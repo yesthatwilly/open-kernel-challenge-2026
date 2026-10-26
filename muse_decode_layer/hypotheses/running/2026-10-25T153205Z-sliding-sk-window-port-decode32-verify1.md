@@ -79,7 +79,7 @@ status: running
 review_at: 2026-10-25T203233Z
 review_companions: null
 hold_reason: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T213134Z
 base_sha: 4b5ab758064dec781322c9326848d77ac8ab9b96
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
@@ -88,6 +88,12 @@ worktree: .worktrees/muse_decode_layer/sliding-sk-window-port-decode32-verify1
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T005253Z
+impl_commit: f798110f78661e2bd739fe420dff86ec8795b0f4
+submission_sha256: fa63b1fb5cbcf0af88c7c1db7264f9f0f273cdf968b31845ea92289bf99e7336
+norm_sha256: 12c87fd68d38764b1d0d66d37a797148eb347d4ede0c1ce35e47ccd2ad2b8c4b
+submission_blob: 2e0687a9bdbdcede1b35478fb931d2a37e0dbbc4
+lint_warnings: 78
 ---
 
 # sliding-sk-window-port-decode32-verify1
@@ -134,3 +140,48 @@ No companion; attribution per row (only Sd32 and Sv1 can change). Distinct kerne
 - Wait for checks, per its own text?
 - Serialize with sliding-cluster-c4-s3-satfinite-on-sk-ticket.
 
+
+## Implementation notes
+
+Edited only muse_decode_layer/submission.py (+1348/-28). Nothing could be compiled or run here (no GPU, torch or nvcc).
+
+What changed
+- New load_inline module `muse_decode_sk_window_v1` (built at import, TORCH_CUDA_ARCH_LIST=9.0a, -O3 -std=c++20 -lineinfo, compile seconds printed). Its TU is attention master's sk TU, kernel body verbatim, reduced to the PSEUDO instantiations 4-7. The CUDA kernel is renamed `skw_attn_kernel`, the exports `skw_attn` / `skw_attrs`, and the combine and non-PSEUDO variants are removed. The host code checks the qkv row layout (2304 bf16 columns, gate at 1280, matching master's qkv GEMM). Decode's `_SK` module is untouched.
+- Triton `skw_pre_kernel` is `_pre_attention_kernel` copied under its own symbol. Both new kernels therefore have distinct names in top_kernels.
+- Routing: `_attn_core` calls `_skw_route` right after the qkv GEMM and before the S1 / S3 / FA3 branches. The route is config plus the state's own per-band flag (b32 = sliding decode 17..32, v1 = sliding verify B=1). kv_scale is descaled inside the kernel. Per-state tickets and workspaces live in `state["skw"]`.
+- Phase SKW runs after T8 and has its own start deadline (150 s), which prints "skipped: deadline". It runs a canary (a tiny first launch of each variant, with launching/ok prints and sync), the pre-kernel front checks, the kernel suite with plants, the variant x grid sub-race, a two-state alternation and a whole-layer check.
+- Kernel suite and plants: lens 1/63/2047/2048/2049/80000 plus ragged, kv_scale 1 and 1/64, plants at the window edges. The reference is fp64 fed the kernel's own q bytes.
+- Sub-race: b32 {6} x {p2,p4,p8}; v1 {4,5} x {p4,p8,sm}. Each candidate is timed against master's routed path (qkv GEMM through the o GEMM, other flags as applied) in two interleaved rounds. A candidate must win by >= 1.03x in both rounds with IQR <= 1.5x master's (master's IQR floored at 0.5 us). All medians and IQRs are printed.
+- The last lines of prepare are compact `[summary] PATH CHOSEN` lines, written after `_prepare_done`.
+
+Review fixes applied: per-state tickets and buffers; distinct kernel symbols; the variant sub-race; selector timed against `_parent_attention` as each state routes it, with skw routed first; fallback lines carry a reason.
+
+Deviations
+- Shared helpers were generalized without changing their defaults: `_cb_flags` (skw), `_cb_cmp_attn` (row_agg), `_cb_cmp_layer` (loose, k_gap_max), `_s3_front_check` (pre_fn, gap_gate), `_cb_attn_ref` (q_override). The skw layer check also uses loose bounds, because both sides round q to FP8 independently (the earlier S1/S3 gates failed on that noise).
+- The existing "start deadline" message now reads "skipped: deadline (...)".
+- The SKW layer check is run inside the SKW phase and not in the T8 check, so a skw miss cannot disable unrelated flags.
+- Hypothesis text says route at >= 1.02x; the brief's standing 1.03x was used.
+- Pre-kernel front checks use rel L2 only, no byte-gap gate (LESSONS).
+- Open questions answered: the sub-race is as the review lists; the selector includes the o GEMM; symbols are distinct. If sliding-cluster-c4-s3-satfinite lands, the b32 selector automatically times against whatever S1/S3 flags the state holds. No serialization with that hypothesis was done.
+
+## Rules check
+- [x] CUDA-graph capturable: kernel_fn path adds only torch.empty, Triton launch and skw_attn launch (shape-based); no sync, item or value-dependent control flow.
+- [x] Nothing derived from data is cached across calls; the race results held in `_SKW_RES` are plain floats from synthetic prepare data.
+- [x] Weights: unchanged (NVFP4 stays NVFP4, BF16 stays BF16).
+- [x] Activations BF16 as master; KV FP8; q FP8 E4M3.
+- [x] Attention sees every key: window 2048 = positions p-2047..p, no skipping (plants test the edges).
+- [x] No subprocess, network, timing or harness patching (nvcc via torch load_inline, as the other modules).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Per-state flags, a miss falls back to master's exact path and no unrelated flag is touched.
+- [x] Bounded waits: the kernel has no spin or mbarrier (ticket arrival only).
+
+okc_lint:
+```
+OK with warnings: .worktrees/muse_decode_layer/sliding-sk-window-port-decode32-verify1/muse_decode_layer/submission.py
+```
+py_compile ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch (no edits made). Checked: (1) every generalized helper (_cb_flags skw, _cb_cmp_attn row_agg, _cb_cmp_layer loose/k_gap_max, _s3_front_check pre_fn/gap_gate/label, _cb_attn_ref q_override) keeps its old behavior at its existing master call sites (defaults reproduce the old code and tag text; _cb_off now also forces skw routes off, a no-op while state["skw"] is absent or its route is all None, which holds through T8); (2) the SKW layer check is loose only on the layer residual, while the kernel-level suite (fp64 reference fed the kernel's own q bytes, window-edge plants, <= 1.5e-2 total / 5e-2 per row) and the row-aggregated attention alternation still fail an O(1) wrong row; the new path is fp16-MMA so it is closer to the fp64 reference than master's FP8-P FA3, so the "new <= 1.25x master" gate does not trip; (3) tickets, workspaces and routes live in state["skw"], cloned per state by _cb_second_state, no module-global device pointer (_SKW_RES holds floats/tuples, the C++ static is a host bool array); (4) SKW starts at <= 150 s into prepare() (prior master logs show prepare at ~7 s), the cell/case deadlines (240/260 s) bound the rest below 300 s, and the compile adds ~45 s to the import clock. The CUDA TU diffs against attention master as rename + PSEUDO-only + qkv layout TORCH_CHECK; skw_pre_kernel is byte-identical to _pre_attention_kernel.
+Residual risk: the race's IQR gate (candidate <= 1.5x master's, master floored at 0.5 us) can reject a real win on 0.5 us event quantization, which would leave both bands unmeasured on master's path.
