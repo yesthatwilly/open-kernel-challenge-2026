@@ -1,4 +1,4 @@
-# Pre-flight audit of one implemented churnsubs hypothesis (model: opus)
+# Pre-flight audit of one implemented churnsubs hypothesis
 
 Repo: /home/user/git/musespark (shell is nushell; use `bash -c` for bash syntax). There is no GPU,
 torch or Triton on this node, so you cannot run the kernel. Audit by reading, and by emulating in
@@ -28,6 +28,16 @@ Find what would waste the run or break a rule. In order of what earlier audits a
    named area? Flag scope creep.
 6. **Performance traps** that make the result unreadable: a path that is never taken, a perf-killing
    sync, autotune, recompiling per call.
+
+Three checks every audit makes (from the 2026-10-25 audit comparison):
+- **Deadlines.** Find the line where the import/prepare clock starts (before or after `import torch`)
+  and take master's real import and prepare times from a recent judge log in
+  `{PROBLEM}/hypotheses/archive/`. Judge each phase deadline against those numbers, not a guess.
+- **Variance vetoes.** Every IQR or variance veto in a gate needs an absolute floor of at least about
+  0.5 us on the incumbent's spread. A timer-resolution IQR otherwise vetoes a real win.
+- **Evidence.** For new CUDA indexing (fragments, swizzles, tile/page maps), emulate it in numpy and
+  save the script in the scratchpad. Any emulation, diff or mutation test you cite must leave its
+  script or output behind, and the audit section names the path.
 
 You MAY fix problems in category 1-4 directly in `{WORKTREE}/{PROBLEM}/submission.py`, minimally.
 Do not redesign the change. Do not commit, stage or run okc. After editing, run
