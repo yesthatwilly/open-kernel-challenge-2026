@@ -1,0 +1,108 @@
+ariant 1 grid 3
+[s6]   w6_kernel done
+[s6] B coherent-lens_a-grid3: rel L2 1.33e-02, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[s6] B coherent-lens_a-device: B=6 kv_scale=1.0 grid=device coherent=True; launching kernel_fn (pre-attention first)
+[s6]   pre-attention (Triton) done; launching w6_kernel variant 1 grid 132
+[s6]   w6_kernel done
+[s6] B coherent-lens_a-device: rel L2 1.01e-02, finite True, ERROR WORD 0 (1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> PASS
+[s6] B BISECT: 1-tile mid-request segments pass: lt-based edge mask and segment-start state cleared
+[s6] B BISECT table: canary=ok, single-tile-lens_a-device=ok, lens_a-grid3-kv1=ok, kv0.25-grid264=ok, B1-2t=ok, B1-4t=ok, B1-17t=ok, B1-34t=ok, B1-4t-kv0.25=ok, cross-2req-4t=ok, mid-1t-B1-3t-grid3=ok, mid-1t-2req-grid3=ok, lens_a-grid3-kv0.25=ok, lens_a-grid7-kv1=ok, lens_a-grid61-kv0.25=ok, lens_b-device=ok, lens_b-grid7-kv0.25=ok, coherent-lens_a-grid3=ok, coherent-lens_a-device=ok
+[s6-gate] B=16 round 1: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 166.0 us net (IQR 2.4) vs variant 0 [_pre_attention_kernel + w6_kernel] 325.5 us net (IQR 3.5) -> master / variant 0.510x (empty graph 5.1 us subtracted)
+[s6-gate] B=16 round 2: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 166.2 us net (IQR 1.7) vs variant 0 [_pre_attention_kernel + w6_kernel] 324.8 us net (IQR 4.8) -> master / variant 0.512x (empty graph 5.3 us subtracted)
+[s6-gate] B=16 variant 0: ratios 0.510x / 0.512x (both need >= 1.05), IQR <= 1.5x master False, rel L2 vs master 6.91e-03 (< 3e-2), finite True, error word 0 -> does not clear
+[s6-gate] B=16 round 1: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 166.0 us net (IQR 2.4) vs variant 1 [_pre_attention_kernel + w6_kernel] 348.6 us net (IQR 1.6) -> master / variant 0.476x (empty graph 5.1 us subtracted)
+[s6-gate] B=16 round 2: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 166.2 us net (IQR 1.7) vs variant 1 [_pre_attention_kernel + w6_kernel] 348.2 us net (IQR 2.6) -> master / variant 0.477x (empty graph 5.3 us subtracted)
+[s6-gate] B=16 variant 1: ratios 0.476x / 0.477x (both need >= 1.05), IQR <= 1.5x master False, rel L2 vs master 7.62e-03 (< 3e-2), finite True, error word 0 -> does not clear
+[s6-gate] B=32 round 1: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 304.7 us net (IQR 1.7) vs variant 0 [_pre_attention_kernel + w6_kernel] 535.2 us net (IQR 5.1) -> master / variant 0.569x (empty graph 5.2 us subtracted)
+[s6-gate] B=32 round 2: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 304.5 us net (IQR 2.0) vs variant 0 [_pre_attention_kernel + w6_kernel] 535.0 us net (IQR 7.1) -> master / variant 0.569x (empty graph 5.3 us subtracted)
+[s6-gate] B=32 variant 0: ratios 0.569x / 0.569x (both need >= 1.05), IQR <= 1.5x master False, rel L2 vs master 8.62e-03 (< 3e-2), finite True, error word 0 -> does not clear
+[s6-gate] B=32 round 1: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 304.7 us net (IQR 1.7) vs variant 1 [_pre_attention_kernel + w6_kernel] 658.1 us net (IQR 2.3) -> master / variant 0.463x (empty graph 5.2 us subtracted)
+[s6-gate] B=32 round 2: master routed path (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel) 304.5 us net (IQR 2.0) vs variant 1 [_pre_attention_kernel + w6_kernel] 657.2 us net (IQR 2.6) -> master / variant 0.463x (empty graph 5.3 us subtracted)
+[s6-gate] B=32 variant 1: ratios 0.463x / 0.463x (both need >= 1.05), IQR <= 1.5x master True, rel L2 vs master 9.40e-03 (< 3e-2), finite True, error word 0 -> does not clear
+[s6] building muse_full_verify_wgmma_s6d: TORCH_CUDA_ARCH_LIST=9.0a, arch flags ['-gencode=arch=compute_90a,code=sm_90a'], extra ['-O3', '-std=c++20', '-lineinfo', '-DW6_SET=1']
+[s6] load_inline (muse_full_verify_wgmma_s6d) compiled in 42.9s
+[s6] 1-CTA/SM ring depth chosen 10 stages: 206688 B of dynamic smem; 12 stages would need 239520 B against the 232448 B per-block limit (does not fit, so 10)
+[s6] variant 2 (s5 CTA-wide ring (256-arrival barriers), full kernel, 4 stages, 2 CTAs/SM): regs 127, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2, dyn smem 99936 B (max attr 99936, static 0)
+[s6] variant 3 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept): regs 114, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2, dyn smem 99936 B (max attr 99936, static 0)
+[s6] variant 4 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue): regs 46, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2, dyn smem 99936 B (max attr 99936, static 0)
+[s6] variant 5 (gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept): regs 101, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2, dyn smem 108192 B (max attr 108192, static 0)
+[s6] variant 6 (gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue): regs 52, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 2, dyn smem 108192 B (max attr 108192, static 0)
+[s6] variant 7 (gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept): regs 101, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 1, dyn smem 206688 B (max attr 206688, static 0)
+[s6] variant 8 (gather-only split ring, 1 CTA/SM (OVL depth), no epilogue): regs 54, local bytes 0, binaryVersion 90, ptxVersion 90, CTAs/SM 1, dyn smem 206688 B (max attr 206688, static 0)
+[s6-diag] B=8: launching _pre_attention_kernel
+[s6-diag] B=8: launching variant 2 (s5 CTA-wide ring (256-arrival barriers), full kernel, 4 stages, 2 CTAs/SM)
+[s6-diag] B=8: launching variant 0 (A: split ring (SW128 ring, per-warpgroup FULL/EMPTY), serial chain, 4 stages, 2 CTAs/SM)
+[s6-diag] B=8: launching variant 1 (B: split ring, S(n+1) before softmax(n), 1 CTA/SM)
+[s6-diag] B=8: launching variant 3 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=8: launching variant 4 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=8: launching variant 5 (gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=8: launching variant 6 (gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=8: launching variant 7 (gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept)
+[s6-diag] B=8: launching variant 8 (gather-only split ring, 1 CTA/SM (OVL depth), no epilogue)
+[s6-diag] B=8: timing 9 designs as cold-L2 graph replays (median of 15, empty graph subtracted)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[gate] empty-graph baseline 2.9 us (subtracted)
+[s6-diag] B=8: s5-ring full output vs variant A rel L2 0.00e+00; device error word 0
+[s6-diag] B=16: launching _pre_attention_kernel
+[s6-diag] B=16: launching variant 2 (s5 CTA-wide ring (256-arrival barriers), full kernel, 4 stages, 2 CTAs/SM)
+[s6-diag] B=16: launching variant 0 (A: split ring (SW128 ring, per-warpgroup FULL/EMPTY), serial chain, 4 stages, 2 CTAs/SM)
+[s6-diag] B=16: launching variant 1 (B: split ring, S(n+1) before softmax(n), 1 CTA/SM)
+[s6-diag] B=16: launching variant 3 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=16: launching variant 4 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=16: launching variant 5 (gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=16: launching variant 6 (gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=16: launching variant 7 (gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept)
+[s6-diag] B=16: launching variant 8 (gather-only split ring, 1 CTA/SM (OVL depth), no epilogue)
+[s6-diag] B=16: timing 9 designs as cold-L2 graph replays (median of 15, empty graph subtracted)
+[gate] empty-graph baseline 3.0 us (subtracted)
+[s6-diag] gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept: 188.7 us, 1.72 TB/s
+[s6-diag] gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue: 81.9 us, 3.97 TB/s
+[s6-diag] gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept: 252.9 us, 1.29 TB/s
+[s6-diag] gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue: 147.8 us, 2.20 TB/s
+[s6-diag] gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept: 194.2 us, 1.67 TB/s
+[s6-diag] gather-only split ring, 1 CTA/SM (OVL depth), no epilogue: 149.7 us, 2.17 TB/s
+[s6-diag] B=16 x 80K agentic (325 MB K+V rows) full kernels (bare, no pre-attention): s5 CTA-wide ring (256-arrival barriers) 285.7 us 1.14 TB/s; A 320.1 us 1.02 TB/s; B 346.3 us 0.94 TB/s
+[s6-diag] B=16: s5-ring full output vs variant A rel L2 0.00e+00; device error word 0
+[s6-diag] B=32: launching _pre_attention_kernel
+[s6-diag] B=32: launching variant 2 (s5 CTA-wide ring (256-arrival barriers), full kernel, 4 stages, 2 CTAs/SM)
+[s6-diag] B=32: launching variant 0 (A: split ring (SW128 ring, per-warpgroup FULL/EMPTY), serial chain, 4 stages, 2 CTAs/SM)
+[s6-diag] B=32: launching variant 1 (B: split ring, S(n+1) before softmax(n), 1 CTA/SM)
+[s6-diag] B=32: launching variant 3 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=32: launching variant 4 (gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=32: launching variant 5 (gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept)
+[s6-diag] B=32: launching variant 6 (gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue)
+[s6-diag] B=32: launching variant 7 (gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept)
+[s6-diag] B=32: launching variant 8 (gather-only split ring, 1 CTA/SM (OVL depth), no epilogue)
+[s6-diag] B=32: timing 9 designs as cold-L2 graph replays (median of 15, empty graph subtracted)
+[gate] empty-graph baseline 3.0 us (subtracted)
+[s6-diag] B=32: s5-ring full output vs variant A rel L2 0.00e+00; device error word 0
+[s6-diag] fit variant 2 (s5 CTA-wide ring (256-arrival barriers)): T = a + b * tiles/CTA: a = 162.6 us fixed, b = 1.759 us/tile; T(B=8/16/32) = 234.7 / 285.7 / 431.4 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 0 (A: split ring (SW128 ring): T = a + b * tiles/CTA: a = 136.4 us fixed, b = 2.589 us/tile; T(B=8/16/32) = 240.6 / 320.1 / 531.1 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 1 (B: split ring): T = a + b * tiles/CTA: a = 54.9 us fixed, b = 1.977 us/tile; T(B=8/16/32) = 206.9 / 346.3 / 654.3 us at 75/150/302 tiles/CTA
+[s6-diag] fit variant 3 (gather-only s5 CTA-wide ring): T = a + b * tiles/CTA: a = 174.5 us fixed, b = 0.380 us/tile; T(B=8/16/32) = 198.3 / 188.7 / 236.7 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 4 (gather-only s5 CTA-wide ring): T = a + b * tiles/CTA: a = -2.1 us fixed, b = 1.151 us/tile; T(B=8/16/32) = 42.6 / 81.9 / 172.5 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 5 (gather-only split ring): T = a + b * tiles/CTA: a = 119.9 us fixed, b = 2.076 us/tile; T(B=8/16/32) = 213.0 / 252.9 / 441.2 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 6 (gather-only split ring): T = a + b * tiles/CTA: a = -54.3 us fixed, b = 2.817 us/tile; T(B=8/16/32) = 57.6 / 147.8 / 374.3 us at 37/75/151 tiles/CTA
+[s6-diag] fit variant 7 (gather-only split ring): T = a + b * tiles/CTA: a = 8.3 us fixed, b = 1.311 us/tile; T(B=8/16/32) = 113.9 / 194.2 / 407.9 us at 75/150/302 tiles/CTA
+[s6-diag] fit variant 8 (gather-only split ring): T = a + b * tiles/CTA: a = -50.9 us fixed, b = 1.393 us/tile; T(B=8/16/32) = 59.3 / 149.7 / 373.0 us at 75/150/302 tiles/CTA
+[s6-diag] fit v2: a=162.6us b=1.759us/tile T8/16/32=235/286/431us
+[s6-diag] fit v0: a=136.4us b=2.589us/tile T8/16/32=241/320/531us
+[s6-diag] fit v1: a=54.9us b=1.977us/tile T8/16/32=207/346/654us
+[s6-diag] fit v3: a=174.5us b=0.380us/tile T8/16/32=198/189/237us
+[s6-diag] fit v4: a=-2.1us b=1.151us/tile T8/16/32=43/82/173us
+[s6-diag] fit v5: a=119.9us b=2.076us/tile T8/16/32=213/253/441us
+[s6-diag] fit v6: a=-54.3us b=2.817us/tile T8/16/32=58/148/374us
+[s6-diag] fit v7: a=8.3us b=1.311us/tile T8/16/32=114/194/408us
+[s6-diag] fit v8: a=-50.9us b=1.393us/tile T8/16/32=59/150/373us
+[s6-diag] gather-only v3/v4 (epilogue kept/removed) B=16: 188.7/81.9 us (1.72/3.97 TB/s)
+[s6-diag] gather-only v5/v6 (epilogue kept/removed) B=16: 252.9/147.8 us (1.29/2.20 TB/s)
+[s6-diag] gather-only v7/v8 (epilogue kept/removed) B=16: 194.2/149.7 us (1.67/2.17 TB/s)
+[s6] SUMMARY self-check variant 0 (A: split ring (SW128 ring): 19/19 cases PASS
+[s6] SUMMARY self-check variant 1 (B: split ring): 19/19 cases PASS
+[s6] GATE B=16 variant 0: master/variant 0.510x, 0.512x (need both >= 1.05), IQR ok False, rel L2 vs master 6.91e-03, finite True, ok False
+[s6] GATE B=16 variant 1: master/variant 0.476x, 0.477x (need both >= 1.05), IQR ok False, rel L2 vs master 7.62e-03, finite True, ok False
+[s6] GATE B=32 variant 0: master/variant 0.569x, 0.569x (need both >= 1.05), IQR ok False, rel L2 vs master 8.62e-03, finite True, ok False
+[s6] GATE B=32 variant 1: master/variant 0.463x, 0.463x (need both >= 1.05), IQR ok True, rel L2 vs master 9.40e-03, finite True, ok False
+PATH CHOSEN: full verify B=16 band 1..24: master paired FA3 (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel); s6 not routed (gate/self-check not met, see [s6-gate] / [s6] SUMMARY)
+PATH CHOSEN: full verify B=32 band 25..64: master paired FA3 (_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel); s6 not routed (gate/self-check not met, see [s6-gate] / [s6] SUMMARY)

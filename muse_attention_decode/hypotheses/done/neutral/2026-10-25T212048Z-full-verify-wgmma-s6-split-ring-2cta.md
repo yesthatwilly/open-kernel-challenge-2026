@@ -89,10 +89,10 @@ prior: "full-verify-wgmma-s5-qfrag-reload: same math and 2 CTAs/SM, but each war
 rewrite_stage: 6
 replaces: "full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212904Z
 base_sha: 99066e11fda854f911b0326172179d3ef997818c
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -111,6 +111,13 @@ attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-s6-split-ring-2cta.md
 prepared_at: 2026-10-26T012538Z
 job: 4899ab49d74f4df7
 dispatched_at: 2026-10-26T012615Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5330838956070243
+speedup_ci: [1.5100876371729188, 1.5560801540411295]
+harvested_at: 2026-10-26T015635Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # full-verify-wgmma-s6-split-ring-2cta
@@ -210,3 +217,36 @@ Fixes:
 2. A phase that finishes past the 480 s budget must route nothing (the convention from the c320 submits). The gate and two-state phases had no end check, so routes are now discarded with a printed line if the clock is over 480 s once they finish.
 
 Residual risk: first execution of new wgmma/mbarrier code (OVL=1 register-pipelined S(n+1) may serialize, variant 0 may spill at the 128-reg cap and be refused); the DIAG build may be skipped by its 360 s start deadline.
+
+## Result
+
+- job `4899ab49d74f4df7` (check), status done, passed True, tests 16/16
+- speedup 1.5331x, 95% CI [1.5101, 1.5561], score 2456.682253849346 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s6-split-ring-2cta.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-wgmma-s6-split-ring-2cta.patch`; branch `hyp/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 10.75 | 1.1183 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 22.43 | 0.7799 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.41 | 1.0154 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 109.29 | 1.0228 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.77 | 1.0102 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 225.77 | 1.0134 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.44 | 0.9985 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 30.79 | 0.9968 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 23.48 | 0.9893 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.3 | 1.0021 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 29.46 | 1.0032 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 301.27 | 1.0102 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 6 of `full-layer verify at 1<batch<=64: FA3 main + prepare_varlen_num_blocks + FlashAttnFwdCombine + _paired_norm_gate_kernel (master paired FA3)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-verify-wgmma-s6-split-ring-2cta --stage 7`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

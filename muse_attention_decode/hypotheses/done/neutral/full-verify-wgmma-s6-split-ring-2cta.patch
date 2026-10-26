@@ -1,0 +1,1790 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 6d6afa47..3cd54814 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -18,6 +18,8 @@ import time
+ from types import MappingProxyType
+ from typing import TypedDict
+ 
++_IMPORT_T0 = time.perf_counter()  # the prepare clock starts here, before the torch/triton/sglang imports (the 480 s start rule)
++
+ import torch
+ import triton
+ import triton.language as tl
+@@ -1739,7 +1741,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     if splitkv and _fused_gate(cfg):  # FUSED_PRE: full decode 1 < B <= 64, pre-attention folded into the kernel
+         return _full_decode_skf(data, qkv)
+     pseudo = _ps_gate(cfg)  # sliding verify band routed to the stream-K pseudo-decode kernel
+-    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv
++    w6 = _w6_gate(cfg)  # full verify band routed to the s6 split-ring wgmma kernel (unpaired query, like splitkv)
++    paired = window == 0 and hkv % 2 == 0 and batch > 1 and not splitkv and not w6
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
+@@ -1752,6 +1755,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     )
+     if splitkv:
+         return _full_decode_splitkv(data, q, qkv)
++    if w6:
++        return _full_verify_w6(data, q, qkv)
+     if pseudo:
+         return _sliding_verify_pseudo(data, q, qkv)
+ 
+@@ -5846,6 +5851,1746 @@ def _sd_setup_body() -> None:
+              f"head-to-head timings, or failed a check){timing}")
+ 
+ 
++
++# ---------------------------------------------------------------------------------------------
++# Full-layer VERIFY (q_len 8, causal inside the block) at 1 < batch <= 64 (tp8, page 1): rewrite
++# stage 6, in its OWN load_inline modules (muse_full_verify_wgmma_s6 for the two routed candidates,
++# muse_full_verify_wgmma_s6d for the prepare-only DIAG designs) so a build or self-check failure here
++# never touches another module. Any failure, refusal or deadline leaves full verify on master's PAIRED
++# FA3 path (the `paired` predicate in kernel_fn stays true when the route table has no entry).
++#
++# SOURCE: s5 (full-verify-wgmma-s5-qfrag-reload, 71e40388): FP8 QK wgmma m64n64k32 with Q staged in smem and
++# reloaded before every tile's S, Max_offset-8 FP8 P, the per-warpgroup V^T transpose, stream-K over 64-token
++# tiles, the in-kernel ticket combine + paired norm-gate, the error word and the bounded mbarrier waits, all
++# verbatim. s5 was correct but 288.7 vs paired FA3 164.4 us at B=16 (429.5 vs 302.4 at B=32): 2x the bytes cost
++# 1.49x the time. Only the PIPELINE OWNERSHIP changes here:
++#  * RING (the adversarial review's design, which wins over the spec's SWIZZLE_64B half-row rings): the ring
++#    is s5's EXACT 4-stage SW128 128-B-row ring with the same descriptors, but each stage's two 64-B head
++#    halves have their own FULL / EMPTY mbarrier pair (128 arrivals, one warpgroup). Warpgroup g's 128
++#    threads fill ONLY head g's half (4 x 16-B cp.async.cg per tile per thread; one warp-wide instruction now
++#    covers 16 full 32-B sectors instead of s5's 8 half-sectors) and wait only for their own half, and each
++#    warpgroup prefetches its own page indices (16-tile blocks, private block pair), so there is no
++#    cross-warpgroup wait anywhere in the tile loop.
++#  * SMEM: s5's non-ring smem is ~34.4 KB (the spec's 6-stage 96 KB ring cannot hold 2 CTAs/SM), so the
++#    2-CTA/SM variant keeps 4 stages; the per-warpgroup page-index blocks add 8 KB (108,192 B per CTA, 2 fit).
++#  * OVL: variant 0 (OVL=0) = the split ring + s5's serial S -> transpose -> softmax -> PV chain at
++#    __launch_bounds__(256, 2), grid 2 x SM. Variant 1 (OVL=1) = the split ring + S(n + 1) issued (FULL(n + 1)
++#    waited) before softmax(n), a second 64x64 fp32 S accumulator, __launch_bounds__(256, 1), grid SM,
++#    12 stages if the layout fits the 232448 B block limit, else 10 (it does not fit at 12 with the
++#    per-warpgroup page-index blocks, so 10; the build prints the numbers).
++#  * DIAG (prepare-only, never routed, never timed in kernel_fn): gather-only instantiations of s5's CTA-wide ring,
++#    the split ring at 2 CTAs/SM and the split ring at 1 CTA/SM, each with and without the ticket epilogue, plus
++#    s5's full kernel, timed at B = 8 / 16 / 32 with the fit T = a + b * tiles/CTA printed.
++# ---------------------------------------------------------------------------------------------
++
++_W6_BUDGET_S = 480.0   # the start rule for the prepare clock (master's import alone already exceeds 230 s)
++# Phase START deadlines in seconds of the prepare clock (the clock starts when this module begins importing):
++# the budget minus the estimated cost still to come (build ~60 s, two bisect self-checks ~45 s, the gate ~30 s,
++# the replay checks ~15 s; DIAG module build ~70 s, DIAG timings ~30 s). A phase past its deadline prints
++# 'skipped: deadline' and the cell stays on master.
++_W6_DL_BUILD = 330.0
++_W6_DL_CHECK = 385.0
++_W6_DL_GATE = 415.0
++_W6_DL_DIAG_BUILD = 360.0
++_W6_DL_DIAG = 430.0
++
++_W6_CPP = r"""
++#include <torch/extension.h>
++void w6_run(int64_t variant, torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++            torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++            int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++            torch::Tensor err, torch::Tensor sink, double score_scale, double eps, int64_t grid);
++torch::Tensor w6_attrs(int64_t variant);
++torch::Tensor w6_ovl_stages();
++"""
++
++_W6_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_bf16.h>
++#include <cuda_fp8.h>
++#include <cstdint>
++
++#ifndef W6_SET
++#define W6_SET 0   // 0: split-ring OVL=0 / OVL=1 (the routed candidates); 1: DIAG-only designs
++#endif
++
++namespace {
++
++constexpr int D = 64;              // head dim
++constexpr int HQ = 16;             // query heads
++constexpr int HKV = 2;             // kv heads
++constexpr int G = HQ / HKV;        // queries per kv head (8)
++constexpr int QL = 8;              // block tokens (q_len)
++constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
++constexpr int TILE = 64;           // tokens per tile (the stream-K unit)
++constexpr int IDX_TILES = 16;      // tiles per page-index prefetch block
++constexpr int IDX_N = IDX_TILES * TILE;
++constexpr int THREADS = 256;
++constexpr int MAXB = 64;
++constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile (8 KB) + V tile (8 KB), both heads' halves
++constexpr int VT_BYTES = D * TILE;                           // one head's V^T: 64 dims x 64 tokens
++constexpr long long WAIT_LIMIT = 2000000000LL;               // ~1 s of SM clock per mbarrier wait
++constexpr int SMEM_LIMIT = 232448;                           // sm_90 max dynamic smem per block (opt-in)
++
++// RING = 0: s5's layout exactly (one CTA-wide ring, 256-arrival FULL / EMPTY barriers, one shared
++// page-index block pair). RING = 1: the SAME 128-B-row SW128 ring and descriptors, but every stage's
++// two 64-B head halves have their own FULL / EMPTY barrier pair (128 arrivals: one warpgroup) and each
++// warpgroup prefetches its own page indices into a private block pair (so no cross-warpgroup wait
++// exists anywhere in the tile loop).
++template <int RING, int STAGES>
++struct Lay {
++  static constexpr int RING_OFF = 0;
++  static constexpr int VT_OFF = RING_OFF + STAGES * STAGE_BYTES;   // [HKV][2 buffers][VT_BYTES]
++  static constexpr int IDX_OFF = VT_OFF + HKV * 2 * VT_BYTES;
++  static constexpr int IDX_BYTES = (RING ? HKV : 1) * 2 * IDX_N * 4;  // int32 [(g)][2][IDX_N]
++  static constexpr int SEQ_OFF = IDX_OFF + IDX_BYTES;              // int32 [MAXB]
++  static constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;               // int32 [MAXB + 4]
++  static constexpr int BAR_OFF = PRE_OFF + (MAXB + 4) * 4;         // u64 [NBAR]: FULL then EMPTY
++  static constexpr int NBAR = (RING ? 4 : 2) * STAGES;
++  static constexpr int FLAG_OFF = BAR_OFF + NBAR * 8;              // int abort, last[HKV], pad
++  static constexpr int QS_OFF = FLAG_OFF + 16;                     // u32 [8][THREADS]: each thread's own Q A fragment
++  static constexpr int USED = QS_OFF + 8 * THREADS * 4;
++  static constexpr int BYTES = USED + 1024;                        // slack: the base is rounded up to 1024 B
++  static_assert(VT_OFF % 1024 == 0 && STAGE_BYTES % 1024 == 0 && VT_BYTES % 512 == 0, "swizzle atom alignment");
++  static_assert(BAR_OFF % 8 == 0, "mbarrier alignment");
++  static_assert(STAGES >= 3 && STAGES <= IDX_TILES, "page-index block rotation needs STAGES <= IDX_TILES");
++};
++
++// The 1-CTA/SM ring depth: 12 stages if the whole layout fits the per-block limit, else 10.
++constexpr int S_OVL = (Lay<1, 12>::BYTES <= SMEM_LIMIT) ? 12 : 10;
++static_assert(Lay<1, S_OVL>::BYTES <= SMEM_LIMIT, "1-CTA/SM layout must fit");
++static_assert(Lay<1, 4>::BYTES <= 116000, "4-stage split layout must fit two CTAs per SM");
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
++  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
++}
++__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
++__device__ __forceinline__ void cp_wait_all() { asm volatile("cp.async.wait_all;\n" ::: "memory"); }
++// Per-thread Q fragment staging: volatile shared accesses, so the compiler can neither keep the
++// fragment in registers across tiles nor move the reload relative to the barrier waits.
++__device__ __forceinline__ void sts32(uint32_t a, uint32_t v) {
++  asm volatile("st.shared.u32 [%0], %1;\n" :: "r"(a), "r"(v) : "memory");
++}
++__device__ __forceinline__ uint32_t lds32(uint32_t a) {
++  uint32_t v;
++  asm volatile("ld.shared.u32 %0, [%1];\n" : "=r"(v) : "r"(a) : "memory");
++  return v;
++}
++__device__ __forceinline__ float ex2(float x) {
++  float y;
++  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
++  return y;
++}
++
++// First flat tile of CTA c: floor(c * T / grid), int64 math.
++__device__ __forceinline__ int start_of(int c, int T, int grid) {
++  return static_cast<int>((static_cast<int64_t>(c) * T) / grid);
++}
++// The CTA whose range holds flat tile x (0 <= x < T): the largest c with start(c) <= x.
++__device__ __forceinline__ int owner_of(int x, int T, int grid) {
++  int c = static_cast<int>(((static_cast<int64_t>(x) + 1) * grid - 1) / T);
++  c = c < 0 ? 0 : (c > grid - 1 ? grid - 1 : c);
++  while (c > 0 && start_of(c, T, grid) > x) --c;
++  while (c + 1 < grid && start_of(c + 1, T, grid) <= x) ++c;
++  return c;
++}
++// Request of flat tile f: the largest b with pre[b] <= f.
++__device__ __forceinline__ int req_of(const int* pre, int B, int f) {
++  int lo = 0, hi = B - 1;
++  while (lo < hi) {
++    const int mid = (lo + hi + 1) >> 1;
++    if (pre[mid] <= f) lo = mid; else hi = mid - 1;
++  }
++  return lo;
++}
++// Warp 0: pre[0] = 0, pre[b + 1] = sum of tiles of batch rows 0..b (seq in smem, B <= 64).
++__device__ __forceinline__ void tile_prefix(const int* seq, int* pre, int B, int lane) {
++  const int i0 = lane * 2, i1 = lane * 2 + 1;
++  const int v0 = i0 < B ? (seq[i0] + TILE - 1) / TILE : 0;
++  const int v1 = i1 < B ? (seq[i1] + TILE - 1) / TILE : 0;
++  int s = v0 + v1;
++#pragma unroll
++  for (int o = 1; o < 32; o <<= 1) {
++    const int t = __shfl_up_sync(0xffffffffu, s, o);
++    if (lane >= o) s += t;
++  }
++  if (i0 < B) pre[i0 + 1] = s - v1;
++  if (i1 < B) pre[i1 + 1] = s;
++  if (lane == 0) pre[0] = 0;
++}
++
++// The LSE merge of request b's slots for kv head g's 8 q heads (64 rows x 64 dims), by the 128
++// threads of one warpgroup (thread tw: row tw / 2, dims (tw & 1) * 32 .. + 31), times v_scale, then
++// the master epilogue: scaleless RMSNorm over 64 (eps inside the sqrt) times sigmoid(gate), bf16.
++// Slots are read through L2 (__ldcg): other CTAs wrote them in this launch.
++__device__ __forceinline__ void merge_head(int b, int g, int tw, const int* pre_s, int B, int gx,
++                                           const float* ws_acc, const float* ws_ml, const float* v_scale,
++                                           const __nv_bfloat16* qkv, int64_t qkv_stride,
++                                           __nv_bfloat16* out, float eps) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  const int rr = tw >> 1, hh = rr >> 3, j = rr & 7, h = g * G + hh, dh = (tw & 1) * 32;
++  const int T = pre_s[B], x0 = pre_s[b], x1 = pre_s[b + 1];
++  const int c_lo = owner_of(x0, T, gx), c_hi = owner_of(x1 - 1, T, gx);
++  const int row = j * HQ + h;
++  float M = NEG_INF;
++  for (int c = c_lo; c <= c_hi; ++c) {
++    const int lo = max(start_of(c, T, gx), x0), hi = min(start_of(c + 1, T, gx), x1);
++    if (lo < hi) M = fmaxf(M, __ldcg(ws_ml + static_cast<int64_t>(c + b) * 2 * QL * HQ + row));
++  }
++  const float Mu = M == NEG_INF ? 0.f : M;
++  float o[32];
++#pragma unroll
++  for (int i = 0; i < 32; ++i) o[i] = 0.f;
++  float L = 0.f;
++  for (int c = c_lo; c <= c_hi; ++c) {
++    const int lo = max(start_of(c, T, gx), x0), hi = min(start_of(c + 1, T, gx), x1);
++    if (lo >= hi) continue;
++    const int64_t sl = static_cast<int64_t>(c + b);
++    const float m = __ldcg(ws_ml + sl * 2 * QL * HQ + row);
++    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // rows with no valid key here weigh 0
++    L += wt * __ldcg(ws_ml + sl * 2 * QL * HQ + QL * HQ + row);
++    const float4* src = reinterpret_cast<const float4*>(ws_acc + ((sl * QL + j) * HQ + h) * D + dh);
++#pragma unroll
++    for (int i = 0; i < 8; ++i) {
++      const float4 a = __ldcg(src + i);
++      o[4 * i] += wt * a.x; o[4 * i + 1] += wt * a.y; o[4 * i + 2] += wt * a.z; o[4 * i + 3] += wt * a.w;
++    }
++  }
++  const float fsc = L > 0.f ? __ldg(v_scale) / L : 0.f;  // every row has key 0, so L > 0
++  float ss = 0.f;
++#pragma unroll
++  for (int i = 0; i < 32; ++i) { o[i] *= fsc; ss += o[i] * o[i]; }
++  ss += __shfl_xor_sync(0xffffffffu, ss, 1);  // the other half of the row's 64 dims
++  const float rinv = 1.f / sqrtf(ss / D + eps);
++  const int64_t tok = static_cast<int64_t>(b) * QL + j;
++  const __nv_bfloat16* gp = qkv + tok * qkv_stride + (HQ + 2 * HKV) * D + h * D + dh;
++  __nv_bfloat16* op = out + (tok * HQ + h) * D + dh;
++#pragma unroll
++  for (int i = 0; i < 32; i += 2) {
++    const __nv_bfloat162 gg = *reinterpret_cast<const __nv_bfloat162*>(gp + i);
++    const float g0 = __low2float(gg), g1 = __high2float(gg);
++    *reinterpret_cast<__nv_bfloat162*>(op + i) =
++        __floats2bfloat162_rn(o[i] * rinv / (1.f + expf(-g0)), o[i + 1] * rinv / (1.f + expf(-g1)));
++  }
++}
++
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
++}
++__device__ __forceinline__ void fence_mbar_init() {
++  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("{\n\t.reg .b64 st;\n\tmbarrier.arrive.shared::cta.b64 st, [%0];\n\t}\n" :: "r"(a) : "memory");
++}
++// Arrives on the mbarrier once every cp.async this thread issued so far has landed (no pending++).
++__device__ __forceinline__ void cp_mbar_arrive_noinc(uint32_t a) {
++  asm volatile("cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];\n" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ bool mbar_try_wait(uint32_t a, uint32_t parity) {
++  uint32_t ok;
++  asm volatile("{\n\t.reg .pred p;\n\tmbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n\t"
++               "selp.u32 %0, 1, 0, p;\n\t}\n" : "=r"(ok) : "r"(a), "r"(parity) : "memory");
++  return ok != 0;
++}
++__device__ __forceinline__ void fence_proxy_async() {
++  asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
++}
++__device__ __forceinline__ void named_bar(int id) {
++  asm volatile("bar.sync %0, 128;\n" :: "r"(id) : "memory");
++}
++__device__ __forceinline__ void wg_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
++__device__ __forceinline__ void wg_wait0() { asm volatile("wgmma.wait_group.sync.aligned 0;\n" ::: "memory"); }
++__device__ __forceinline__ void fence_acc(float (&d)[32]) {
++#pragma unroll
++  for (int i = 0; i < 32; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++// sm90 shared-memory matrix descriptor: start >> 4 (bits 0-13), LBO 16 B (unused for swizzled
++// K-major), SBO >> 4 (bits 32-45), base offset 0 (atoms are aligned), layout (bits 62-63):
++// 1 = 128B swizzle, 2 = 64B swizzle.
++__device__ __forceinline__ uint64_t make_desc(uint32_t saddr, uint32_t sbo, uint32_t layout) {
++  uint64_t d = static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4);
++  d |= static_cast<uint64_t>(1u) << 16;
++  d |= static_cast<uint64_t>((sbo >> 4) & 0x3FFFu) << 32;
++  d |= static_cast<uint64_t>(layout & 3u) << 62;
++  return d;
++}
++// D (+)= A B, m64n64k32, A = e4m3 registers (4 x b32 per thread), B = e4m3 K-major smem descriptor.
++__device__ __forceinline__ void wgmma_e4m3(float (&d)[32], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
++  asm volatile(
++      "{\n\t.reg .pred p;\n\tsetp.ne.b32 p, %37, 0;\n\t"
++      "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 "
++      "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, "
++      "%16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, "
++      "{%32, %33, %34, %35}, %36, p, 1, 1;\n\t}\n"
++      : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]),
++        "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]),
++        "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]),
++        "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
++      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d)
++      : "memory");
++}
++// Four fp32 -> four E4M3 bytes (a in the low byte), round to nearest, saturating.
++__device__ __forceinline__ uint32_t pack_e4m3x4(float a, float b, float c, float d) {
++  const uint32_t lo = __nv_cvt_float2_to_fp8x2(make_float2(a, b), __NV_SATFINITE, __NV_E4M3);
++  const uint32_t hi = __nv_cvt_float2_to_fp8x2(make_float2(c, d), __NV_SATFINITE, __NV_E4M3);
++  return lo | (hi << 16);
++}
++
++// This thread's wgmma A-fragment words of request req's FP8 query (m16n8k32 A layout per warp: reg 0
++// row r dims 4 tig.., reg 1 row r + 8, reg 2 row r dims 16 + 4 tig.., reg 3 row r + 8), into shared memory.
++__device__ __forceinline__ void stage_q(uint32_t qs_u, const uint8_t* q, int req, int r, int hA, int tig) {
++  const uint8_t* qra = q + (static_cast<int64_t>(req) * QL + r) * HQ * D + hA * D + tig * 4;
++  const uint8_t* qrb = qra + D;  // head hA + 1, same block token
++#pragma unroll
++  for (int kk = 0; kk < 2; ++kk) {
++    sts32(qs_u + 4u * THREADS * (4 * kk + 0), __ldg(reinterpret_cast<const unsigned int*>(qra + kk * 32)));
++    sts32(qs_u + 4u * THREADS * (4 * kk + 1), __ldg(reinterpret_cast<const unsigned int*>(qrb + kk * 32)));
++    sts32(qs_u + 4u * THREADS * (4 * kk + 2), __ldg(reinterpret_cast<const unsigned int*>(qra + kk * 32 + 16)));
++    sts32(qs_u + 4u * THREADS * (4 * kk + 3), __ldg(reinterpret_cast<const unsigned int*>(qrb + kk * 32 + 16)));
++  }
++}
++// s5's fix: qa is re-read from shared memory before EVERY tile's S wgmma.
++__device__ __forceinline__ void load_qa(uint32_t (&qa)[2][4], uint32_t qs_u) {
++#pragma unroll
++  for (int kk = 0; kk < 2; ++kk) {
++#pragma unroll
++    for (int j = 0; j < 4; ++j) qa[kk][j] = lds32(qs_u + 4u * THREADS * (4 * kk + j));
++  }
++}
++// S = Q K^T for head g: B = K tile rows (tokens) x head g's 64 bytes, k-step kk at +32 kk (SW128, SBO 1024).
++__device__ __forceinline__ void issue_S(float (&sacc)[32], const uint32_t (&qa)[2][4], uint32_t kst, int g) {
++  fence_acc(sacc);
++  wg_fence();
++  wgmma_e4m3(sacc, qa[0], make_desc(kst + 64 * g, 1024, 1), 0);
++  wgmma_e4m3(sacc, qa[1], make_desc(kst + 64 * g + 32, 1024, 1), 1);
++  wg_commit();
++}
++// Head g's V half of the tile -> a V^T buffer (rows = dims, 64 B each; byte k' of row d =
++// V[token(k')][d], token(32 kt + 16 h + 4 t + e) = 32 kt + 16 h + 8 (e >> 1) + 2 t + (e & 1)), stored with
++// the 64B swizzle (chunk ^ ((d >> 1) & 3)). Unit u = (dim group dg, k' group kg): 4 tokens x 4 dims.
++__device__ __forceinline__ void transpose_v(const uint8_t* Vs, uint8_t* vt, int tw, int g) {
++#pragma unroll
++  for (int i = 0; i < 2; ++i) {
++    const int u = tw + 128 * i, kg = u & 15, dg = u >> 4;
++    const int T0 = 32 * (kg >> 3) + 16 * ((kg >> 2) & 1) + 2 * (kg & 3);
++    const int c = 4 * g + (dg >> 2), off = (dg & 3) * 4;
++    const uint32_t w0 = *reinterpret_cast<const uint32_t*>(Vs + T0 * ROW + ((c ^ (T0 & 7)) << 4) + off);
++    const uint32_t w1 = *reinterpret_cast<const uint32_t*>(Vs + (T0 + 1) * ROW + ((c ^ ((T0 + 1) & 7)) << 4) + off);
++    const uint32_t w2 = *reinterpret_cast<const uint32_t*>(Vs + (T0 + 8) * ROW + ((c ^ ((T0 + 8) & 7)) << 4) + off);
++    const uint32_t w3 = *reinterpret_cast<const uint32_t*>(Vs + (T0 + 9) * ROW + ((c ^ ((T0 + 9) & 7)) << 4) + off);
++    const uint32_t t0 = __byte_perm(w0, w1, 0x5140), t1 = __byte_perm(w0, w1, 0x7362);
++    const uint32_t t2 = __byte_perm(w2, w3, 0x5140), t3 = __byte_perm(w2, w3, 0x7362);
++    uint32_t o4[4];
++    o4[0] = __byte_perm(t0, t2, 0x5410);  // dim d0:     tokens T0, T0 + 1, T0 + 8, T0 + 9
++    o4[1] = __byte_perm(t0, t2, 0x7632);  // dim d0 + 1
++    o4[2] = __byte_perm(t1, t3, 0x5410);  // dim d0 + 2
++    o4[3] = __byte_perm(t1, t3, 0x7632);  // dim d0 + 3
++    // Odd dim groups store their rows in the order 1, 0, 3, 2 so the two half-warps hit rows
++    // of opposite parity (opposite 64-byte bank halves) on every store.
++    const int odd = dg & 1;
++#pragma unroll
++    for (int ii = 0; ii < 4; ++ii) {
++      const int dd = 4 * dg + (ii ^ odd);
++      const uint32_t val = odd ? o4[ii ^ 1] : o4[ii];
++      *reinterpret_cast<uint32_t*>(vt + dd * 64 + (((kg >> 2) ^ ((dd >> 1) & 3)) << 4) + (kg & 3) * 4) = val;
++    }
++  }
++}
++#endif
++
++// OVL = false: s5's serial S -> transpose -> softmax -> PV chain per tile. OVL = true: S(n + 1) is
++// issued (FULL(n + 1) waited) before softmax(n); the second S accumulator snxt is copied into sacc after the
++// wait that closes PV(n) (which also drains S(n + 1)). GATHER = true: every wgmma / transpose / softmax is
++// compiled out (consumers wait FULL, xor one word of their half of the stage into a sink, arrive EMPTY) and
++// EPI selects whether the segment-end partial store + ticket merge still runs. EPI is always true for the
++// real kernels.
++template <int RING, int STAGES, int MINB, bool OVL, bool EPI, bool GATHER>
++__global__ void __launch_bounds__(THREADS, MINB)
++w6_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * QL, HQ, D]
++          const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
++          const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
++          int64_t rows,
++          const int* __restrict__ page_table, int64_t pt_stride,
++          const int* __restrict__ seqlens, int B,
++          const float* __restrict__ k_scale, const float* __restrict__ v_scale,
++          float score_scale,
++          const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++          __nv_bfloat16* out, float eps,
++          float* ws_acc,                          // f32 [grid + B, QL, HQ, D]
++          float* ws_ml,                           // f32 [grid + B, 2, QL * HQ]
++          int* ticket,                            // int32 [MAXB * HKV], 0 between launches
++          int* err,
++          int* sink) {                            // GATHER only: int32 [grid * THREADS]
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using L = Lay<RING, STAGES>;
++  constexpr int ISS = RING ? 128 : THREADS;  // threads that issue / consume one barrier's tile
++  extern __shared__ __align__(1024) uint8_t smem_raw[];
++  // Swizzle atoms need 1024-byte-aligned stage bases: round the dynamic base up (BYTES has slack).
++  uint8_t* smem = smem_raw + ((1024u - (smem_u32(smem_raw) & 1023u)) & 1023u);
++  uint8_t* ring = smem + L::RING_OFF;
++  int* seq_s = reinterpret_cast<int*>(smem + L::SEQ_OFF);
++  int* pre_s = reinterpret_cast<int*>(smem + L::PRE_OFF);
++  volatile int* flag_s = reinterpret_cast<volatile int*>(smem + L::FLAG_OFF);  // [0] abort, [1 + g] last
++  const uint32_t ring_u = smem_u32(ring);
++  const uint32_t vt_u = smem_u32(smem + L::VT_OFF);
++  const uint32_t bar_u = smem_u32(smem + L::BAR_OFF);
++  const uint32_t qs_u = smem_u32(smem + L::QS_OFF) + 4u * threadIdx.x;  // + 4 * THREADS * word
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x, gx = gridDim.x;
++  if (blockDim.x != THREADS) {  // uniform; never expected
++    if (tid == 0) atomicOr(err, 4);
++    return;
++  }
++  const int g = warp >> 2;                 // warpgroup = kv head
++  const int w = warp & 3;                  // warp in the warpgroup: rows 16w .. 16w + 15
++  const int tw = tid & 127;
++  const int ti = RING ? tw : tid;          // index among the threads that issue this barrier's tiles
++  int* idx_s = reinterpret_cast<int*>(smem + L::IDX_OFF) + (RING ? g * 2 * IDX_N : 0);
++  if (tid < B) seq_s[tid] = seqlens[tid];
++  if (tid == 0) {
++    for (int i = 0; i < L::NBAR; ++i) mbar_init(bar_u + 8 * i, ISS);  // FULL: one noinc arrival per issuer; EMPTY: one per consumer
++    flag_s[0] = 0;
++    flag_s[1] = 0;
++    flag_s[2] = 0;
++    fence_mbar_init();
++  }
++  __syncthreads();
++  if (warp == 0) tile_prefix(seq_s, pre_s, B, lane);
++  __syncthreads();
++  const int T = pre_s[B];
++  const int s0 = start_of(bx, T, gx), s1 = start_of(bx + 1, T, gx);
++  if (s0 >= s1) return;  // empty range (grid > Ttot): writes nothing; uniform over the CTA
++  const int N = s1 - s0;                             // tiles of this CTA, one flat pipeline
++  const int nk = (N + IDX_TILES - 1) / IDX_TILES;    // page-index blocks
++  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const int bfirst = req_of(pre_s, B, s0);
++
++  // Bounded mbarrier wait: on timeout set the CTA abort flag and the device error flag; once the
++  // abort flag is set every wait returns at once, so the CTA runs to the end (garbage, no hang).
++  auto wait_bar = [&](uint32_t a, uint32_t parity) {
++    if (mbar_try_wait(a, parity)) return;
++    const long long t0 = clock64();
++    while (!flag_s[0]) {
++      if (mbar_try_wait(a, parity)) return;
++      if (clock64() - t0 > WAIT_LIMIT) {
++        flag_s[0] = 1;
++        atomicOr(err, 2);
++        return;
++      }
++    }
++  };
++  // FULL / EMPTY barrier of (this thread's warpgroup when split, else the CTA) for ring stage s.
++  auto full_bar = [&](int s) { return bar_u + 8 * ((RING ? g * STAGES : 0) + s); };
++  auto empty_bar = [&](int s) { return bar_u + 8 * ((RING ? 2 : 1) * STAGES + (RING ? g * STAGES : 0) + s); };
++
++  // Page indices of the group's tiles 16k .. 16k + 15 into buffer k & 1 (entry (tile % 16) * 64 +
++  // token); positions past the CTA range or the request's length are zero-filled, never read.
++  auto issue_meta = [&](int k) {
++    const int buf = k & 1;
++#pragma unroll
++    for (int j = 0; j < IDX_N / ISS; ++j) {
++      const int e = ti + j * ISS;
++      const int f = s0 + k * IDX_TILES + e / TILE;
++      const int* src = page_table;
++      bool ok = false;
++      if (f < s1) {
++        const int b = req_of(pre_s, B, f);
++        const int pos = (f - pre_s[b]) * TILE + (e % TILE);
++        if (pos < seq_s[b]) {
++          ok = true;
++          src = page_table + static_cast<int64_t>(b) * pt_stride + pos;
++        }
++      }
++      cp_async4(smem_u32(idx_s + buf * IDX_N + e), src, ok ? 4 : 0);
++    }
++  };
++  // Tile nn of the CTA into ring stage nn % STAGES. RING = 0 (s5): thread -> token tid / 4, 16-byte
++  // chunks 2 * (tid % 4) + {0, 1} of its K row and its V row. RING = 1: this warpgroup's 128 threads
++  // fill ONLY head g's half (chunks 4g .. 4g + 3): thread -> token tw / 2, chunks 4g + 2j + (tw & 1), so
++  // one warp-wide instruction covers 16 full 32-B sectors. Chunk c is stored at c ^ (token % 8) (= SW128).
++  // The page index is clamped into the cache, so even a garbage index can never fault.
++  int ib = bfirst;
++  auto issue_tile = [&](int nn) {
++    const int f = s0 + nn;
++    while (f >= pre_s[ib + 1]) ++ib;
++    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
++    const int tt = RING ? (tw >> 1) : (tid >> 2);
++    const bool ok = (f - pre_s[ib]) * TILE + tt < seq_s[ib];
++    int64_t row = 0;
++    if (ok) {
++      row = static_cast<int64_t>(static_cast<uint32_t>(idx_s[((nn / IDX_TILES) & 1) * IDX_N + (nn % IDX_TILES) * TILE + tt]));
++      row = row < rows - 1 ? row : rows - 1;
++    }
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vs = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = RING ? (4 * g + 2 * j + (tw & 1)) : ((tid & 3) * 2 + j);
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
++    }
++  };
++
++  // Prologue: index block 0 (waited, CTA barrier outside the tile loop), then tiles 0 .. STAGES-2,
++  // each closed by a noinc arrival on its FULL barrier; block 1 rides tile 0's arrival.
++  issue_meta(0);
++  cp_commit();
++  asm volatile("cp.async.wait_group 0;\n" ::: "memory");
++  __syncthreads();
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % IDX_TILES == 0 && j / IDX_TILES + 1 < nk) issue_meta(j / IDX_TILES + 1);
++      cp_mbar_arrive_noinc(full_bar(j));
++    }
++  }
++
++  const int r = lane >> 2, tig = lane & 3; // r = the block token of both rows of this thread
++  const int hA = g * G + 2 * w;            // row 16w + r: head hA; row 16w + r + 8: head hA + 1
++  uint8_t* vt_base = smem + L::VT_OFF + g * 2 * VT_BYTES;
++  const uint32_t vt_gu = vt_u + g * 2 * VT_BYTES;
++  uint32_t qa[2][4];
++  float sacc[32], oacc[32], snxt[32];
++#pragma unroll
++  for (int i = 0; i < 32; ++i) { sacc[i] = 0.f; oacc[i] = 0.f; snxt[i] = 0.f; }
++  float mA = NEG_INF, mB = NEG_INF, lA = 0.f, lB = 0.f;
++  uint32_t sink_v = 0u;
++  int cb = bfirst;
++
++  for (int n = 0; n < N; ++n) {
++    const int st = n % STAGES;
++    {
++      // Refill: tile n + STAGES - 1 goes to the stage tile n - 1 used, once this barrier's consumers
++      // (this warpgroup when split, the whole CTA otherwise) released it. Its FULL arrival also
++      // covers the next page-index block when one is issued here.
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        if (n >= 1) wait_bar(empty_bar(nn % STAGES), ((n - 1) / STAGES) & 1);
++        issue_tile(nn);
++        if (nn % IDX_TILES == 0 && nn / IDX_TILES + 1 < nk) issue_meta(nn / IDX_TILES + 1);
++        cp_mbar_arrive_noinc(full_bar(nn % STAGES));
++      }
++    }
++    const int f = s0 + n;
++    while (f >= pre_s[cb + 1]) ++cb;
++    const int lt = f - pre_s[cb];   // tile index inside request cb
++    const int seq = seq_s[cb];
++    const uint32_t kst = ring_u + st * STAGE_BYTES;
++
++    if constexpr (GATHER) {
++      // Same cp.async / mbarrier / page-index schedule, no compute: consume one word of this
++      // warpgroup's half of the stage's K row and V row, then release the stage.
++      wait_bar(full_bar(st), (n / STAGES) & 1);
++      {
++        const int tt = tw & 63, c = 4 * g + (tw >> 6);
++        const int off = tt * ROW + ((c ^ (tt & 7)) << 4);
++        sink_v ^= *reinterpret_cast<const volatile uint32_t*>(ring + st * STAGE_BYTES + off);
++        sink_v ^= *reinterpret_cast<const volatile uint32_t*>(ring + st * STAGE_BYTES + TILE * ROW + off);
++      }
++      mbar_arrive(empty_bar(st));
++    } else {
++      if (n == 0 || lt == 0) {
++        // Segment start: stage the request's FP8 query in shared memory ONCE per segment (OVL stages
++        // it one tile ahead, below), reset the running softmax state.
++        if constexpr (!OVL) stage_q(qs_u, q, cb, r, hA, tig);
++        mA = mB = NEG_INF;
++        lA = lB = 0.f;
++#pragma unroll
++        for (int i = 0; i < 32; ++i) oacc[i] = 0.f;
++      }
++      if constexpr (!OVL) {
++        // qa is re-read from shared memory before EVERY tile's S wgmma, ahead of the FULL wait so
++        // the ld.shared overlap the wait.
++        load_qa(qa, qs_u);
++        wait_bar(full_bar(st), (n / STAGES) & 1);
++        fence_proxy_async();  // the cp.async (generic proxy) writes -> wgmma (async proxy) reads
++        __syncwarp();
++        issue_S(sacc, qa, kst, g);
++      } else {
++        if (n == 0) {
++          stage_q(qs_u, q, cb, r, hA, tig);
++          load_qa(qa, qs_u);
++          wait_bar(full_bar(st), 0);
++          fence_proxy_async();
++          __syncwarp();
++          issue_S(sacc, qa, kst, g);
++          wg_wait0();
++          fence_acc(sacc);
++        }
++        if (n + 1 < N) {
++          // S(n + 1) before softmax(n): its query (staged now when tile n + 1 opens a request) is
++          // read into qa only here, after S(n) has completed, so no in-flight wgmma reads qa.
++          const int f1 = f + 1;
++          int cn = cb;
++          while (f1 >= pre_s[cn + 1]) ++cn;
++          if (f1 == pre_s[cn]) stage_q(qs_u, q, cn, r, hA, tig);
++          load_qa(qa, qs_u);
++          const int n1 = n + 1;
++          wait_bar(full_bar(n1 % STAGES), (n1 / STAGES) & 1);
++          fence_proxy_async();
++          __syncwarp();
++          issue_S(snxt, qa, ring_u + (n1 % STAGES) * STAGE_BYTES, g);
++        }
++      }
++
++      // Meanwhile: head g's V half of tile n -> V^T buffer n & 1 (from this warpgroup's own half).
++      transpose_v(ring + st * STAGE_BYTES + TILE * ROW, vt_base + (n & 1) * VT_BYTES, tw, g);
++
++      if constexpr (!OVL) {
++        wg_wait0();
++        fence_acc(sacc);
++      }
++      mbar_arrive(empty_bar(st));  // this thread is done with stage st (K via wgmma, V via the loads)
++
++      // Thread scores: sacc[4 nb + e] (head hA) and sacc[4 nb + 2 + e] (head hA + 1) at tile token
++      // nb * 8 + 2 tig + e, both for block token r. Key t valid iff t <= seq - QL + r, i.e. tile
++      // token < lim; only tiles reaching past seq - QL need the test (the last one or two).
++      const bool edge = lt * TILE + TILE + (QL - 1) > seq;
++      const int lim = seq - (QL - 1) + r - lt * TILE;
++      float mxA = NEG_INF, mxB = NEG_INF;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++#pragma unroll
++        for (int e = 0; e < 2; ++e) {
++          float xa = sacc[4 * nb + e] * scale, xb = sacc[4 * nb + 2 + e] * scale;
++          if (edge && nb * 8 + 2 * tig + e >= lim) { xa = NEG_INF; xb = NEG_INF; }
++          sacc[4 * nb + e] = xa;
++          sacc[4 * nb + 2 + e] = xb;
++          mxA = fmaxf(mxA, xa);
++          mxB = fmaxf(mxB, xb);
++        }
++      }
++      mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 1));
++      mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 2));
++      mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 1));
++      mxB = fmaxf(mxB, __shfl_xor_sync(0xffffffffu, mxB, 2));
++      const float nA = fmaxf(mA, mxA), nB = fmaxf(mB, mxB);
++      const float uA = nA == NEG_INF ? 0.f : nA, uB = nB == NEG_INF ? 0.f : nB;
++      const float aA = ex2(mA - uA), aB = ex2(mB - uB);  // 0 while the row has seen no valid key
++      mA = nA;
++      mB = nB;
++      // FA3's FP8 Max_offset = 8: P = 2^(s - max + 8) in [0, 256], so the E4M3 rounding below keeps
++      // weights down to 2^-17 of the row max. l and O both carry the 2^8, which cancels in O / l
++      // (and in the slot merge, which scales l and O by the same weight).
++      const float vA = uA - 8.f, vB = uB - 8.f;
++      float sumA = 0.f, sumB = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        const float p0 = ex2(sacc[4 * nb] - vA), p1 = ex2(sacc[4 * nb + 1] - vA);
++        const float p2 = ex2(sacc[4 * nb + 2] - vB), p3 = ex2(sacc[4 * nb + 3] - vB);
++        sumA += p0 + p1;
++        sumB += p2 + p3;
++        sacc[4 * nb] = p0;
++        sacc[4 * nb + 1] = p1;
++        sacc[4 * nb + 2] = p2;
++        sacc[4 * nb + 3] = p3;
++      }
++      lA = lA * aA + sumA;  // this lane's columns; quad-reduced at segment end
++      lB = lB * aB + sumB;
++#pragma unroll
++      for (int nd = 0; nd < 8; ++nd) {
++        oacc[4 * nd] *= aA; oacc[4 * nd + 1] *= aA; oacc[4 * nd + 2] *= aB; oacc[4 * nd + 3] *= aB;
++      }
++      // P (E4M3) as the A fragment of k-step kt: reg 0 row r k' 4 tig + e = n-blocks 4kt, 4kt + 1
++      // (cols 2 tig, 2 tig + 1), reg 1 the same for row r + 8, regs 2 / 3 n-blocks 4kt + 2, 4kt + 3.
++      uint32_t pa[2][4];
++#pragma unroll
++      for (int kt = 0; kt < 2; ++kt) {
++        const int b0 = 16 * kt;
++        pa[kt][0] = pack_e4m3x4(sacc[b0], sacc[b0 + 1], sacc[b0 + 4], sacc[b0 + 5]);
++        pa[kt][1] = pack_e4m3x4(sacc[b0 + 2], sacc[b0 + 3], sacc[b0 + 6], sacc[b0 + 7]);
++        pa[kt][2] = pack_e4m3x4(sacc[b0 + 8], sacc[b0 + 9], sacc[b0 + 12], sacc[b0 + 13]);
++        pa[kt][3] = pack_e4m3x4(sacc[b0 + 10], sacc[b0 + 11], sacc[b0 + 14], sacc[b0 + 15]);
++      }
++
++      fence_proxy_async();  // this thread's V^T stores -> visible to the async proxy
++      named_bar(1 + g);     // the warpgroup's V^T buffer is complete (128 threads, never the CTA)
++
++      // O += P V: B = V^T buffer n & 1 (rows = dims, K-major SW64), k-step kt at +32 kt.
++      const uint32_t vtu = vt_gu + (n & 1) * VT_BYTES;
++      fence_acc(oacc);
++      wg_fence();
++      wgmma_e4m3(oacc, pa[0], make_desc(vtu, 512, 2), 1);
++      wgmma_e4m3(oacc, pa[1], make_desc(vtu + 32, 512, 2), 1);
++      wg_commit();
++      wg_wait0();  // OVL: also drains S(n + 1)
++      fence_acc(oacc);
++      if constexpr (OVL) {
++        if (n + 1 < N) {
++          fence_acc(snxt);
++#pragma unroll
++          for (int i = 0; i < 32; ++i) sacc[i] = snxt[i];
++        }
++      }
++    }
++
++    if constexpr (!GATHER || EPI) {
++      if (n == N - 1 || f + 1 == pre_s[cb + 1]) {
++        // Segment end: this warp's 16 rows of request cb's partial at slot bx + cb.
++        float la = lA, lb = lB;
++        la += __shfl_xor_sync(0xffffffffu, la, 1);
++        la += __shfl_xor_sync(0xffffffffu, la, 2);
++        lb += __shfl_xor_sync(0xffffffffu, lb, 1);
++        lb += __shfl_xor_sync(0xffffffffu, lb, 2);
++        const int64_t slot = static_cast<int64_t>(bx) + cb;
++        float* pa_ = ws_acc + ((slot * QL + r) * HQ + hA) * D + 2 * tig;
++        float* pb_ = pa_ + D;  // head hA + 1
++#pragma unroll
++        for (int nd = 0; nd < 8; ++nd) {
++          *reinterpret_cast<float2*>(pa_ + nd * 8) = make_float2(oacc[4 * nd], oacc[4 * nd + 1]);
++          *reinterpret_cast<float2*>(pb_ + nd * 8) = make_float2(oacc[4 * nd + 2], oacc[4 * nd + 3]);
++        }
++        if (tig == 0) {
++          float* ml = ws_ml + slot * 2 * QL * HQ + r * HQ + hA;
++          ml[0] = mA;
++          ml[1] = mB;
++          ml[QL * HQ] = la;
++          ml[QL * HQ + 1] = lb;
++        }
++        // Release: every thread fences its partial at gpu scope, the warpgroup syncs, one thread
++        // adds this segment's tile count; the warpgroup completing the request's count merges.
++        __threadfence();
++        named_bar(1 + g);
++        if (tw == 0) {
++          const int add = f + 1 - max(s0, pre_s[cb]);
++          const int old = atomicAdd(ticket + cb * HKV + g, add);
++          flag_s[1 + g] = (old + add == pre_s[cb + 1] - pre_s[cb]) ? 1 : 0;
++        }
++        named_bar(1 + g);
++        if (flag_s[1 + g]) {
++          __threadfence();  // acquire side, every thread, before the L2 (.cg) reloads
++          merge_head(cb, g, tw, pre_s, B, gx, ws_acc, ws_ml, v_scale, qkv, qkv_stride, out, eps);
++          if (tw == 0) ticket[cb * HKV + g] = 0;  // ready for the next launch / graph replay
++        }
++      }
++    }
++  }
++  cp_wait_all();  // every issued tile was consumed; drain anyway
++  if constexpr (GATHER) sink[bx * THREADS + tid] = static_cast<int>(sink_v);
++#else
++  // Not the sm_90a image: no wgmma / mbarrier here. Flag it; the self-check turns the path off.
++  if (threadIdx.x == 0) atomicOr(err, 1);
++#endif
++}
++
++struct Args {
++  torch::Tensor q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, out, ws_acc, ws_ml, ticket, err, sink;
++  int64_t qkv_stride;
++  double score_scale, eps;
++  int64_t grid;
++  int B;
++  int64_t rows;
++};
++
++template <int RING, int STAGES, int MINB, bool OVL, bool EPI, bool GATHER>
++void set_attr_once() {
++  static bool done = false;
++  if (!done) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(w6_kernel<RING, STAGES, MINB, OVL, EPI, GATHER>,
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, Lay<RING, STAGES>::BYTES));
++    done = true;
++  }
++}
++
++template <int RING, int STAGES, int MINB, bool OVL, bool EPI, bool GATHER>
++void launch_w6(const Args& a) {
++  set_attr_once<RING, STAGES, MINB, OVL, EPI, GATHER>();
++  auto stream = at::cuda::getCurrentCUDAStream();
++  w6_kernel<RING, STAGES, MINB, OVL, EPI, GATHER><<<static_cast<unsigned>(a.grid), THREADS, Lay<RING, STAGES>::BYTES, stream>>>(
++      reinterpret_cast<const uint8_t*>(a.q.data_ptr()), reinterpret_cast<const uint8_t*>(a.k_cache.data_ptr()),
++      reinterpret_cast<const uint8_t*>(a.v_cache.data_ptr()), a.rows, a.page_table.data_ptr<int>(),
++      a.page_table.stride(0), a.cache_seqlens.data_ptr<int>(), a.B, a.k_scale.data_ptr<float>(),
++      a.v_scale.data_ptr<float>(), static_cast<float>(a.score_scale),
++      reinterpret_cast<const __nv_bfloat16*>(a.qkv.data_ptr()), a.qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(a.out.data_ptr()), static_cast<float>(a.eps), a.ws_acc.data_ptr<float>(),
++      a.ws_ml.data_ptr<float>(), a.ticket.data_ptr<int>(), a.err.data_ptr<int>(), a.sink.data_ptr<int>());
++}
++
++template <int RING, int STAGES, int MINB, bool OVL, bool EPI, bool GATHER>
++void attrs_w6(int64_t* p) {
++  set_attr_once<RING, STAGES, MINB, OVL, EPI, GATHER>();
++  auto fn = w6_kernel<RING, STAGES, MINB, OVL, EPI, GATHER>;
++  cudaFuncAttributes at;
++  int occ = 0;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&at, fn));
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, Lay<RING, STAGES>::BYTES));
++  p[0] = at.numRegs;
++  p[1] = static_cast<int64_t>(at.localSizeBytes);
++  p[2] = at.binaryVersion;
++  p[3] = at.ptxVersion;
++  p[4] = occ;
++  p[5] = Lay<RING, STAGES>::BYTES;
++  p[6] = at.maxDynamicSharedSizeBytes;
++  p[7] = static_cast<int64_t>(at.sharedSizeBytes);
++}
++
++}  // namespace
++
++// Variants. Set 0 (the routed candidates): 0 = split ring, serial chain, 4 stages, 2 CTAs/SM;
++// 1 = split ring, S(n + 1) before softmax(n), S_OVL stages, 1 CTA/SM. Set 1 (DIAG only): 2 = s5's CTA-wide
++// ring (full kernel, 4 stages, 2 CTAs/SM); gather-only {3, 4} = s5 ring with / without the epilogue,
++// {5, 6} = split ring 4 stages with / without, {7, 8} = split ring S_OVL stages at 1 CTA/SM with / without.
++void w6_run(int64_t variant, torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
++            torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
++            int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor ticket,
++            torch::Tensor err, torch::Tensor sink, double score_scale, double eps, int64_t grid) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  TORCH_CHECK(B >= 1 && B <= MAXB, "w6_run: batch out of range");
++  TORCH_CHECK(q.size(0) == static_cast<int64_t>(B) * QL && q.size(1) == HQ && q.size(2) == D, "w6_run: q shape");
++  TORCH_CHECK(ws_acc.size(0) >= grid + B && ws_ml.size(0) >= grid + B, "w6_run: workspace too small");
++  TORCH_CHECK(ticket.numel() >= static_cast<int64_t>(MAXB) * HKV && err.numel() >= 1, "w6_run: ticket/err");
++  if (variant >= 3) TORCH_CHECK(sink.numel() >= grid * THREADS, "w6_run: sink too small");  // gather-only DIAG variants
++  TORCH_CHECK(k_cache.numel() % ROW == 0 && k_cache.numel() >= ROW, "w6_run: cache rows");
++  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous()
++              && ws_acc.is_contiguous() && ws_ml.is_contiguous() && out.is_contiguous(), "w6_run: layout");
++  Args a{q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, out, ws_acc, ws_ml, ticket, err, sink,
++         qkv_stride, score_scale, eps, grid, B, k_cache.numel() / ROW};
++#if W6_SET == 0
++  if (variant == 0) launch_w6<1, 4, 2, false, true, false>(a);
++  else if (variant == 1) launch_w6<1, S_OVL, 1, true, true, false>(a);
++  else TORCH_CHECK(false, "w6_run: variant not in this module");
++#else
++  if (variant == 2) launch_w6<0, 4, 2, false, true, false>(a);
++  else if (variant == 3) launch_w6<0, 4, 2, false, true, true>(a);
++  else if (variant == 4) launch_w6<0, 4, 2, false, false, true>(a);
++  else if (variant == 5) launch_w6<1, 4, 2, false, true, true>(a);
++  else if (variant == 6) launch_w6<1, 4, 2, false, false, true>(a);
++  else if (variant == 7) launch_w6<1, S_OVL, 1, false, true, true>(a);
++  else if (variant == 8) launch_w6<1, S_OVL, 1, false, false, true>(a);
++  else TORCH_CHECK(false, "w6_run: variant not in this module");
++#endif
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// CPU int64 [8]: regs, local bytes, binaryVersion, ptxVersion, CTAs/SM at the dynamic smem size, that
++// dynamic smem size, max dynamic smem attribute, static smem.
++torch::Tensor w6_attrs(int64_t variant) {
++  auto t = torch::zeros({8}, torch::dtype(torch::kInt64));
++  int64_t* p = t.data_ptr<int64_t>();
++#if W6_SET == 0
++  if (variant == 0) attrs_w6<1, 4, 2, false, true, false>(p);
++  else if (variant == 1) attrs_w6<1, S_OVL, 1, true, true, false>(p);
++  else TORCH_CHECK(false, "w6_attrs: variant not in this module");
++#else
++  if (variant == 2) attrs_w6<0, 4, 2, false, true, false>(p);
++  else if (variant == 3) attrs_w6<0, 4, 2, false, true, true>(p);
++  else if (variant == 4) attrs_w6<0, 4, 2, false, false, true>(p);
++  else if (variant == 5) attrs_w6<1, 4, 2, false, true, true>(p);
++  else if (variant == 6) attrs_w6<1, 4, 2, false, false, true>(p);
++  else if (variant == 7) attrs_w6<1, S_OVL, 1, false, true, true>(p);
++  else if (variant == 8) attrs_w6<1, S_OVL, 1, false, false, true>(p);
++  else TORCH_CHECK(false, "w6_attrs: variant not in this module");
++#endif
++  return t;
++}
++
++// The 1-CTA/SM ring depth the module chose (12 if the layout fits 232448 B, else 10) and its smem bytes.
++torch::Tensor w6_ovl_stages() {
++  auto t = torch::zeros({3}, torch::dtype(torch::kInt64));
++  int64_t* p = t.data_ptr<int64_t>();
++  p[0] = S_OVL;
++  p[1] = Lay<1, S_OVL>::BYTES;
++  p[2] = Lay<1, 12>::BYTES;
++  return t;
++}
++"""
++
++_W6_EXT = None        # the routed-candidate module (variants 0, 1); None = master paired FA3 everywhere
++_W6_DEXT = None       # the DIAG module (variants 2..8), prepare only
++_W6_ROUTE = MappingProxyType({})  # band (16: B 1..24, 32: B 25..64) -> variant; frozen at the end of _w6_setup
++_W6_FORCE = None      # prepare only: None = the route table, -1 = master's path, 0 / 1 = that variant
++_W6_GRID = None       # grid override, set only by the self-check
++_W6_HOOK = None       # self-check only: called between launches (sync + print); None when timed
++_W6_ERR = None        # int32 [1] device error flag (1: not the sm_90a image, 2: mbarrier timeout, 4: launch shape)
++_W6_ANYB = False      # self-check only: let the gate accept batch 1 (the single-request bisect cases)
++_W6_KEEP = None       # self-check only: dict the launch fills with its workspaces (per-slot partials)
++_W6_TICKETS = {}
++
++
++def _w6_tickets(device) -> torch.Tensor:
++    """int32 [64 * 2] per-(request, kv head) tickets, zeroed once per device (allocated from the device alone,
++    never from inputs); every launch leaves them at 0 again (the merging warpgroup resets its ticket)."""
++    key = device.index if device.index is not None else torch.cuda.current_device()
++    t = _W6_TICKETS.get(key)
++    if t is None:
++        t = _W6_TICKETS[key] = torch.zeros(64 * 2, dtype=torch.int32, device=device)
++    return t
++
++
++def _w6_band(batch: int) -> int:
++    """Timing band of a batch: 16 for 1..24, 32 for 25..64 (config only)."""
++    return 16 if batch <= 24 else 32
++
++
++def _w6_variant(cfg):
++    """The variant a verify shape takes: the prepare-time force, else the frozen route table (config only)."""
++    f = _W6_FORCE
++    if f is not None:
++        return None if f < 0 else f
++    return _W6_ROUTE.get(_w6_band(cfg["batch"]))
++
++
++def _w6_gate(cfg) -> bool:
++    """Config-only predicate for the s6 wgmma verify path: full layer, q_len 8, 1 < batch <= 64, tp8 heads
++    (16 q / 2 kv heads: never the dp 128 / 16 heads), head dim 64, page 1 (never page 64), and a route for the
++    shape's band. When it is False, kernel_fn's `paired` predicate is True for these shapes: master's path."""
++    return (_W6_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 8
++            and (cfg["batch"] > 1 or _W6_ANYB) and cfg["batch"] <= 64 and cfg["num_q_heads"] == 16
++            and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64 and cfg["page_size"] == 1
++            and _w6_variant(cfg) is not None)
++
++
++def _full_verify_w6(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
++    """The s6 kernel (one launch after the pre-attention kernel: combine + norm-gate inside); q is the unpaired
++    FP8 query [B*8, 16, 64]. Grid and workspace come from shapes and the device only: CTA c writes slot c + b
++    for each request b its range touches."""
++    cfg = data["config"]
++    batch, length, hq, d = cfg["batch"], cfg["q_len"], cfg["num_q_heads"], cfg["head_dim"]
++    device = qkv.device
++    variant = _w6_variant(cfg)
++    grid = _W6_GRID or _w6_grid_of(variant, _sm_count(device))
++    slots = grid + batch
++    ws_acc = torch.empty((slots, length, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((slots, 2, length * hq), dtype=torch.float32, device=device)
++    out = torch.empty((batch, length, hq * d), dtype=torch.bfloat16, device=device)
++    if _W6_KEEP is not None:
++        _W6_KEEP.update(ws_acc=ws_acc, ws_ml=ws_ml, grid=grid)
++    hook = _W6_HOOK
++    if hook is not None:
++        hook(f"pre-attention (Triton) done; launching w6_kernel variant {variant} grid {grid}")
++    _W6_EXT.w6_run(variant, q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"],
++                   data["k_scale"], data["v_scale"], qkv, qkv.stride(0), out, ws_acc, ws_ml, _w6_tickets(device),
++                   _W6_ERR, _W6_ERR, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid)
++    if hook is not None:
++        hook("w6_kernel done")
++    return out
++
++
++
++
++def _w6_synthetic(lens, kv_scale, gen, device, coherent=False, max_pages=None):
++    """Gated verify inputs (full layer, q_len 8, tp8, page 1). lens are cache_seqlens (seq_lens +
++    8): a request of length 8 has seq_lens 0. Built as reference.generate_input builds them
++    (scattered pages, odd page-table stride, 8 positions / cache rows per request)."""
++    batch, length, hq, hkv, d = len(lens), 8, 16, 2, 64
++    max_pages = max_pages or max(lens) + 37
++    total = batch * max_pages
++    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
++    page_table = torch.full((batch, max_pages), -1, dtype=torch.int32, device=device)
++    off = 0
++    for b, n in enumerate(lens):
++        page_table[b, :n] = perm[off:off + n]
++        off += n
++    seq = torch.tensor([n - length for n in lens], dtype=torch.int64, device=device)
++    pos = seq[:, None] + torch.arange(length, dtype=torch.int64, device=device)[None, :]
++    k_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    v_cache = (torch.randn((total, 1, hkv, d), generator=gen, device=device) / kv_scale).to(FP8)
++    qkv = (2 * torch.randn((batch, length, (2 * hq + 2 * hkv) * d), generator=gen, device=device)).to(torch.bfloat16)
++    if coherent:
++        # Coherent long-context keys: low-norm noise keys plus a few planted keys per request and kv
++        # head along the block's last query, so the softmax is peaked with a long low-weight tail
++        # (the regime that exercises the FP8 P operand's Max_offset 8 range).
++        kf = k_cache.float() * 0.3
++        qn = qkv[..., :hq * d].float().reshape(batch, length, hq, d)
++        qn = qn * torch.rsqrt(qn.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++        for b, n in enumerate(lens):
++            rows = page_table[b, torch.randperm(n, generator=gen, device=device)[:4]].long()
++            for g in range(hkv):
++                kf[rows, 0, g] = qn[b, length - 1, g * (hq // hkv)] * (0.35 / kv_scale)
++        k_cache = kf.to(FP8)
++    return {
++        "qkv": qkv,
++        "positions": pos.reshape(-1).clone(),
++        "cache_loc": torch.gather(page_table.long(), 1, pos).reshape(-1),
++        "cache_seqlens": (seq + length).to(torch.int32),
++        "cu_seqlens_q": torch.arange(0, batch + 1, dtype=torch.int32, device=device) * length,
++        "scheduler_metadata": None,
++        "k_cache": k_cache,
++        "v_cache": v_cache,
++        "k_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "v_scale": torch.tensor(kv_scale, dtype=torch.float32, device=device),
++        "page_table": page_table,
++        "seq_lens": seq.to(torch.int32),
++        "config": {"batch": batch, "q_len": length, "num_q_heads": hq, "num_kv_heads": hkv, "head_dim": d,
++                   "page_size": 1, "window": 0, "rope_theta": 0.0, "qk_scale_factor": 5.4730064863875,
++                   "sm_scale": d ** -0.5, "kv_scale": kv_scale},
++    }
++
++
++def _w6_reference(data, lens):
++    """FP32 causal attention over the cache as kernel_fn left it (the block's own keys included),
++    FP8 queries: block token i of request b sees keys t <= cache_seqlens[b] - 8 + i."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(batch, length, -1).float()
++    q = qkv[..., :hq * d].reshape(batch, length, hq, d)
++    q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    q = q.to(FP8).float() * cfg["qk_scale_factor"]
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    outs = []
++    for b, n in enumerate(lens):
++        rows = data["page_table"][b, :n].long()
++        keys = (kf[rows].float() * data["k_scale"]).repeat_interleave(hq // hkv, dim=1)
++        vals = (vf[rows].float() * data["v_scale"]).repeat_interleave(hq // hkv, dim=1)
++        s = torch.einsum("lhd,nhd->lhn", q[b], keys) * cfg["sm_scale"]
++        t = torch.arange(n, device=s.device)
++        lim = n - length + torch.arange(length, device=s.device)
++        s = s.masked_fill((t[None, :] > lim[:, None])[:, None, :], float("-inf"))
++        p = torch.softmax(s, dim=-1)
++        outs.append(torch.einsum("lhn,nhd->lhd", p, vals))
++    a = torch.stack(outs)
++    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
++    gate = qkv[..., (hq + 2 * hkv) * d:].reshape(batch, length, hq, d)
++    return (a * torch.sigmoid(gate)).reshape(batch, length, hq * d)
++
++
++def _w6_segments(lens, grid):
++    """The kernel's work split, on the host: request prefix of 64-token tiles and every (CTA, request)
++    segment (CTA c owns flat tiles [floor(c T / grid), floor((c + 1) T / grid)), slot c + b)."""
++    pre = [0]
++    for n in lens:
++        pre.append(pre[-1] + (n + 63) // 64)
++    total = pre[-1]
++    segs = []
++    for c in range(grid):
++        s0, s1 = c * total // grid, (c + 1) * total // grid
++        if s0 >= s1:
++            continue
++        for b in range(len(lens)):
++            lo, hi = max(s0, pre[b]), min(s1, pre[b + 1])
++            if lo < hi:
++                segs.append((c, b, lo, hi, s0, s1))
++    return pre, segs
++
++
++def _w6_diagnose(data, lens, keep, tag):
++    """For a failing case: compare every per-slot partial the kernel wrote (O, m, l) with an fp32
++    reference of that exact (CTA range, request) segment and print where it first goes wrong, plus
++    bad/good counts by tiles per segment, request crossing and CTA-relative tile index >= 16
++    (page-index block rotation). O and l carry the kernel's 2^8 (FA3 Max_offset); m is the raw
++    log2-domain row max."""
++    cfg = data["config"]
++    batch, length = cfg["batch"], cfg["q_len"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    gq = hq // hkv
++    grid = int(keep["grid"])
++    ws_acc = keep["ws_acc"].view(-1, length, hq, d)
++    ws_ml = keep["ws_ml"].view(-1, 2, length * hq)
++    pre, segs = _w6_segments(lens, grid)
++    qkv = data["qkv"].reshape(batch, length, -1).float()
++    q = qkv[..., :hq * d].reshape(batch, length, hq, d)
++    q = (q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)).to(FP8).float()  # raw FP8 query
++    scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E * float(data["k_scale"])
++    kf = data["k_cache"].view(-1, hkv, d)
++    vf = data["v_cache"].view(-1, hkv, d)
++    bad, good, rows_out = [], [], []
++    ninf = float("-inf")
++    for (c, b, lo, hi, s0, s1) in segs:
++        t0, t1 = (lo - pre[b]) * 64, min((hi - pre[b]) * 64, lens[b])
++        idx = data["page_table"][b, t0:t1].long()
++        keys = kf[idx].float().repeat_interleave(gq, dim=1)
++        vals = vf[idx].float().repeat_interleave(gq, dim=1)
++        sc = torch.einsum("lhd,nhd->lhn", q[b], keys) * scale
++        tt = torch.arange(t0, t1, device=sc.device)
++        lim = lens[b] - length + torch.arange(length, device=sc.device)
++        sc = sc.masked_fill((tt[None, :] > lim[:, None])[:, None, :], ninf)
++        m = sc.amax(-1)
++        mu = torch.where(torch.isfinite(m), m, torch.zeros_like(m))
++        p = torch.exp2(sc - mu[..., None] + 8.0)
++        l_ref = p.sum(-1)
++        o_ref = torch.einsum("lhn,nhd->lhd", p, vals)
++        slot = c + b
++        gm = ws_ml[slot, 0].view(length, hq)
++        gl = ws_ml[slot, 1].view(length, hq)
++        go = ws_acc[slot]
++        fin = torch.isfinite(m)
++        m_bad = (fin != torch.isfinite(gm)) | (fin & ((m - gm).abs() > 0.1 + 0.01 * m.abs()))
++        l_err = torch.where(fin, (l_ref - gl).abs() / l_ref.clamp_min(1e-6), torch.zeros_like(l_ref))
++        l_err = torch.where(torch.isfinite(l_err), l_err, torch.full_like(l_err, 1e9))
++        on_ref = o_ref / l_ref.clamp_min(1e-6)[..., None]
++        on_got = go / gl.clamp_min(1e-6)[..., None]
++        o_err_row = (on_ref - on_got).norm(dim=-1) / on_ref.norm(dim=-1).clamp_min(1e-6)  # [length, hq]
++        o_err_row = torch.where(fin & torch.isfinite(o_err_row), o_err_row, torch.zeros_like(o_err_row))
++        e_m, e_l, e_o = int(m_bad.sum()), float(l_err.max()), float(o_err_row.max())
++        seg_bad = e_m > 0 or e_l > 0.05 or e_o > 0.15
++        nt = hi - lo
++        info = dict(cta=c, req=b, tiles=nt, lt_first=lo - pre[b], cta_first_tile=lo - s0, cta_last_tile=hi - 1 - s0,
++                    crossed=b != _w6_req_first(pre, s0), n_cta_tiles=s1 - s0,
++                    m_bad_rows=e_m, l_err=e_l, o_err=e_o, seq=lens[b])
++        if seg_bad:
++            w = int(o_err_row.argmax())
++            info["worst_row"] = (w // hq, w % hq)
++            info["o_err_by_kv_head"] = [float(o_err_row[:, g * gq:(g + 1) * gq].max()) for g in range(hkv)]
++            bad.append(info)
++        else:
++            good.append(info)
++    print(f"[s6]   DIAG {tag}: {len(segs)} segments, {len(bad)} bad, {len(good)} good "
++          f"(bad = m row mismatch, l rel > 5%, or O/l row rel L2 > 15% vs the fp32 segment reference)", flush=True)
++    def bucket(i):
++        return "1" if i["tiles"] == 1 else "2" if i["tiles"] == 2 else "3-4" if i["tiles"] <= 4 else "5-16" if i["tiles"] <= 16 else ">16"
++    for name, f in (("tiles/segment", bucket), ("after request crossing", lambda i: "yes" if i["crossed"] else "no"),
++                    ("segment reaches CTA tile >= 16", lambda i: "yes" if i["cta_last_tile"] >= 16 else "no"),
++                    ("segment starts at CTA tile > 0", lambda i: "yes" if i["cta_first_tile"] > 0 else "no")):
++        keys = sorted({f(i) for i in bad + good})
++        print(f"[s6]   DIAG {tag}: by {name}: "
++              + ", ".join(f"{k}: {sum(1 for i in bad if f(i) == k)} bad / {sum(1 for i in good if f(i) == k)} good" for k in keys),
++              flush=True)
++    if bad:
++        bad.sort(key=lambda i: (i["cta"], i["req"]))
++        for i in bad[:4]:
++            print(f"[s6]   DIAG {tag}: BAD segment {i}", flush=True)
++    return len(bad), len(segs)
++
++
++def _w6_req_first(pre, s0):
++    """Request of flat tile s0 (the largest b with pre[b] <= s0)."""
++    b = 0
++    while b + 1 < len(pre) - 1 and pre[b + 1] <= s0:
++        b += 1
++    return b
++
++
++def _w6_verdict(results):
++    """Name the variable the bisect cases implicate. results: {case name: passed}."""
++    def failed(prefix):
++        return [k for k, v in results.items() if k.startswith(prefix) and not v]
++    lines = []
++    one = failed("B1-")
++    if failed("single-tile"):
++        lines.append("single-tile cases fail: the per-tile math / V^T / descriptors, not multi-tile state")
++    if one:
++        lines.append(f"single-request multi-tile cases fail ({', '.join(one)}): multi-tile loop state (n >= 1), "
++                     "no request crossing involved")
++        if all(k in one for k in ("B1-34t",)) and not any(k in one for k in ("B1-2t", "B1-4t")):
++            lines.append("  only the long cases fail: page-index block rotation or ring wrap")
++    elif failed("cross") or failed("lens_a-grid3-kv1"):
++        lines.append(f"single-request multi-tile cases pass but {failed('cross') + failed('lens_a-grid3-kv1')} fail: "
++                     "request crossing / slot bookkeeping")
++    if failed("mid-1t"):
++        lines.append(f"1-tile segments starting mid-request (n == 0, lt >= 1) fail ({', '.join(failed('mid-1t'))}): "
++                     "the lt-dependent edge mask / segment-start state, not the multi-tile qa carry")
++    elif not one and not failed("cross"):
++        lines.append("1-tile mid-request segments pass: lt-based edge mask and segment-start state cleared")
++    if failed("kv0.25-grid264"):
++        lines.append("kv_scale 0.25 fails at <= 1 tile per CTA: kv_scale handling")
++    if not lines:
++        lines.append("no bisect case failed")
++    return lines
++
++# --- build, image check, self-check ------------------------------------------------------------
++
++def _w6_elapsed() -> float:
++    """Seconds since this module began importing (the prepare clock)."""
++    return time.perf_counter() - _IMPORT_T0
++
++
++def _build_w6(set_id: int):
++    """Compile one s6 module (set 0: the routed candidates; set 1: the DIAG-only designs) for sm_90a ONLY
++    (TORCH_CUDA_ARCH_LIST=9.0a around the build, restored after). Returns (module, None) or (None, reason).
++    A failure here never touches any other module: full verify stays on master's paired FA3."""
++    t0 = time.perf_counter()
++    name = "muse_full_verify_wgmma_s6" if set_id == 0 else "muse_full_verify_wgmma_s6d"
++    flags = ["-O3", "-std=c++20", "-lineinfo", f"-DW6_SET={set_id}"]
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    arch = None
++    try:
++        from torch.utils.cpp_extension import load_inline
++        try:
++            from torch.utils.cpp_extension import _get_cuda_arch_flags
++            arch = list(_get_cuda_arch_flags())
++        except Exception as e:  # private helper; the cubin check afterwards is authoritative
++            _say(f"[s6] could not read torch's nvcc arch flags: {e!r}")
++        _say(f"[s6] building {name}: TORCH_CUDA_ARCH_LIST=9.0a, arch flags {arch}, extra {flags}")
++        ext = load_inline(
++            name=name,
++            cpp_sources=_W6_CPP,
++            cuda_sources=_W6_CUDA,
++            functions=["w6_run", "w6_attrs", "w6_ovl_stages"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:  # keep master's paired FA3 verify path if the build fails
++        msg = str(e)
++        _say(f"[s6] load_inline ({name}) FAILED after {time.perf_counter() - t0:.1f}s: {type(e).__name__}: ...{msg[-2500:]}")
++        return None, f"build failed ({type(e).__name__})"
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    _say(f"[s6] load_inline ({name}) compiled in {time.perf_counter() - t0:.1f}s")
++    if arch is not None and any("arch=" in f and "90a" not in f for f in arch):
++        return None, f"nvcc arch flags beyond sm_90a: {arch}"
++    return ext, None
++
++
++_W6_NAMES = {
++    0: "A: split ring (SW128 ring, per-warpgroup FULL/EMPTY), serial chain, 4 stages, 2 CTAs/SM",
++    1: "B: split ring, S(n+1) before softmax(n), 1 CTA/SM",
++    2: "s5 CTA-wide ring (256-arrival barriers), full kernel, 4 stages, 2 CTAs/SM",
++    3: "gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, ticket epilogue kept",
++    4: "gather-only s5 CTA-wide ring, 4 stages, 2 CTAs/SM, no epilogue",
++    5: "gather-only split ring, 4 stages, 2 CTAs/SM, ticket epilogue kept",
++    6: "gather-only split ring, 4 stages, 2 CTAs/SM, no epilogue",
++    7: "gather-only split ring, 1 CTA/SM (OVL depth), ticket epilogue kept",
++    8: "gather-only split ring, 1 CTA/SM (OVL depth), no epilogue",
++}
++_W6_ONE_CTA = (1, 7, 8)  # variants launched with grid = SM count (1 CTA/SM); every other one 2 x SM
++
++
++def _w6_grid_of(variant: int, sms: int) -> int:
++    return sms if variant in _W6_ONE_CTA else 2 * sms
++
++
++def _w6_image_check(ext, variants) -> dict:
++    """Per variant: regs, local (spill) bytes, binary version, CTAs/SM and dynamic smem, printed. A variant is
++    refused with local bytes > 0, a non-sm_90 image, or (variant 0) fewer than 2 CTAs/SM, which would measure
++    1-CTA/SM TLP instead of the premise. Returns {variant: None | refusal reason}."""
++    out = {}
++    cap = tuple(torch.cuda.get_device_capability())
++    try:
++        st = ext.w6_ovl_stages().tolist()
++        _say(f"[s6] 1-CTA/SM ring depth chosen {st[0]} stages: {st[1]} B of dynamic smem; 12 stages would need {st[2]} B "
++             f"against the {232448} B per-block limit ({'fits' if st[2] <= 232448 else 'does not fit, so 10'})")
++    except Exception as e:
++        _say(f"[s6] w6_ovl_stages raised {e!r}")
++    for v in variants:
++        try:
++            a = ext.w6_attrs(v).tolist()
++        except Exception as e:
++            out[v] = f"attrs raised {type(e).__name__}"
++            _say(f"[s6] variant {v} ({_W6_NAMES[v]}): attrs raised {e!r}")
++            continue
++        _say(f"[s6] variant {v} ({_W6_NAMES[v]}): regs {a[0]}, local bytes {a[1]}, binaryVersion {a[2]}, ptxVersion {a[3]}, "
++             f"CTAs/SM {a[4]}, dyn smem {a[5]} B (max attr {a[6]}, static {a[7]})")
++        if cap != (9, 0):
++            out[v] = f"device capability {cap}"
++        elif a[2] != 90:
++            out[v] = f"loaded image is not sm_90 SASS (binaryVersion {a[2]})"
++        elif a[1] > 0:
++            out[v] = f"local bytes {a[1]} > 0 (register spill)"
++        elif v in (0, 2, 3, 4, 5, 6) and a[4] < 2:
++            out[v] = f"CTAs/SM {a[4]} < 2 (the 2-CTA/SM premise is not met)"
++        elif a[4] < 1:
++            out[v] = "0 CTAs/SM"
++        else:
++            out[v] = None
++        if out[v] is not None:
++            _say(f"[s6] variant {v} REFUSED: {out[v]}")
++    return out
++
++
++def _w6_trace(msg: str) -> None:
++    """Self-check hook between launches: wait for the GPU, then say what finished, so a fault is attributed
++    to the kernel before it. Never installed during timed calls."""
++    torch.cuda.synchronize()
++    print(f"[s6]   {msg}", flush=True)
++
++
++def _w6_self_check(variant: int):
++    """One-time eager check, in-process, on synthetic data only: the gated verify path through kernel_fn
++    against an FP32 causal reference, every launch traced (sync + print), the device ERROR WORD printed per
++    case (bounded-wait abort = 2). Every case runs even after a failure, so one check bisects the failing
++    variable (s5's 19-case table: canary, device grid, kv 0.25, single-request 2/4/17/34 tiles on one CTA,
++    request crossing, mid-request 1-tile segments, grids 3/7/61/264, lens_b, two coherent-key cases), and
++    the 'second eager call identical' test covers the ticket reset. Returns (ok, reason, table)."""
++    global _W6_GRID, _W6_FORCE, _W6_HOOK, _W6_ANYB, _W6_KEEP
++    lens_a = [9000, 1025, 70, 4097, 1023, 8]
++    lens_b = [129, 66, 195, 260, 69, 70, 71, 9, 15, 8, 64, 65, 3000]
++    # (name, lens, kv_scale, grid, coherent, second eager call)
++    cases = [("canary", [70, 13], 1.0, 4, False, False),
++             ("single-tile-lens_a-device", lens_a, 1.0, None, False, True),
++             ("lens_a-grid3-kv1", lens_a, 1.0, 3, False, False),
++             ("kv0.25-grid264", lens_a, 0.25, 264, False, False),
++             ("B1-2t", [128], 1.0, 1, False, False),
++             ("B1-4t", [256], 1.0, 1, False, False),
++             ("B1-17t", [1088], 1.0, 1, False, False),
++             ("B1-34t", [2176], 1.0, 1, False, False),
++             ("B1-4t-kv0.25", [256], 0.25, 1, False, False),
++             ("cross-2req-4t", [128, 128], 1.0, 1, False, False),
++             ("mid-1t-B1-3t-grid3", [192], 1.0, 3, False, False),
++             ("mid-1t-2req-grid3", [128, 128], 1.0, 3, False, False),
++             ("lens_a-grid3-kv0.25", lens_a, 0.25, 3, False, False),
++             ("lens_a-grid7-kv1", lens_a, 1.0, 7, False, False),
++             ("lens_a-grid61-kv0.25", lens_a, 0.25, 61, False, False),
++             ("lens_b-device", lens_b, 1.0, None, False, True),
++             ("lens_b-grid7-kv0.25", lens_b, 0.25, 7, False, False),
++             ("coherent-lens_a-grid3", lens_a, 1.0, 3, True, False),
++             ("coherent-lens_a-device", lens_a, 1.0, None, True, False)]
++    gen = torch.Generator(device="cuda").manual_seed(4321)
++    dev = torch.device("cuda")
++    tag = "AB"[variant]
++    _W6_FORCE = variant
++    _W6_ANYB = True
++    results, fails = {}, []
++    try:
++        for name, lens, kv_scale, grid, coherent, second in cases:
++            data = _w6_synthetic(lens, kv_scale, gen, dev, coherent)
++            assert _w6_gate(data["config"])
++            _W6_GRID = grid
++            _W6_ERR.zero_()
++            keep = {}
++            _W6_KEEP = keep
++            print(f"[s6] {tag} {name}: B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'} coherent={coherent}; "
++                  f"launching kernel_fn (pre-attention first)", flush=True)
++            _W6_HOOK = _w6_trace
++            out = kernel_fn(data)
++            _W6_HOOK = None
++            _W6_KEEP = None
++            torch.cuda.synchronize()
++            flag = int(_W6_ERR.item())
++            ref = _w6_reference(data, lens)
++            err = float((out.float() - ref).norm() / ref.norm())
++            finite = bool(torch.isfinite(out).all())
++            passed = finite and err < 3e-2 and not flag
++            results[name] = passed
++            print(f"[s6] {tag} {name}: rel L2 {err:.2e}, finite {finite}, ERROR WORD {flag} "
++                  f"(1: not sm_90a, 2: mbarrier wait timeout, 4: shape) -> {'PASS' if passed else 'FAIL'}", flush=True)
++            if not passed:
++                fails.append((name, err, finite, flag))
++                if len([1 for f in fails if f[0] != name]) < 4 and "ws_acc" in keep:
++                    try:
++                        _w6_diagnose(data, lens, keep, f"{tag} {name}")
++                    except Exception as e:  # diagnosis must never take the check down
++                        print(f"[s6]   DIAG {tag} {name} raised {e!r}", flush=True)
++                continue
++            if second:
++                again = kernel_fn(data)
++                torch.cuda.synchronize()
++                same = bool(torch.equal(again, out))
++                print(f"[s6] {tag} {name}: second eager call identical {same}", flush=True)
++                if not same or int(_W6_ERR.item()):
++                    fails.append((name + " (second call)", float("nan"), True, int(_W6_ERR.item())))
++        for line in _w6_verdict(results):
++            print(f"[s6] {tag} BISECT: {line}", flush=True)
++        table = ", ".join(f"{k}={'ok' if v else 'FAIL'}" for k, v in results.items())
++        print(f"[s6] {tag} BISECT table: {table}", flush=True)
++        if fails:
++            n, e, f, w = fails[0]
++            return False, f"{n}, rel L2 {e:.2e}, finite {f}, error word {w}", results
++    except Exception as e:
++        print(f"[s6] {tag} self-check raised: {e!r}", flush=True)
++        return False, f"raised {type(e).__name__}", results
++    finally:
++        _W6_GRID = None
++        _W6_HOOK = None
++        _W6_KEEP = None
++        _W6_ANYB = False
++        _W6_FORCE = None
++    return True, None, results
++
++
++# --- the prepare-time gate: two interleaved rounds against master's ROUTED path -------------------
++
++def _w6_capture(fn):
++    """fn captured as a CUDA graph after an eager warm-up on a side stream; returns (graph, output)."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    g = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g):
++        o = fn()
++    torch.cuda.synchronize()
++    return g, o
++
++
++def _w6_replay_times(graphs: dict, flush, reps: int, rot: int) -> dict:
++    """Replay every graph `reps` times, interleaved (the order reverses every rep and its start rotates with
++    `rot`), a 256 MB flush before each replay (cold L2). Returns {label: [us per replay]}."""
++    labels = list(graphs)
++    ev = {k: [] for k in labels}
++    for rep in range(reps):
++        k0 = (rot + rep) % len(labels)
++        order = labels[k0:] + labels[:k0]
++        if rep % 2:
++            order = order[::-1]
++        for k in order:
++            flush.zero_()
++            e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            e0.record()
++            graphs[k].replay()
++            e1.record()
++            ev[k].append((e0, e1))
++    torch.cuda.synchronize()
++    return {k: [1000.0 * a.elapsed_time(b) for a, b in v] for k, v in ev.items()}
++
++
++def _w6_stats(ts):
++    s = sorted(ts)
++    n = len(s)
++    return s[n // 2], s[(3 * n) // 4] - s[n // 4]
++
++
++def _w6_agentic_lens(B: int):
++    """The scored shapes' lengths: ctx 80000, agentic spread (74K-86K)."""
++    return [int(80000 * (1 + 0.075 * (2 * ((i * 7) % 13) / 12 - 1))) for i in range(B)]
++
++
++_W6_MASTER_KERNELS = "_pre_attention_kernel + FA3 paired + FlashAttnFwdCombine + _paired_norm_gate_kernel"
++_W6_THR = 1.05
++_W6_ROUNDS = 2
++_W6_REPS = 40
++
++
++def _w6_gate_band(B: int, cands, gen, flush, empty):
++    """Time master's ROUTED paired-FA3 path (kernel_fn with the s6 route off) against each candidate
++    variant's kernel_fn, as cold-L2 CUDA-graph replays, two interleaved rounds of 40, an empty-graph
++    baseline subtracted. A variant clears the cell only if BOTH rounds are >= 1.05x vs master, its IQR is
++    <= 1.5x master's in both, its output agrees with master's (rel L2 < 3e-2), it is finite and the device
++    error word is 0. Returns (best variant | None, numbers dict)."""
++    global _W6_FORCE
++    dev = torch.device("cuda")
++    lens = _w6_agentic_lens(B)
++    data = _w6_synthetic(lens, 1.0, gen, dev)
++    graphs, outs = {}, {}
++    _W6_ERR.zero_()
++    try:
++        for label, f in [("master", -1)] + [(f"v{v}", v) for v in cands]:
++            _W6_FORCE = f
++            graphs[label], outs[label] = _w6_capture(lambda: kernel_fn(data))
++    finally:
++        _W6_FORCE = None
++    graphs["empty"] = empty
++    rounds = []
++    for rd in range(_W6_ROUNDS):
++        t = _w6_replay_times(graphs, flush, _W6_REPS, rd)
++        rounds.append({k: _w6_stats(v) for k, v in t.items()})
++    eword = int(_W6_ERR.item())
++    om = outs["master"].float()
++    nums = {"B": B, "rounds": rounds, "eword": eword, "cand": {}}
++    best, best_ratio = None, 0.0
++    for v in cands:
++        ov = outs[f"v{v}"].float()
++        agree = float((ov - om).norm() / om.norm())
++        fin = bool(torch.isfinite(ov).all())
++        ratios, iqr_ok = [], True
++        for rd, st in enumerate(rounds):
++            e = st["empty"][0]
++            m_us, m_iqr = st["master"][0] - e, st["master"][1]
++            v_us, v_iqr = st[f"v{v}"][0] - e, st[f"v{v}"][1]
++            ratio = m_us / v_us if v_us > 0 else 0.0
++            ratios.append(ratio)
++            iqr_ok = iqr_ok and v_iqr <= 1.5 * max(m_iqr, 0.5)  # 0.5 us floor: a timer-resolution master IQR must not veto
++            _say(f"[s6-gate] B={B} round {rd + 1}: master routed path ({_W6_MASTER_KERNELS}) {m_us:.1f} us net "
++                 f"(IQR {m_iqr:.1f}) vs variant {v} [_pre_attention_kernel + w6_kernel] {v_us:.1f} us net (IQR {v_iqr:.1f}) "
++                 f"-> master / variant {ratio:.3f}x (empty graph {e:.1f} us subtracted)")
++        ok = min(ratios) >= _W6_THR and iqr_ok and agree < 3e-2 and fin and not eword
++        nums["cand"][v] = {"ratios": ratios, "iqr_ok": iqr_ok, "agree": agree, "finite": fin, "ok": ok}
++        _say(f"[s6-gate] B={B} variant {v}: ratios {ratios[0]:.3f}x / {ratios[1]:.3f}x (both need >= {_W6_THR}), IQR <= 1.5x master "
++             f"{iqr_ok}, rel L2 vs master {agree:.2e} (< 3e-2), finite {fin}, error word {eword} -> "
++             f"{'CLEARS the cell' if ok else 'does not clear'}")
++        mean = sum(ratios) / len(ratios)
++        if ok and mean > best_ratio:
++            best, best_ratio = v, mean
++    del graphs, outs, om
++    return best, nums
++
++
++def _w6_two_state(B: int, variant: int, gen):
++    """Two states, one CUDA graph each, captured once; alternating replays (A B A B B A, refilled in place with
++    different request lengths) through kernel_fn with the candidate route active, each against its own FP32
++    reference. Nothing in the kernel may hold a pointer into either state. None on success, else the reason."""
++    global _W6_ROUTE
++    dev = torch.device("cuda")
++    lens = _w6_agentic_lens(B)
++    top = max(lens)
++    sets = [[max(9, n) for n in s] for s in _alt_sets(lens)]
++
++    def synth(L):
++        return _w6_synthetic(L, 1.0, gen, dev, max_pages=top + 37)
++
++    prev = _W6_ROUTE
++    _W6_ROUTE = MappingProxyType({_w6_band(B): variant})
++    _W6_ERR.zero_()
++    try:
++        why = _alt_check(f"[s6] two-state B={B} variant {variant}", synth, _w6_reference, sets, gate=_w6_gate, tol=3e-2)
++        eword = int(_W6_ERR.item())
++    finally:
++        _W6_ROUTE = prev
++    if why is None and eword:
++        why = f"two-state B={B} variant {variant}: device error word {eword}"
++    return why
++
++
++# --- DIAG: gather-only roofline, ticket epilogue on / off, fixed-vs-per-tile fit -------------------
++
++def _w6_prepare_q(data):
++    """The pre-attention launch as kernel_fn issues it for the unpaired verify layout (DIAG only)."""
++    cfg = data["config"]
++    batch, length, hq, hkv, d = cfg["batch"], cfg["q_len"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = batch * length
++    qkv = data["qkv"].reshape(tokens, -1)
++    q = torch.empty((tokens, hq, d), dtype=FP8, device=qkv.device)
++    _pre_attention_kernel[(tokens, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], data["k_scale"], data["k_scale"], data["v_scale"],
++        q, data["k_cache"], data["v_cache"], qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=False, EPS=RMS_EPS, PAIRED=False, G=hq // hkv, num_warps=1,
++    )
++    return q, qkv
++
++
++def _w6_fit(xs, ts):
++    """Least squares T = a + b x over the points (x = tiles per CTA)."""
++    n = len(xs)
++    mx, mt = sum(xs) / n, sum(ts) / n
++    sxx = sum((x - mx) ** 2 for x in xs)
++    b = sum((x - mx) * (t - mt) for x, t in zip(xs, ts)) / sxx if sxx > 0 else 0.0
++    return mt - b * mx, b
++
++
++def _w6_diag(have_diag: bool, ok_vars) -> list:
++    """Prepare-only DIAG, never routed and never timed in kernel_fn. Times the bare kernels (cold L2 graph
++    replays, no pre-attention) at B = 8 / 16 / 32 x ~80K agentic lengths: the full s5 CTA-wide ring (v2), s6 A
++    (v0), s6 B (v1) and, when the DIAG module built, the six gather-only instantiations (each ring design with
++    and without the ticket epilogue). Prints the TB/s of every design and the fit T = a + b * tiles/CTA (a = the
++    fixed, B-independent component, b = the per-tile slope). Returns the compact summary lines."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    gen = torch.Generator(device="cuda").manual_seed(2468)
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    designs = [v for v in (2, 0, 1) if (v in ok_vars if v < 2 else have_diag)] + ([3, 4, 5, 6, 7, 8] if have_diag else [])
++    pts = {v: [] for v in designs}
++    tb16 = {}
++    nb16 = 0
++    for B in (8, 16, 32):
++        lens = _w6_agentic_lens(B)
++        data = _w6_synthetic(lens, 1.0, gen, dev)
++        _say(f"[s6-diag] B={B}: launching _pre_attention_kernel")
++        q, qkv = _w6_prepare_q(data)
++        torch.cuda.synchronize()
++        cfg = data["config"]
++        scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E
++        kc, vc, pt = data["k_cache"], data["v_cache"], data["page_table"]
++        seql, ksc, vsc = data["cache_seqlens"], data["k_scale"], data["v_scale"]
++        nbytes = sum(lens) * 256
++        tiles = sum((n + 63) // 64 for n in lens)
++        tk = _w6_tickets(dev)
++        bufs = {}
++        for v in designs:
++            grid = _w6_grid_of(v, sms)
++            bufs[v] = (torch.empty((grid + B, 8, 16, 64), dtype=torch.float32, device=dev),
++                       torch.empty((grid + B, 2, 128), dtype=torch.float32, device=dev),
++                       torch.empty((B, 8, 1024), dtype=torch.bfloat16, device=dev),
++                       torch.zeros(grid * 256, dtype=torch.int32, device=dev), grid)
++
++        def run(v):
++            wa, wm, out, sink, grid = bufs[v]
++            ext = _W6_EXT if v < 2 else _W6_DEXT
++            return lambda: ext.w6_run(v, q, kc, vc, pt, seql, ksc, vsc, qkv, qkv.stride(0), out, wa, wm, tk,
++                                      _W6_ERR, sink, scale, RMS_EPS, grid)
++
++        for v in designs:  # announce + sync each design once, so a fault names its kernel
++            _say(f"[s6-diag] B={B}: launching variant {v} ({_W6_NAMES[v]})")
++            run(v)()
++            torch.cuda.synchronize()
++        _say(f"[s6-diag] B={B}: timing {len(designs)} designs as cold-L2 graph replays (median of 15, empty graph subtracted)")
++        ts = _interleaved_us([run(v) for v in designs], flush, warm=3, reps=15)
++        eword = int(_W6_ERR.item())
++        ref = bufs[0][2].float() if 0 in bufs else None
++        for v, t in zip(designs, ts):
++            pts[v].append((tiles / bufs[v][4], t))
++            if B == 16:
++                tb16[v] = (t, nbytes / (t * 1e-6) / 1e12)
++        nb16 = nbytes if B == 16 else nb16
++        if B == 16:
++            for v in designs:
++                if v >= 3:
++                    _say(f"[s6-diag] gather-only {_W6_NAMES[v].split('gather-only ')[1]}: {tb16[v][0]:.1f} us, {tb16[v][1]:.2f} TB/s")
++            line = "; ".join(f"{_W6_NAMES[v].split(':')[0].split(',')[0]} {tb16[v][0]:.1f} us {tb16[v][1]:.2f} TB/s"
++                             for v in designs if v < 3)
++            _say(f"[s6-diag] B=16 x 80K agentic ({nbytes / 1e6:.0f} MB K+V rows) full kernels (bare, no pre-attention): {line}")
++        if ref is not None and 2 in bufs:
++            rel = float((bufs[2][2].float() - ref).norm() / ref.norm())
++            _say(f"[s6-diag] B={B}: s5-ring full output vs variant A rel L2 {rel:.2e}; device error word {eword}")
++        del data, q, qkv, kc, vc, pt, bufs
++        torch.cuda.empty_cache()
++    summary = []
++    for v in designs:
++        xs = [p[0] for p in pts[v]]
++        a, b = _w6_fit(xs, [p[1] for p in pts[v]])
++        line = (f"[s6-diag] fit variant {v} ({_W6_NAMES[v].split(',')[0]}): T = a + b * tiles/CTA: a = {a:.1f} us fixed, "
++                f"b = {b:.3f} us/tile; T(B=8/16/32) = " + " / ".join(f"{p[1]:.1f}" for p in pts[v]) + f" us at {xs[0]:.0f}/{xs[1]:.0f}/{xs[2]:.0f} tiles/CTA")
++        _say(line)
++        summary.append(f"[s6-diag] fit v{v}: a={a:.1f}us b={b:.3f}us/tile T8/16/32={'/'.join(f'{p[1]:.0f}' for p in pts[v])}us")
++    if have_diag:
++        for v in (3, 5, 7):
++            if v in tb16 and v + 1 in tb16:
++                summary.append(f"[s6-diag] gather-only v{v}/v{v + 1} (epilogue kept/removed) B=16: {tb16[v][0]:.1f}/{tb16[v + 1][0]:.1f} us "
++                               f"({tb16[v][1]:.2f}/{tb16[v + 1][1]:.2f} TB/s)")
++    del flush
++    torch.cuda.empty_cache()
++    return summary
++
++
++# --- setup -----------------------------------------------------------------------------------
++
++def _w6_setup() -> None:
++    """Build, image check, bisect self-check per variant, the two-round gate against master's routed path, the
++    two-state replay check of every routed cell, then (time permitting) the DIAG. Any failure, refusal or
++    deadline leaves the cell on master's paired FA3 path, byte-identical. The last lines printed are the
++    compact PATH CHOSEN / GATE summary."""
++    global _W6_EXT, _W6_DEXT, _W6_ERR, _W6_ROUTE
++    summary = []
++    route = {}
++    ok_vars = {}
++    nums = {}
++    bis = {}
++    have_diag = False
++    dev = torch.device("cuda")
++    why_off = None
++    try:
++        _W6_ERR = torch.zeros(1, dtype=torch.int32, device=dev)
++        _w6_tickets(dev)
++        el = _w6_elapsed()
++        if el > _W6_DL_BUILD:
++            _say(f"[s6] skipped: deadline (prepare clock {el:.0f} s > {_W6_DL_BUILD:.0f} s before the build; the build + checks + gate "
++                 f"+ replay need about {_W6_BUDGET_S - _W6_DL_BUILD:.0f} s of the {_W6_BUDGET_S:.0f} s budget)")
++            why_off = f"skipped: deadline (clock {el:.0f} s)"
++        elif tuple(torch.cuda.get_device_capability()) != (9, 0):
++            why_off = f"device capability {tuple(torch.cuda.get_device_capability())} is not (9, 0)"
++        else:
++            _W6_EXT, why_off = _build_w6(0)
++        if _W6_EXT is not None:
++            refused = _w6_image_check(_W6_EXT, (0, 1))
++            for v in (0, 1):
++                if refused.get(v) is not None:
++                    bis[v] = f"refused: {refused[v]}"
++                    continue
++                el = _w6_elapsed()
++                if el > _W6_DL_CHECK:
++                    _say(f"[s6] variant {v} self-check skipped: deadline (clock {el:.0f} s > {_W6_DL_CHECK:.0f} s)")
++                    bis[v] = "skipped: deadline"
++                    continue
++                ok, why, table = _w6_self_check(v)
++                n_ok = sum(1 for x in table.values() if x)
++                bis[v] = f"{n_ok}/{len(table)} cases " + ("PASS" if ok else f"FAIL ({why})")
++                if ok:
++                    ok_vars[v] = True
++                else:
++                    _say(f"[s6] variant {v} SELF-CHECK FAILED: {why}")
++            _W6_ERR.zero_()
++            _w6_tickets(dev).zero_()
++            torch.cuda.synchronize()
++        cands = sorted(ok_vars)
++        if cands:
++            el = _w6_elapsed()
++            if el > _W6_DL_GATE:
++                _say(f"[s6-gate] skipped: deadline (clock {el:.0f} s > {_W6_DL_GATE:.0f} s)")
++                for B in (16, 32):
++                    nums[B] = None
++            else:
++                gen = torch.Generator(device="cuda").manual_seed(99)
++                flush = torch.empty(256 << 20, dtype=torch.uint8, device=dev)
++                scratch = torch.zeros(16, dtype=torch.float32, device=dev)
++                empty, _ = _w6_capture(lambda: scratch.add_(0.0))
++                for B in (16, 32):
++                    try:
++                        best, n = _w6_gate_band(B, cands, gen, flush, empty)
++                    except Exception as e:
++                        _say(f"[s6-gate] B={B} raised ({e!r}): band stays on master")
++                        best, n = None, None
++                    nums[B] = n
++                    if best is not None:
++                        route[_w6_band(B)] = best
++                del flush, empty
++                torch.cuda.empty_cache()
++            for B in (16, 32):
++                band = _w6_band(B)
++                if band in route:
++                    try:
++                        why = _w6_two_state(B, route[band], torch.Generator(device="cuda").manual_seed(5150 + B))
++                    except Exception as e:
++                        why = f"two-state check raised {e!r}"
++                    if why is not None:
++                        _say(f"[s6] band B={B} variant {route[band]} dropped to master ({why})")
++                        route.pop(band)
++            _W6_ERR.zero_()
++            _w6_tickets(dev).zero_()
++            torch.cuda.synchronize()
++            el = _w6_elapsed()
++            if route and el > _W6_BUDGET_S:  # a phase that finishes past the start-rule budget routes nothing
++                _say(f"[s6-gate] finished at clock {el:.0f} s > {_W6_BUDGET_S:.0f} s: routes discarded, every band stays on master")
++                why_off = f"finished past the budget (clock {el:.0f} s)"
++                route.clear()
++    except Exception as e:  # never raise at import: every cell keeps master
++        route.clear()
++        why_off = f"setup raised {e!r}"
++        _say(f"[s6] setup raised {e!r}: every full verify cell stays on master")
++    _W6_ROUTE = MappingProxyType(dict(route))  # frozen: kernel_fn only reads it
++    # DIAG (prepare-only, after the route is frozen; the shared tickets are re-zeroed afterwards on every exit).
++    try:
++        if _W6_EXT is not None and 0 in ok_vars:
++            el = _w6_elapsed()
++            if el > _W6_DL_DIAG_BUILD:
++                _say(f"[s6-diag] DIAG module build skipped: deadline (clock {el:.0f} s > {_W6_DL_DIAG_BUILD:.0f} s)")
++            else:
++                _W6_DEXT, why = _build_w6(1)
++                if _W6_DEXT is not None:
++                    refused = _w6_image_check(_W6_DEXT, (2, 3, 4, 5, 6, 7, 8))
++                    have_diag = all(r is None for r in refused.values())
++                    if not have_diag:
++                        _say(f"[s6-diag] DIAG module unusable: {refused}")
++            el = _w6_elapsed()
++            if el > _W6_DL_DIAG:
++                _say(f"[s6-diag] timings skipped: deadline (clock {el:.0f} s > {_W6_DL_DIAG:.0f} s)")
++            else:
++                summary += _w6_diag(have_diag, ok_vars)
++        else:
++            _say("[s6-diag] skipped: variant A is not available (no self-check pass)")
++    except Exception as e:
++        _say(f"[s6-diag] raised (path unaffected): {e!r}")
++    finally:
++        try:
++            _W6_ERR.zero_()
++            _w6_tickets(dev).zero_()
++            torch.cuda.synchronize()
++        except Exception as e:
++            _say(f"[s6-diag] ticket re-zero raised: {e!r}")
++    # The last lines of prepare: the compact PATH CHOSEN / GATE summary (the judge keeps only the log tail).
++    for line in summary:
++        _say(line)
++    for v in (0, 1):
++        if v in bis:
++            _say(f"[s6] SUMMARY self-check variant {v} ({_W6_NAMES[v].split(',')[0]}): {bis[v]}")
++    for B in (16, 32):
++        n = nums.get(B)
++        if n is not None:
++            for v, c in n["cand"].items():
++                _say(f"[s6] GATE B={B} variant {v}: master/variant {c['ratios'][0]:.3f}x, {c['ratios'][1]:.3f}x (need both >= {_W6_THR}), "
++                     f"IQR ok {c['iqr_ok']}, rel L2 vs master {c['agree']:.2e}, finite {c['finite']}, ok {c['ok']}")
++    for B in (16, 32):
++        band = _w6_band(B)
++        names = "1..24" if B == 16 else "25..64"
++        if band in _W6_ROUTE:
++            v = _W6_ROUTE[band]
++            _say(f"PATH CHOSEN: full verify B={B} band {names}: s6 wgmma kernel variant {v} ({_W6_NAMES[v]}) "
++                 f"(bisect {bis.get(v)}; two interleaved rounds both >= {_W6_THR}x vs master's routed path)")
++        else:
++            _say(f"PATH CHOSEN: full verify B={B} band {names}: master paired FA3 ({_W6_MASTER_KERNELS}); s6 not routed "
++                 f"({why_off or 'gate/self-check not met, see [s6-gate] / [s6] SUMMARY'})")
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -5919,3 +7664,10 @@ if torch.cuda.is_available():
+     except Exception as _e:  # never raise at import: sliding decode keeps master exactly
+         _SD_ROUTE = MappingProxyType({})
+         _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
++    # Full verify s6 last (it checks the prepare clock before every phase and prints its PATH CHOSEN / GATE summary as
++    # the final lines of prepare); any failure or deadline leaves full verify on master's paired FA3, byte-identical.
++    try:
++        _w6_setup()
++    except Exception as _e:  # never raise at import
++        _W6_ROUTE = MappingProxyType({})
++        _say(f"PATH CHOSEN: full verify master paired FA3 (fallback: s6 setup raised {_e!r})")
