@@ -36,11 +36,14 @@ append-only, newest last.
      - H=-8;
      - v4c.
   3. decode check at eacf0722: H=-8, v4c, and the anatomies.
-  4. Then build, for the next decode check: the bulk12 codec in decode's dense GEMMs at T=1.
-     - P = dl_pooler_router: the pooler's 4096 rows of W_pr on 12-bit; the router's hi / lo rows stay raw.
-     - qkv and o, from bf16's b12_kernel (judge-proven: pooler m=1 17.7 -> 14.8 us in bf16).
-     - Gate each against today's route, as in bf16. At T >= 8 the decision waits on the bf16 cp.async-x check
-       (0acdca48).
+  4. Then build, for the next decode check: the bulk12 codec in decode's P = dl_pooler_router at T=1, on the pooler's
+     4096 rows of W_pr (the router's hi / lo rows stay raw).
+     - Pooler is the only bulk12 cell that is clearly judge-proven: gate 0.82 vs judge 0.84; bf16 pooler m=1
+       17.7 -> 14.8 us.
+     - qkv / o at m=1 judged ~1.00 / 0.97 against gate 0.88 / 0.87, so port them only after a read-flush gate shows a
+       win.
+     - The decode gates should flush L2 with a read (the judge's method), not a write.
+     - T >= 8 stays raw: the bf16 m >= 8 variants lost in the judge.
 - quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 8 / 9, attention 14 / 10, prefill 16 / 10
 - boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
   bf16 **1.2664** (rank 355 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
