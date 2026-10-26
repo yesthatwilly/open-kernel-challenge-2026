@@ -1,0 +1,106 @@
+de] KERNELS skew-guard (print only) high T=3012 round 2: master rega_kernel<w2> 829.5 us (IQR 4.9) 546 TFLOP/s, 5.88 TB/s issued L2->SM, 3968 items (30-31 per CTA of 132); wide rega_wide_kernel<w2> 1025.8 us (IQR 7.4) 442 TFLOP/s, 2.95 TB/s issued L2->SM, 1984 items (15-16 per CTA of 132)
+[rega-wide] GATE high T=3012 soft (norm-gather-ON block): ratios per round [1.163, 1.18] (need <= 0.97 in both), IQR ok [False, False]; skew guard [1.196, 1.199]: OFF (master kept)
+[rega-wide] [ft T=4500 local] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=4500 local] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=4500 local] launching master rega_kernel<w2>
+[rega-wide] [ft T=4500 local] master rega_kernel<w2> done
+[rega-wide] [ft T=4500 local] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=4500 local] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=4500 local] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=4500 local] rega_wide_kernel<w2> done
+[rega-wide] exact T=4500 local: 36000 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=8192 random] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=8192 random] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=8192 random] launching master rega_kernel<w2>
+[rega-wide] [ft T=8192 random] master rega_kernel<w2> done
+[rega-wide] [ft T=8192 random] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=8192 random] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=8192 random] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=8192 random] rega_wide_kernel<w2> done
+[rega-wide] exact T=8192 random: 8171 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=8192 local] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=8192 local] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=8192 local] launching master rega_kernel<w2>
+[rega-wide] [ft T=8192 local] master rega_kernel<w2> done
+[rega-wide] [ft T=8192 local] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=8192 local] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=8192 local] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=8192 local] rega_wide_kernel<w2> done
+[rega-wide] exact T=8192 local: 65536 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=16384 random] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=16384 random] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=16384 random] launching master rega_kernel<w2>
+[rega-wide] [ft T=16384 random] master rega_kernel<w2> done
+[rega-wide] [ft T=16384 random] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=16384 random] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=16384 random] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=16384 random] rega_wide_kernel<w2> done
+[rega-wide] exact T=16384 random: 16356 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=16384 skewed] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=16384 skewed] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=16384 skewed] launching master rega_kernel<w2>
+[rega-wide] [ft T=16384 skewed] master rega_kernel<w2> done
+[rega-wide] [ft T=16384 skewed] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=16384 skewed] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=16384 skewed] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=16384 skewed] rega_wide_kernel<w2> done
+[rega-wide] exact T=16384 skewed: 73644 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=16384 one] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=16384 one] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=16384 one] launching master rega_kernel<w2>
+[rega-wide] [ft T=16384 one] master rega_kernel<w2> done
+[rega-wide] [ft T=16384 one] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=16384 one] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=16384 one] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=16384 one] rega_wide_kernel<w2> done
+[rega-wide] exact T=16384 one: 16384 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] [ft T=16384 local] launching master rega_kernel<w13+silu>
+[rega-wide] [ft T=16384 local] master rega_kernel<w13+silu> done
+[rega-wide] [ft T=16384 local] launching master rega_kernel<w2>
+[rega-wide] [ft T=16384 local] master rega_kernel<w2> done
+[rega-wide] [ft T=16384 local] launching rega_wide_kernel<w13+silu>
+[rega-wide] [ft T=16384 local] rega_wide_kernel<w13+silu> done
+[rega-wide] [ft T=16384 local] launching rega_wide_kernel<w2>
+[rega-wide] [ft T=16384 local] rega_wide_kernel<w2> done
+[rega-wide] exact T=16384 local: 131072 local routes; wide vs master max |diff| == 0 (bitwise): hs True, y True; error word 0 (ok; master 0); markers w13 0x57474d4d w2 0x57474d4d
+[rega-wide] WIDE GATE random ft T=16384 random round 1/2 (16218 local routes): master block (rega_kernel, as routed) median 3169.4 us IQR 40.5; wide block (rega_wide_kernel mask 3) median 3790.7 us IQR 46.7 (1.15x master's, need <= 1.5); ratio 1.196 (need <= 0.97)
+[rega-wide] KERNELS random ft T=16384 round 1: master rega_kernel<w13> 2015.0 us (IQR 25.6) 540 TFLOP/s, 5.66 TB/s issued L2->SM, 9024 items (68-69 per CTA of 132); wide rega_wide_kernel<w13> 2438.2 us (IQR 43.3) 446 TFLOP/s, 2.89 TB/s issued L2->SM, 4512 items (34-35 per CTA of 132)
+[rega-wide] KERNELS random ft T=16384 round 1: master rega_kernel<w2> 965.9 us (IQR 15.7) 563 TFLOP/s, 5.91 TB/s issued L2->SM, 4512 items (34-35 per CTA of 132); wide rega_wide_kernel<w2> 1159.6 us (IQR 18.0) 469 TFLOP/s, 3.03 TB/s issued L2->SM, 2256 items (17-18 per CTA of 132)
+[rega-wide] WIDE GATE random ft T=16384 random round 2/2 (16218 local routes): master block (rega_kernel, as routed) median 3171.4 us IQR 64.6; wide block (rega_wide_kernel mask 3) median 3807.1 us IQR 69.3 (1.07x master's, need <= 1.5); ratio 1.200 (need <= 0.97)
+[rega-wide] KERNELS random ft T=16384 round 2: master rega_kernel<w13> 2039.4 us (IQR 37.6) 534 TFLOP/s, 5.60 TB/s issued L2->SM, 9024 items (68-69 per CTA of 132); wide rega_wide_kernel<w13> 2444.7 us (IQR 60.9) 445 TFLOP/s, 2.88 TB/s issued L2->SM, 4512 items (34-35 per CTA of 132)
+[rega-wide] KERNELS random ft T=16384 round 2: master rega_kernel<w2> 968.5 us (IQR 21.1) 562 TFLOP/s, 5.89 TB/s issued L2->SM, 4512 items (34-35 per CTA of 132); wide rega_wide_kernel<w2> 1160.6 us (IQR 23.4) 469 TFLOP/s, 3.03 TB/s issued L2->SM, 2256 items (17-18 per CTA of 132)
+[rega-wide] WIDE GATE skew-guard (print only) ft T=16384 skewed round 1/2 (73711 local routes): master block (rega_kernel, as routed) median 15745.7 us IQR 581.9; wide block (rega_wide_kernel mask 3) median 18522.0 us IQR 1164.1 (2.00x master's, need <= 1.5); ratio 1.176 (need <= 0.97)
+[rega-wide] KERNELS skew-guard (print only) ft T=16384 round 1: master rega_kernel<w13> 10347.3 us (IQR 756.5) 478 TFLOP/s, 4.84 TB/s issued L2->SM, 37952 items (287-288 per CTA of 132); wide rega_wide_kernel<w13> 12084.1 us (IQR 449.8) 409 TFLOP/s, 2.53 TB/s issued L2->SM, 18976 items (143-144 per CTA of 132)
+[rega-wide] KERNELS skew-guard (print only) ft T=16384 round 1: master rega_kernel<w2> 4984.1 us (IQR 158.6) 496 TFLOP/s, 5.02 TB/s issued L2->SM, 18976 items (143-144 per CTA of 132); wide rega_wide_kernel<w2> 5705.3 us (IQR 318.7) 434 TFLOP/s, 2.68 TB/s issued L2->SM, 9488 items (71-72 per CTA of 132)
+[rega-wide] WIDE GATE skew-guard (print only) ft T=16384 skewed round 2/2 (73711 local routes): master block (rega_kernel, as routed) median 15436.7 us IQR 552.2; wide block (rega_wide_kernel mask 3) median 18554.1 us IQR 1723.3 (3.12x master's, need <= 1.5); ratio 1.202 (need <= 0.97)
+[rega-wide] KERNELS skew-guard (print only) ft T=16384 round 2: master rega_kernel<w13> 10420.7 us (IQR 646.3) 475 TFLOP/s, 4.80 TB/s issued L2->SM, 37952 items (287-288 per CTA of 132); wide rega_wide_kernel<w13> 12149.9 us (IQR 553.5) 407 TFLOP/s, 2.52 TB/s issued L2->SM, 18976 items (143-144 per CTA of 132)
+[rega-wide] KERNELS skew-guard (print only) ft T=16384 round 2: master rega_kernel<w2> 4970.7 us (IQR 167.8) 498 TFLOP/s, 5.03 TB/s issued L2->SM, 18976 items (143-144 per CTA of 132); wide rega_wide_kernel<w2> 5591.1 us (IQR 231.9) 442 TFLOP/s, 2.74 TB/s issued L2->SM, 9488 items (71-72 per CTA of 132)
+[rega-wide] GATE ft T=16384 soft (norm-gather-ON block): ratios per round [1.196, 1.2] (need <= 0.97 in both), IQR ok [True, True]; skew guard [1.176, 1.202]: OFF (master kept)
+[rega-wide] SUMMARY high: master (ratios [1.163, 1.18], IQR ok [False, False]); ft: master (ratios [1.196, 1.2], IQR ok [True, True])
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 18.1 us; chunk 512 8.7 us; chunk 1024 21.3 us; chunk chosen 512 ratio 0.481 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 69.6 us; chunk 512 8.5 us; chunk 1024 21.5 us; chunk chosen 512 ratio 0.122 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 393.7 us; chunk 512 26.9 us; chunk 1024 23.0 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8086.7 us, contig-varlen 7688.0 us, contig-batched n/a us (gather alone 16.6 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4503.3 us, contig-varlen 4282.0 us, contig-batched n/a us (gather alone 12.7 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 908.5 us, contig-varlen 869.6 us, contig-batched n/a us (gather alone 8.6 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1644.6 us, contig-varlen 1600.4 us, contig-batched n/a us (gather alone 49.6 us; bar 0.97 x paged, best/paged 0.973) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 427.5 us, contig-varlen 421.5 us, contig-batched n/a us (gather alone 16.8 us; bar 0.97 x paged, best/paged 0.986) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 105.5s
+[rega-lo] guard routing at T=753: alpha 2.2 -> 1356 local routes (target 1350, the TASK.md floor-implied judge turn_1 load) = 1.83x the uniform 742; calibration 1:725, 1.1:827, 1.2:891, 1.3:932, 1.4:987, 1.5:998, 1.6:1114, 1.7:1150, 1.8:1194, 1.9:1266, 2:1290, 2.1:1338, 2.2:1356, 2.3:1416, 2.4:1485, 2.5:1534, 2.6:1567, 2.7:1625, 2.8:1665, 2.9:1676, 3:1725
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): master block 475.9 us (ratio vs master 1.000); KERNELS w13 304.5 us 1.98 TB/s, w2 148.6 us 2.03 TB/s; chunks 32 (max 1 per expert); grid 132
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V64 block 416.3 us (ratio vs master 0.875); KERNELS w13 263.6 us 2.29 TB/s, w2 130.0 us 2.32 TB/s; chunks 32 (max 1 per expert); grid 264
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V32 block 416.4 us (ratio vs master 0.875); KERNELS w13 261.1 us 2.31 TB/s, w2 131.8 us 2.29 TB/s; chunks 33 (max 2 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): master block 543.5 us (ratio vs master 1.000); KERNELS w13 344.5 us 1.75 TB/s, w2 172.5 us 1.75 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V64 block 563.1 us (ratio vs master 1.036); KERNELS w13 354.7 us 1.70 TB/s, w2 177.0 us 1.71 TB/s; chunks 39 (max 4 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V32 block 718.1 us (ratio vs master 1.321); KERNELS w13 457.4 us 1.32 TB/s, w2 232.5 us 1.30 TB/s; chunks 58 (max 8 per expert); grid 264
+[rega-lo] LOW GATE verdict (norm-gather-ON block): no candidate at <= 0.95 random AND <= 1.0 guard (random, guard ratios {'V64': (0.875, 1.036), 'V32': (0.875, 1.321)}): master kept
+[rega-lo] SKEW CURVE 1.0x 0.875 1.2x 0.990 1.5x 0.968 1.8x 1.036 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[rega-lo] phase took 33.3s; prepare total 139.5s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)
+[rega-wide] GATE high T=3012 soft (norm-gather-ON block): ratios per round [1.163, 1.18] (need <= 0.97 in both), IQR ok [False, False]; skew guard [1.196, 1.199]: OFF (master kept)
+[rega-wide] GATE ft T=16384 soft (norm-gather-ON block): ratios per round [1.196, 1.2] (need <= 0.97 in both), IQR ok [True, True]; skew guard [1.176, 1.202]: OFF (master kept)
+[rega-wide] SUMMARY high: master (ratios [1.163, 1.18], IQR ok [False, False]); ft: master (ratios [1.196, 1.2], IQR ok [True, True])
+[rega-wide] phase took 39.8s; prepare total before 139.5s, after 179.3s
+[rega-wide] PATH CHOSEN high: master (rega ON for the class; every other path as master)
+[rega-wide] PATH CHOSEN ft: master (rega ON for the class; every other path as master)

@@ -85,10 +85,10 @@ controls_for: null
 rewrite_stage: 4
 replaces: rega_kernel<true,*> + rega_kernel<false,*> (128-row tile) in the high (T=3012) and ft (T=16384) classes
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212551Z
 base_sha: d375dd60d9615046903966bfa1143a876e566b8a
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -107,6 +107,13 @@ attempt_file: 2026-10-26T012540Z-check-experts-rega-s4-bm256-wide-tile-high-ft.m
 prepared_at: 2026-10-26T012540Z
 job: a6f6063051f14750
 dispatched_at: 2026-10-26T012820Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4757672292732262
+speedup_ci: [1.453630720834128, 1.4979037377123245]
+harvested_at: 2026-10-26T023858Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
@@ -204,3 +211,32 @@ Verdict: dispatch-with-fixes (read-only audit plus numpy emulation; nothing coul
 - okc_lint: OK with warnings (0 errors); py_compile ok; __pycache__ removed.
 
 Residual risk: NB = 128 register pressure (spill or ptxas wgmma serialization turns the path off or fails the 0.97 gate), and the prepare total landing near 250 s.
+
+## Result
+
+- job `a6f6063051f14750` (check), status done, passed True, tests 5/5
+- speedup 1.4758x, 95% CI [1.4536, 1.4979], score 262510.165773762 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-turn-rega-s4-first-turn-n128.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-s4-bm256-wide-tile-high-ft.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-s4-bm256-wide-tile-high-ft.patch`; branch `hyp/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 777.02 | 769.33 | 1.0664 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1136.06 | 1145.38 | 1.0143 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2251.37 | 2148.97 | 1.0493 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3785.25 | 3725.86 | 1.0411 | gained |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 12148.27 | 10973.2 | 1.0621 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11658.83 | 10828.31 | 1.0547 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15589.38 | 14827.97 | 1.0644 | gained |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 19167.43 | 18238.85 | 1.043 | gained |
+
+gained on sliding first_turn, turn_1, turn_4; full first_turn, turn_4. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 4 of `rega_kernel<true,*> + rega_kernel<false,*> (128-row tile) in the high (T=3012) and ft (T=16384) classes`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-rega-s4-bm256-wide-tile-high-ft --stage 5`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
