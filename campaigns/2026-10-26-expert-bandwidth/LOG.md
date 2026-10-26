@@ -5,12 +5,12 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T15:52Z
-- step: X0b built (R no-align + combine prefetch, both pass cuda_syntax.py), Opus audit running; then S1 (v3 with 8
-  consumer warps, "v4") as the next build
-- in flight: X0b audit (read-only agent)
-- next action: apply audit fixes; X0b attempt files + decode/moe checks; start S1
-- quota left 10-26: decode 6 checks / 2 scored, moe 5 / 6
+- updated: 2026-10-26T16:05Z
+- step: X0b in flight; S1 (Engine A v4: v3 on 8 consumer warps, 2-record stages, D=2) built and syntax-clean,
+  Opus audit running
+- in flight: decode check 523252767fc84a26 and moe check 6eb226e9db4f4876 (X0b, d25a987d); v4 audit
+- next action: harvest X0b (score on improvement); apply v4 audit fixes; v4 attempt files + decode/moe checks
+- quota left 10-26: decode 5 checks / 2 scored, moe 4 / 6
 - boards: decode **1.4466** (rank 370 of 733), moe 1.5762 (428 of 840), overall 375 of 1223
 
 ## 2026-10-26T15:35Z: campaign opened
@@ -59,3 +59,19 @@ append-only, newest last.
 - Next: X0b (R no-align + combine prefetch) awaits its audit. A g++ -fsyntax-only CUDA checker (rewrite/bin/
   cuda_syntax.py with cuda_stub/) now parses every judge-compiled source and caught a planted arity error. Run it
   before every dispatch.
+
+## 2026-10-26T16:05Z: X0b dispatched; S1 (v4) built
+
+- X0b (d25a987d): R skips its Marlin align where Engine A runs; ea_combine issues all slot loads before one barrier.
+  - Read-only Opus audit: no BLOCKER or MAJOR. Three MINOR fixes applied: the no-align check runs before the layer
+    checks, the ticket counter is asserted 0, and the combine's regs/spill are printed.
+  - Checks: decode 523252767fc84a26, moe 6eb226e9db4f4876.
+- S1 = Engine A **v4** (rewrite/lib/cuda/ea4_kernels.cuh, ea4_core.py): v3 on a CTA of 8 consumer warps plus a
+  producer warp (288 threads).
+  - A stage is two group records (groups 2sg and 2sg+1, two 18432 B bulk copies on one barrier) plus the token rows
+    once. D=2. The work unit is (pass, 128-row super-group, k-chunk).
+  - build_map runs on 9 warps, its scratch aliased into the ring. The Map is 5324 B, smem 112364 B, 2 CTAs/SM.
+  - The module builds with v4 and falls back to a build without v4 on failure.
+  - Candidates: every T<=32 class (EA_ENGINES); decode big-T at T=128 only (T=256 keeps v3 then the hybrid gate);
+    moe big-T at 128 and 256.
+  - cuda_syntax.py passes for both builds (with and without v4).
