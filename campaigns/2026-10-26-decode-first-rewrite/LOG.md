@@ -222,7 +222,8 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
   v16 1.307, v32 1.336): decode rank 354/719, overall 361/1190. Landed on master. Builder porting the hybrid to moe
   T=256 (branch campaign/moe-hybrid).
 
-## 2026-10-26T08:28Z: session close (user's autonomous window ran to 09:49Z)
+## 2026-10-26T08:26Z: active work paused (~80 min of the user's 09:49Z window left; the remaining levers need
+   multi-hour kernel work, listed in the 08:12Z next steps)
 
 - moe hybrid (builder, campaign/moe-hybrid c3313183, check 6463699fb2014f74 1.5856): correct (canary clean, vs fp32
   0.0053) but 0.70-0.74x of moe's wg path at T=256 (the gate's zipf input: 1154 local routes, 24 hot experts up to 163
