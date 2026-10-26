@@ -5,12 +5,14 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T17:05Z
-- step: X2 = wgmma-hot + v4-cold hybrids. moe landed (1.6851); decode port (wg_core.py) in its first check
-- in flight: decode check a1bc1756256b4c91 (wg-hot hybrid H=-16 at T=128/256, 3bcb685b)
-- next action: harvest; if H=-16 wins in decode, it waits for the 00:00Z reset (decode scored 0 left today); with the
-  last moe check, try a hot threshold of 24/32 or the T=128 hybrid; plan 10-27 (thresholds, then X3 glue folds)
-- quota left 10-26: decode 0 checks / 0 scored, moe 1 / 4
+- updated: 2026-10-26T17:50Z
+- step: Engine D (dense bf16 skinny GEMM for P / qkv_gate / o / unpooler at T <= 32): kernel written
+  (`rewrite/lib/cuda/ed_kernels.cuh`), Python side (`ed_core.py` + `ed_decode.py`) in progress, then audit
+- in flight: nothing (no checks left today for either problem)
+- next action: finish Engine D, syntax-check it, audit it. At 00:00Z: decode check of the current build (8b098599:
+  hybrid + prefer_within 0). Score it, or `submission.wghyb-3bcb685b.py` (check 1.5097), whichever beats the board.
+  Then the Engine D check. moe: the v4 k-split consumer (ladder-2 verdict) once Engine D is out
+- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
 - boards: decode **1.4956** (rank 342 of 737), moe **1.6851** (rank 370 of 844), overall 347 of 1228
 
 ## 2026-10-26T15:35Z: campaign opened
@@ -175,3 +177,38 @@ append-only, newest last.
   - decode includes it. Its hybrid gains H=-16: `_hcw_build` builds the module, checks attributes, attaches scratch
     and retiles 32 experts; a miss turns only H=-16 off.
   - Check a1bc1756256b4c91.
+
+## 2026-10-26T17:50Z: decode wg-hot hybrid check 1.5097; selector tie-break reverted; ladder-2 verdict (v4 is consumer-bound)
+
+- decode a1bc1756256b4c91 (check, 3bcb685b: wgmma-hot hybrid H=-16 at T=128/256): passed, **1.5097** vs board 1.4956.
+  - v32 rows +15.5% (s 539.4 -> 466.9) and +10.8% (f 807.2 -> 728.5); v16 +1.7%.
+  - T <= 32 rows were 1-9% slower. Cause: `EA_PREFER_WITHIN = 0.01` put T=9..16 on v3, where v4 leads by 3-5% in
+    every run (d16 s 169.1 -> 180.7).
+  - Not scored: decode had no scored runs left today. Bytes kept as `muse_decode_layer/submission.wghyb-3bcb685b.py`.
+- 8b098599: `EA_PREFER_WITHIN = 0.0` again (the best worst ratio wins). At the 00:00Z reset, check this build first
+  (expected about 1.52: the hybrid gain plus the T <= 32 rows back) and score whichever of the two beats the board.
+- moe 5eafb39e194d4d8b (check, 1cec46df: ladder-2, diagnostic only): passed. Rung ceilings in TB/s, v4's geometry
+  (8 consumer warps, two 18 KB records per stage):
+
+  | rung | TB/s | drop |
+  |---|---|---|
+  | C-R1 ring alone, D=2, 2 CTAs/SM | 4.37 | (4-warp ring 4.46) |
+  | C-R2 + exact dequant | 3.98 | -8.9% |
+  | C-R3 + MMA (const B, 1 tile) | 3.75 | -5.8% |
+  | C-R4 + x from smem, 8 tokens | 3.45 | -8.0% |
+  | C-R4 + x from smem, 16 tokens (2 tiles) | 2.94 | -14.8% |
+  | C-R1 / C-R4 at D=3, 1 CTA/SM | 4.34 / 3.44 | same as D=2 |
+
+  - 8 vs 4 consumer warps at the same ring work: x1.024 (8 tokens), x1.043 (16 tokens). So v4 is neither ring- nor
+    latency-bound: **the consumer's instructions per weight element are the limit.** Each addition costs throughput
+    in proportion to its work. The B fragments (ldmatrix of x) and the MMAs scale with the token tiles.
+  - v4's real kernels (3.21 / 3.12 / 2.92 at T=8/16/32) sit about 7% under C-R4 (maps, scatter, fix-ups).
+  - Next lever for v4: each warp takes a k-slice of all 128 rows instead of 16 rows of all k. One B fragment then
+    feeds 8 m-tiles instead of 1 (B loads / 8), at the cost of one cross-warp reduction per unit. A cheaper dequant
+    is second.
+- Ladder runs archived (profile files). No checks left today for either problem (decode 0/0, moe 0/4 scored).
+- Now building Engine D (`rewrite/lib/cuda/ed_kernels.cuh`): a dense bf16 skinny GEMM on v4's CTA for the decode
+  layer's P (pooler + router), qkv_gate, o and the unpooler at T <= 32.
+  - These rows today: P 22-27 us at 2.8-3.4 TB/s; qkv_gate 11-13 us; o 5-5.4 us; unpooler at T >= 9 16.7 us (cuBLAS).
+  - Engine D's ring alone reaches about 4.4 TB/s. Without dequant its consumer is 4x lighter per byte than v4's.
+  - Expected savings per row: about 9 us at d1, 13 at d16, 20 at d32 (headline about x1.04).
