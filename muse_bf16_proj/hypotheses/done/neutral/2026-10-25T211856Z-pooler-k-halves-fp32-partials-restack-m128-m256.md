@@ -81,6 +81,9 @@ harvested_at: 2026-10-26T015638Z
 best_at_harvest: 1.2566457115954903
 promotion: null
 confirm_queued: pooler-k-halves-fp32-partials-restack-m128-m256-cf
+confirm_job: caaa76cc288d47c7
+confirm_outcome: neutral
+pooled_speedup: 1.2636332647989572
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256

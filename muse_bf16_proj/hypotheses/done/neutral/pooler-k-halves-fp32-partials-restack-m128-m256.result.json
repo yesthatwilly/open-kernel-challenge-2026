@@ -1128,5 +1128,24 @@
   ],
   "summary": "gained on unpooler decode_1; router decode_1, verify_32; qkv_gate decode_16, decode_32; pooler verify_16; lost on router decode_32",
   "expected_hit": "2/3"
+ },
+ "pooled": {
+  "jobs": [
+   "de95f81782374124",
+   "caaa76cc288d47c7"
+  ],
+  "speedups": [
+   1.2682668011504035,
+   1.258999728447511
+  ],
+  "speedup": 1.2636332647989572,
+  "ci": [
+   1.2502303199368707,
+   1.2770362096610437
+  ],
+  "outcome": "neutral",
+  "detail": "unproven-vs-best",
+  "best": 1.2566457115954903,
+  "at": "2026-10-26T023858Z"
  }
 }

@@ -1,0 +1,10 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ff7580f8..4cfa21c6 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -3474,3 +3474,5 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         return _router_hilo_forward(x, hi, lo)
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])
++
++# churn confirm rerun of pooler-k-halves-fp32-partials-restack-m128-m256 (job de95f81782374124); code otherwise identical
