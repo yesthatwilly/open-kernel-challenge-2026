@@ -218,4 +218,7 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 3. Decode d32 full rows: split-KV attention is ~50% of the row (closed in the plan as "1.75x its floor"; revisit only
    with a concrete idea).
 4. W4 own T <= 32 chain (P pooler/router 21-28 us is near its floor; launch gaps and boundary folding remain).
+- 08:16Z: the hybrid's scored run 0d84f58ca33b424b drew **1.4422** (loads d1 1.608, d16 1.465, d32 1.314, v1 1.665,
+  v16 1.307, v32 1.336): decode rank 354/719, overall 361/1190. Landed on master. Builder porting the hybrid to moe
+  T=256 (branch campaign/moe-hybrid).
 
