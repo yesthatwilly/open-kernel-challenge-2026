@@ -69,6 +69,8 @@ submission_sha256: d451b3ff16827922c05d638b1d478a8b1b7a760dfd5c24280686db285b98c
 norm_sha256: 478b2209429ec85fd18bb83e264144195eb06c7769c7a6c9c4e2999fb92989da
 submission_blob: ff7580f8edf36c612459db87204b32d412842b5b
 lint_warnings: 36
+attempt_file: 2026-10-26T012539Z-check-pooler-k-halves-fp32-partials-restack-m128-m256.md
+prepared_at: 2026-10-26T012539Z
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256
