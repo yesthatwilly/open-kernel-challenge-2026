@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212549Z
 base_sha: 8dd2a8d59b8619aeeb15dc4ebd6d2939f2eab87e
 base_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
@@ -75,6 +75,8 @@ submission_blob: 6c52162510bc950d3e53196acc57c9df34525b5d
 lint_warnings: 38
 attempt_file: 2026-10-26T012540Z-check-router-m128-m256-wgmma-swapab-tall-cluster-stage2.md
 prepared_at: 2026-10-26T012540Z
+job: 38daa28c6a704810
+dispatched_at: 2026-10-26T012820Z
 ---
 
 # router-m128-m256-wgmma-swapab-tall-cluster-stage2
