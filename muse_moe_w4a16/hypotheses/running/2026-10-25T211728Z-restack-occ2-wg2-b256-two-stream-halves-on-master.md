@@ -62,7 +62,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212523Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212549Z
 base_sha: 2b505e1ba8846dfb42e476ada051a571345fbfbf
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -79,6 +79,8 @@ submission_blob: 28f02abd4f47ebe530bc077aa45168bb8027abc3
 lint_warnings: 120
 attempt_file: 2026-10-26T012541Z-check-restack-occ2-wg2-b256-two-stream-halves-on-master.md
 prepared_at: 2026-10-26T012541Z
+job: 6ee7b6e302a348c8
+dispatched_at: 2026-10-26T012819Z
 ---
 
 # restack-occ2-wg2-b256-two-stream-halves-on-master
