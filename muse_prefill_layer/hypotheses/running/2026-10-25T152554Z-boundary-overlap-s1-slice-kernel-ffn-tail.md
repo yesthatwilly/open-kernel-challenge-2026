@@ -72,7 +72,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212333Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212552Z
 base_sha: cc874e4f97ac53e4c4a00078d39a8ff28d8316aa
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -81,6 +81,12 @@ worktree: .worktrees/muse_prefill_layer/boundary-overlap-s1-slice-kernel-ffn-tai
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T011443Z
+impl_commit: be87808942711d08b3625dbd3ecd6b39455c3d4f
+submission_sha256: 36bea92e834c646f4af8fedc308047c8e68297281cf61b8d82c38904b4df973a
+norm_sha256: 93d2e9656ab3256c3ac85f2ffb2f115230d5eb030e59112669246a8c5af6e36b
+submission_blob: d24dd7d968891f49c1073544913df9dc158131b9
+lint_warnings: 104
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
@@ -130,3 +136,40 @@ No companion: in-process captured-graph A/B (master tail vs chunked tail at NCH 
 - Add prior (norm-boundaries-persistent-multirow, qkv-gate-columns-side-stream-under-attention); fix base blob f4751fc0 and prepare budget 300 s.
 - Stage 2 (attention boundary under the pooler) competes with the router side stream; settle before minting it.
 
+
+## Implementation notes
+
+Edited only `muse_prefill_layer/submission.py` in the worktree (+~770 lines: one block before `kernel_fn`, a 5-line hook at the end of `prepare()`, a 10-line routed branch in `kernel_fn`).
+
+- **Kernel** `bnd_rows` (own `load_inline` module `muse_prefill_bnd_v1`, kernel symbol `muse_prefill_bnd_rows_kernel`, flags `-O3 -std=c++20 -lineinfo`, `TORCH_CUDA_ARCH_LIST=9.0` around the build, restored after): 512 threads, 16 elements/thread, all row loads (2 x uint4 branch, 4 x float4 stream) issued first, two block reductions (separate smem slots), post-norm (x wpost when given) -> alpha/beta mix -> pre-norm, writes fp32 stream and bf16 next input into ROW SLICES (row0, nrows) of preallocated outputs. `grid` arg: 0 = one CTA per row, else that many persistent CTAs (the review's capped-grid variant). Host checks dtype/shape/contiguity/16-B alignment/row range; prints regs, local (spill) bytes, static smem, occupancy.
+- **Coefficients** (per state, never module-global): alpha/beta probed from `state['attn_boundary']`/`['ffn_boundary']` and cross-checked against the reference formula (ported from the neutral norm-boundaries-persistent-multirow patch), wpost/wpre from the modules' effective weights.
+- **Tail** `_bnd_tail`: NCH chunks; `torch.mm(expert_output[rc], unpooler.t(), out=ffn_output[rc])` on the main stream, then `bnd_stream.wait_stream(main)` and `bnd_rows` on the per-state side stream; `main.wait_stream(bnd_stream)` after the loop; outputs `torch.empty` per call; `record_stream` only outside capture.
+- **Prepare gate** (`_bnd_setup`, runs LAST after rega-lo, start deadline 215 s, phase deadline 270 s, each skip prints `skipped: deadline`): source audit, build (time printed), attributes/occupancy, coefficient probe, parity at T=753 and 16384 on both boundaries (two separately allocated sets alternated over 4 runs, two row chunks with different grids, sentinel check that rows outside a chunk are untouched, whole-matrix and worst-row bounds 5e-3 / 3e-3 / 5x, no NaN), M1 print (kernel vs module, graph, flushed, two rounds), tail gate, a two-state captured-graph replay check with refilled inputs. Compact summary lines are printed again as the last lines of prepare.
+- **Tail gate**: master = its ACTUALLY ROUTED tail (`_gemm` unpooler + `ffn_boundary`, no clone) vs 12 candidates (NCH 2/4 x grid 0/32/16 x side-stream priority 0/-1), eager correctness first, then 2 interleaved rounds x 15 alternations, 256 MiB flush, empty-graph baseline subtracted. ON only if the best candidate is <= 0.95x master in BOTH rounds and candidate IQR <= 1.5x master's in both. All rounds/IQRs/kernel names printed even when master is kept. Flag is per state (`state['bnd_ok']`); a miss is master's exact path and touches no other flag.
+
+Review fixes applied: (1) bnd_rows occupancy/regs/spills printed; the nvjet kernel's smem/regs are not queryable in-process (closed cuBLAS binary), so the profiler prints the chunked and master GEMM kernel names instead (does the 192x192 tile survive at M=8192/4096). (2) Two interleaved rounds with the IQR bound. (3) High-priority `bnd_stream` (priority -1) is a candidate dimension, so the A/B shows whether capture keeps priority. (4) Capped-grid persistent bnd_rows (16/32 CTAs) vs one CTA per row is a candidate dimension. (5) Base blob f4751fc0 and the 300 s prepare budget are what the code assumes (deadlines are in the 300 s frame). The stage-2 open question is not build-relevant.
+
+Deviations: routing is T == 16384 exactly (the gated, scored first_turn shape), not every T > 4096, because only 16384 is timed in prepare; other T stay on master's tail. Candidate selection extends the spec's NCH choice with grid and priority per the review.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `_bnd_tail` has no sync/alloc-on-values/branching on values (shape checks only); event waits via `wait_stream`; `record_stream` skipped while capturing; the gate itself captures and replays it.
+- [x] Nothing derived from `data` is cached: only weight-derived coefficients, the extension handle and a stream in `state`; no device pointers cached, no module-global tensors.
+- [x] Weights: nothing repacked or re-stored; coefficients are fp32 [8192] vectors derived from the norm modules; unpooler used as a transposed view of the bf16 weight.
+- [x] Activations: stream fp32, branch/outputs bf16 exactly as SGLang's boundary; no precision change.
+- [x] Attention untouched.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (torch.profiler in prepare only, as muse_bf16_proj does).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] Prepare budget: own start/phase deadlines; the build and gate fall back to master on any error, never raise.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare()-reachable code and pre-existing dtype warnings); `py_compile` ok; no __pycache__ left.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes.
+- Capture safety: _bnd_tail forks with bnd_stream.wait_stream(main) per chunk and joins with main.wait_stream(bnd_stream); no host sync, outputs are shape-sized torch.empty, record_stream only outside capture (redundant but harmless since main joins). The side stream is created per prepare() in _bnd_setup and stored per state; graphs only share it sequentially, which is legal.
+- Partition: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/bnd_rows_partition_emulation.py (numpy) shows every row written exactly once and every column covered once by the 512x2x8 map, at T=16384 and T=753 (376+377 and 188x3+189 boundary chunks), nch 2/4, grid 0/32/16, and the parity halves.
+- Routing: diff vs master is three hunks (hook at end of prepare, the new block, the T == 16384 branch in kernel_fn); every other T/shape runs master's tail unchanged.
+- Fix: deadlines tightened (start 215 -> 190 s, gate 270 -> 250 s). Master's prepare ends at ~140 s (archive combo-b log), build+gates ~60 s, so this is still ample, but it keeps the phases inside 300 s if the harness clock also counts the import.
+- Parity margin note: the equivalent Triton port measured out rel L2 2.3e-3 (FFN, T=753) vs the 3e-3 gate; deterministic, passes, but thin.
+Residual risk: out rel L2 gate (3e-3) sits close to the measured 2.3e-3 bf16-rounding gap vs the module, and the 192x192 nvjet tile may not survive at M=T/NCH, so the tail gate may simply keep master.
