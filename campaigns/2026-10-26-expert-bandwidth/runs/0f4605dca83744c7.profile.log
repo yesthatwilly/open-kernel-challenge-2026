@@ -1,0 +1,99 @@
+82 (<= 0.0075), worst row 0.00391 (<= 0.0375) -> ok
+[engineA] combine verify T=16 (v4 + CUDA combine): rel-L2 0.00384 (<= 0.0075), worst row 0.00402 (<= 0.0375) -> ok
+[engineA] combine verify T=32 (v4 + CUDA combine): rel-L2 0.00387 (<= 0.0075), worst row 0.00409 (<= 0.0375) -> ok
+[engineA] copy check: 24 replays on two states, T [1, 2, 128]: PASS
+[engineA] PATH CHOSEN T=1 = ENGINE A v1
+[engineA] PATH CHOSEN T=2..32 = ENGINE A v4
+[engineA] PATH CHOSEN T=128 = ENGINE A v4
+[engineA] PATH CHOSEN T=256 = MASTER
+[hybrid-moe] align kernel H=-16: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.38 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.29 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.30 s
+[hybrid-moe] first H=-16 launch: T=128 zipf (each step synced)
+[hybrid-moe]     [H=-16 T=128 zipf] launching _hm_align
+[hybrid-moe]     [H=-16 T=128 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, Engine A v3 cold w13 + w2, post-norm)
+[hybrid-moe]     [H=-16 T=128 zipf] _hm_experts ok
+[hybrid-moe] first H=-32 launch: T=128 zipf (each step synced)
+[hybrid-moe]     [H=-32 T=128 zipf] launching _hm_align
+[hybrid-moe]     [H=-32 T=128 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, Engine A v3 cold w13 + w2, post-norm)
+[hybrid-moe]     [H=-32 T=128 zipf] _hm_experts ok
+[hybrid-moe] first H=-48 launch: T=128 zipf (each step synced)
+[hybrid-moe]     [H=-48 T=128 zipf] launching _hm_align
+[hybrid-moe]     [H=-48 T=128 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, Engine A v3 cold w13 + w2, post-norm)
+[hybrid-moe]     [H=-48 T=128 zipf] _hm_experts ok
+[hybrid-moe] first H=32 launch: T=128 zipf (each step synced)
+[hybrid-moe]     [H=32 T=128 zipf] launching _hm_align
+[hybrid-moe]     [H=32 T=128 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, post-norm)
+[hybrid-moe]     [H=32 T=128 zipf] _hm_experts ok
+[hybrid-moe] first H=48 launch: T=128 zipf (each step synced)
+[hybrid-moe]     [H=48 T=128 zipf] launching _hm_align
+[hybrid-moe]     [H=48 T=128 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, post-norm)
+[hybrid-moe]     [H=48 T=128 zipf] _hm_experts ok
+[hybrid-moe] canary T=128 zipf: local routes 568, distinct 32, hot experts 9 (358 rows, max 91), 16-row blocks 51; master vs fp32 0.00388
+[hybrid-moe] canary T=128 random: local routes 125, distinct 32, hot experts 0 (0 rows, max 8), 16-row blocks 32; master vs fp32 0.00385
+[hybrid-moe] canary T=128 local8: local routes 1024, distinct 32, hot experts 24 (912 rows, max 113), 16-row blocks 77; master vs fp32 0.00386
+[hybrid-moe] canary T=128 skewed-4hot: local routes 562, distinct 30, hot experts 4 (512 rows, max 128), 16-row blocks 58; master vs fp32 0.00388
+[hybrid-moe] canary T=128 one-local: local routes 128, distinct 1, hot experts 1 (128 rows, max 128), 16-row blocks 8; master vs fp32 0.00388
+[hybrid-moe] canary T=128 two-local: local routes 256, distinct 2, hot experts 2 (256 rows, max 128), 16-row blocks 16; master vs fp32 0.00387
+[hybrid-moe] canary T=128 zero-local: local routes 0, distinct 0, hot experts 0 (0 rows, max 0), 16-row blocks 0; master vs fp32 0
+[hybrid-moe] canary T=128 max-active: local routes 1024, distinct 32, hot experts 32 (1024 rows, max 32), 16-row blocks 64; master vs fp32 0.00387
+[hybrid-moe] canary T=256 zipf: local routes 1160, distinct 32, hot experts 24 (1070 rows, max 170), 16-row blocks 85; master vs fp32 0.00426
+[hybrid-moe] canary T=256 random: local routes 256, distinct 32, hot experts 0 (0 rows, max 14), 16-row blocks 32; master vs fp32 0.00425
+[hybrid-moe] canary T=256 local8: local routes 2048, distinct 32, hot experts 32 (2048 rows, max 237), 16-row blocks 143; master vs fp32 0.00426
+[hybrid-moe] canary T=256 skewed-4hot: local routes 1140, distinct 32, hot experts 4 (1024 rows, max 256), 16-row blocks 92; master vs fp32 0.00426
+[hybrid-moe] canary T=256 one-local: local routes 256, distinct 1, hot experts 1 (256 rows, max 256), 16-row blocks 16; master vs fp32 0.00426
+[hybrid-moe] canary T=256 two-local: local routes 512, distinct 2, hot experts 2 (512 rows, max 256), 16-row blocks 32; master vs fp32 0.00426
+[hybrid-moe] canary T=256 zero-local: local routes 0, distinct 0, hot experts 0 (0 rows, max 0), 16-row blocks 0; master vs fp32 0
+[hybrid-moe] canary T=256 max-active: local routes 2048, distinct 32, hot experts 32 (2048 rows, max 64), 16-row blocks 128; master vs fp32 0.00426
+[hybrid-moe] canary H=-16: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00427 (master 0.00426)
+[hybrid-moe] canary H=-32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00426)
+[hybrid-moe] canary H=-48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00426)
+[hybrid-moe] canary H=32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00426)
+[hybrid-moe] canary H=48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00426)
+[hybrid-moe] gate input T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes): local routes 201, distinct 16, hot experts 1 (122 rows, max 122), 16-row blocks 23
+[hybrid-moe] gate input T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes): local routes 194, distinct 23, hot experts 5 (100 rows, max 28), 16-row blocks 28
+[hybrid-moe] gate input T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes): local routes 162, distinct 27, hot experts 1 (49 rows, max 49), 16-row blocks 30
+[hybrid-moe] gate T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes) round 1 (graph baseline 5.50 us subtracted): master 233.98 us (IQR 1.50) | H-16 229.25 us (IQR 1.57, p10/p90 227.90/231.20, x1.021) | H-32 243.62 us (IQR 1.15, p10/p90 241.79/244.51, x0.960, FAIL) | H-48 245.41 us (IQR 1.57, p10/p90 244.16/247.23, x0.953, FAIL) | H32 259.74 us (IQR 0.64, p10/p90 258.72/260.58, x0.901, FAIL) | H48 262.88 us (IQR 1.31, p10/p90 262.08/264.06, x0.890, FAIL)
+[hybrid-moe] gate T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes) round 2 (graph baseline 5.50 us subtracted): master 233.38 us (IQR 1.54) | H-16 228.99 us (IQR 2.34, p10/p90 227.33/231.49, x1.019, FAIL) | H-32 242.75 us (IQR 1.60, p10/p90 241.22/244.45, x0.961, FAIL) | H-48 244.90 us (IQR 2.21, p10/p90 243.23/247.23, x0.953, FAIL) | H32 259.04 us (IQR 1.57, p10/p90 257.54/260.29, x0.901, FAIL) | H48 261.79 us (IQR 1.44, p10/p90 260.38/263.36, x0.891, FAIL)
+[hybrid-moe] gate T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes) round 1 (graph baseline 5.34 us subtracted): master 279.42 us (IQR 1.89) | H-16 288.03 us (IQR 1.98, p10/p90 286.24/289.34, x0.970, FAIL) | H-32 278.43 us (IQR 2.27, p10/p90 276.58/280.51, x1.004, FAIL) | H-48 298.40 us (IQR 2.30, p10/p90 295.78/300.13, x0.936, FAIL) | H32 308.00 us (IQR 1.66, p10/p90 306.21/309.31, x0.907, FAIL) | H48 328.93 us (IQR 2.46, p10/p90 327.26/331.58, x0.849, FAIL)
+[hybrid-moe] gate T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes) round 2 (graph baseline 5.47 us subtracted): master 279.39 us (IQR 1.79) | H-16 287.68 us (IQR 1.82, p10/p90 285.76/289.44, x0.971, FAIL) | H-32 278.75 us (IQR 1.73, p10/p90 276.29/280.32, x1.002, FAIL) | H-48 298.50 us (IQR 1.57, p10/p90 296.77/300.10, x0.936, FAIL) | H32 307.71 us (IQR 1.41, p10/p90 306.21/309.28, x0.908, FAIL) | H48 328.99 us (IQR 1.79, p10/p90 327.46/331.26, x0.849, FAIL)
+[hybrid-moe] gate T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes) round 1 (graph baseline 5.31 us subtracted): master 296.99 us (IQR 1.73) | H-16 301.73 us (IQR 1.82, p10/p90 299.81/304.29, x0.984, FAIL) | H-32 300.03 us (IQR 2.11, p10/p90 298.98/302.75, x0.990, FAIL) | H-48 308.80 us (IQR 1.02, p10/p90 307.49/310.88, x0.962, FAIL) | H32 347.71 us (IQR 1.15, p10/p90 346.66/348.86, x0.854, FAIL) | H48 358.02 us (IQR 1.47, p10/p90 356.22/359.49, x0.830, FAIL)
+[hybrid-moe] gate T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes) round 2 (graph baseline 5.50 us subtracted): master 298.05 us (IQR 2.05) | H-16 302.37 us (IQR 1.70, p10/p90 299.90/303.84, x0.986, FAIL) | H-32 301.15 us (IQR 2.05, p10/p90 298.98/303.78, x0.990, FAIL) | H-48 309.31 us (IQR 1.86, p10/p90 307.74/310.91, x0.964, FAIL) | H32 348.42 us (IQR 1.54, p10/p90 347.33/349.47, x0.855, FAIL) | H48 358.75 us (IQR 1.38, p10/p90 357.47/360.06, x0.831, FAIL)
+[hybrid-moe] gate T=128 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x0.970, H-32 x0.960, H-48 x0.936, H32 x0.854, H48 x0.830 -> master
+[hybrid-moe] gate input T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes): local routes 333, distinct 22, hot experts 4 (224 rows, max 155), 16-row blocks 34
+[hybrid-moe] gate input T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes): local routes 374, distinct 23, hot experts 7 (274 rows, max 82), 16-row blocks 38
+[hybrid-moe] gate input T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes): local routes 467, distinct 25, hot experts 8 (361 rows, max 143), 16-row blocks 43
+[hybrid-moe] gate T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes) round 1 (graph baseline 5.47 us subtracted): master 364.61 us (IQR 1.38) | H-16 304.29 us (IQR 1.70, p10/p90 303.14/305.70, x1.198) | H-32 328.67 us (IQR 1.70, p10/p90 327.10/330.11, x1.109) | H-48 344.45 us (IQR 1.89, p10/p90 343.04/345.76, x1.059) | H32 356.29 us (IQR 1.66, p10/p90 354.88/358.24, x1.023) | H48 371.20 us (IQR 1.70, p10/p90 369.70/372.61, x0.982, FAIL)
+[hybrid-moe] gate T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes) round 2 (graph baseline 5.50 us subtracted): master 363.81 us (IQR 1.50) | H-16 304.19 us (IQR 1.18, p10/p90 303.10/305.73, x1.196) | H-32 328.38 us (IQR 1.44, p10/p90 327.49/329.76, x1.108) | H-48 343.78 us (IQR 1.38, p10/p90 342.43/345.73, x1.058) | H32 356.13 us (IQR 1.79, p10/p90 354.30/357.60, x1.022) | H48 371.01 us (IQR 1.12, p10/p90 369.25/372.06, x0.981, FAIL)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 1 (graph baseline 5.38 us subtracted): master 370.34 us (IQR 1.41) | H-16 325.98 us (IQR 1.73, p10/p90 324.45/328.19, x1.136) | H-32 374.37 us (IQR 2.11, p10/p90 372.58/376.19, x0.989, FAIL) | H-48 368.74 us (IQR 2.53, p10/p90 366.88/372.22, x1.004, FAIL) | H32 393.31 us (IQR 2.02, p10/p90 391.52/394.75, x0.942, FAIL) | H48 387.39 us (IQR 2.08, p10/p90 385.63/389.25, x0.956, FAIL)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 2 (graph baseline 5.31 us subtracted): master 368.99 us (IQR 2.05) | H-16 325.54 us (IQR 2.05, p10/p90 323.42/327.17, x1.133) | H-32 373.31 us (IQR 2.05, p10/p90 371.52/375.10, x0.988, FAIL) | H-48 367.52 us (IQR 2.08, p10/p90 365.98/370.78, x1.004, FAIL) | H32 391.78 us (IQR 1.47, p10/p90 390.40/393.22, x0.942, FAIL) | H48 386.21 us (IQR 2.14, p10/p90 384.80/388.38, x0.955, FAIL)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 1 (graph baseline 5.50 us subtracted): master 409.06 us (IQR 1.70) | H-16 365.25 us (IQR 1.41, p10/p90 363.81/366.18, x1.120) | H-32 417.09 us (IQR 1.86, p10/p90 415.07/418.75, x0.981, FAIL) | H-48 415.33 us (IQR 1.73, p10/p90 413.47/416.77, x0.985, FAIL) | H32 434.27 us (IQR 2.43, p10/p90 431.39/436.06, x0.942, FAIL) | H48 433.66 us (IQR 1.60, p10/p90 431.97/435.36, x0.943, FAIL)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 2 (graph baseline 5.50 us subtracted): master 408.10 us (IQR 1.95) | H-16 364.29 us (IQR 1.60, p10/p90 362.62/366.43, x1.120) | H-32 414.85 us (IQR 2.62, p10/p90 413.18/417.44, x0.984, FAIL) | H-48 413.54 us (IQR 2.08, p10/p90 412.00/415.90, x0.987, FAIL) | H32 431.87 us (IQR 2.24, p10/p90 430.14/434.40, x0.945, FAIL) | H48 431.49 us (IQR 1.70, p10/p90 430.02/433.12, x0.946, FAIL)
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.120, H-32 x0.981, H-48 x0.985, H32 x0.942, H48 x0.943 -> H-16
+[hybrid-moe] layer check T=256 H=-16 (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00428 (master 0.00428)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] ===== MOE HYBRID (T (128, 256)) SUMMARY (4.5 s; prepare at 121.3 s) =====
+[hybrid-moe] align kernel H=-16: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.38 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.29 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.30 s
+[hybrid-moe] canary H=-16: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00427 (master 0.00426)
+[hybrid-moe] canary H=-32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00426)
+[hybrid-moe] canary H=-48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00426)
+[hybrid-moe] canary H=32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00426)
+[hybrid-moe] canary H=48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00426)
+[hybrid-moe] gate input T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes): local routes 201, distinct 16, hot experts 1 (122 rows, max 122), 16-row blocks 23
+[hybrid-moe] gate input T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes): local routes 194, distinct 23, hot experts 5 (100 rows, max 28), 16-row blocks 28
+[hybrid-moe] gate input T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes): local routes 162, distinct 27, hot experts 1 (49 rows, max 49), 16-row blocks 30
+[hybrid-moe] gate T=128 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x0.970, H-32 x0.960, H-48 x0.936, H32 x0.854, H48 x0.830 -> master
+[hybrid-moe] gate input T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes): local routes 333, distinct 22, hot experts 4 (224 rows, max 155), 16-row blocks 34
+[hybrid-moe] gate input T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes): local routes 374, distinct 23, hot experts 7 (274 rows, max 82), 16-row blocks 38
+[hybrid-moe] gate input T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes): local routes 467, distinct 25, hot experts 8 (361 rows, max 143), 16-row blocks 43
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.120, H-32 x0.981, H-48 x0.985, H32 x0.942, H48 x0.943 -> H-16
+[hybrid-moe] layer check T=256 H=-16 (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00428 (master 0.00428)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] PATH CHOSEN T=128 = MASTER (fallback: no H wins every round (H-16 x0.970, H-32 x0.960, H-48 x0.936, H32 x0.854, H48 x0.830); layer us passes): master 297.5, H-16 302.0, H-32 300.6, H-48 309.1, H32 348.1, H48 358.4)
+[hybrid-moe] PATH CHOSEN T=256 = HYBRID (hot on Marlin, cold on Engine A v3) H=-16 (hot > 16 rows at block 16); layer us passes): master 408.6, H-16 364.8, H-32 416.0, H-48 414.4, H32 433.1, H48 432.6
