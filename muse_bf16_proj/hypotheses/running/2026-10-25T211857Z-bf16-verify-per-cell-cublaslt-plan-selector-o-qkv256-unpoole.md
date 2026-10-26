@@ -57,7 +57,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212547Z
 base_sha: d8ecddc962f6cc4f6ef3802f28e49e32b60b4010
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -74,6 +74,8 @@ submission_blob: 1950f1435c1a301ea25f06353bed0780ab5a2bbd
 lint_warnings: 40
 attempt_file: 2026-10-26T012539Z-check-bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole.md
 prepared_at: 2026-10-26T012539Z
+job: 37ed8722bc9b402d
+dispatched_at: 2026-10-26T012616Z
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
