@@ -72,8 +72,10 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 3
 replaces: "sliding decode (q_len 1, page 1, tp8, 2<=B<=32): stage-2 [_pre_attention_kernel + splitkv_attn_sk_kernel TOK=1] pair at B=17..32 and master Triton _sliding_fused_kernel at B=2..16"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-26T220207Z
+review_companions: null
 ---
 
 # sliding-decode-sk-s3-fused-preattn-rope
@@ -102,3 +104,34 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-26T220207Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed as an okc check with no companions: the design is sound, gated per band and readable from the decode_16/32 sliding rows. It is the same FUSED_PRE fold DIAGNOSIS lists as do-not-try for full decode (+3.1/+3.2 us at full B=16, ~0 at B=32), so expect roughly 1.0-1.15x per row and +0.3-1.0% headline. Two build traps (load_prefix_pseudo has an empty body in the skF TU; the dynamic-smem attribute is set for one kernel only) and a missing window-edge self-check must be fixed before dispatch.
+
+### Justification
+Removing the separate _pre_attention_kernel node is a real lever on these latency-bound rows (sliding decode_32 17.80 us = sk 14.1 + pre 1.9; decode_16 15.24 us Triton 12.6), but the fold adds in-kernel cost (skF measured +3.2 us at full B=16). Gate budgets: B=32 fold <= 2.4 us, B=16 <= 2.1-2.7 us: each band close to a coin flip. M2 (decode_32 <= 15.5 us) is the operative milestone; M3 is unreachable at these sizes. The difference from full-decode-splitkv-s3-fused-preattn is real at B=2..16 (bar is Triton's single launch).
+
+### Confounders on the current kernel
+- restack-sliding-decode-sk-window-on-cluster-master (parent): its pair is the B=17..32 incumbent; read _SD_ROUTE and _SDF_ROUTE PATH CHOSEN lines
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn: templating skF can perturb SLIDE=false codegen (125/128 regs)
+- sliding-decode1-cluster-per-kvhead (master head): build from current master 5d528bf3, not the stale restack branch
+- fused-preattention-triton: Triton sin/cos approximate at ~80000 rad; use rel < 5e-2 vs Triton, byte match info only
+- sliding-deep-splits-on-cuda-splitkv + sliding-fused-triton-decode1-gate: the Triton single-launch incumbent at B=2..16
+- shared self-resetting _ps_ticket: SDF setup needs a finally re-zero
+
+### Interference and A/B needs
+No companion: rewrite stage with its own in-process A/B per band; gain attributable from the decode_16/32 sliding rows plus [sdf-gate] lines; print [fused] - [sk alone] per band as the fold cost.
+
+### Open questions
+- BUILDER (blocking): load_prefix_pseudo is empty in the skF TU (no -DSK_PSEUDO): inline the scan under if constexpr (SLIDE) or add the define
+- BUILDER (blocking): set the dynamic-smem attribute for both skF instantiations
+- BUILDER: self-check on _slide_synthetic with edge keys, B=4 and B=16 cases
+- BUILDER: load positions / inv_freq in the prologue or a smem cos/sin table
+- BUILDER: __threadfence only on the owner branch that stored
+- BUILDER: two-round gate (>= 1.03x vs Triton at B=2..16; vs the routed pair at B=17..32); fp32 accurate-RoPE row reference
+- BUILDER: skip timing the B=1 band; own try/except freezing _SDF_ROUTE; re-zero _ps_ticket in finally
+- HARVEST: judge on sliding decode_16/32 rows and [sdf-gate] lines vs master 4b608df595b046fb
+
