@@ -1,0 +1,137 @@
+ fp32 0.00798 (<= 0.0125); master vs fp32 0.00641
+[combo] F1 launching master T=1 all-local
+[combo] F1 ok master T=1 all-local
+[combo] F1 launching w13 atomic T=1 all-local (poisoned buffer)
+[combo] F1 ok w13 atomic T=1 all-local
+[combo] F1 T=1 all-local atomic: rel-L2 vs master 0.0071 (<= 0.0125), vs fp32 0.00586 (<= 0.0125); master vs fp32 0.00535
+[combo] F1 launching w13 atomic_zero T=1 all-local (poisoned buffer)
+[combo] F1 ok w13 atomic_zero T=1 all-local
+[combo] F1 T=1 all-local atomic_zero: rel-L2 vs master 0.0071 (<= 0.0125), vs fp32 0.00586 (<= 0.0125); master vs fp32 0.00535
+[combo] F1 correctness: atomic worst rel-L2 vs master 0.0101, vs fp32 0.00819; master vs fp32 worst 0.00641
+[combo] F1 [A/B] w13 Marlin call alone T=1: zipf: master 27.23 us, atomic 25.79 us; random: master 18.37 us, atomic 13.95 us
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.23 us, w13 atomic 25.79 us, ratio 0.947 (ON at <= 0.98); fp32 worst 0.00819, vs master worst 0.0101
+[combo] phase F1: ran, 0.1 s (prepare at 60.9 s)
+[combo] F2 launching warm: _align_parallel and align2 chunks (64, 128, 256, 512) at bsm 16, T 128..512
+[combo] F2 ok warm
+[combo] F2 table check: 126 cases; failing candidates none
+[combo] F2 launching _moe_wgmma master front end T=128 skewed
+[combo] F2 ok _moe_wgmma master front end T=128 skewed
+[combo] F2 launching _moe_wgmma master front end T=128 random
+[combo] F2 ok _moe_wgmma master front end T=128 random
+[combo] F2 launching _moe_wgmma master front end T=191 skewed
+[combo] F2 ok _moe_wgmma master front end T=191 skewed
+[combo] F2 launching _moe_wgmma master front end T=191 random
+[combo] F2 ok _moe_wgmma master front end T=191 random
+[combo] F2 launching _moe_wgmma master front end T=192 skewed
+[combo] F2 ok _moe_wgmma master front end T=192 skewed
+[combo] F2 launching _moe_wgmma master front end T=192 random
+[combo] F2 ok _moe_wgmma master front end T=192 random
+[combo] F2 launching _moe_wgmma master front end T=256 skewed
+[combo] F2 ok _moe_wgmma master front end T=256 skewed
+[combo] F2 launching _moe_wgmma master front end T=256 random
+[combo] F2 ok _moe_wgmma master front end T=256 random
+[combo] F2 launching _moe_wgmma master front end T=257 skewed
+[combo] F2 ok _moe_wgmma master front end T=257 skewed
+[combo] F2 launching _moe_wgmma master front end T=257 random
+[combo] F2 ok _moe_wgmma master front end T=257 random
+[combo] F2 launching _moe_wgmma master front end T=384 skewed
+[combo] F2 ok _moe_wgmma master front end T=384 skewed
+[combo] F2 launching _moe_wgmma master front end T=384 random
+[combo] F2 ok _moe_wgmma master front end T=384 random
+[combo] F2 launching _moe_wgmma master front end T=512 skewed
+[combo] F2 ok _moe_wgmma master front end T=512 skewed
+[combo] F2 launching _moe_wgmma master front end T=512 random
+[combo] F2 ok _moe_wgmma master front end T=512 random
+[combo] F2 bitwise _moe_wgmma check: passing ['_align_parallel bsm 16', 'align2 chunk 64 bsm 16', 'align2 chunk 128 bsm 16', 'align2 chunk 256 bsm 16', 'align2 chunk 512 bsm 16']; failing none
+[combo] F2 [A/B] B256 front end alone T=256 (gather+cast+SGLang align vs candidates): zipf: master 12.74 us, _align_parallel bsm 16 6.46 us, align2 chunk 64 bsm 16 4.70 us, align2 chunk 128 bsm 16 5.89 us, align2 chunk 256 bsm 16 5.54 us, align2 chunk 512 bsm 16 7.46 us; random: master 12.58 us, _align_parallel bsm 16 6.27 us, align2 chunk 64 bsm 16 4.29 us, align2 chunk 128 bsm 16 5.57 us, align2 chunk 256 bsm 16 5.15 us, align2 chunk 512 bsm 16 7.04 us
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.74 us, align2 chunk 64 bsm 16 4.70 us, ratio 0.369 (ON at <= 0.98)
+[combo] phase F2: ran, 2.4 s (prepare at 63.3 s)
+[combo] C1a launching warm: _align_parallel T 17..32
+[combo] C1a ok warm
+[combo] C1a [A/B] align alone T=32 bsm=16 (master = _align_small): zipf: master 3.42 us, align_parallel 1.92 us; random: master 3.42 us, align_parallel 1.86 us
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.42 us, _align_parallel 1.92 us, ratio 0.561 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] phase C1a: ran, 0.3 s (prepare at 63.6 s)
+[combo] C1b launching warm: _post_norm_combine_hoisted_kernel T=32
+[combo] C1b ok warm
+[combo] C1b T=32 random: hoisted rel-L2 vs fp32 0.00165, SGLang 0.00244, bound 0.00365
+[combo] C1b T=32 skewed: hoisted rel-L2 vs fp32 0.00167, SGLang 0.00244, bound 0.00366
+[combo] C1b T=32 all-remote: hoisted rel-L2 vs fp32 0, SGLang 0, bound 1e-05
+[combo] C1b T=32 all-one-expert: hoisted rel-L2 vs fp32 0.00165, SGLang 0.00244, bound 0.00366
+[combo] C1b T=32 all-local: hoisted rel-L2 vs fp32 0.00166, SGLang 0.00244, bound 0.00366
+[combo] C1b T=32 all-local-saturated: hoisted rel-L2 vs fp32 0.00165, SGLang 0.00244, bound 0.00367
+[combo] C1b [A/B] post-norm alone T=32: zipf: master 7.71 us, hoisted 3.23 us; random: master 3.68 us, hoisted 2.85 us
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.68 us, hoisted Triton post-norm 2.85 us, ratio 0.774 (ON at <= 0.98); error vs fp32 worst hoisted 0.00167 / SGLang 0.00244 (6 routings)
+[combo] phase C1b: ran, 0.2 s (prepare at 63.8 s)
+[cuda-wgmma-verify] select  B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.8 us: Marlin full path 369.4 us, wgmma full path 462.6 us, Marlin/wgmma 0.799x (end-to-end rel-L2 6.04e-03)
+[cuda-wgmma-verify] select  B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.8 us: Marlin full path 366.3 us, wgmma full path 463.5 us, Marlin/wgmma 0.790x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify] select  B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.799x, 0.790x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 376 us (judged s4 Marlin pair 306.2 us); 0.1s
+[cuda-wgmma-verify] select  B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.8 us: Marlin full path 497.5 us, wgmma full path 463.6 us, Marlin/wgmma 1.073x (end-to-end rel-L2 6.08e-03)
+[cuda-wgmma-verify] select  B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.8 us: Marlin full path 483.8 us, wgmma full path 453.3 us, Marlin/wgmma 1.067x (end-to-end rel-L2 6.02e-03)
+[cuda-wgmma-verify] select  B256 (256 <= T <= 512): wgmma ENABLED: ratios 1.073x, 1.067x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 501 us (judged s4 Marlin pair 483.2 us); 0.2s
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] phase F2-select-diag: ran, 0.3 s (prepare at 64.2 s)
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] phase copy: ran, 0.5 s (prepare at 64.6 s)
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.33 us, align2 3.97 us, ratio 0.839, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.26 us, align2 4.38 us, ratio 0.745, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.11 us, align2 4.38 us, ratio 1.394, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'F2-select-diag': 200.0, 'copy': 255.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.4 s, ran
+[combo] phase C1a: 0.3 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] phase copy: 0.5 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.23 us, w13 atomic 25.79 us, ratio 0.947 (ON at <= 0.98); fp32 worst 0.00819, vs master worst 0.0101
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.74 us, align2 chunk 64 bsm 16 4.70 us, ratio 0.369 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.42 us, _align_parallel 1.92 us, ratio 0.561 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.68 us, hoisted Triton post-norm 2.85 us, ratio 0.774 (ON at <= 0.98); error vs fp32 worst hoisted 0.00167 / SGLang 0.00244 (6 routings)
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 (master = 'master'/0)
+[combo] prepare seconds: master 60.8, total 64.6
+[ladder] load_inline okc_campaign_ea_ladder_v1 compiled in 38.1s (TORCH_CUDA_ARCH_LIST=9.0a, ['-O3', '-std=c++20', '-lineinfo'])
+[ladder] env sm=132 clk_mhz=1980 build_s=38.1 flush=read256 timer=graph reps=21x2 kernels: k0:48r/0sp/72K/occ3 k1:48r/0sp/108K/occ2 k2:52r/0sp/72K/occ3 k3:72r/0sp/72K/occ3 k4:63r/0sp/72K/occ3 k5:80r/0sp/72K/occ3 k6:83r/0sp/72K/occ3 k7:85r/0sp/72K/occ3 k8:75r/0sp/104K/occ2 k9:83r/0sp/102K/occ2 k10:96r/0sp/151K/occ1 k11:48r/0sp/54K/occ4
+[ladder] dq_exact=0/121856 mismatches (extraction-only 0); first bad case none
+[ladder]   canary k0 (R1 stream cta-ring D4 occ2) grid 264 ...
+[ladder]   canary k1 (R1 stream cta-ring D6 occ2) grid 264 ...
+[ladder]   canary k2 (R1 stream warp-ring D4 occ2) grid 264 ...
+[ladder]   canary k3 (R2 +dq=master occ2) grid 264 ...
+[ladder]   canary k4 (R2 +dq=prop occ2) grid 264 ...
+[ladder]   canary k5 (R3 +mma const-B nt1 dq=prop) grid 264 ...
+[ladder]   canary k6 (R3 +mma const-B nt4 dq=prop) grid 264 ...
+[ladder]   canary k7 (R3 +mma const-B nt1 dq=master) grid 264 ...
+[ladder]   canary k8 (R4 +x smem-B nt1 tok1) grid 264 ...
+[ladder]   canary k9 (R4 +x smem-B nt2 tok16) grid 264 ...
+[ladder]   canary k10 (R4 +x smem-B nt4 tok32) grid 132 ...
+[ladder]   canary k11 (R1 stream cta-ring D3 occ2) grid 264 ...
+[ladder] canary: 12 kernels ran clean (error word 0), bank 201.3 MB = 10922 stages
+[ladder] graph baseline (empty graph, one tiny kernel) 5.70 us subtracted as t_us; t_raw includes it (true kernel time lies between; tbps uses t_us, tbps_raw uses t_raw)
+[ladder] R1 stream cta-ring D4 occ2: grid=264 t_us=44.74 t_raw=50.43 iqr=1.38 p10=43.42 p90=45.12 tbps=4.50 tbps_raw=3.99 clk_stage_cta=2141 regs=48 spill=0 smem=72K occ=3
+[ladder] R1 stream cta-ring D4 occ3: grid=396 t_us=44.00 t_raw=49.70 iqr=1.38 p10=43.42 p90=44.99 tbps=4.58 tbps_raw=4.05 clk_stage_cta=3159 regs=48 spill=0 smem=72K occ=3
+[ladder] R1 stream cta-ring D6 occ2: grid=264 t_us=43.84 t_raw=49.54 iqr=1.34 p10=43.49 p90=45.06 tbps=4.59 tbps_raw=4.06 clk_stage_cta=2098 regs=48 spill=0 smem=108K occ=2
+[ladder] R1 stream warp-ring D4 occ2: grid=264 t_us=44.77 t_raw=50.46 iqr=1.31 p10=43.52 p90=45.18 tbps=4.50 tbps_raw=3.99 clk_stage_cta=2143 regs=52 spill=0 smem=72K occ=3
+[ladder] R1 stream warp-ring D4 occ3: grid=396 t_us=43.71 t_raw=49.41 iqr=1.31 p10=43.33 p90=44.90 tbps=4.61 tbps_raw=4.07 clk_stage_cta=3138 regs=52 spill=0 smem=72K occ=3
+[ladder] R2 +dq=master occ2: grid=264 t_us=50.50 t_raw=56.19 iqr=0.51 p10=50.05 p90=51.10 tbps=3.99 tbps_raw=3.58 clk_stage_cta=2417 regs=72 spill=0 smem=72K occ=3
+[ladder] R2 +dq=prop occ2: grid=264 t_us=49.82 t_raw=55.52 iqr=0.58 p10=49.54 p90=50.94 tbps=4.04 tbps_raw=3.63 clk_stage_cta=2385 regs=63 spill=0 smem=72K occ=3
+[ladder] R2 +dq=prop occ3: grid=396 t_us=49.38 t_raw=55.07 iqr=0.90 p10=48.90 p90=50.24 tbps=4.08 tbps_raw=3.66 clk_stage_cta=3545 regs=63 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt1 dq=prop: grid=264 t_us=53.54 t_raw=59.23 iqr=0.45 p10=53.12 p90=54.08 tbps=3.76 tbps_raw=3.40 clk_stage_cta=2562 regs=80 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt4 dq=prop: grid=264 t_us=69.22 t_raw=74.91 iqr=0.42 p10=68.83 p90=69.57 tbps=2.91 tbps_raw=2.69 clk_stage_cta=3313 regs=83 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt1 dq=master: grid=264 t_us=59.39 t_raw=65.09 iqr=0.32 p10=59.10 p90=60.10 tbps=3.39 tbps_raw=3.09 clk_stage_cta=2842 regs=85 spill=0 smem=72K occ=3
+[ladder] R4 +x smem-B nt1 tok1: grid=264 t_us=55.26 t_raw=60.96 iqr=0.77 p10=54.85 p90=56.32 tbps=3.64 tbps_raw=3.30 clk_stage_cta=2645 regs=75 spill=0 smem=104K occ=2
+[ladder] R4 +x smem-B nt1 tok8: grid=264 t_us=59.23 t_raw=64.93 iqr=0.64 p10=58.82 p90=60.13 tbps=3.40 tbps_raw=3.10 clk_stage_cta=2835 regs=75 spill=0 smem=104K occ=2
+[ladder] R4 +x smem-B nt2 tok16: grid=264 t_us=70.78 t_raw=76.48 iqr=1.06 p10=70.24 p90=71.90 tbps=2.84 tbps_raw=2.63 clk_stage_cta=3388 regs=83 spill=0 smem=102K occ=2
+[ladder] R4 +x smem-B nt4 tok32: grid=132 t_us=147.07 t_raw=152.77 iqr=1.66 p10=145.73 p90=148.74 tbps=1.37 tbps_raw=1.32 clk_stage_cta=3519 regs=96 spill=0 smem=151K occ=1
+[ladder] R1 stream cta-ring D3 occ2: grid=264 t_us=44.13 t_raw=49.82 iqr=1.15 p10=43.68 p90=45.09 tbps=4.56 tbps_raw=4.04 clk_stage_cta=2112 regs=48 spill=0 smem=54K occ=4
+[ladder] R1 stream cta-ring D3 occ1: grid=132 t_us=44.90 t_raw=50.59 iqr=1.28 p10=44.22 p90=45.98 tbps=4.48 tbps_raw=3.98 clk_stage_cta=1074 regs=48 spill=0 smem=54K occ=4
+[ladder] R0 flush=read|zero_ rung=R1 t_us=44.74|53.57 dirty_penalty_us=8.83 dirty_penalty_pct=19.7 (graph baseline 5.70 us subtracted)
+[ladder] R6ref master T=1 local8: active=8 bytes_mb=226.5 t_us=103.65 iqr=0.83 tbps_active=2.19
+[ladder] R6ref master T=1 zipf: active=5 bytes_mb=141.6 t_us=72.51 iqr=0.61 tbps_active=1.95
+[ladder] R6ref master T=8 zipf: active=15 bytes_mb=424.7 t_us=174.94 iqr=1.22 tbps_active=2.43
+[ladder] R6ref master T=32 zipf: active=31 bytes_mb=877.7 t_us=359.33 iqr=1.15 tbps_active=2.44
+[ladder] VERDICT ceiling_tbps=4.61 (raw 4.07) [R1 stream cta-ring D4 occ2]>[R2 +dq=prop occ2]=10.2% [R2 +dq=prop occ2]>[R3 +mma const-B nt1 dq=prop]=6.9% [R3 +mma const-B nt1 dq=prop]>[R4 +x smem-B nt1 tok8]=9.6% [R1 stream cta-ring D3 occ2]>[R4 +x smem-B nt2 tok16]=37.7% [R1 stream cta-ring D3 occ1]>[R4 +x smem-B nt4 tok32]=69.5% dq_master_vs_prop=3.99|4.04 limiter=R2 (R2 +dq=prop occ2) dq_exact=0/121856 (R2 pays an XOR sink R3/R4 do not)
+[ladder] ladder seconds 38.3 (prepare at 102.9 s)

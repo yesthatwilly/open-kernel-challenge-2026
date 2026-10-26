@@ -56,3 +56,24 @@ rows that moved, decision. A new session resumes from the last entry.
   18 KB bulk ring, mma.sync swap-AB, stream-K with last-arriver ticket), ea_core.py (repack, forward), ea_moe.py
   (canary, rates, selector, copy check), ea_decode.py (decode adapter; layer check; inactive). A numpy emulation of
   the repack + fragment decode: 0 mismatches over 262,144 elements for both code layouts. Opus audit running.
+
+## 2026-10-26T05:45Z: moe ladder a997f2587a654f7c: Engine A is viable (kill bar 3.0 TB/s cleared)
+
+Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, graph timing, baseline 5.70 us:
+
+| rung | t_us (net) | TB/s net / raw |
+|---|---|---|
+| R1 stream, CTA ring D4/D6/D3, per-warp ring, 1-3 CTAs/SM | 43.7-44.9 | 4.48-4.61 / 3.98-4.07 |
+| R2 + dequant prop (master) | 49.8 (50.5) | 4.04 (3.99) / 3.63 |
+| R3 + mma.sync const B, N=8, prop (master) | 53.5 (59.4) | 3.76 (3.39) / 3.40 |
+| R3 N=32 | 69.2 | 2.91 |
+| R4 smem B via ldmatrix: 1 tok / 8 tok | 55.3 / 59.2 | 3.64 / 3.40 |
+| R4 16 tok (2 CTAs/SM) / 32 tok (1 CTA/SM) | 70.8 / 147.1 | 2.84 / 1.37 |
+| R6ref master kernel_fn T=1 local8 / T=1 zipf / T=8 / T=32 (active bytes) | 103.7 / 72.5 / 174.9 / 359.3 | 2.19 / 1.95 / 2.43 / 2.44 |
+
+- dq_exact 0/121856. R0: the zero_ write flush inflates the 45 us stream by 8.83 us (+19.7%).
+- Ring depth and occupancy do not move the pure stream; the dequant and MMA cost ~24% from R1 to R4 (8 tokens).
+- Exact integer dequant: equal alone, 11% faster than master's once the MMA is in the loop.
+- Decision: Engine A keeps D4 / 2 CTAs/SM / exact dequant / N = 8. T above 8 goes in passes of at most 8 routes per
+  expert (repeat reads served from L2), never more than one n-tile. Gathering B per expert (n_e rows instead of all
+  T) is worth about 7% at T = 8.
