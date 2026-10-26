@@ -1,0 +1,114 @@
+ H-48 530.50 us (IQR 2.66, p10/p90 527.10/533.22, x1.061)
+[hotcold] gate T=256 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.985, H48 1.005, H64 0.972, H-16 1.128, H-32 1.007, H-48 1.029 -> H=-16
+[hotcold] layer check T=256 H=-16 (on vs off, 2 inputs, ids identical) ok: worst hidden 0.0024, stream 0.0019, update 0.0026, k_cache 0, k_gap 0, ids_tokens_differ 0
+[hotcold] copy check: 16 replays on two states, T [128, 256]: PASS
+[hotcold] ===== HOT/COLD MARLIN (decode, 128 <= T <= 256) SUMMARY (35.7 s; prepare at 92.5 s) =====
+[hotcold] align kernel H=32: compiled + ran in 0.25 s
+[hotcold] align kernel H=48: compiled + ran in 0.24 s
+[hotcold] align kernel H=64: compiled + ran in 0.23 s
+[hotcold] align kernel H=-16: compiled + ran in 0.29 s
+[hotcold] align kernel H=-32: compiled + ran in 0.29 s
+[hotcold] align kernel H=-48: compiled + ran in 0.29 s
+[hotcold] kernel check H=32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000253; T=128 fp32 0.00521 (master 0.00521), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000271; T=128 fp32 0.00521 (master 0.00521), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=64: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000269; T=128 fp32 0.00521 (master 0.00521), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=-16: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00594; T=128 fp32 0.00425 (master 0.00521), T=256 fp32 0.00424 (master 0.00519)
+[hotcold] kernel check H=-32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00592; T=128 fp32 0.00473 (master 0.00521), T=256 fp32 0.0048 (master 0.00519)
+[hotcold] kernel check H=-48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00592; T=128 fp32 0.00473 (master 0.00521), T=256 fp32 0.0048 (master 0.00519)
+[hotcold] T=128 layer input 0 (local_start 32): local routes 198, distinct 18, hot experts 3 (143 rows, max 72), master's 16-row blocks 25
+[hotcold] T=128 layer input 1 (local_start 32): local routes 212, distinct 19, hot experts 3 (137 rows, max 65), master's 16-row blocks 26
+[hotcold] gate T=128 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.926, H48 0.956, H64 0.917, H-16 1.020, H-32 0.971, H-48 1.001 -> H=-16
+[hotcold] layer check T=128 H=-16 (on vs off, 2 inputs, ids identical) ok: worst hidden 0.0025, stream 0.002, update 0.0026, k_cache 0, k_gap 0, ids_tokens_differ 0
+[hotcold] T=256 layer input 0 (local_start 32): local routes 433, distinct 21, hot experts 6 (350 rows, max 144), master's 16-row blocks 39
+[hotcold] T=256 layer input 1 (local_start 64): local routes 438, distinct 22, hot experts 8 (349 rows, max 113), master's 16-row blocks 40
+[hotcold] gate T=256 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.985, H48 1.005, H64 0.972, H-16 1.128, H-32 1.007, H-48 1.029 -> H=-16
+[hotcold] layer check T=256 H=-16 (on vs off, 2 inputs, ids identical) ok: worst hidden 0.0024, stream 0.0019, update 0.0026, k_cache 0, k_gap 0, ids_tokens_differ 0
+[hotcold] copy check: 16 replays on two states, T [128, 256]: PASS
+[hotcold] PATH CHOSEN T=128 (128..191): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block -16), layer 376.5 us vs master 389.0 us
+[hotcold] PATH CHOSEN T=256 (192..256): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block -16), layer 479.2 us vs master 558.2 us
+[engine-d] load_inline muse_engine_d compiled in 31.0s (TORCH_CUDA_ARCH_LIST=9.0a, ['-O3', '-std=c++20', '-lineinfo'])
+[engine-d] kernel NT=1: attrs ok True, 88 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] kernel NT=2: attrs ok True, 94 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] kernel NT=4: attrs ok True, 94 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] records: P 4608x8192 grid 264, qkv_gate 2304x8192 grid 264, o 8192x1024 grid 264, unpooler 8192x4096 grid 264 (132 SMs x 2 CTAs), pdl 1
+[engine-d] anatomy T=1 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=8 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=16 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=32 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] check P T 1..32 ok: rel-L2 <= 0.00168 (incumbent 0.00168), row <= 0.00175, logits rel <= 1.09e-06 (incumbent 1.37e-06; bound 1e-05); repeats identical, probes exact
+[engine-d] check qkv_gate T 1..32 ok: rel-L2 <= 0.00167 (incumbent 0.00167), row <= 0.00176; repeats identical, probes exact
+[engine-d] check o T 1..32 ok: rel-L2 <= 0.00168 (incumbent 0.00168), row <= 0.00171; repeats identical, probes exact
+[engine-d] check unpooler T 9..32 ok: rel-L2 <= 0.00167 (incumbent 0.00167), row <= 0.00171; repeats identical, probes exact
+[engine-d] gemm P T=1: incumbent 19.62/19.62 vs Engine D 21.25/21.02 us (3.57 TB/s) x0.923 -> incumbent
+[engine-d] gemm qkv_gate T=1: incumbent 11.17/11.14 vs Engine D 13.89/13.86 us (2.72 TB/s) x0.804 -> incumbent
+[engine-d] gemm o T=1: incumbent 4.83/4.86 vs Engine D 9.09/9.18 us (1.84 TB/s) x0.530 -> incumbent
+[engine-d] gemm P T=8: incumbent 20.38/20.19 vs Engine D 22.05/21.98 us (3.43 TB/s) x0.918 -> incumbent
+[engine-d] gemm qkv_gate T=8: incumbent 11.52/11.36 vs Engine D 14.40/14.37 us (2.62 TB/s) x0.791 -> incumbent
+[engine-d] gemm o T=8: incumbent 5.02/5.06 vs Engine D 9.44/9.44 us (1.78 TB/s) x0.532 -> incumbent
+[engine-d] gemm P T=16: incumbent 21.41/21.47 vs Engine D 23.97/23.78 us (3.16 TB/s) x0.893 -> incumbent
+[engine-d] gemm qkv_gate T=16: incumbent 11.74/11.71 vs Engine D 16.00/16.13 us (2.35 TB/s) x0.726 -> incumbent
+[engine-d] gemm o T=16: incumbent 5.41/5.38 vs Engine D 10.43/10.46 us (1.61 TB/s) x0.514 -> incumbent
+[engine-d] gemm unpooler T=16: incumbent 16.86/16.77 vs Engine D 22.37/22.46 us (2.99 TB/s) x0.746 -> incumbent
+[engine-d] gemm P T=32: incumbent 23.84/23.84 vs Engine D 27.30/27.17 us (2.77 TB/s) x0.873 -> incumbent
+[engine-d] gemm qkv_gate T=32: incumbent 12.70/12.70 vs Engine D 19.58/19.46 us (1.93 TB/s) x0.649 -> incumbent
+[engine-d] gemm o T=32: incumbent 5.25/5.31 vs Engine D 13.02/12.99 us (1.29 TB/s) x0.403 -> incumbent
+[engine-d] gemm unpooler T=32: incumbent 17.22/17.22 vs Engine D 25.02/25.09 us (2.68 TB/s) x0.686 -> incumbent
+[engine-d] ===== ENGINE D (decode dense GEMMs) SUMMARY (31.5 s, build 31.0 s; prepare at 124.0 s) =====
+[engine-d] kernel NT=1: attrs ok True, 88 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] kernel NT=2: attrs ok True, 94 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] kernel NT=4: attrs ok True, 94 regs, 0 B spill, 81 KB smem, 2 CTAs/SM
+[engine-d] anatomy T=1 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=8 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=16 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] anatomy T=32 raised RuntimeError: Expected a 'cpu' device type for generator but found 'cuda'
+[engine-d] check P T 1..32 ok: rel-L2 <= 0.00168 (incumbent 0.00168), row <= 0.00175, logits rel <= 1.09e-06 (incumbent 1.37e-06; bound 1e-05); repeats identical, probes exact
+[engine-d] check qkv_gate T 1..32 ok: rel-L2 <= 0.00167 (incumbent 0.00167), row <= 0.00176; repeats identical, probes exact
+[engine-d] check o T 1..32 ok: rel-L2 <= 0.00168 (incumbent 0.00168), row <= 0.00171; repeats identical, probes exact
+[engine-d] check unpooler T 9..32 ok: rel-L2 <= 0.00167 (incumbent 0.00167), row <= 0.00171; repeats identical, probes exact
+[engine-d] gemm P T=1: incumbent 19.62/19.62 vs Engine D 21.25/21.02 us (3.57 TB/s) x0.923 -> incumbent
+[engine-d] gemm qkv_gate T=1: incumbent 11.17/11.14 vs Engine D 13.89/13.86 us (2.72 TB/s) x0.804 -> incumbent
+[engine-d] gemm o T=1: incumbent 4.83/4.86 vs Engine D 9.09/9.18 us (1.84 TB/s) x0.530 -> incumbent
+[engine-d] gemm P T=8: incumbent 20.38/20.19 vs Engine D 22.05/21.98 us (3.43 TB/s) x0.918 -> incumbent
+[engine-d] gemm qkv_gate T=8: incumbent 11.52/11.36 vs Engine D 14.40/14.37 us (2.62 TB/s) x0.791 -> incumbent
+[engine-d] gemm o T=8: incumbent 5.02/5.06 vs Engine D 9.44/9.44 us (1.78 TB/s) x0.532 -> incumbent
+[engine-d] gemm P T=16: incumbent 21.41/21.47 vs Engine D 23.97/23.78 us (3.16 TB/s) x0.893 -> incumbent
+[engine-d] gemm qkv_gate T=16: incumbent 11.74/11.71 vs Engine D 16.00/16.13 us (2.35 TB/s) x0.726 -> incumbent
+[engine-d] gemm o T=16: incumbent 5.41/5.38 vs Engine D 10.43/10.46 us (1.61 TB/s) x0.514 -> incumbent
+[engine-d] gemm unpooler T=16: incumbent 16.86/16.77 vs Engine D 22.37/22.46 us (2.99 TB/s) x0.746 -> incumbent
+[engine-d] gemm P T=32: incumbent 23.84/23.84 vs Engine D 27.30/27.17 us (2.77 TB/s) x0.873 -> incumbent
+[engine-d] gemm qkv_gate T=32: incumbent 12.70/12.70 vs Engine D 19.58/19.46 us (1.93 TB/s) x0.649 -> incumbent
+[engine-d] gemm o T=32: incumbent 5.25/5.31 vs Engine D 13.02/12.99 us (1.29 TB/s) x0.403 -> incumbent
+[engine-d] gemm unpooler T=32: incumbent 17.22/17.22 vs Engine D 25.02/25.09 us (2.68 TB/s) x0.686 -> incumbent
+[engine-d] PATH CHOSEN T=1: P incumbent (gemm x0.923; Engine D 21.14 vs incumbent 19.62 us), qkv_gate incumbent (gemm x0.804; Engine D 13.87 vs incumbent 11.15 us), o incumbent (gemm x0.530; Engine D 9.14 vs incumbent 4.85 us)
+[engine-d] PATH CHOSEN T=2..8: P incumbent (gemm x0.918; Engine D 22.02 vs incumbent 20.29 us), qkv_gate incumbent (gemm x0.791; Engine D 14.38 vs incumbent 11.44 us), o incumbent (gemm x0.532; Engine D 9.44 vs incumbent 5.04 us)
+[engine-d] PATH CHOSEN T=9..16: P incumbent (gemm x0.893; Engine D 23.87 vs incumbent 21.44 us), qkv_gate incumbent (gemm x0.726; Engine D 16.06 vs incumbent 11.73 us), o incumbent (gemm x0.514; Engine D 10.45 vs incumbent 5.39 us), unpooler incumbent (gemm x0.746; Engine D 22.42 vs incumbent 16.82 us)
+[engine-d] PATH CHOSEN T=17..32: P incumbent (gemm x0.873; Engine D 27.23 vs incumbent 23.84 us), qkv_gate incumbent (gemm x0.649; Engine D 19.52 vs incumbent 12.70 us), o incumbent (gemm x0.403; Engine D 13.01 vs incumbent 5.28 us), unpooler incumbent (gemm x0.686; Engine D 25.06 vs incumbent 17.22 us)
+[campaign] ===== FINAL PATHS =====
+[engineA-dl] gate T=1 (whole layer): worst ratio v1 1.064, v2 1.040, v3 1.051, v4 1.045 -> ENGINE A v1
+[engineA-dl] gate T=8 (whole layer): worst ratio v1 1.056, v2 1.050, v3 1.047, v4 1.066 -> ENGINE A v4
+[engineA-dl] gate T=16 (whole layer): worst ratio v2 1.063, v3 1.132, v4 1.147 -> ENGINE A v4
+[engineA-dl] gate T=32 (whole layer): worst ratio v2 0.935, v3 1.028, v4 1.079 -> ENGINE A v4
+[engineA-dl] big gate T=128 (whole layer): worst ratio v3 1.024, v4 1.083 -> ENGINE A v4
+[engineA-dl] big gate T=256 (whole layer): worst ratio v3 1.016, v4 1.085 -> ENGINE A v4
+[engineA-dl] k2 grid gate T=1 (v1, whole layer): full/132-CTA worst ratio 0.927 -> full grid
+[engineA-dl] combine gate T=1 (whole layer): Triton/CUDA worst ratio 1.023 -> CUDA
+[engineA-dl] combine gate T=8 (whole layer): Triton/CUDA worst ratio 1.009 -> CUDA
+[engineA-dl] combine gate T=16 (whole layer): Triton/CUDA worst ratio 1.007 -> CUDA
+[engineA-dl] combine gate T=32 (whole layer): Triton/CUDA worst ratio 1.009 -> CUDA
+[engineA-dl] pdl gate T=1 (whole layer, R -> K1): plain/PDL worst ratio 0.998 -> PDL
+[engineA-dl] PATH CHOSEN T=1 = ENGINE A v1
+[engineA-dl] PATH CHOSEN T=2..32 = ENGINE A v4
+[engineA-dl] PATH CHOSEN T=128 = ENGINE A v4
+[engineA-dl] PATH CHOSEN T=256 = ENGINE A v4
+[dense-swapab] PATH CHOSEN T=1: qkv_gate SWAP-AB (swap-AB 11.20 vs cuBLAS 12.72 us), o SWAP-AB (swap-AB 4.94 vs cuBLAS 5.49 us); whole layer x1.025
+[dense-swapab] PATH CHOSEN T=2..8: qkv_gate SWAP-AB (swap-AB 11.50 vs cuBLAS 12.98 us), o SWAP-AB (swap-AB 5.02 vs cuBLAS 5.36 us); whole layer x1.011
+[dense-swapab] PATH CHOSEN T=9..16: qkv_gate SWAP-AB (swap-AB 11.82 vs cuBLAS 12.91 us), o MASTER (gemm x1.006; swap-AB 5.33 vs cuBLAS 5.39 us), unpooler MASTER (gemm x1.002; swap-AB 16.70 vs cuBLAS 1
+[dense-swapab] PATH CHOSEN T=17..32: qkv_gate SWAP-AB (swap-AB 12.88 vs cuBLAS 13.41 us), o SWAP-AB (swap-AB 5.42 vs cuBLAS 5.66 us), unpooler MASTER (gemm x1.002; swap-AB 16.86 vs cuBLAS 16.93 us); w
+[hotcold] PATH CHOSEN T=128 (128..191): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block -16), layer 376.5 us vs master 389.0 us
+[hotcold] PATH CHOSEN T=256 (192..256): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block -16), layer 479.2 us vs master 558.2 us
+[engine-d] PATH CHOSEN T=1: P incumbent (gemm x0.923; Engine D 21.14 vs incumbent 19.62 us), qkv_gate incumbent (gemm x0.804; Engine D 13.87 vs incumbent 11.15 us), o incumbent (gemm x0.530; Engine D 
+[engine-d] PATH CHOSEN T=2..8: P incumbent (gemm x0.918; Engine D 22.02 vs incumbent 20.29 us), qkv_gate incumbent (gemm x0.791; Engine D 14.38 vs incumbent 11.44 us), o incumbent (gemm x0.532; Engine
+[engine-d] PATH CHOSEN T=9..16: P incumbent (gemm x0.893; Engine D 23.87 vs incumbent 21.44 us), qkv_gate incumbent (gemm x0.726; Engine D 16.06 vs incumbent 11.73 us), o incumbent (gemm x0.514; Engin
+[engine-d] PATH CHOSEN T=17..32: P incumbent (gemm x0.873; Engine D 27.23 vs incumbent 23.84 us), qkv_gate incumbent (gemm x0.649; Engine D 19.52 vs incumbent 12.70 us), o incumbent (gemm x0.403; Engi
+[combo] gate stream basis: draw 3 beta 0.3, worst distinct error 11.7% (0.6 s); busiest range routes/distinct/max/hot per BxL: 1x1 2/2.5/1/0.0 (judge distinct 2.5), 1x8 14/6.6/5/0.0 (judge distinct 7.5), 16x1 35/7.0/13/0.0 (judge distinct 7.5), 32x1 67/8.6/25/1.8 (judge distinct 9.0), 16x8 233/19.5/73/3.5 (judge distinct 18.4), 32x8 454/22.1/140/5.4 (judge distinct 21.3)
+[engineA-dl] gate inputs, busiest range routes/distinct/max/hot: T=1 3/2.9/1/0.0 (n=27), T=2 4/3.2/2/0.0 (n=6), T=3 7/6.0/2/0.0 (n=1), T=5 14/6.0/5/0.0 (n=1), T=8 16/8.0/5/0.0 (n=18), T=9 21/5.0/9/0.0 (n=1), T=12 24/6.0/10/0.0 (n=1), T=16 34/6.8/13/0.0 (n=18), T=17 40/9.0/14/0.0 (n=1), T=24 57/6.0/19/1.0 (n=1), T=32 69/8.3/25/1.7 (n=18), T=128 215/19.1/70/3.4 (n=14), T=256 433/21.2/134/6.7 (n=19)

@@ -128,3 +128,18 @@ Tags: **[M]** judge-measured, **[P]** prepare-time measured, **[I]** inference o
   - sliding attention about 15 us (SoL 3.5).
   The expert block and P are the largest gaps. Ladder-2 (moe, 10-26 evening) measures v4's geometry rung by rung to
   find v4's limiter.
+
+## Engine D and the dense GEMMs (10-26 evening)
+
+- **The T <= 32 dense GEMMs already run near the ring ceiling** (graph-timed, cold L2, f59cb301):
+  - P (pooler + router, master's dl kernel): 19.6-23.8 us, 3.85 TB/s at T=1;
+  - qkv_gate (swap-AB): 11.2-12.7 us;
+  - o: 4.85-5.3 us;
+  - unpooler at T >= 9 (cuBLAS): 16.8-17.2 us.
+  Their speed-of-light headroom adds up to about 6 us per row.
+- The P rows of 22-27 us in the decode profiles include PDL waits. Plan only from graph-timed kernels in isolation.
+- **Engine D** (a dense bf16 skinny GEMM on v4's CTA, ring of 32 KB stages, stream-K + last-arriver fix-up) lost every
+  selector: x0.923 (P, T=1) down to x0.403 (o, T=32).
+  - Its fixed cost per launch (ramp, fix-up tails, T x-copies per stage) outweighs the streaming gain.
+  - Killed; the code stays behind CAMPAIGN_ENGINE_D = False.
+

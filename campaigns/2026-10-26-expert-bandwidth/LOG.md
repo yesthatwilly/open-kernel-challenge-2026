@@ -5,13 +5,15 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T18:16Z
-- step: Engine D (dense bf16 skinny GEMM for P / qkv_gate / o / unpooler at T <= 32) in its first decode check
-- in flight: decode check f59cb301895240e6 (27ef83df: Engine D + 8b098599's tie-break revert + the wg-hot hybrid)
-- next action: harvest. At 00:00Z score the best of: this check (if it beats the board),
-  `submission.wghyb-3bcb685b.py` (check 1.5097), `submission.pw0-8b098599.py`. Use the anatomy lines (expert block
-  alone at T=1/8/16/32 vs its no-route launch cost) to choose between the T <= 32 glue folds (X3) and the v4 dequant
-  (dq3: fewer INT32 ops). moe 10-27: ladder rungs for dq3
+- updated: 2026-10-26T18:45Z
+- step: dq3 (Engine A's exact dequant in 9 ALU ops per code word instead of about 11) in its read-only audit; Engine
+  D killed
+- in flight: nothing on the judge; the dq3 audit is running
+- next action at 00:00Z (10-27):
+  1. decode scored run of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347; content hash 613b6c2d...); land
+     it on master.
+  2. moe check of dq3 (the ladder re-measures C-R2/C-R4 and dq_exact; moe's own rows show the effect).
+  3. decode check of dq3 + the anatomy print.
 - quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
 - boards: decode **1.4956** (rank 342 of 737), moe **1.6851** (rank 370 of 844), overall 347 of 1228
 
@@ -234,3 +236,38 @@ append-only, newest last.
   route. The d1 profile suggests about 45 us of expert block, against about 17 us at the ring's rate.
 - Next lever, pending the anatomy: X3 glue folds, or dq3. dq3 is a dequant with fewer INT32 ops. Ladder-2 puts it at
   about 15 INT32 per k16 step at half rate, which is the consumer's limit. The best code layout saves about 15%.
+
+## 2026-10-26T18:45Z: decode f59cb301 passed at 1.5347 (to be scored at 00:00Z); Engine D killed; dq3 built
+
+- decode f59cb301895240e6 (check, 27ef83df): passed 13/13, **1.5347** vs board 1.4956. Content hash 613b6c2d...; the
+  bytes are kept as `submission.edoff-27ef83df.py` for the 00:00Z scored run.
+  - Against board run dc51d8e8 (each run vs its own SGLang time):
+    - T <= 32 rows x0.958-x1.003, i.e. noise (v1 full's SGLang time moved 7% too);
+    - v16 x1.075 / x1.034 and v32 x1.204 / x1.118 (the wgmma-hot hybrid).
+  - Selections: v1 at T=1; v4 at T=2..32, 128 and 256 (the tie-break revert); H=-16 at T=128 / 256.
+- **Engine D lost every GEMM selector**, so every cell kept its incumbent. Graph-timed, cold L2, incumbent / Engine D
+  at T=1:
+
+  | GEMM | incumbent us | Engine D us | ratio | incumbent rate |
+  |---|---|---|---|---|
+  | P | 19.6 | 21.1 | x0.923 | 3.85 TB/s |
+  | qkv_gate | 11.2 | 13.9 | x0.804 | |
+  | o | 4.85 | 9.1 | x0.530 | |
+
+  - It gets worse with T (T=32: P x0.873, qkv x0.649, o x0.403, unpooler x0.686).
+  - The incumbents already run at 3.4-3.9 TB/s. The 22-27 us P rows I planned from were profile rows that include
+    PDL waits.
+  - Engine D pays several us per launch: ramp, a fix-up per partial group, and T x-copies per stage. o is all
+    overhead.
+  - Speed-of-light headroom left in these four GEMMs: about 6 us per row in total. **Killed** (CAMPAIGN_ENGINE_D off,
+    0a3d3f27).
+  - Lesson: compare kernels only graph-timed in isolation, never on PDL-launched profile rows (PLAN §2 item 5, which
+    I did not apply to the dense GEMMs).
+- The expert-block anatomy print raised (`_ead_inputs` takes a host generator). It now runs from Engine A's decode
+  setup and comes with the next decode check.
+- dq3 (uncommitted, in audit) re-permutes each code word so that every pair comes out with a funnel-shift rotation
+  plus AND; pair 3 takes two of each. Ladder-2's limiter is the consumer's INT32 work, and this cuts about 11 ALU ops
+  per word to 9.
+  - Found by an exhaustive search: four pure rotations cannot tile the word, and 9 is the minimum.
+  - Verified on CPU over all codes with crosstalk.
+  - One moe check at 00:00Z re-measures the ladder rungs and dq_exact on the device.
