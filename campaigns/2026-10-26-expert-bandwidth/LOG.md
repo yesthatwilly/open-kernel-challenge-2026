@@ -5,13 +5,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T17:50Z
-- step: Engine D (dense bf16 skinny GEMM for P / qkv_gate / o / unpooler at T <= 32): kernel written
-  (`rewrite/lib/cuda/ed_kernels.cuh`), Python side (`ed_core.py` + `ed_decode.py`) in progress, then audit
-- in flight: nothing (no checks left today for either problem)
-- next action: finish Engine D, syntax-check it, audit it. At 00:00Z: decode check of the current build (8b098599:
-  hybrid + prefer_within 0). Score it, or `submission.wghyb-3bcb685b.py` (check 1.5097), whichever beats the board.
-  Then the Engine D check. moe: the v4 k-split consumer (ladder-2 verdict) once Engine D is out
+- updated: 2026-10-26T18:16Z
+- step: Engine D (dense bf16 skinny GEMM for P / qkv_gate / o / unpooler at T <= 32) in its first decode check
+- in flight: decode check f59cb301895240e6 (27ef83df: Engine D + 8b098599's tie-break revert + the wg-hot hybrid)
+- next action: harvest. At 00:00Z score the best of: this check (if it beats the board),
+  `submission.wghyb-3bcb685b.py` (check 1.5097), `submission.pw0-8b098599.py`. Use the anatomy lines (expert block
+  alone at T=1/8/16/32 vs its no-route launch cost) to choose between the T <= 32 glue folds (X3) and the v4 dequant
+  (dq3: fewer INT32 ops). moe 10-27: ladder rungs for dq3
 - quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
 - boards: decode **1.4956** (rank 342 of 737), moe **1.6851** (rank 370 of 844), overall 347 of 1228
 
@@ -212,3 +212,25 @@ append-only, newest last.
   - These rows today: P 22-27 us at 2.8-3.4 TB/s; qkv_gate 11-13 us; o 5-5.4 us; unpooler at T >= 9 16.7 us (cuBLAS).
   - Engine D's ring alone reaches about 4.4 TB/s. Without dequant its consumer is 4x lighter per byte than v4's.
   - Expected savings per row: about 9 us at d1, 13 at d16, 20 at d32 (headline about x1.04).
+
+## 2026-10-26T18:16Z: Engine D audited and dispatched (decode f59cb301895240e6)
+
+- Engine D (27ef83df) is a dense bf16 skinny GEMM on v4's CTA. It covers P (pooler + router hi/lo pairs, fp32
+  logits), qkv_gate, o, and the unpooler at T <= 32.
+  - Kernel: 288 threads, a 2-stage ring of 32 KB, 2 CTAs/SM, stream-K over (128-row group, 128-k chunk) units, and
+    last-arriver tickets.
+  - Records are a lossless permutation in mma A-fragment order. On CPU, the roundtrip and the fragment order were
+    checked exhaustively with numpy.
+  - Each (GEMM, T class) has its own checks vs fp64, a GEMM selector against its incumbent, and a whole-layer gate
+    and layer check, plus a copy check. Any miss keeps the incumbent.
+- Audit (read-only Opus): no BLOCKER or MAJOR. The auditor emulated the fragment path end to end in numpy at 9 values
+  of T and simulated stream-K over every grid from 1 to 299.
+  - Fixed: its MINOR on the last arriver's sum, which ran one dependent L2 load and a division per contributor (about
+    15 contributors per qkv_gate group). It now batches 8 / NT loads, picks the slot without a division (simulated
+    clean) and uses the template NT.
+  - Noted, not fixed: the whole-layer gates time full attention only at T=2..8; a timed-out mbarrier wait yields
+    garbage (as in Engine A).
+- The check also prints an anatomy: the expert block alone at T=1/8/16/32 next to the same launches with no local
+  route. The d1 profile suggests about 45 us of expert block, against about 17 us at the ring's rate.
+- Next lever, pending the anatomy: X3 glue folds, or dq3. dq3 is a dequant with fewer INT32 ops. Ladder-2 puts it at
+  about 15 INT32 per k16 step at half rate, which is the consumer's limit. The best code layout saves about 15%.
