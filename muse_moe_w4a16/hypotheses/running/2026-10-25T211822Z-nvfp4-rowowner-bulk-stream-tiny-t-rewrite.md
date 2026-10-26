@@ -67,7 +67,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212523Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212549Z
 base_sha: 641f0e0099c84be50a9f8705e113a62388a5847a
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -76,6 +76,12 @@ worktree: .worktrees/muse_moe_w4a16/nvfp4-rowowner-bulk-stream-tiny-t-rewrite
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T011350Z
+impl_commit: f8aeac2ce84e32fc31c5c54ff673fa9cf8955c2f
+submission_sha256: 006510c848cd58ef8832029b1c7b00134f4e0a90c7f19a1668af58f08f6811a8
+norm_sha256: 716518602fecdcb24fb5cebb09d1626c452a4ead420bedc11cc986e938285f3c
+submission_blob: 9ef29f6f02cb52b468933ae16626fb37854c927e
+lint_warnings: 112
 ---
 
 # nvfp4-rowowner-bulk-stream-tiny-t-rewrite
@@ -129,3 +135,47 @@ No companion. This is a rewrite stage, judged on the replaced kernels' own time 
 - Span balance: with 264 CTAs (2 per SM) and 8 active experts at T=1, 33 CTAs per expert x 31 pair rows covers 1023 of 1024 rows. How are remainder rows and non-divisible active-expert counts (3, 5, 7) assigned without a tail CTA doing twice the work?
 - If variant F is ALU-bound at T=4 and M is chosen, padding 4 tokens to 8 doubles the B-operand work. Does the gate print both variants at both T so stage 2 can split T=1 (F) from T=2..4 (M)?
 
+
+## Implementation notes
+
+Edited only `muse_moe_w4a16/submission.py` in the worktree (+1216 lines; master's code untouched apart from three hooks).
+
+- New load_inline module `muse_moe_w4a16_rowowner_v1` (sm_90 only: cp.async.bulk, mbarrier, mma.sync, griddepcontrol; no wgmma/setmaxnreg; `-O3 -std=c++20 -lineinfo`, TORCH_CUDA_ARCH_LIST=9.0 around the build, arch flags, build time, regs/spills/occupancy printed). Kernels `rowowner_v1_w13<VAR>` and `rowowner_v1_w2<VAR>`, VAR 0 = F (CUDA-core fp32 FMA), 1 = M (mma.sync m16n8k16, tokens padded to 8).
+- Repack (prepare, lossless, torch): 16-row units, 256-k records of 2304 B (2048 B codes in A-fragment order + 256 B e4m3 scales); w13 unit = 8 gate rows + the 8 matching up rows, so gate_i and up_i land in the same thread and silu fuses in registers; w2 unit = 16 rows. A numpy port of the pack plus a lane-level emulation of dequant, B layout and mma fragments matched a direct matmul to 1e-17 (scratchpad, not in the repo).
+- Each warp owns whole units over full K with a private 4-stage mbarrier ring (lane 0 issues 1-D bulk copies, `__syncwarp` is the empty barrier); no cross-warp/CTA reduction, no atomics, no spins; all mbarrier waits bounded (error word 1). Grid = 2 x SMs CTAs of 4 warps; contiguous balanced unit spans.
+- Work map is device-built inside each kernel prologue (shuffle/ballot over topk_ids), so no separate kernel A: it REPLACES master's `_align_small` (answers open Q1). Block 0 writes local_ids in master's [T, 8] layout; y goes to master's cache3 layout; `_post_norm_combine_kernel` unchanged.
+- Zero local routes: n_act = 0, all spans empty, no ring is initialised, no wait; w2 warps still execute griddepcontrol.wait; output zeros (open Q2; canary has a zero-local case and requires exact zero).
+- w2 PDL: weight copies are issued before `griddepcontrol.wait` (only h waits); w13 triggers launch_dependents after its prologue; smem is ~70 KB/CTA so w2 CTAs co-reside with w13 CTAs (open Q3).
+- Span balance: units = n_act x (I/8) split base/rem across all warps, so at most one extra unit per warp, any n_act (open Q4).
+- Gate prints F and M at T=1 and T=4 (open Q5); T=2,3 inherit T=4's variant only if canary-clean.
+
+Review fixes applied: (1) selector = two interleaved rounds (41 cold-L2 graph replays each), both >= 1.03 on both local8 and skewed-4hot routings, candidate IQR <= 1.5x master's (master IQR floored at 0.25 us); master timed as kernel_fn with the flag off (its actually routed path, incl. F1/w2 atomic); (2) canary forces active counts 0, 1, 2, 8 and up to 32, finiteness and rel-L2 vs fp32 reference with the judge-side 1.2e-2 cap (and <= 2x master's own error), per-row check, zero-local exact zero, stage diagnostic (h vs fp32, y given kernel h); (3) runs_ns bimodality: p10/p90 printed per cell; (4) every variant's cold-L2 kernel-only us and TB/s printed even when master is kept; (5) compact PATH CHOSEN / gate lines are the last lines of prepare; (6) review wins over spec on LESSONS line numbers (cosmetic).
+
+Other requirements: per-T flags in `state["ro"]` (not module global; state copy clones tensors, ext shared); err word per state; `-lineinfo`; per-launch flushed prints with sync for the first canary case; new phase has its own deadlines (start 150 s, canary 210 s, gate 235 s, copy check 250 s) and prints "skipped: deadline"; PDL falls back to off if the canary only passes without it; any failure leaves master's path for that T.
+
+Deviations: no `_ab_flags`/NEW_CELL_FLAGS pattern exists in this file, so the flag is `state["ro"]["on"][T]`. Nothing was compiled or run (no GPU/nvcc here).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path = `_ro_forward` (torch.empty, two launches, Triton post-norm); no sync/.item/.cpu; branches on shape and prepare flags only.
+- [x] Nothing derived from `data` cached: work map rebuilt on device each call; scratch allocated per call.
+- [x] Weights repacked losslessly in prepare() only; NVFP4 codes and e4m3 scales unchanged, fp32 global scale x 2^7 exact.
+- [x] Activations bf16 (x, h, y bf16 as Marlin path; gate/up rounded to bf16 before silu as SGLang).
+- [x] n/a: attention rule, MoE problem; every routed local expert is computed in full.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network (lint clean of errors).
+- [x] All work inside the timed call; no output caching or replay.
+- [x] New code in its own module; own per-state flags; miss falls back to master's exact path; bounded waits; distinct kernel symbols.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare-only code); `py_compile` ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Emulation: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/emu/rowowner_emu.py (log run_full.log beside it).
+
+- Fix 1 (gate that always fails): the spec and the code assumed I = 1024, but reference.D_EXPERT = 4096 (the 11.4 us floor is 2 active local experts x 28 MB at T=1, not 8 x 7 MB). w2 stages h for T rows per warp, 4 warps: 168704 B of dynamic smem at T=4, but ro_init raised the limit to only 120 KB and sized the host launch for MAXT rows, so every ro_w2 launch raised (invalid argument), the canary failed for every variant and T and the path never ran. Now the limit is 192 KB, the w2 smem and per-warp stride are sized by the actual T (T=1: 70016 B, 3 CTAs/SM and PDL co-residence with w13; T=4: 1 CTA/SM), and ro_init's occupancy probe uses the real 2056-word row.
+- Fix 2 (variance veto): RO_IQR_FLOOR_US 0.25 -> 0.5 us (CUDA event timer resolution).
+- Fix 3 (gate that may fail a correct kernel): RO_REL_FLOOR 2e-3 -> 4e-3. The emulation shows the chain's own bf16 roundings (gate, up, h, y) give ~3.3e-3 rel-L2 vs an un-rounded fp32 reference, above the old floor, so a lucky master could veto it. The 1.2e-2 cap is unchanged.
+- Verified by reading and emulation: mbarrier counts (init 1, one arrive.expect_tx of 2304 B per fill, parity (q/4)&1, every wait bounded by 2^26 cycles then error word 1); w2 pre-wait work touches only w2 records, topk_ids and its own smem, h is read after griddepcontrol.wait; numpy emulation at real shapes (H = I = 4096) of the pack, dequant, A/B/C fragments (M), FMA + xor-shuffle (F), staging, spans (every active count 0..32, grids 228..288 partition exactly), local_ids layout and y routing matched an fp64 reference to 1e-16 for both variants at T=1..4, including 0 active experts (no span, no ring, zero output). Zero-local: master's own path handles all-remote (the F1 and align self-checks run it) and its post-norm stores exact zeros, so the exact-zero canary can pass.
+- Not changed: deadlines. Master's prepare is 60-105 s, this phase starts at ~105 s, compile ~40-60 s, canary budget to 210 s; a miss lands on master with a "skipped: deadline" line.
+
+Residual risk: nothing was compiled or run (no nvcc); w2 at T=4 runs 1 CTA/SM (36 KB in flight per SM), so T=4 may fail the 1.03 gate and keep master, which does not affect the scored T=1.
