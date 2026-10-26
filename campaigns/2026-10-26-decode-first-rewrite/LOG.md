@@ -44,3 +44,15 @@ rows that moved, decision. A new session resumes from the last entry.
   BEST.json (churn-generated) still names a903b9d0.
 - Next: moe ladder check once its audit returns; Engine A v1 (T <= 8) written, to be audited and checked in moe next.
 
+
+## 2026-10-26T05:35Z: moe ladder check dispatched; Engine A v1 written and under audit
+
+- Ladder audit (Opus): dispatch-with-fixes, no build/fault/hang issue. Its emulation and a g++ type check found 0
+  dequant mismatches over 121,856 cases and 800,000 random words. Fixes applied: verdict links compare equal grids
+  (new D3 stream rungs), error word re-checked after timing, raw times printed beside baseline-subtracted ones,
+  cleanup never raises and frees the flush buffer, no duplicate log lines, 16-byte alignment guard.
+- **moe ladder check, job a997f2587a654f7c** (branch b2421f48; CAMPAIGN_LADDER on, Engine A off).
+- Engine A v1 (T <= 8): rewrite/lib/cuda/ea_kernels.cuh (K1 w13+silu, K2 w2 with PDL weight prefetch; CTA-shared
+  18 KB bulk ring, mma.sync swap-AB, stream-K with last-arriver ticket), ea_core.py (repack, forward), ea_moe.py
+  (canary, rates, selector, copy check), ea_decode.py (decode adapter; layer check; inactive). A numpy emulation of
+  the repack + fragment decode: 0 mismatches over 262,144 elements for both code layouts. Opus audit running.
