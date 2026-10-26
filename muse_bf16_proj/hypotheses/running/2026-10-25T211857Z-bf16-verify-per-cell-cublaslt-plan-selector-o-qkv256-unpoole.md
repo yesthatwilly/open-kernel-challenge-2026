@@ -72,6 +72,8 @@ submission_sha256: 81089cdd43d1fa6746db08109fba9c1cf9bd10bce63c3effc4d249afc53fc
 norm_sha256: 5bf6afd6f22094b1d056a28188705c38b2b6b65973e74ce63f67cd5fc29c183e
 submission_blob: 1950f1435c1a301ea25f06353bed0780ab5a2bbd
 lint_warnings: 40
+attempt_file: 2026-10-26T012539Z-check-bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole.md
+prepared_at: 2026-10-26T012539Z
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
