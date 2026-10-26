@@ -438,3 +438,21 @@ append-only, newest last.
   The moe submit picks were skipped (steer: moe quota untouched). Daily diagnoses skipped.
 - bf16 BEST.json registered by hand to the landed bulk12 run (3834ceec 1.2664, blob 2bcfe7d4), noted in DECISIONS.
   Churn could not see it: it was submitted from a worktree copy.
+
+## 2026-10-26T22:05Z: bf16 bulk12 beyond m=1 and the router ticket: three more checks, none beat the board
+
+- Router ticket check 7e8be36a (c891dc84): 1.2650. Both gates lost (swap-AB m=16 x1.073, hilo m=128 x1.103 net): under
+  graph replay the memset node is cheaper than a serialized last-arriver epilogue. **Killed.**
+- Chunk rotation check 2980f57a (a7da6fa9, audited): 1.2690, same routes.
+  - Rotation partly confirms the L2 hot-spot theory: qkv m=8 17.1 -> 14.5 net us (0.983 vs incumbent), pooler m=8 25.3
+    -> 24.5 (1.02).
+  - m=16/32 stay far behind.
+- Resident-x m=8 check 6617f94d (b12r_kernel, audited): **1.2528**, below the board.
+  - b12r pooler m=8 routed (gate 0.938) but moved the judged row only x1.016 (19.07 -> 18.68 us).
+  - The rotated b12x qkv m=8 routed by a hair (0.976) and lost **x0.769** in the judge (12.86 -> 15.63 us).
+  - **Lesson (gate vs judge):** _cell_gate flushes with a 256 MB write (flush.zero_()); the judge reads a buffer larger
+    than L2. At m=1 the gate predicted the judge well (pooler 0.85 / 0.84). At m=8 it does not: the incumbent reads
+    ~2 us faster in the judge and b12x ~1 us slower.
+  - Next window: re-gate with a read flush and a stricter margin before routing anything at m >= 8.
+- The bf16 board stays at the landed bulk12 m=1 (3834ceec 1.2664, rank 355). bf16 checks used today: 13 of 20 (8 by
+  the churn before the campaign, 5 bulk12 + 1 router + 1 resident-x after 20:00Z).
