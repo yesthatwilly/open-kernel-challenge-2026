@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212614Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212614Z
 base_sha: f8d14416f350af92938d3e41f3256af4aa532299
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -87,6 +87,8 @@ submission_blob: 18bc92b5a7d3cfa10ac6120d8ab524a4fd8cb25a
 lint_warnings: 35
 attempt_file: 2026-10-26T012539Z-check-bf16-verify16-cutlass-m128-onetile-splitk-rewrite.md
 prepared_at: 2026-10-26T012539Z
+job: d4edd38aeed44334
+dispatched_at: 2026-10-26T012632Z
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
