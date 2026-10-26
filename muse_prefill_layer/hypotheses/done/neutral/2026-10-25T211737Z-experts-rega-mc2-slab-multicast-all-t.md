@@ -61,10 +61,10 @@ prior: "experts-rega-pingpong-consumers-all-t: changed only the consumer schedul
 rewrite_stage: 1
 replaces: "rega_kernel<true,BIG> + rega_kernel<false,BIG> (w13, w2) in all three rega classes: low T<=1024, high 1024<T<=4096, ft 4096<T<=16384"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212550Z
 base_sha: 98cd3251d87b4318340450cec6f52e37f574895c
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -83,6 +83,13 @@ attempt_file: 2026-10-26T012540Z-check-experts-rega-mc2-slab-multicast-all-t.md
 prepared_at: 2026-10-26T012540Z
 job: 0ca60bb781db48e4
 dispatched_at: 2026-10-26T012819Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.463020293602461
+speedup_ci: [1.441074989198424, 1.4849655980064977]
+harvested_at: 2026-10-26T023157Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # experts-rega-mc2-slab-multicast-all-t
@@ -183,3 +190,32 @@ Verdict: dispatch-with-fixes (audited by reading; no GPU/nvcc here).
 - Fix 1: `_experts_rega` fell to a KeyError on `state["rega_mc_grid"][...]` if a capacity-class instantiation had failed its prepare check but the class was ON; it now falls back to master's rega_gemm.
 - Fix 2: the gate's IQR veto (candidate IQR <= 1.5x master's over 11 samples) could reject a real win on a near-zero master IQR; added 1% of master's time as slack. The ratio <= 0.97 in both rounds is unchanged and times master's routed `_experts(pre_norm=True)` with the flag off.
 Residual risk: nvcc/ptxas compile of the cluster/multicast PTX and the producer register fit at setmaxnreg 40 are unverified; any build failure lands on master's v2 module.
+
+## Result
+
+- job `0ca60bb781db48e4` (check), status done, passed True, tests 5/5
+- speedup 1.4630x, 95% CI [1.4411, 1.4850], score 264797.3522267951 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-mc2-slab-multicast-all-t.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-mc2-slab-multicast-all-t.patch`; branch `hyp/muse_prefill_layer/experts-rega-mc2-slab-multicast-all-t`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 756.7 | 740.88 | 1.0038 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1150.28 | 1138.49 | 0.9853 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2197.82 | 2115.59 | 0.9924 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3744.83 | 3683.23 | 0.9901 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11889.83 | 11286.06 | 0.9883 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11119.71 | 10885.45 | 1.0038 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15073.37 | 14659.82 | 1.0057 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18589.69 | 18326.0 | 0.9996 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `rega_kernel<true,BIG> + rega_kernel<false,BIG> (w13, w2) in all three rega classes: low T<=1024, high 1024<T<=4096, ft 4096<T<=16384`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on experts-rega-mc2-slab-multicast-all-t --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-mc2-slab-multicast-all-t`) that adds a further change in the same area is the only way to learn more.
+
