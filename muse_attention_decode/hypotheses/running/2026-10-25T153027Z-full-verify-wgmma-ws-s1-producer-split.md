@@ -99,6 +99,8 @@ submission_sha256: 25c1ac890e3b7d4fd618b7584e444f5aa865e2b41e7f80369d36069199a1a
 norm_sha256: 9d9bde6a809544ca479046ad510696bb8fe5187c305360b44da7f47ec59ca75d
 submission_blob: 680eba9fc5edd19dfbbeae4c15929ab6eca23fce
 lint_warnings: 82
+attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-ws-s1-producer-split.md
+prepared_at: 2026-10-26T012538Z
 ---
 
 # full-verify-wgmma-ws-s1-producer-split
