@@ -54,10 +54,10 @@ kind: primary
 controls_for: null
 prior: "bf16-cublaslt-algo-pick-in-prepare-m128-m256: that pick was timed without interleaving against the incumbent, with no empty-graph baseline and no margin, and its qkv m=256 choice flipped (+14%) in the judge; this reuses master's cell-B Lt plan machinery per cell with the hardened two-round 1.03 gate, a profiler kernel assert, and excludes the dead K-split candidates"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212547Z
 base_sha: d8ecddc962f6cc4f6ef3802f28e49e32b60b4010
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -76,6 +76,13 @@ attempt_file: 2026-10-26T012539Z-check-bf16-verify-per-cell-cublaslt-plan-select
 prepared_at: 2026-10-26T012539Z
 job: 37ed8722bc9b402d
 dispatched_at: 2026-10-26T012616Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2524931643719077
+speedup_ci: [1.2337057669063292, 1.2712805618374863]
+harvested_at: 2026-10-26T023152Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole
@@ -181,3 +188,53 @@ Audited 2026-10-25 by an opus subagent, by reading only (no GPU on this node). *
 - Also checked: the PC branch sits above the NN branch, so unpooler m=128 is reachable. The flag-off gate side is master's routing. The NN probe is compared with the true W column. `unpooler_t` always exists, so state B's K-halves plan is safe. A failed state-B build turns off the PC flags through NEW_CELL_FLAGS. The test shapes (m 33/130/512/1000) never match PC_BY_LM. okc_lint is OK (warnings are prepare-only) and py_compile passes.
 
 Residual risk: the gate will likely route 0-2 cells, so the result is mostly per-row PATH CHOSEN. The extra load_inline compile adds about 30-60 s of run wall clock, inside the 10-minute limit.
+
+## Result
+
+- job `37ed8722bc9b402d` (check), status done, passed True, tests 9/9
+- speedup 1.2525x, 95% CI [1.2337, 1.2713], score 3856.947197330629 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole.patch`; branch `hyp/muse_bf16_proj/bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 11.17 | 0.9714 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.12 | 0.9813 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.89 | 0.9881 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 5.1 | 0.9777 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 5.18 | 0.9991 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 13.14 | 0.9843 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 6.33 | 0.9627 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.51 | 0.9939 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.71 | 0.9954 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.55 | 0.967 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.8 | 0.9999 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.45 | 0.9887 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 20.14 | 0.9905 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.2 | 1.0081 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.04 | 0.9967 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.89 | 1.0036 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 5.69 | 1.021 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 18.99 | 1.0118 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 4.88 | 1.0819 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 4.85 | 1.1155 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 15.57 | 1.0052 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.24 | 1.017 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 22.46 | 0.983 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 18.95 | 0.9974 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.59 | 1.0118 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 20.29 | 0.9679 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.08 | 1.022 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 29.67 | 0.972 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 23.81 | 1.0064 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.03 | 1.0395 | gained |
+
+gained on unpooler verify_1; router verify_1, verify_32; lost on o decode_16; router decode_16; qkv_gate verify_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole`) that adds a further change in the same area is the only way to learn more.
+

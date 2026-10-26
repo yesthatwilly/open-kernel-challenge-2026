@@ -1,0 +1,626 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..1950f143 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -119,6 +119,9 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 256),
+     # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
+     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    # per-cell cuBLASLt plan selector (PC): the cells it can route (unpooler 128 is above).
++    ("o", 8192, 1024, 128), ("o", 8192, 1024, 256), ("qkv_gate", 2304, 8192, 256),
++    ("unpooler", 8192, 4096, 256),
+ )
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+@@ -2096,7 +2099,40 @@ LT_WS_BYTES = 1 << 20        # per-state workspace handed to cublasLtMatmul
+ LT_MAX_ALGOS = 16
+ LT_PICK_REPS = 15
+ LT_ALIGN = 256
+-NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG)
++# PC: per-cell cuBLASLt plan selector (hypothesis bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-
++# unpoole). Five cells, each with its OWN state flag and plan; cell B above is untouched. A cell routes
++# only if two independent interleaved graph-replay rounds both give master / candidate >= PC_MIN_RATIO
++# and the candidate's IQR <= PC_IQR_MAX x master's, and the profiled kernels differ from master's.
++# key -> (layer, m, n, k, state flag, NN-layout weight key in state or None)
++PC_CELLS = {
++    "o128":   ("o", 128, 8192, 1024, "lt_o128_ok", "o_t"),
++    "o256":   ("o", 256, 8192, 1024, "lt_o256_ok", "o_t"),
++    "qkv256": ("qkv_gate", 256, 2304, 8192, "lt_qkv256_ok", None),
++    "unp128": ("unpooler", 128, 8192, 4096, "lt_unp128_ok", "unpooler_t"),
++    "unp256": ("unpooler", 256, 8192, 4096, "lt_unp256_ok", "unpooler_t"),
++}
++PC_BY_LM = {(spec[0], spec[1]): key for key, spec in PC_CELLS.items()}
++PC_KHALVES_KEYS = ("unp256",)   # K-halves bmm with fp32 partials (S=2); dead at unpooler m=128 / qkv
++PC_EXT_NAME = "muse_bf16_lt_percell_v1"   # distinct from cell B's module: different source
++PC_WS_BYTES = 32 << 20          # per-state shared fp32 workspace (cells run serially on one stream)
++PC_QUERY_WS = (0, PC_WS_BYTES)  # heuristic workspace caps queried
++PC_MAX_ALGOS = 24
++PC_TOP_SPLITK1 = 8              # per layout
++PC_TOP_SPLITK = 4               # per layout, split-K > 1 (fp32 COMPUTE_TYPE reduction only)
++PC_RED_COMPUTE_TYPE = 2         # CUBLASLT_REDUCTION_SCHEME_COMPUTE_TYPE (fp32 workspace partials)
++PC_RED_OUTPUT_TYPE = 4          # CUBLASLT_REDUCTION_SCHEME_OUTPUT_TYPE (bf16 partial sums): excluded
++PC_PICK_REPS = LT_PICK_REPS
++PC_FINALISTS = 2
++PC_GATE_REPS = 41
++PC_GATE_ROUNDS = 2
++PC_MIN_RATIO = 1.03             # master / candidate, in BOTH rounds
++PC_IQR_MAX = 1.5                # candidate IQR <= this x master IQR (master IQR floored below)
++PC_IQR_FLOOR_US = 0.25
++PC_START_DEADLINE_S = 150.0     # do not start the phase later than this into _prepare_state
++PC_PHASE_BUDGET_S = 100.0       # a cell not started inside this budget prints 'skipped: deadline'
++PC_MAX_KERNELS = 4
++NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG) + tuple(
++    spec[4] for spec in PC_CELLS.values())
+ 
+ _BULK_CPP = r"""
+ #include <torch/extension.h>
+@@ -2476,6 +2512,129 @@ void run(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor algo
+ }
+ """
+ 
++_LT2_CPP = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <cublasLt.h>
++#include <cstring>
++#include <vector>
++
++#define MUSE_LT2_CHECK(expr)                                                             \
++  do {                                                                                   \
++    cublasStatus_t muse_s_ = (expr);                                                     \
++    TORCH_CHECK(muse_s_ == CUBLAS_STATUS_SUCCESS, #expr " -> cublasStatus ",             \
++                static_cast<int>(muse_s_));                                              \
++  } while (0)
++
++static_assert(sizeof(cublasLtMatmulAlgo_t) == 8 * sizeof(int64_t),
++              "cublasLtMatmulAlgo_t is expected to be uint64_t[8]");
++
++// Per-call host descriptors for out[m, n] = x[m, k] @ W^T (column-major D[n, m] = op(A)[n, k] *
++// x[k, m]). transa != 0: A is W [n, k] row-major as stored (col-major [k, n], ld k, op T). transa ==
++// 0: A is the lossless transpose W_t [k, n] row-major (col-major [n, k], ld n, op N). No static or
++// global state; under CUDA graph replay none of this host code runs.
++struct MuseLt2Desc {
++  cublasLtMatmulDesc_t op = nullptr;
++  cublasLtMatrixLayout_t a = nullptr, b = nullptr, d = nullptr;
++  MuseLt2Desc(int64_t n, int64_t k, int64_t m, int64_t transa) {
++    MUSE_LT2_CHECK(cublasLtMatmulDescCreate(&op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
++    const cublasOperation_t ta = transa ? CUBLAS_OP_T : CUBLAS_OP_N, tb = CUBLAS_OP_N;
++    MUSE_LT2_CHECK(cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta)));
++    MUSE_LT2_CHECK(cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb)));
++    if (transa) {
++      MUSE_LT2_CHECK(cublasLtMatrixLayoutCreate(&a, CUDA_R_16BF, k, n, k));
++    } else {
++      MUSE_LT2_CHECK(cublasLtMatrixLayoutCreate(&a, CUDA_R_16BF, n, k, n));
++    }
++    MUSE_LT2_CHECK(cublasLtMatrixLayoutCreate(&b, CUDA_R_16BF, k, m, k));   // x
++    MUSE_LT2_CHECK(cublasLtMatrixLayoutCreate(&d, CUDA_R_16BF, n, m, n));   // out
++  }
++  ~MuseLt2Desc() {
++    if (d) cublasLtMatrixLayoutDestroy(d);
++    if (b) cublasLtMatrixLayoutDestroy(b);
++    if (a) cublasLtMatrixLayoutDestroy(a);
++    if (op) cublasLtMatmulDescDestroy(op);
++  }
++  MuseLt2Desc(const MuseLt2Desc&) = delete;
++  MuseLt2Desc& operator=(const MuseLt2Desc&) = delete;
++};
++
++template <typename T>
++static int64_t muse_lt2_cfg(const cublasLtMatmulAlgo_t& algo, cublasLtMatmulAlgoConfigAttributes_t attr) {
++  T v{};
++  size_t written = 0;
++  if (cublasLtMatmulAlgoConfigGetAttribute(&algo, attr, &v, sizeof(v), &written) != CUBLAS_STATUS_SUCCESS ||
++      written != sizeof(v))
++    return -1;
++  return static_cast<int64_t>(v);
++}
++
++// {algos int64 [count, 8] (raw cublasLtMatmulAlgo_t), info int64 [count, 8] = (algo_id, tile_id,
++// stages_id, splitk_num, reduction_scheme, workspace_bytes, waves*1000, state)}.
++std::vector<torch::Tensor> lt2_candidates(int64_t n, int64_t k, int64_t m, int64_t max_algos,
++                                          int64_t ws_bytes, int64_t transa) {
++  MuseLt2Desc d(n, k, m, transa);
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cublasLtMatmulPreference_t pref;
++  MUSE_LT2_CHECK(cublasLtMatmulPreferenceCreate(&pref));
++  const uint64_t ws = static_cast<uint64_t>(ws_bytes);
++  cublasStatus_t st = cublasLtMatmulPreferenceSetAttribute(
++      pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws, sizeof(ws));
++  std::vector<cublasLtMatmulHeuristicResult_t> res(static_cast<size_t>(max_algos));
++  int returned = 0;
++  if (st == CUBLAS_STATUS_SUCCESS)
++    st = cublasLtMatmulAlgoGetHeuristic(h, d.op, d.a, d.b, d.d, d.d, pref, static_cast<int>(max_algos),
++                                        res.data(), &returned);
++  cublasLtMatmulPreferenceDestroy(pref);
++  MUSE_LT2_CHECK(st);
++  auto algos = torch::zeros({returned, 8}, torch::kInt64);
++  auto info = torch::full({returned, 8}, -1, torch::kInt64);
++  int64_t* ap = algos.data_ptr<int64_t>();
++  int64_t* ip = info.data_ptr<int64_t>();
++  for (int i = 0; i < returned; ++i) {
++    const cublasLtMatmulAlgo_t& a = res[i].algo;
++    std::memcpy(ap + 8 * i, &a, sizeof(a));
++    ip[8 * i + 0] = muse_lt2_cfg<int32_t>(a, CUBLASLT_ALGO_CONFIG_ID);
++    ip[8 * i + 1] = muse_lt2_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_TILE_ID);
++    ip[8 * i + 2] = muse_lt2_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_STAGES_ID);
++    ip[8 * i + 3] = muse_lt2_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_SPLITK_NUM);
++    ip[8 * i + 4] = muse_lt2_cfg<uint32_t>(a, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME);
++    ip[8 * i + 5] = static_cast<int64_t>(res[i].workspaceSize);
++    ip[8 * i + 6] = static_cast<int64_t>(res[i].wavesCount * 1000.0f);
++    ip[8 * i + 7] = static_cast<int64_t>(res[i].state);
++  }
++  return {algos, info};
++}
++
++// out[m, n] = x[m, k] @ W^T with the given algo on the current stream. transa != 0: w is [n, k];
++// else w is the transposed copy [k, n]. No sync, no allocation; the workspace is the caller's
++// prepare()-allocated per-state tensor (graph-capturable).
++void lt2_run(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor algo_row,
++             torch::Tensor ws, int64_t transa) {
++  TORCH_CHECK(x.is_cuda() && w.is_cuda() && out.is_cuda() && ws.is_cuda(), "cuda tensors expected");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16, "bf16 x / w / out expected");
++  TORCH_CHECK(x.dim() == 2 && w.dim() == 2 && out.dim() == 2, "2-D tensors expected");
++  TORCH_CHECK(x.is_contiguous() && w.is_contiguous() && out.is_contiguous() && ws.is_contiguous(),
++              "contiguous tensors expected");
++  const int64_t m = x.size(0), k = x.size(1);
++  const int64_t n = transa ? w.size(0) : w.size(1);
++  TORCH_CHECK((transa ? w.size(1) : w.size(0)) == k && out.size(0) == m && out.size(1) == n,
++              "shape mismatch");
++  TORCH_CHECK(!algo_row.is_cuda() && algo_row.scalar_type() == at::kLong && algo_row.numel() == 8 &&
++              algo_row.is_contiguous(), "algo_row must be a CPU int64 [8]");
++  MuseLt2Desc d(n, k, m, transa);
++  cublasLtMatmulAlgo_t algo;
++  std::memcpy(&algo, algo_row.data_ptr<int64_t>(), sizeof(algo));
++  const float alpha = 1.0f, beta = 0.0f;
++  cublasLtHandle_t h = at::cuda::getCurrentCUDABlasLtHandle();
++  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
++  MUSE_LT2_CHECK(cublasLtMatmul(h, d.op, &alpha, w.data_ptr(), d.a, x.data_ptr(), d.b, &beta,
++                                out.data_ptr(), d.d, out.data_ptr(), d.d, &algo, ws.data_ptr(),
++                                static_cast<size_t>(ws.numel() * ws.element_size()), stream));
++}
++"""
++
+ 
+ def _bulk_build():
+     """Compile the bulk row-owner module once per process, at import (never during capture), for
+@@ -2526,8 +2685,29 @@ def _lt_build():
+     return ext
+ 
+ 
++def _lt2_build():
++    """Compile the per-cell cuBLASLt plan module (C++ only, with_cuda, -lcublasLt; distinct name,
++    symbols and descriptor struct from cell B's module) at import. Prints the build seconds. No
++    CUDA kernel of ours is in it, so there are no regs/spills to report. Returns None (master
++    paths) on any failure; never raises."""
++    t0 = time.perf_counter()
++    try:
++        from torch.utils.cpp_extension import load_inline
++        ext = load_inline(
++            name=PC_EXT_NAME, cpp_sources=_LT2_CPP, functions=["lt2_candidates", "lt2_run"],
++            with_cuda=True, extra_cflags=["-O2"], extra_ldflags=["-lcublasLt"], verbose=False)
++    except Exception as e:
++        print(f"[pc] load_inline FAILED after {time.perf_counter() - t0:.1f}s, master paths kept: {e!r}",
++              flush=True)
++        return None
++    print(f"[build-time] pc lt2 load_inline compiled in {time.perf_counter() - t0:.1f}s "
++          f"(C++/cuBLASLt only: no device kernels, no regs/spills)", flush=True)
++    return ext
++
++
+ _BULK_EXT = _bulk_build() if torch.cuda.is_available() else None
+ _LT_EXT = _lt_build() if torch.cuda.is_available() else None
++_LT2_EXT = _lt2_build() if torch.cuda.is_available() else None
+ 
+ 
+ def _bulk_repack(w: torch.Tensor, rows: int) -> torch.Tensor:
+@@ -2586,7 +2766,7 @@ def _lt_forward(x: torch.Tensor, w: torch.Tensor, algo_row: torch.Tensor, ws: to
+     return out
+ 
+ 
+-def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None) -> str:
++def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None, verbose: bool = True) -> str:
+     """prepare()-only canary + correctness for one new path fn(x) -> [m, n] bf16. Every launch is
+     announced with a flushed print and followed by a synchronize, the error word (if any) and a
+     flushed print, so a fault names its kernel. Random x: rel L2 vs fp64 <= CELL_REL_L2, finite,
+@@ -2603,14 +2783,16 @@ def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None)
+     xp[0, col] = 0.5
+     outs = []
+     for label, xin in (("random", x), ("random-again", x), ("probe", xp)):
+-        print(f"[cell] LAUNCH {tag} {label} m={m} ...", flush=True)
++        if verbose:
++            print(f"[cell] LAUNCH {tag} {label} m={m} ...", flush=True)
+         o = fn(xin)
+         torch.cuda.synchronize()
+         code = 0
+         if err is not None:
+             code = int(err.item())
+             err.zero_()
+-        print(f"[cell] DONE   {tag} {label} m={m} (synced, error word {code})", flush=True)
++        if verbose:
++            print(f"[cell] DONE   {tag} {label} m={m} (synced, error word {code})", flush=True)
+         if code:
+             return f"{label}: error word {code}"
+         outs.append(o)
+@@ -2623,8 +2805,9 @@ def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None)
+     rel = float((outs[0].double() - ref).norm() / ref.norm().clamp_min(1e-30))
+     pref = wd[:, col] * 0.5
+     prel = float((outs[2][0].double() - pref).norm() / pref.norm().clamp_min(1e-30))
+-    print(f"[cell] check {tag} m={m}: rel L2 {rel:.3e} (<= {CELL_REL_L2:g}), probe row rel {prel:.3e} "
+-          f"(<= {CELL_PROBE_REL:g})", flush=True)
++    if verbose:
++        print(f"[cell] check {tag} m={m}: rel L2 {rel:.3e} (<= {CELL_REL_L2:g}), probe row rel {prel:.3e} "
++              f"(<= {CELL_PROBE_REL:g})", flush=True)
+     if not rel <= CELL_REL_L2:
+         return f"rel L2 {rel:.3e} > {CELL_REL_L2:g}"
+     if not prel <= CELL_PROBE_REL:
+@@ -2915,6 +3098,300 @@ def _lt_prepare(state: dict, flags=None) -> None:
+           + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
+ 
+ 
++def _pc_route(layer: str, x: torch.Tensor, cfg, state: dict):
++    """PC cell key if (layer, cfg m) is one of the five cells, its prepare()-set flag and plan exist,
++    cfg n / k and the weight are the cell's full shape and x is a contiguous 256-byte-aligned bf16
++    [m, k]. cfg, shapes and state only; else None (master's routing, untouched)."""
++    key = PC_BY_LM.get((layer, cfg["m"]))
++    if key is None:
++        return None
++    spec = PC_CELLS[key]
++    if not state[spec[4]] or key not in state["pc_plan"]:
++        return None
++    n, k, m = spec[2], spec[3], spec[1]
++    w = state[layer]
++    if (cfg["n"] == n and cfg["k"] == k and w.dim() == 2 and tuple(w.shape) == (n, k)
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k and x.dtype == torch.bfloat16
++            and x.is_contiguous() and x.data_ptr() % LT_ALIGN == 0):
++        return key
++    return None
++
++
++def _pc_forward(key: str, plan: dict, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """One cell's candidate: a fixed cuBLASLt plan on the TN weight or the NN view, or the K-halves
++    bmm with fp32 partials (S=2) on the NN copy. No sync; allocations are shapes only."""
++    n = PC_CELLS[key][2]
++    if plan["kind"] == "lt":
++        out = torch.empty((x.shape[0], n), dtype=torch.bfloat16, device=x.device)
++        _LT2_EXT.lt2_run(x, state[plan["w_name"]], out, plan["algo"], state["pc_ws"], plan["transa"])
++        return out
++    m, k = x.shape
++    xh = x.view(m, 2, k // 2).transpose(0, 1)
++    wh = state[plan["w_name"]].view(2, k // 2, n)
++    part = torch.bmm(xh, wh, out_dtype=torch.float32)    # fp32 partials: one bf16 rounding at the end
++    return (part[0] + part[1]).to(torch.bfloat16)
++
++
++def _iqr(v):
++    s = sorted(v)
++    return s[(3 * len(s)) // 4] - s[len(s) // 4]
++
++
++def _pc_gate_round(layer: str, m: int, n: int, k: int, st_c: dict, st_i: dict) -> dict:
++    """One independent interleaved round of the model selector: a FRESH x, both kernel_fn graphs
++    RE-CAPTURED, PC_GATE_REPS replays (order swapped every rep) with a CELL_FLUSH_BYTES write before
++    each, medians and IQRs, empty-graph baseline subtracted from the medians. prepare()-only."""
++    dev = st_c["router"].device
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    g_base = _cell_capture(lambda: scratch.add_(1.0))
++    base = _ouns_median([replay_us(g_base) for _ in range(PC_GATE_REPS)])
++    graphs = {"cand": _cell_capture(lambda: kernel_fn(data, st_c)),
++              "master": _cell_capture(lambda: kernel_fn(data, st_i))}
++    times = {"cand": [], "master": []}
++    for rep in range(PC_GATE_REPS):
++        order = ("cand", "master") if rep % 2 == 0 else ("master", "cand")
++        for name in order:
++            times[name].append(replay_us(graphs[name]))
++    med = {name: _ouns_median(v) for name, v in times.items()}
++    iqr = {name: _iqr(v) for name, v in times.items()}
++    net = {name: max(v - base, 0.25) for name, v in med.items()}
++    del graphs, g_base, flush
++    torch.cuda.synchronize()
++    ratio = net["master"] / net["cand"]
++    iqr_ok = iqr["cand"] <= PC_IQR_MAX * max(iqr["master"], PC_IQR_FLOOR_US)
++    return {"cand": net["cand"], "master": net["master"], "cand_iqr": iqr["cand"],
++            "master_iqr": iqr["master"], "base": base, "ratio": ratio, "iqr_ok": iqr_ok,
++            "ok": ratio >= PC_MIN_RATIO and iqr_ok}
++
++
++def _pc_round_str(r: dict) -> str:
++    return (f"cand {r['cand']:.2f}us (IQR {r['cand_iqr']:.2f}) vs master {r['master']:.2f}us "
++            f"(IQR {r['master_iqr']:.2f}) base {r['base']:.2f} -> master/cand {r['ratio']:.3f}"
++            f"{'' if r['iqr_ok'] else ' IQR-FAIL'}{' ok' if r['ok'] else ' FAIL'}")
++
++
++def _pc_cell(state: dict, key: str) -> None:
++    """One PC cell: enumerate candidates (cuBLASLt heuristic plans on the TN weight and, for o /
++    unpooler, the NN view; split-K 1 and split-K > 1 with fp32 COMPUTE_TYPE reduction; unp256 also
++    the K-halves bmm), correctness-check and cold-L2 graph-time each, send the fastest
++    PC_FINALISTS through PC_GATE_ROUNDS independent interleaved rounds, then assert by
++    torch.profiler that the routed call launches kernels different from master's. Sets
++    state[flag], state['pc_plan'][key], state['pc_note'][key]. Raises are caught by the caller."""
++    layer, m, n, k, flag, nn_name = PC_CELLS[key]
++    note = state["pc_note"]
++    w = state[layer]
++    dev = w.device
++    if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16 and w.is_contiguous()):
++        note[key] = f"weight {tuple(w.shape)} unexpected"
++        return
++    layouts = [(layer, 1)]
++    if nn_name is not None and state.get(nn_name) is not None and tuple(state[nn_name].shape) == (k, n):
++        layouts.append((nn_name, 0))
++    cands, seen, skipped = [], set(), {}
++    for wname, transa in layouts:
++        lay = "TN" if transa else "NN"
++        buckets = {1: [], 2: []}
++        for cap in PC_QUERY_WS:
++            algos, info = _LT2_EXT.lt2_candidates(n, k, m, PC_MAX_ALGOS, cap, transa)
++            for i in range(algos.shape[0]):
++                algo_id, tile, stg, splitk, red, ws_need, waves, st = (int(v) for v in info[i].tolist())
++                desc = (f"{lay} cap={cap >> 20}MB i={i:2d} algo={algo_id} tile={tile} stg={stg} "
++                        f"splitK={splitk} red={red} ws={ws_need}")
++                rkey = (transa,) + tuple(int(v) for v in algos[i].tolist())
++                bucket = buckets[1 if splitk == 1 else 2]
++                why = ""
++                if st != 0:
++                    why = "heuristic state"
++                elif splitk < 1:
++                    why = "splitK unknown"
++                elif red == PC_RED_OUTPUT_TYPE:
++                    why = "OUTPUT_TYPE reduction"
++                elif splitk > 1 and red != PC_RED_COMPUTE_TYPE:
++                    why = "split-K without fp32 COMPUTE_TYPE reduction"
++                elif ws_need < 0 or ws_need > PC_WS_BYTES:
++                    why = "workspace"
++                elif rkey in seen:
++                    why = "duplicate"
++                elif len(bucket) >= (PC_TOP_SPLITK1 if splitk == 1 else PC_TOP_SPLITK):
++                    why = "beyond top-N"
++                if why:
++                    skipped[why] = skipped.get(why, 0) + 1
++                    continue
++                seen.add(rkey)
++                row = algos[i].clone().contiguous()
++                bucket.append(({"kind": "lt", "w_name": wname, "transa": transa, "algo": row}, desc))
++        cands += buckets[1] + buckets[2]
++    if key in PC_KHALVES_KEYS and state.get("unpooler_t") is not None and k % 2 == 0:
++        cands.append(({"kind": "khalves", "w_name": "unpooler_t", "transa": 0, "algo": None},
++                      "K-halves bmm S=2 fp32 partials on NN copy"))
++    print(f"[pc] {key} ({layer} m={m} n={n} k={k}): {len(cands)} candidates; excluded {skipped}", flush=True)
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    st_off = dict(state)
++    st_off[flag] = False
++    master_pre = _lt_graph_median_us(lambda: kernel_fn(data, st_off), flush, PC_PICK_REPS)
++    nn_inc = layer == "unpooler" and m == 128 and bool(state["nn_ok"])
++    incumbent = "NN torch.mm on unpooler_t (nn_ok)" if nn_inc else "_bf16_gemm_dispatch_impl"
++    print(f"[pc] {key}: gated incumbent = {incumbent}; master routed path pre-screen {master_pre:.2f} us "
++          f"(graph replay incl. fixed cost, cold L2, median of {PC_PICK_REPS})", flush=True)
++    scored = []
++    for plan, desc in cands:
++        try:
++            fn = lambda xx, plan=plan: _pc_forward(key, plan, xx, state)
++            bad = _cell_check(f"PC {key} {desc}", fn, w, m, n, k, verbose=False)
++            if bad:
++                print(f"[pc] {key} {desc}: excluded ({bad})", flush=True)
++                continue
++            us = _lt_graph_median_us(lambda: fn(x), flush, PC_PICK_REPS)
++        except Exception as e:   # unsupported option (e.g. bmm out_dtype) or cuBLAS status: skip it
++            print(f"[pc] {key} {desc}: excluded (raised {type(e).__name__}: {str(e)[-160:]})", flush=True)
++            continue
++        print(f"[pc] {key} {desc}: {us:.2f} us", flush=True)
++        scored.append((us, len(scored), plan, desc))
++    del flush
++    if not scored:
++        note[key] = f"no usable candidate ({len(cands)} queried); incumbent {incumbent}"
++        return
++    scored.sort(key=lambda t: (t[0], t[1]))
++    finalists = scored[:PC_FINALISTS]
++    best = None
++    for us, _, plan, desc in finalists:
++        st_c = dict(state)
++        st_c[flag] = True
++        st_c["pc_plan"] = dict(state["pc_plan"])
++        st_c["pc_plan"][key] = plan
++        rounds = []
++        for rnd in range(PC_GATE_ROUNDS):
++            tg = time.perf_counter()
++            r = _pc_gate_round(layer, m, n, k, st_c, st_off)
++            rounds.append(r)
++            print(f"[pc] gate {key} [{desc}] round {rnd + 1}/{PC_GATE_ROUNDS} ({PC_GATE_REPS} reps, "
++                  f"{CELL_FLUSH_BYTES >> 20} MB flush, fresh x, recaptured graphs, {time.perf_counter() - tg:.1f}s): "
++                  f"{_pc_round_str(r)} (route needs >= {PC_MIN_RATIO} and IQR <= {PC_IQR_MAX}x master's)",
++                  flush=True)
++        if all(r["ok"] for r in rounds):
++            score = min(r["ratio"] for r in rounds)
++            if best is None or score > best[0]:
++                best = (score, plan, desc, rounds)
++    if best is None:
++        note[key] = (f"gate: no finalist cleared both rounds ({len(finalists)} tried; incumbent {incumbent}); "
++                     f"best pre-screen {finalists[0][0]:.2f} us [{finalists[0][3]}] vs master {master_pre:.2f} us")
++        return
++    score, plan, desc, rounds = best
++    st_on = dict(state)
++    st_on[flag] = True
++    st_on["pc_plan"] = dict(state["pc_plan"])
++    st_on["pc_plan"][key] = plan
++    try:
++        mnames = _cell_kernels(lambda: kernel_fn(data, st_off))
++        cnames = _cell_kernels(lambda: kernel_fn(data, st_on))
++    except Exception as e:
++        note[key] = f"profiler unavailable ({type(e).__name__}: {str(e)[-160:]}); kernel names unverified, dropped"
++        return
++    print(f"[pc] {key}: master kernels {mnames}; candidate [{desc}] kernels {cnames}", flush=True)
++    if not cnames or len(cnames) > PC_MAX_KERNELS:
++        note[key] = f"profiled candidate kernels {cnames}: expected 1..{PC_MAX_KERNELS} launches"
++    elif sorted(cnames) == sorted(mnames):
++        note[key] = f"candidate [{desc}] launches the SAME kernels as master {mnames}: dropped (a tie by construction)"
++    else:
++        state["pc_plan"][key] = plan
++        state[flag] = True
++        note[key] = (f"[{desc}] r1 {_pc_round_str(rounds[0])} | r2 {_pc_round_str(rounds[1])} | "
++                     f"kernels {cnames} vs master {mnames}; incumbent {incumbent}")
++
++
++def _pc_prepare(state: dict, t_start: float, flags=None) -> None:
++    """PC cells. Every flag starts False. flags None (the judge's state): per cell _pc_cell behind
++    its own start deadline (prints 'skipped: deadline'), any exception keeps master for that cell
++    only. flags a dict (the A/B check's second state): inherit each flag and plan (own algo row
++    copies), allocate the state's own workspace and NN view."""
++    for spec in PC_CELLS.values():
++        state[spec[4]] = False
++    state["pc_plan"] = {}
++    state["pc_ws"] = None
++    state["o_t"] = None
++    state["pc_note"] = {}
++    if flags is not None:
++        plans = flags.get("_pc_plans") or {}
++        need_ws = False
++        for key, spec in PC_CELLS.items():
++            plan = plans.get(key)
++            if not flags.get(spec[4]) or plan is None:
++                continue
++            if plan["w_name"] == "o_t" and state["o_t"] is None:
++                state["o_t"] = state["o"].t().contiguous()
++            new = dict(plan)
++            if plan["algo"] is not None:
++                new["algo"] = plan["algo"].clone()
++            state["pc_plan"][key] = new
++            state[spec[4]] = True
++            need_ws = need_ws or plan["kind"] == "lt"
++        if need_ws:
++            state["pc_ws"] = torch.empty(PC_WS_BYTES, dtype=torch.uint8, device=state["o"].device)
++        return
++    if _LT2_EXT is None:
++        for key in PC_CELLS:
++            state["pc_note"][key] = "no lt2 module"
++        return
++    t_phase = time.perf_counter()
++    try:
++        dev = state["o"].device
++        state["pc_ws"] = torch.empty(PC_WS_BYTES, dtype=torch.uint8, device=dev)
++        state["o_t"] = state["o"].t().contiguous()   # lossless [1024, 8192] NN view of W_o, built once
++    except Exception as e:
++        for key in PC_CELLS:
++            state["pc_note"][key] = f"setup raised {type(e).__name__}: {str(e)[-120:]}"
++        state["pc_ws"], state["o_t"] = None, None
++        return
++    for key, spec in PC_CELLS.items():
++        now = time.perf_counter()
++        if now - t_start > PC_START_DEADLINE_S or now - t_phase > PC_PHASE_BUDGET_S:
++            print(f"[pc] {key}: skipped: deadline (phase {now - t_phase:.1f}s of {PC_PHASE_BUDGET_S:.0f}s, "
++                  f"prepare {now - t_start:.1f}s of {PC_START_DEADLINE_S:.0f}s)", flush=True)
++            state["pc_note"][key] = "skipped: deadline"
++            continue
++        tc = time.perf_counter()
++        try:
++            _pc_cell(state, key)
++        except Exception as e:   # never raises: this cell keeps master's path, no other flag moves
++            state[spec[4]] = False
++            state["pc_plan"].pop(key, None)
++            state["pc_note"][key] = f"raised {type(e).__name__}: {str(e)[-200:]}"
++        if not state[spec[4]]:
++            state["pc_plan"].pop(key, None)
++        torch.cuda.synchronize()
++        print(f"[prepare-time] pc cell {key}: {time.perf_counter() - tc:.2f}s", flush=True)
++        print(f"PATH CHOSEN PC {spec[0]} m={spec[1]}: {'candidate' if state[spec[4]] else 'master'}; "
++              f"{state['pc_note'].get(key, '')}", flush=True)
++    if not any(p["kind"] == "lt" for p in state["pc_plan"].values()):
++        state["pc_ws"] = None
++    if not any(p["w_name"] == "o_t" for p in state["pc_plan"].values()):
++        state["o_t"] = None
++
++
++def _pc_print_summary(state: dict) -> None:
++    """Compact last lines of prepare(): one line per PC cell with its FINAL flag (after the A/B
++    self-check), so the judge's log tail keeps every PATH CHOSEN / GATE result."""
++    for key, spec in PC_CELLS.items():
++        note = state.get("pc_note", {}).get(key, "")
++        print(f"PC-SUMMARY PATH CHOSEN {key} ({spec[0]} m={spec[1]}): "
++              f"{'ROUTED' if state[spec[4]] else 'master'} | {note[:600]}", flush=True)
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -3005,6 +3482,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
++        # (10) per-cell cuBLASLt plan selector PC: o 128/256, qkv_gate 256, unpooler 128/256.
++        _pc_prepare(state, t_all)
++        t = tick("pc cells (candidates + pre-screen + two-round gate + profile)", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+@@ -3013,7 +3493,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _lt_prepare(state, flags=flags)
+-        t = tick("bulk / lt per-state buffers (flags inherited)", t)
++        _pc_prepare(state, t_all, flags=flags)
++        t = tick("bulk / lt / pc per-state buffers (flags inherited)", t)
+     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
+           f"{time.perf_counter() - t_all:.2f}s", flush=True)
+     return state
+@@ -3027,9 +3508,12 @@ def _ab_flags(state: dict) -> dict:
+     return flags
+ 
+ 
+-def _ab_component(layer: str, m: int) -> str:
++def _ab_component(layer: str, m: int, state=None) -> str:
+     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
+     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
++    pc_key = PC_BY_LM.get((layer, m))
++    if pc_key is not None and state is not None and state[PC_CELLS[pc_key][4]]:
++        return PC_CELLS[pc_key][4]   # a routed PC cell: a miss switches off only its own flag
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
+     if layer == "qkv_gate" and m == LT_M:
+@@ -3058,6 +3542,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     try:
+         fl = _ab_flags(state_a)
+         fl["_lt_algo"] = state_a["lt_algo_qkv128"]   # the B cell's prepare()-chosen algo row (CPU)
++        fl["_pc_plans"] = state_a["pc_plan"]         # the PC cells' prepare()-chosen plans (CPU rows)
+         state_b = _prepare_state(weights, flags=fl)
+     except Exception as e:
+         print(f"[ab] second-state build failed ({type(e).__name__}: {e}); NN, router cluster, "
+@@ -3075,7 +3560,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     bad = {}
+     wf = {}
+     for layer, n, k, m in AB_CASES:
+-        comp = _ab_component(layer, m)
++        comp = _ab_component(layer, m, state_a)
+         graphs, xs, outs = {}, {}, {}
+         try:
+             cfg = {"m": m, "n": n, "k": k, "layer": layer}
+@@ -3159,6 +3644,7 @@ def prepare(weights: Weights) -> dict:
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
+           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++    _pc_print_summary(state)   # LAST lines of prepare: the judge keeps only the log tail
+     return state
+ 
+ 
+@@ -3169,6 +3655,9 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     # dispatch flag (ouns_cl, router_cluster_ok, nn_ok) is read from `state`.
+     if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
+         return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
++    pc_key = _pc_route(layer, x, cfg, state)   # o 128/256, qkv_gate 256, unpooler 128/256: per-cell flag
++    if pc_key is not None:                      # (above the NN branch below, which unpooler m=128 hits)
++        return _pc_forward(pc_key, state["pc_plan"][pc_key], x, state)
+     if _bulk_route_ok(layer, x, cfg, state):   # pooler / qkv_gate / o at m == 1, per-cell flag
+         return _bulk_forward(layer, x, state)
+     key16 = _swapab16_key(layer, cfg)
