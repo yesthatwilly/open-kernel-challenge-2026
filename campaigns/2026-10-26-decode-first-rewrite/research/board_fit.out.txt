@@ -1,0 +1,27 @@
+teams on the overall board: 1163; teams with all four kernel boards: 632
+us: yesthatwilly overall rank 480
+  muse_attention_decode    1.5347  rank 373/755
+  muse_bf16_proj           1.2566  rank 319/1019
+  muse_moe_w4a16           1.4021  rank 490/797
+  muse_decode_layer        1.3164  rank 448/704
+
+formula (weights att, bf16, moe, decode on log speedup) -> (order violations, spearman)
+  time-share (.17,.21,.59,1)   (310, 0.9936157432412711)
+  equal                        (311, 0.9765676703835156)
+  decode only                  (98, 0.9960715008615117)
+  grid best of earlier run     (279, 0.9972368210764281)
+  mean rank                    spearman 0.9495
+  rank on muse_attention_decode spearman 0.8481
+  rank on muse_bf16_proj       spearman 0.6295
+  rank on muse_moe_w4a16       spearman 0.9465
+  rank on muse_decode_layer    spearman 0.9961
+
+min-violation fit: violations 98, spearman 0.9961, weights (att, bf16, moe) (0.0, 0.0, 0.0) with decode = 1
+
+decode_layer speedup needed, other three held at ours:
+  overall ~top25   (rank among all-4 teams) needs decode 2.026x
+  overall ~top50   (rank among all-4 teams) needs decode 1.933x
+  overall ~top100  (rank among all-4 teams) needs decode 1.783x
+  overall ~top150  (rank among all-4 teams) needs decode 1.701x
+  overall ~top200  (rank among all-4 teams) needs decode 1.606x
+  overall ~top300  (rank among all-4 teams) needs decode 1.450x
