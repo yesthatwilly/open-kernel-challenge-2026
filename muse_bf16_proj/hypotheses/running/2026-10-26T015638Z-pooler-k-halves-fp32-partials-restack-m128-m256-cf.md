@@ -15,7 +15,7 @@ confirm_of: pooler-k-halves-fp32-partials-restack-m128-m256
 confirm_of_job: de95f81782374124
 review: proceed
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-26T020127Z
 base_sha: 659ff4783582d8103e09cf89dd5fae13e57f96cf
 base_blob: ff7580f8edf36c612459db87204b32d412842b5b
@@ -32,6 +32,8 @@ submission_blob: 4cfa21c6157c58d30290c826b6e7dc400aaa4829
 lint_warnings: 36
 attempt_file: 2026-10-26T020132Z-check-pooler-k-halves-fp32-partials-restack-m128-m256-cf.md
 prepared_at: 2026-10-26T020132Z
+job: caaa76cc288d47c7
+dispatched_at: 2026-10-26T020142Z
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256-cf
