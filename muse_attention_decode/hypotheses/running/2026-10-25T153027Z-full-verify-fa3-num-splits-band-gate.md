@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212903Z
 base_sha: 2922874607ac8f3aee67594fba45a5337e29365e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -73,6 +73,8 @@ submission_blob: f171866b1c89fc143bbb35f711723ef60d39a715
 lint_warnings: 65
 attempt_file: 2026-10-26T012536Z-check-full-verify-fa3-num-splits-band-gate.md
 prepared_at: 2026-10-26T012536Z
+job: 849f2733f8ea4888
+dispatched_at: 2026-10-26T012615Z
 ---
 
 # full-verify-fa3-num-splits-band-gate
