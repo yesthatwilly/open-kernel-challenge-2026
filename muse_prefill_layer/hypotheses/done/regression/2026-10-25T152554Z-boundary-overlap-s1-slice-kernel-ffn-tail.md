@@ -69,10 +69,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "FusedPostNormResidualPreNorm (muse_spark_norm_residual_kernel) x2 on the critical path after the o and unpooler GEMMs at T > 4096 (stage 1: the FFN boundary)"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212333Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212552Z
 base_sha: cc874e4f97ac53e4c4a00078d39a8ff28d8316aa
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -91,6 +91,13 @@ attempt_file: 2026-10-26T012540Z-check-boundary-overlap-s1-slice-kernel-ffn-tail
 prepared_at: 2026-10-26T012540Z
 job: 6962f6c6af3d4e5b
 dispatched_at: 2026-10-26T012946Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.443764489953735
+speedup_ci: [1.422108022604429, 1.4654209573030408]
+harvested_at: 2026-10-26T023859Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
@@ -177,3 +184,31 @@ Verdict: dispatch-with-fixes.
 - Fix: deadlines tightened (start 215 -> 190 s, gate 270 -> 250 s). Master's prepare ends at ~140 s (archive combo-b log), build+gates ~60 s, so this is still ample, but it keeps the phases inside 300 s if the harness clock also counts the import.
 - Parity margin note: the equivalent Triton port measured out rel L2 2.3e-3 (FFN, T=753) vs the 3e-3 gate; deterministic, passes, but thin.
 Residual risk: out rel L2 gate (3e-3) sits close to the measured 2.3e-3 bf16-rounding gap vs the module, and the 192x192 nvjet tile may not survive at M=T/NCH, so the tail gate may simply keep master.
+
+## Result
+
+- job `6962f6c6af3d4e5b` (check), status done, passed True, tests 5/5
+- speedup 1.4438x, 95% CI [1.4221, 1.4654], score 268329.0125887597 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json
+- **outcome: regression** (regression)
+- files: `muse_prefill_layer/hypotheses/done/regression/boundary-overlap-s1-slice-kernel-ffn-tail.result.json`, `muse_prefill_layer/hypotheses/done/regression/boundary-overlap-s1-slice-kernel-ffn-tail.patch`; branch `hyp/muse_prefill_layer/boundary-overlap-s1-slice-kernel-ffn-tail`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 756.7 | 768.94 | 0.9589 | lost |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1150.28 | 1125.74 | 0.9988 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2197.82 | 2116.81 | 0.9702 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3744.83 | 3707.2 | 0.9814 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11889.83 | 11703.46 | 1.0026 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11119.71 | 10907.97 | 1.0106 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15073.37 | 14819.76 | 0.9923 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18589.69 | 18330.03 | 0.9943 | flat |
+
+lost on sliding turn_1. Expected hit: 1/2. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `FusedPostNormResidualPreNorm (muse_spark_norm_residual_kernel) x2 on the critical path after the o and unpooler GEMMs at T > 4096 (stage 1: the FFN boundary)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_prefill_layer "<what to fix or tune>" --kind rewrite --depends-on boundary-overlap-s1-slice-kernel-ffn-tail --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+

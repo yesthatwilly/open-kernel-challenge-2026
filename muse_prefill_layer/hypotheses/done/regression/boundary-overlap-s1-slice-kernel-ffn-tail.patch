@@ -1,0 +1,790 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f4751fc0..d24dd7d9 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -643,6 +643,11 @@ def prepare(weights):
+     # The low-class candidates' summary; its '[rega-lo] PATH CHOSEN low: ...' line is the last prepare() line.
+     for line in lo_lines:
+         print(line[:1200], flush=True)
++    # boundary-overlap-s1-slice-kernel-ffn-tail: AFTER master's whole setup, with its own deadlines; never raises.
++    # Its compact summary (every GATE / PATH CHOSEN line) is repeated LAST so the archived log tail keeps it.
++    bnd_lines = _bnd_setup(state, weights, device, t_prepare0)
++    for line in bnd_lines:
++        print(line[:1500], flush=True)
+     return state
+ 
+ 
+@@ -5760,6 +5765,757 @@ def _rega_lo_run(state, weights, device, t_start, sm, lines):
+     return None, chosen
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# boundary-overlap-s1-slice-kernel-ffn-tail (rewrite stage 1): the FFN tail at T == BND_TOKENS (first_turn) as NCH row
++# chunks, unpooler chunk c (torch.mm into a row slice of ffn_output, main stream) then the post-FFN boundary of the
++# same rows on a per-state side stream (bnd_rows, a CUDA kernel writing ROW SLICES of preallocated outputs), so
++# boundary chunk c can run under unpooler chunk c + 1. Built last in prepare() (after rega-lo), with its own
++# deadlines; a build error, parity miss, exception, deadline or a tail that is not >= 1/BND_RATIO faster than master's
++# routed tail in BOTH interleaved rounds leaves master's exact path (state['bnd_ok'] False). Nothing here is
++# module-global device state: the extension handle, coefficients and stream live in the per-state dict state['bnd'].
++BND_TAG = "[bnd]"
++BND_EXT_NAME = "muse_prefill_bnd_v1"
++BND_CUDA_CFLAGS = ["-O3", "-std=c++20", "-lineinfo"]
++BND_TOKENS = 16384                 # the one T the chunked tail serves (the scored first_turn shapes): a shape check
++BND_NCH = (2, 4)                   # candidate chunk counts
++BND_GRIDS = (0, 32, 16)            # bnd_rows grid: 0 = one CTA per row, else that many persistent CTAs
++BND_PRIOS = (0, -1)                # side-stream priority candidates (does the captured graph keep it?)
++BND_RATIO = 0.95                   # ON only at <= this x master's routed tail in BOTH rounds (>= 1.053x)
++BND_IQR_MAX = 1.5                  # and candidate IQR <= this x master's IQR in both rounds
++BND_ROUNDS = 2
++BND_ALTERNATIONS = 15
++BND_M1_RATIO = 1.05                # milestone M1: bnd_rows over all rows <= this x the SGLang module (print only)
++BND_START_DEADLINE_S = 190.0       # no build once prepare() has used this many seconds (master ends ~140 s; build+gates ~60 s)
++BND_GATE_DEADLINE_S = 250.0        # no further phase after this: keeps margin if the 300 s clock also counts the import
++BND_RESID_TOL = 5e-3               # residual-update rel L2 vs the module (stream - alpha * stream_in)
++BND_OUT_TOL = 3e-3                 # next-input rel L2 vs the module
++BND_ROW_MULT = 5.0                 # worst row <= this x the tolerance
++BND_PARITY_T = (753, 16384)
++BND_COEF_TOL = 1e-2
++BND_SENTINEL = 7.0
++
++_BND_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void bnd_rows(torch::Tensor stream_in, torch::Tensor branch, int64_t row0, int64_t nrows, torch::Tensor alpha,
++              torch::Tensor beta, torch::Tensor wpost, torch::Tensor wpre, double post_eps, double rms_eps,
++              torch::Tensor out_next, torch::Tensor out_stream, int64_t grid);
++std::vector<int64_t> bnd_info();
++"""
++
++_BND_CU = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <vector>
++
++namespace {
++
++constexpr int BND_N = 8192;
++constexpr int BND_THREADS = 512;
++
++__device__ __forceinline__ float bnd_warp_sum(float v) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  return v;
++}
++
++// Block sum over 16 warps; each reduction uses its own 16-float shared slot (no reuse hazard across the two).
++__device__ __forceinline__ float bnd_block_sum(float v, float* red, int lane, int warp) {
++  v = bnd_warp_sum(v);
++  if (lane == 0) red[warp] = v;
++  __syncthreads();
++  float tot = 0.f;
++#pragma unroll
++  for (int i = 0; i < 16; ++i) tot += red[i];
++  return tot;
++}
++
++__device__ __forceinline__ void bnd_ld8(const float* p, float* o) {
++  const float4 a = *reinterpret_cast<const float4*>(p);
++  const float4 b = *reinterpret_cast<const float4*>(p + 4);
++  o[0] = a.x; o[1] = a.y; o[2] = a.z; o[3] = a.w;
++  o[4] = b.x; o[5] = b.y; o[6] = b.z; o[7] = b.w;
++}
++
++// One row per CTA iteration (CTA r, r + gridDim.x, ...); 512 threads x 16 elements. Thread t owns columns
++// (t + 512 j) * 8 .. + 7 for j = 0, 1: every global load of the row (2 x uint4 of branch, 4 x float4 of stream) is
++// issued before any math. post-norm of the branch (x wpost when given), norm-preserving residual mix, pre-norm of the
++// new stream; writes the new stream (fp32) and the next input (bf16) at the same rows.
++__global__ void __launch_bounds__(BND_THREADS) muse_prefill_bnd_rows_kernel(
++    const float* __restrict__ stream_in, const __nv_bfloat16* __restrict__ branch, int64_t row0, int nrows,
++    const float* __restrict__ alpha, const float* __restrict__ beta, const float* __restrict__ wpost,
++    const float* __restrict__ wpre, float post_eps, float rms_eps, __nv_bfloat16* __restrict__ out_next,
++    float* __restrict__ out_stream) {
++  __shared__ float red[2][16];
++  const int t = threadIdx.x, lane = t & 31, warp = t >> 5;
++  for (int r = blockIdx.x; r < nrows; r += gridDim.x) {
++    const int64_t base = (row0 + r) * static_cast<int64_t>(BND_N);
++    uint4 braw[2];
++    float4 sraw[4];
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int64_t col = base + static_cast<int64_t>(t + BND_THREADS * j) * 8;
++      braw[j] = *reinterpret_cast<const uint4*>(branch + col);
++      sraw[2 * j] = *reinterpret_cast<const float4*>(stream_in + col);
++      sraw[2 * j + 1] = *reinterpret_cast<const float4*>(stream_in + col + 4);
++    }
++    float b[16], s[16];
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const uint32_t w[4] = {braw[j].x, braw[j].y, braw[j].z, braw[j].w};
++#pragma unroll
++      for (int q = 0; q < 4; ++q) {
++        b[j * 8 + 2 * q] = __uint_as_float(w[q] << 16);
++        b[j * 8 + 2 * q + 1] = __uint_as_float(w[q] & 0xffff0000u);
++      }
++      s[j * 8 + 0] = sraw[2 * j].x; s[j * 8 + 1] = sraw[2 * j].y;
++      s[j * 8 + 2] = sraw[2 * j].z; s[j * 8 + 3] = sraw[2 * j].w;
++      s[j * 8 + 4] = sraw[2 * j + 1].x; s[j * 8 + 5] = sraw[2 * j + 1].y;
++      s[j * 8 + 6] = sraw[2 * j + 1].z; s[j * 8 + 7] = sraw[2 * j + 1].w;
++    }
++    if (wpost != nullptr) {
++#pragma unroll
++      for (int j = 0; j < 2; ++j) {
++        float w8[8];
++        bnd_ld8(wpost + (t + BND_THREADS * j) * 8, w8);
++#pragma unroll
++        for (int k = 0; k < 8; ++k) b[j * 8 + k] *= w8[k];
++      }
++    }
++    float ss = 0.f;
++#pragma unroll
++    for (int i = 0; i < 16; ++i) ss += b[i] * b[i];
++    ss = bnd_block_sum(ss, red[0], lane, warp);
++    const float inv = rsqrtf(ss * (1.0f / BND_N) + post_eps);
++    float ss2 = 0.f;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      float a8[8], be8[8];
++      bnd_ld8(alpha + (t + BND_THREADS * j) * 8, a8);
++      bnd_ld8(beta + (t + BND_THREADS * j) * 8, be8);
++#pragma unroll
++      for (int k = 0; k < 8; ++k) {
++        const float sn = a8[k] * s[j * 8 + k] + be8[k] * (b[j * 8 + k] * inv);
++        s[j * 8 + k] = sn;
++        ss2 += sn * sn;
++      }
++    }
++    ss2 = bnd_block_sum(ss2, red[1], lane, warp);
++    const float inv2 = rsqrtf(ss2 * (1.0f / BND_N) + rms_eps);
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int64_t col = base + static_cast<int64_t>(t + BND_THREADS * j) * 8;
++      float p8[8];
++      bnd_ld8(wpre + (t + BND_THREADS * j) * 8, p8);
++      *reinterpret_cast<float4*>(out_stream + col) = make_float4(s[j * 8 + 0], s[j * 8 + 1], s[j * 8 + 2], s[j * 8 + 3]);
++      *reinterpret_cast<float4*>(out_stream + col + 4) = make_float4(s[j * 8 + 4], s[j * 8 + 5], s[j * 8 + 6], s[j * 8 + 7]);
++      uint32_t o[4];
++#pragma unroll
++      for (int q = 0; q < 4; ++q) {
++        const __nv_bfloat162 pr = __floats2bfloat162_rn(s[j * 8 + 2 * q] * inv2 * p8[2 * q],
++                                                        s[j * 8 + 2 * q + 1] * inv2 * p8[2 * q + 1]);
++        o[q] = *reinterpret_cast<const uint32_t*>(&pr);
++      }
++      *reinterpret_cast<uint4*>(out_next + col) = make_uint4(o[0], o[1], o[2], o[3]);
++    }
++  }
++}
++
++bool bnd_aligned(const torch::Tensor& t) { return reinterpret_cast<uintptr_t>(t.data_ptr()) % 16 == 0; }
++
++}  // namespace
++
++// stream_in fp32 [T, 8192], branch bf16 [T, 8192], alpha / beta / wpre fp32 [8192], wpost fp32 [8192] or an empty
++// tensor (no input scale), out_next bf16 [T, 8192], out_stream fp32 [T, 8192]; rows row0 .. row0 + nrows - 1 on the
++// current stream. grid 0: one CTA per row, else min(grid, nrows) persistent CTAs.
++void bnd_rows(torch::Tensor stream_in, torch::Tensor branch, int64_t row0, int64_t nrows, torch::Tensor alpha,
++              torch::Tensor beta, torch::Tensor wpost, torch::Tensor wpre, double post_eps, double rms_eps,
++              torch::Tensor out_next, torch::Tensor out_stream, int64_t grid) {
++  TORCH_CHECK(stream_in.is_cuda() && branch.is_cuda() && out_next.is_cuda() && out_stream.is_cuda(), "bnd_rows: cuda");
++  TORCH_CHECK(stream_in.scalar_type() == at::kFloat && out_stream.scalar_type() == at::kFloat &&
++              branch.scalar_type() == at::kBFloat16 && out_next.scalar_type() == at::kBFloat16, "bnd_rows: dtypes");
++  TORCH_CHECK(alpha.scalar_type() == at::kFloat && beta.scalar_type() == at::kFloat &&
++              wpre.scalar_type() == at::kFloat && wpost.scalar_type() == at::kFloat, "bnd_rows: coef dtypes");
++  TORCH_CHECK(stream_in.is_contiguous() && branch.is_contiguous() && out_next.is_contiguous() &&
++              out_stream.is_contiguous() && alpha.is_contiguous() && beta.is_contiguous() && wpre.is_contiguous() &&
++              wpost.is_contiguous(), "bnd_rows: contiguous");
++  TORCH_CHECK(stream_in.dim() == 2 && stream_in.size(1) == BND_N && branch.sizes() == stream_in.sizes() &&
++              out_next.sizes() == stream_in.sizes() && out_stream.sizes() == stream_in.sizes(), "bnd_rows: shapes");
++  TORCH_CHECK(alpha.numel() == BND_N && beta.numel() == BND_N && wpre.numel() == BND_N &&
++              (wpost.numel() == 0 || wpost.numel() == BND_N), "bnd_rows: coef sizes");
++  TORCH_CHECK(row0 >= 0 && nrows >= 0 && row0 + nrows <= stream_in.size(0), "bnd_rows: row range");
++  TORCH_CHECK(bnd_aligned(stream_in) && bnd_aligned(branch) && bnd_aligned(out_next) && bnd_aligned(out_stream) &&
++              bnd_aligned(alpha) && bnd_aligned(beta) && bnd_aligned(wpre) && (wpost.numel() == 0 || bnd_aligned(wpost)),
++              "bnd_rows: 16-byte alignment");
++  if (nrows == 0) return;
++  const c10::cuda::CUDAGuard guard(stream_in.device());
++  const int64_t blocks = (grid <= 0 || grid > nrows) ? nrows : grid;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  muse_prefill_bnd_rows_kernel<<<static_cast<unsigned int>(blocks), BND_THREADS, 0, stream>>>(
++      reinterpret_cast<const float*>(stream_in.data_ptr()), reinterpret_cast<const __nv_bfloat16*>(branch.data_ptr()),
++      row0, static_cast<int>(nrows), reinterpret_cast<const float*>(alpha.data_ptr()),
++      reinterpret_cast<const float*>(beta.data_ptr()),
++      wpost.numel() == 0 ? nullptr : reinterpret_cast<const float*>(wpost.data_ptr()),
++      reinterpret_cast<const float*>(wpre.data_ptr()), static_cast<float>(post_eps), static_cast<float>(rms_eps),
++      reinterpret_cast<__nv_bfloat16*>(out_next.data_ptr()), reinterpret_cast<float*>(out_stream.data_ptr()));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// attributes ok, numRegs, localSizeBytes, static smem, CTAs per SM at 512 threads, binaryVersion, ptxVersion
++std::vector<int64_t> bnd_info() {
++  std::vector<int64_t> r;
++  const void* fn = reinterpret_cast<const void*>(muse_prefill_bnd_rows_kernel);
++  cudaFuncAttributes a{};
++  const cudaError_t e1 = cudaFuncGetAttributes(&a, fn);
++  int occ = 0;
++  const cudaError_t e2 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, BND_THREADS, 0);
++  if (e1 != cudaSuccess || e2 != cudaSuccess) (void)cudaGetLastError();
++  r.push_back(e1 == cudaSuccess && e2 == cudaSuccess ? 1 : 0);
++  r.push_back(a.numRegs);
++  r.push_back(static_cast<int64_t>(a.localSizeBytes));
++  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
++  r.push_back(occ);
++  r.push_back(a.binaryVersion);
++  r.push_back(a.ptxVersion);
++  return r;
++}
++"""
++
++
++def _bnd_build():
++    """Compile the small module (prepare only). Plain sm_90 (no wgmma / sm_90a PTX): TORCH_CUDA_ARCH_LIST is set to
++    9.0 around the build and restored after. Returns (ext or None, build seconds)."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    ext = None
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:
++            arch_flags = [f"<unknown: {e!r}>"]
++        print(f"{BND_TAG} build {BND_EXT_NAME}: torch {torch.__version__} cuda {torch.version.cuda}; "
++              f"TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> {arch_flags}; "
++              f"extra_cuda_cflags {BND_CUDA_CFLAGS}", flush=True)
++        ext = load_inline(name=BND_EXT_NAME, cpp_sources=_BND_CPP, cuda_sources=_BND_CU,
++                          functions=["bnd_rows", "bnd_info"], extra_cuda_cflags=list(BND_CUDA_CFLAGS), verbose=False)
++    except Exception as e:
++        ext = None
++        print(f"{BND_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {str(e)[-400:]!r}", flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    elapsed = time.perf_counter() - t0
++    if ext is not None:
++        print(f"{BND_TAG} load_inline compiled in {elapsed:.1f}s", flush=True)
++    return ext, elapsed
++
++
++def _bnd_source_audit():
++    """Pre-build audit of the sources: no templated tensor accessor, no mutable file-scope / static / device state."""
++    bad = []
++    for name, src in (("cpp", _BND_CPP), ("cuda", _BND_CU)):
++        for n, line in enumerate(src.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line:
++                bad.append(f"{name} line {n}: {line.strip()[:120]}")
++    bad.extend(_rega_audit_cpp(_BND_CPP + "\n" + _BND_CU))
++    return bad
++
++
++def _bnd_step(tag, fn):
++    """A launch announced before and synced + printed after, so a fault names its kernel."""
++    print(f"{BND_TAG} [{tag}] launching", flush=True)
++    out = fn()
++    torch.cuda.synchronize()
++    print(f"{BND_TAG} [{tag}] done", flush=True)
++    return out
++
++
++def _bnd_master(state, which, stream, branch):
++    """SGLang's boundary module, called as kernel_fn calls it: (next input bf16, new stream fp32)."""
++    if which == "attn":
++        out, s_new, _ = state["attn_boundary"](stream, branch, branch_dtype=torch.bfloat16, router_dtype=None)
++    else:
++        out, s_new, _ = state["ffn_boundary"](stream, branch, branch_dtype=torch.bfloat16)
++    return out, s_new
++
++
++def _bnd_master_tail(state, expert_output, stream):
++    """Master's routed FFN tail at T > MARLIN_MAX_TOKENS: the unpooler GEMM, then the boundary module."""
++    ffn_output = _gemm(expert_output, state["dense"]["unpooler"])
++    out, s_new, _ = state["ffn_boundary"](stream, ffn_output, branch_dtype=torch.bfloat16)
++    return out, s_new
++
++
++def _bnd_coefs(state, weights, device):
++    """Per-state fp32 [8192] alpha, beta, wpost (empty = none) and wpre for both boundaries. alpha and beta are probed
++    from the SGLang modules (stream = 1, branch = 0 gives alpha; stream = 0, branch = 1 gives beta over the normalized
++    branch), then cross-checked against the reference formula (> BND_COEF_TOL apart raises)."""
++    pre_ffn, next_pre_attn, _, post_ffn, _ = state["_modules"]
++
++    def eff(mod):
++        return mod._get_effective_weight().detach().float().contiguous()
++
++    wpost = eff(post_ffn)
++    ones = torch.ones((8, HIDDEN), dtype=torch.float32, device=device)
++    zeros = torch.zeros_like(ones)
++    out = {}
++    for which, gate_name, wp, wpre in (("attn", "attn_residual_gate", None, eff(pre_ffn)),
++                                       ("ffn", "ffn_residual_gate", wpost, eff(next_pre_attn))):
++        _, alpha_p = _bnd_master(state, which, ones.clone(), zeros.to(torch.bfloat16))
++        _, beta_raw = _bnd_master(state, which, zeros.clone(), ones.to(torch.bfloat16))
++        b = torch.ones(HIDDEN, dtype=torch.float32, device=device)
++        if wp is not None:
++            b = b * wp
++        b = b * torch.rsqrt((b * b).mean() + POST_NORM_EPS)
++        alpha_p, beta_p = alpha_p[0].float().contiguous(), (beta_raw[0].float() / b).contiguous()
++        w = weights[gate_name].float() / 0.3
++        beta_f = torch.sigmoid(w)
++        alpha_f = torch.sqrt(torch.clamp(torch.sigmoid(-w) * (1.0 + beta_f), min=1e-3))
++        d = max(float((alpha_p - alpha_f).abs().max()), float((beta_p - beta_f).abs().max()))
++        torch.cuda.synchronize()
++        print(f"{BND_TAG} coefficients {which}: probe vs formula max diff {d:.2e}", flush=True)
++        if not d <= BND_COEF_TOL:
++            raise RuntimeError(f"{which} alpha/beta probe differs from the reference formula by {d:.2e}")
++        out[which] = {"alpha": alpha_p, "beta": beta_p,
++                      "wpost": wp if wp is not None else torch.empty(0, dtype=torch.float32, device=device),
++                      "wpre": wpre}
++    return out
++
++
++def _bnd_rel(got, want, base=None):
++    """(whole-matrix rel L2, worst row rel) of got - want against base (default want); a row's denominator is at
++    least a tenth of the mean row norm, as the judge measures near-zero rows."""
++    g, w = got.float(), want.float()
++    ref = w if base is None else base.float()
++    diff = g - w
++    rn = ref.norm(dim=1)
++    rn = torch.maximum(rn, 0.1 * rn.mean())
++    return (float(diff.norm() / ref.norm().clamp_min(1e-30)), float((diff.norm(dim=1) / rn).max()))
++
++
++def _bnd_compare(want_o, want_s, got_o, got_s, stream_in, coef):
++    """None when the outputs match the module within the residual / next-input tolerances (whole and worst row), else
++    the reason; also prints nothing."""
++    if not (bool(torch.isfinite(got_o.float()).all()) and bool(torch.isfinite(got_s).all())):
++        return "NaN/Inf"
++    rel_s, row_s = _bnd_rel(got_s, want_s, base=want_s - coef["alpha"] * stream_in)
++    rel_o, row_o = _bnd_rel(got_o, want_o)
++    msg = f"stream {rel_s:.2e} (row {row_s:.2e}), next {rel_o:.2e} (row {row_o:.2e})"
++    if rel_s > BND_RESID_TOL or row_s > BND_ROW_MULT * BND_RESID_TOL:
++        return f"residual update too far: {msg}"
++    if rel_o > BND_OUT_TOL or row_o > BND_ROW_MULT * BND_OUT_TOL:
++        return f"next input too far: {msg}"
++    return msg
++
++
++def _bnd_ok_msg(res):
++    return res is not None and not res.startswith(("NaN", "residual", "next"))
++
++
++def _bnd_parity(state, ext, coefs, device, gen, t_start):
++    """bnd_rows (two row chunks, grids alternating one-CTA-per-row / 32 persistent) against the SGLang modules on
++    random rows at T in BND_PARITY_T, both boundaries, run four times alternating two separately allocated sets
++    (inputs, outputs, coefficient copies). Rows outside a chunk must keep the sentinel. Returns None or a reason."""
++    for t in BND_PARITY_T:
++        for which in ("attn", "ffn"):
++            if time.perf_counter() - t_start > BND_GATE_DEADLINE_S:
++                return f"skipped: deadline (T={t} {which})"
++            sets = []
++            for _ in range(2):
++                stream = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32)
++                branch = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++                want_o, want_s = _bnd_master(state, which, stream.clone(), branch)
++                sets.append({
++                    "stream": stream, "branch": branch, "want_o": want_o, "want_s": want_s,
++                    "coef": {k: v.clone() for k, v in coefs[which].items()},
++                    "out_o": torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device),
++                    "out_s": torch.empty((t, HIDDEN), dtype=torch.float32, device=device)})
++            torch.cuda.synchronize()
++            half = t // 2
++            worst = None
++            for it in range(4):
++                st = sets[it % 2]
++                st["out_o"].fill_(BND_SENTINEL)
++                st["out_s"].fill_(BND_SENTINEL)
++                grids = (0, 32) if it % 2 == 0 else (32, 0)
++                c = st["coef"]
++
++                def launch(r0, n, grid, st=st, c=c):
++                    ext.bnd_rows(st["stream"], st["branch"], r0, n, c["alpha"], c["beta"], c["wpost"], c["wpre"],
++                                 POST_NORM_EPS, RMS_EPS, st["out_o"], st["out_s"], grid)
++
++                _bnd_step(f"parity T={t} {which} it={it} chunk 0 (grid {grids[0]})",
++                          lambda: launch(0, half, grids[0]))
++                if it == 0:
++                    untouched = bool((st["out_s"][half:] == BND_SENTINEL).all()) and \
++                        bool((st["out_o"][half:] == BND_SENTINEL).all())
++                    if not untouched:
++                        return f"T={t} {which}: rows outside the chunk were written"
++                _bnd_step(f"parity T={t} {which} it={it} chunk 1 (grid {grids[1]})",
++                          lambda: launch(half, t - half, grids[1]))
++                res = _bnd_compare(st["want_o"], st["want_s"], st["out_o"], st["out_s"], st["stream"], coefs[which])
++                if not _bnd_ok_msg(res):
++                    return f"T={t} {which} it={it}: {res}"
++                worst = res
++            print(f"{BND_TAG} parity T={t} {which}: ok, last {worst}", flush=True)
++            del sets
++    return None
++
++
++def _bnd_capture(fn, pool):
++    """Warm fn up on a side stream, then capture it once into the shared private pool; returns the graph."""
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        for _ in range(2):
++            fn()
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph, pool=pool):
++        fn()
++    torch.cuda.synchronize()
++    return graph
++
++
++def _bnd_rounds(graphs, pool, device):
++    """BND_ROUNDS interleaved rounds of BND_ALTERNATIONS alternations (rotated and flipped order), a 256 MiB flush
++    write before every replay, an empty-graph baseline subtracted from each round's median. Returns
++    {name: [(median us, IQR us) per round]}."""
++    tiny = torch.zeros(16, dtype=torch.float32, device=device)
++    graphs = dict(graphs)
++    graphs["empty"] = _bnd_capture(lambda: tiny.zero_(), pool)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def once(graph):
++        flush.zero_()
++        ev[0].record()
++        graph.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    names = list(graphs)
++    for name in names:
++        once(graphs[name])
++    samples = {name: [[] for _ in range(BND_ROUNDS)] for name in names}
++    for rnd in range(BND_ROUNDS):
++        for i in range(BND_ALTERNATIONS):
++            k = (i + rnd * 5) % len(names)
++            order = names[k:] + names[:k]
++            if (i + rnd) % 2:
++                order = order[::-1]
++            for name in order:
++                samples[name][rnd].append(once(graphs[name]))
++    out = {}
++    base = [sorted(v)[len(v) // 2] for v in samples["empty"]]
++    for name in names:
++        if name == "empty":
++            continue
++        rows = []
++        for rnd in range(BND_ROUNDS):
++            v = sorted(samples[name][rnd])
++            n = len(v)
++            rows.append((max(v[n // 2] - base[rnd], 0.0), v[(3 * n) // 4] - v[n // 4]))
++        out[name] = rows
++    return out
++
++
++def _bnd_fmt(rows):
++    return " | ".join(f"r{i + 1} {m:.0f} (IQR {q:.0f})" for i, (m, q) in enumerate(rows))
++
++
++def _bnd_kernels(fn):
++    """prepare()-only: the CUDA kernel names one call of fn launches (torch.profiler); a PATH CHOSEN line proves the
++    selector, not the launched kernel. Raises if the profiler fails."""
++    from torch.profiler import ProfilerActivity, profile
++    fn()
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CUDA]) as prof:
++        fn()
++        torch.cuda.synchronize()
++    return [e.name for e in prof.events() if "CUDA" in str(getattr(e, "device_type", ""))
++            and not e.name.startswith(("Activity Buffer Request", "Buffer Flush"))]
++
++
++def _bnd_tail(ext, coef, bnd_stream, unp_t, expert_output, stream, nch, grid, bufs=None):
++    """The chunked FFN tail: for each of nch row chunks, the unpooler GEMM into a row slice of ffn_output on the
++    current stream, then bnd_rows for the same rows on bnd_stream (it waits only for that chunk's GEMM); the current
++    stream joins bnd_stream at the end. Outputs are allocated here (shape-sized) unless bufs is given."""
++    tokens = expert_output.shape[0]
++    if bufs is None:
++        dev = expert_output.device
++        ffn_output = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++        next_in = torch.empty((tokens, HIDDEN), dtype=torch.bfloat16, device=dev)
++        stream_out = torch.empty((tokens, HIDDEN), dtype=torch.float32, device=dev)
++    else:
++        ffn_output, next_in, stream_out = bufs
++    main = torch.cuda.current_stream()
++    step = tokens // nch
++    for c in range(nch):
++        r0 = c * step
++        n = tokens - r0 if c == nch - 1 else step
++        torch.mm(expert_output[r0:r0 + n], unp_t, out=ffn_output[r0:r0 + n])
++        bnd_stream.wait_stream(main)
++        with torch.cuda.stream(bnd_stream):
++            ext.bnd_rows(stream, ffn_output, r0, n, coef["alpha"], coef["beta"], coef["wpost"], coef["wpre"],
++                         POST_NORM_EPS, RMS_EPS, next_in, stream_out, grid)
++    main.wait_stream(bnd_stream)
++    if not torch.cuda.is_current_stream_capturing():
++        for tensor in (expert_output, stream, ffn_output, next_in, stream_out):
++            tensor.record_stream(bnd_stream)
++    return next_in, stream_out
++
++
++def _bnd_speed(state, ext, coefs, device, gen, pool):
++    """Milestone M1: bnd_rows over all rows at T = BND_TOKENS (one CTA per row, and the persistent grids) vs the
++    SGLang module, graph replay, flushed, interleaved. Returns the printed summary string."""
++    t = BND_TOKENS
++    stream = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32)
++    branch = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++    out_o = torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device)
++    out_s = torch.empty((t, HIDDEN), dtype=torch.float32, device=device)
++    c = coefs["ffn"]
++    graphs = {"module": _bnd_capture(lambda: _bnd_master(state, "ffn", stream, branch), pool)}
++    for grid in BND_GRIDS:
++        graphs[f"bnd_g{grid}"] = _bnd_capture(
++            lambda grid=grid: ext.bnd_rows(stream, branch, 0, t, c["alpha"], c["beta"], c["wpost"], c["wpre"],
++                                           POST_NORM_EPS, RMS_EPS, out_o, out_s, grid), pool)
++    stats = _bnd_rounds(graphs, pool, device)
++    parts = []
++    for name, rows in stats.items():
++        parts.append(f"{name} {_bnd_fmt(rows)}")
++    ratio = max(stats["bnd_g0"][r][0] / max(stats["module"][r][0], 1e-9) for r in range(BND_ROUNDS))
++    msg = (f"M1 T={t} FFN boundary kernel only (graph, cold L2, us): " + "; ".join(parts) +
++           f"; one-CTA-per-row / module = {ratio:.3f} (M1 target <= {BND_M1_RATIO}: "
++           f"{'met' if ratio <= BND_M1_RATIO else 'MISSED'})")
++    print(f"{BND_TAG} {msg}", flush=True)
++    del graphs, stream, branch, out_o, out_s
++    return msg, ratio
++
++
++def _bnd_tail_gate(state, ext, coefs, streams, device, gen, t_start, pool, lines):
++    """Master's routed tail (unpooler + module) vs the chunked tail at every (NCH, grid, priority) candidate on a
++    synthetic bf16 expert_output at T = BND_TOKENS: eager correctness first, then two interleaved graph rounds.
++    Returns the chosen (nch, grid, prio) or None; always prints every candidate's rounds and the kernel names."""
++    t = BND_TOKENS
++    unp_t = state["dense"]["unpooler"].t()
++    expert_output = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
++    stream = torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32)
++    bufs = (torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device),
++            torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device),
++            torch.empty((t, HIDDEN), dtype=torch.float32, device=device))
++    c = coefs["ffn"]
++    want_o, want_s = _bnd_master_tail(state, expert_output, stream.clone())
++    torch.cuda.synchronize()
++    cands = {}
++    for nch in BND_NCH:
++        for grid in BND_GRIDS:
++            for prio in BND_PRIOS:
++                name = f"nch{nch}_g{grid}_p{prio}"
++                if time.perf_counter() - t_start > BND_GATE_DEADLINE_S:
++                    print(f"{BND_TAG} tail candidate {name} skipped: deadline", flush=True)
++                    continue
++                got_o, got_s = _bnd_step(f"tail eager {name}", lambda: _bnd_tail(
++                    ext, c, streams[prio], unp_t, expert_output, stream, nch, grid, bufs))
++                res = _bnd_compare(want_o, want_s, got_o, got_s, stream, c)
++                if not _bnd_ok_msg(res):
++                    print(f"{BND_TAG} tail candidate {name} dropped: {res}", flush=True)
++                    continue
++                cands[name] = (nch, grid, prio)
++    del want_o, want_s
++    if not cands:
++        lines.append(f"{BND_TAG} tail gate: no candidate passed the eager check")
++        return None
++    # The unpooler kernels the chunked tail launches (does the big nvjet tile survive at M = T / NCH?).
++    try:
++        for nch in BND_NCH:
++            first = next((n for n, v in cands.items() if v[0] == nch), None)
++            if first is None:
++                continue
++            _, grid, prio = cands[first]
++            names = _bnd_kernels(lambda: _bnd_tail(ext, c, streams[prio], unp_t, expert_output, stream, nch, grid, bufs))
++            uniq = list(dict.fromkeys(n[:140] for n in names))
++            print(f"{BND_TAG} chunked tail NCH={nch} kernels ({len(names)} launches): {uniq[:8]}", flush=True)
++            if names and not any("muse_prefill_bnd_rows_kernel" in n for n in names):
++                print(f"{BND_TAG} profiler saw no bnd_rows kernel for NCH={nch}; candidate group dropped", flush=True)
++                cands = {n: v for n, v in cands.items() if v[0] != nch}
++        base_names = _bnd_kernels(lambda: _bnd_master_tail(state, expert_output, stream))
++        print(f"{BND_TAG} master tail kernels: {list(dict.fromkeys(n[:140] for n in base_names))[:8]}", flush=True)
++    except Exception as e:
++        print(f"{BND_TAG} profiler kernel-name check unavailable: {str(e)[:160]!r} (candidates kept)", flush=True)
++    if not cands:
++        lines.append(f"{BND_TAG} tail gate: profiler saw no bnd_rows kernel in any candidate")
++        return None
++    if time.perf_counter() - t_start > BND_GATE_DEADLINE_S:
++        lines.append(f"{BND_TAG} tail gate skipped: deadline")
++        print(lines[-1], flush=True)
++        return None
++    # Master's ACTUALLY ROUTED tail, exactly as kernel_fn calls it (no clone: a copy would inflate master's side).
++    graphs = {"master": _bnd_capture(lambda: _bnd_master_tail(state, expert_output, stream), pool)}
++    for name, (nch, grid, prio) in cands.items():
++        graphs[name] = _bnd_capture(
++            lambda nch=nch, grid=grid, prio=prio: _bnd_tail(ext, c, streams[prio], unp_t, expert_output, stream, nch,
++                                                            grid, bufs), pool)
++    stats = _bnd_rounds(graphs, pool, device)
++    m = stats["master"]
++    best, best_ratio = None, 9.0
++    top = None   # the candidate closest to winning, reported even when master is kept
++    for name, rows in stats.items():
++        if name == "master":
++            print(f"{BND_TAG} tail T={t} master (routed unpooler + FFN boundary): {_bnd_fmt(rows)}", flush=True)
++            continue
++        ratios = [rows[r][0] / max(m[r][0], 1e-9) for r in range(BND_ROUNDS)]
++        iqr_ok = all(rows[r][1] <= BND_IQR_MAX * max(m[r][1], 0.5) for r in range(BND_ROUNDS))
++        worst = max(ratios)
++        verdict = "pass" if (worst <= BND_RATIO and iqr_ok) else "fail"
++        print(f"{BND_TAG} tail T={t} {name}: {_bnd_fmt(rows)}; / master {ratios[0]:.3f} {ratios[1]:.3f}; "
++              f"IQR {'ok' if iqr_ok else 'WIDE'}; {verdict}", flush=True)
++        if top is None or worst < top[0]:
++            top = (worst, name, rows, iqr_ok)
++        if verdict == "pass" and worst < best_ratio:
++            best, best_ratio = cands[name], worst
++    del graphs, bufs, expert_output, stream
++    if best is None:
++        lines.append(f"{BND_TAG} tail gate: no candidate <= {BND_RATIO}x master in both rounds (IQR <= "
++                     f"{BND_IQR_MAX}x), master kept; master {_bnd_fmt(m)}; closest {top[1]} {_bnd_fmt(top[2])} "
++                     f"({top[0]:.3f}x worst round, IQR {'ok' if top[3] else 'WIDE'})")
++    else:
++        lines.append(f"{BND_TAG} tail gate: best nch {best[0]} grid {best[1]} prio {best[2]} at {best_ratio:.3f}x master "
++                     f"(worst round); master {_bnd_fmt(m)}; winner {_bnd_fmt(top[2])}")
++    print(lines[-1], flush=True)
++    return best
++
++
++def _bnd_replay_check(state, ext, coefs, streams, choice, device, gen, pool):
++    """The chosen tail captured once per state (two separately allocated states), replayed alternately with refilled
++    inputs and compared with the module's tail on the same data. Returns None or a reason."""
++    t = BND_TOKENS
++    nch, grid, prio = choice
++    unp_t = state["dense"]["unpooler"].t()
++    c = coefs["ffn"]
++    sets = []
++    for _ in range(2):
++        st = {"eo": torch.zeros((t, D_EXPERT), dtype=torch.bfloat16, device=device),
++              "stream": torch.zeros((t, HIDDEN), dtype=torch.float32, device=device),
++              "bufs": (torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device),
++                       torch.empty((t, HIDDEN), dtype=torch.bfloat16, device=device),
++                       torch.empty((t, HIDDEN), dtype=torch.float32, device=device))}
++        st["graph"] = _bnd_capture(
++            lambda st=st: _bnd_tail(ext, c, streams[prio], unp_t, st["eo"], st["stream"], nch, grid, st["bufs"]), pool)
++        sets.append(st)
++    for it in range(4):
++        st = sets[it % 2]
++        st["eo"].copy_(torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16))
++        st["stream"].copy_(torch.randn((t, HIDDEN), generator=gen, device=device, dtype=torch.float32))
++        want_o, want_s = _bnd_master_tail(state, st["eo"], st["stream"].clone())
++        _bnd_step(f"replay check it={it} state {it % 2}", st["graph"].replay)
++        res = _bnd_compare(want_o, want_s, st["bufs"][1], st["bufs"][2], st["stream"], c)
++        print(f"{BND_TAG} replay check it={it} state {it % 2}: {res}", flush=True)
++        if not _bnd_ok_msg(res):
++            return f"it={it}: {res}"
++    return None
++
++
++def _bnd_setup(state, weights, device, t_start):
++    """prepare() only, LAST. Sets state['bnd_ok'] (False unless every step passes) and state['bnd'] = {ext, coef,
++    stream, nch, grid}; never raises. Returns the compact summary lines (printed again as prepare's last lines)."""
++    state["bnd_ok"] = False
++    state["bnd"] = None
++    summary = []
++    t0 = time.perf_counter()
++    try:
++        used = time.perf_counter() - t_start
++        if used > BND_START_DEADLINE_S:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (skipped: deadline, prepare already used "
++                           f"{used:.0f}s > {BND_START_DEADLINE_S:.0f}s)")
++            print(summary[-1], flush=True)
++            return summary
++        bad = _bnd_source_audit()
++        print(f"{BND_TAG} source audit: {bad if bad else 'none'}", flush=True)
++        if bad:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (source audit {bad[:2]})")
++            print(summary[-1], flush=True)
++            return summary
++        ext, built = _bnd_build()
++        if ext is None:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (build failed)")
++            print(summary[-1], flush=True)
++            return summary
++        info = [int(v) for v in ext.bnd_info()]
++        print(f"{BND_TAG} bnd_rows attributes ok={info[0]}, regs {info[1]}, local (spill) bytes {info[2]}, static smem "
++              f"{info[3]}, occupancy {info[4]} CTAs/SM at 512 threads, binary {info[5]} ptx {info[6]} (the nvjet "
++              f"unpooler's regs/smem are not queryable in-process: kernel names are printed by the profiler below)",
++              flush=True)
++        if not info[0]:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (attribute query failed)")
++            print(summary[-1], flush=True)
++            return summary
++        gen = torch.Generator(device=device).manual_seed(20261026)
++        pool = torch.cuda.graph_pool_handle()
++        used = time.perf_counter() - t_start
++        if used > BND_GATE_DEADLINE_S:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (skipped: deadline after build, {used:.0f}s)")
++            print(summary[-1], flush=True)
++            return summary
++        coefs = _bnd_coefs(state, weights, device)
++        why = _bnd_parity(state, ext, coefs, device, gen, t_start)
++        if why is not None:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (parity: {why})")
++            print(summary[-1], flush=True)
++            return summary
++        summary.append(f"{BND_TAG} parity ok at T in {BND_PARITY_T} (both boundaries, 2 alternating sets, row slices)")
++        torch.cuda.synchronize()
++        if time.perf_counter() - t_start > BND_GATE_DEADLINE_S:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (M1 / tail gate skipped: deadline)")
++            print(summary[-1], flush=True)
++            return summary
++        m1_msg, _ = _bnd_speed(state, ext, coefs, device, gen, pool)
++        summary.append(f"{BND_TAG} {m1_msg}")
++        streams = {p: torch.cuda.Stream(device, priority=p) for p in BND_PRIOS}
++        choice = _bnd_tail_gate(state, ext, coefs, streams, device, gen, t_start, pool, summary)
++        if choice is None:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (no chunked candidate won)")
++            print(summary[-1], flush=True)
++            return summary
++        if time.perf_counter() - t_start > BND_GATE_DEADLINE_S:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (replay check skipped: deadline)")
++            print(summary[-1], flush=True)
++            return summary
++        why = _bnd_replay_check(state, ext, coefs, streams, choice, device, gen, pool)
++        if why is not None:
++            summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (replay check: {why})")
++            print(summary[-1], flush=True)
++            return summary
++        nch, grid, prio = choice
++        state["bnd"] = {"ext": ext, "coef": coefs["ffn"], "stream": streams[prio], "nch": nch, "grid": grid}
++        state["bnd_ok"] = True
++        summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: chunked nch {nch}, grid {grid}, side-stream priority "
++                       f"{prio} (T <= {MARLIN_MAX_TOKENS} and the attention boundary stay master); {time.perf_counter() - t0:.0f}s")
++        print(summary[-1], flush=True)
++    except Exception as e:
++        state["bnd_ok"] = False
++        state["bnd"] = None
++        summary.append(f"{BND_TAG} PATH CHOSEN T={BND_TOKENS} tail: master (setup raised {str(e)[:300]!r})")
++        print(summary[-1], flush=True)
++    finally:
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    return summary
++
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+@@ -5843,6 +6599,15 @@ def kernel_fn(data, state):
+     local_ids = _local_expert_ids(topk_ids, data["local_start"])
+     # all-reduce: identity
+     expert_output = _experts(expert_input, topk_weights, local_ids, state, pre_norm=True)
++    bnd = state.get("bnd") if state.get("bnd_ok") else None
++    if (bnd is not None and tokens == BND_TOKENS and expert_output.shape == (tokens, D_EXPERT)
++            and expert_output.dtype == torch.bfloat16 and expert_output.is_contiguous()
++            and stream.shape == (tokens, HIDDEN) and stream.dtype == torch.float32 and stream.is_contiguous()):
++        # Shape-only routing (gated in prepare): the chunked unpooler + FFN boundary tail, boundary chunk c on a side
++        # stream under unpooler chunk c + 1. Anything else (T <= 4096, other shapes, layouts) is master's tail.
++        next_attn_input, stream = _bnd_tail(bnd["ext"], bnd["coef"], bnd["stream"], dense["unpooler"].t(),
++                                            expert_output, stream, bnd["nch"], bnd["grid"])
++        return next_attn_input, stream, topk_ids
+     ffn_output = _gemm(expert_output, dense["unpooler"])
+ 
+     # Post-FFN boundary, with the next layer's pre-attention norm.
