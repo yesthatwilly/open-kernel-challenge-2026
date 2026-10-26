@@ -222,3 +222,15 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
   v16 1.307, v32 1.336): decode rank 354/719, overall 361/1190. Landed on master. Builder porting the hybrid to moe
   T=256 (branch campaign/moe-hybrid).
 
+## 2026-10-26T08:28Z: session close (user's autonomous window ran to 09:49Z)
+
+- moe hybrid (builder, campaign/moe-hybrid c3313183, check 6463699fb2014f74 1.5856): correct (canary clean, vs fp32
+  0.0053) but 0.70-0.74x of moe's wg path at T=256 (the gate's zipf input: 1154 local routes, 24 hot experts up to 163
+  routes; the wg path groups hot experts far better than Marlin) -> master; it stays in the file behind its gate.
+- Boards now: muse_decode_layer 1.4422 rank 355 of 720; muse_moe_w4a16 1.5762 rank 413 of 817; overall rank 362 of 1193. Start of day: decode 1.3164 (rank 448), moe 1.402 (490), overall 480.
+- Branch campaign/decode-first-rewrite HEAD ae91f55d holds every merged piece; master holds the scored bytes (moe at
+  55108358 = 1.5762, decode at 07b6dcae = 1.4422). Builder worktrees (.worktrees/engine-b, engine-b2, ea-v3, ea-v3big,
+  dense-port, hotcold, moe-hybrid) are merged and can be removed.
+- Quota used on 10-26 (UTC): decode 13 checks + 7 scored, moe 12 checks + 4 scored.
+- Resume from the 08:12Z "state and next steps" entry above.
+

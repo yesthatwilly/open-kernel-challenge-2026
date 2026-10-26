@@ -1,0 +1,128 @@
+326.56 us (IQR 1.18) | v2 311.55 us (IQR 1.76, p10/p90 310.11/313.34, x1.048) | v3 296.58 us (IQR 1.34, p10/p90 295.17/298.05, x1.101)
+[engineA] gate T=32 zipf round 2 (graph baseline 5.50 us subtracted): master 326.72 us (IQR 1.22) | v2 311.30 us (IQR 1.54, p10/p90 309.70/312.22, x1.050) | v3 297.89 us (IQR 2.30, p10/p90 296.16/300.58, x1.097)
+[engineA] gate T=32 random round 1 (graph baseline 5.50 us subtracted): master 232.48 us (IQR 1.44) | v2 185.18 us (IQR 1.54, p10/p90 184.19/186.62, x1.255) | v3 186.91 us (IQR 0.96, p10/p90 185.98/188.54, x1.244)
+[engineA] gate T=32 random round 2 (graph baseline 5.50 us subtracted): master 232.45 us (IQR 1.18) | v2 184.77 us (IQR 1.38, p10/p90 184.22/186.24, x1.258) | v3 186.78 us (IQR 0.96, p10/p90 186.18/187.78, x1.244)
+[engineA] first big v3 launch: T=128 zipf (synced)
+[engineA]     [v3 T=128 zipf] before ea3_w13
+[engineA]     [v3 T=128 zipf] after ea3_w13 / before ea3_w2
+[engineA]     [v3 T=128 zipf] after ea3_w2 / before post-expert norm
+[engineA]     [v3 T=128 zipf] after post-expert norm
+[engineA] big gate T=128 zipf round 1 (graph baseline 5.38 us subtracted): master 555.36 us (IQR 1.66) | v3 534.37 us (IQR 1.73, p10/p90 532.93/536.10, x1.039)
+[engineA] big gate T=128 zipf round 2 (graph baseline 5.54 us subtracted): master 555.07 us (IQR 1.44) | v3 534.56 us (IQR 1.57, p10/p90 533.12/535.65, x1.038)
+[engineA] big gate T=128 random round 1 (graph baseline 5.50 us subtracted): master 362.24 us (IQR 1.28) | v3 312.42 us (IQR 0.67, p10/p90 311.71/313.47, x1.159)
+[engineA] big gate T=128 random round 2 (graph baseline 5.50 us subtracted): master 362.88 us (IQR 1.18) | v3 312.51 us (IQR 1.12, p10/p90 311.68/313.60, x1.161)
+[engineA] big gate T=256 zipf round 1 (graph baseline 5.54 us subtracted): master 531.07 us (IQR 6.08) | v3 863.23 us (IQR 9.41, p10/p90 854.43/866.02, x0.615, FAIL)
+[engineA] big gate T=256 zipf round 2 (graph baseline 5.54 us subtracted): master 531.78 us (IQR 2.85) | v3 864.45 us (IQR 2.59, p10/p90 859.07/866.56, x0.615, FAIL)
+[engineA] big gate T=256 random round 1 (graph baseline 5.50 us subtracted): master 454.53 us (IQR 2.24) | v3 343.97 us (IQR 1.73, p10/p90 342.56/345.98, x1.321)
+[engineA] big gate T=256 random round 2 (graph baseline 5.50 us subtracted): master 455.10 us (IQR 1.47) | v3 345.79 us (IQR 2.05, p10/p90 343.01/347.17, x1.316)
+[engineA] k2 grid gate T=1 zipf round 1 (graph baseline 5.50 us subtracted): full 77.66 us (IQR 0.61) | one_per_sm 81.38 us (IQR 11.55, p10/p90 80.70/94.08, x0.954, FAIL)
+[engineA] k2 grid gate T=1 zipf round 2 (graph baseline 5.50 us subtracted): full 77.70 us (IQR 0.70) | one_per_sm 81.02 us (IQR 1.86, p10/p90 80.54/93.86, x0.959, FAIL)
+[engineA] k2 grid gate T=1 random round 1 (graph baseline 5.50 us subtracted): full 20.96 us (IQR 0.61) | one_per_sm 23.65 us (IQR 0.61, p10/p90 23.33/24.61, x0.886, FAIL)
+[engineA] k2 grid gate T=1 random round 2 (graph baseline 5.34 us subtracted): full 21.18 us (IQR 0.29) | one_per_sm 23.81 us (IQR 0.58, p10/p90 23.46/24.29, x0.890, FAIL)
+[engineA] combine gate T=1 zipf round 1 (graph baseline 5.54 us subtracted): triton 47.84 us (IQR 0.58) | cuda 47.07 us (IQR 0.67, p10/p90 46.69/47.97, x1.016)
+[engineA] combine gate T=1 zipf round 2 (graph baseline 5.54 us subtracted): triton 47.90 us (IQR 0.90) | cuda 47.01 us (IQR 0.58, p10/p90 46.66/47.68, x1.019)
+[engineA] combine gate T=1 random round 1 (graph baseline 5.50 us subtracted): triton 20.86 us (IQR 0.35) | cuda 20.00 us (IQR 0.86, p10/p90 19.52/20.86, x1.043)
+[engineA] combine gate T=1 random round 2 (graph baseline 5.38 us subtracted): triton 21.09 us (IQR 0.38) | cuda 19.94 us (IQR 0.32, p10/p90 19.65/20.74, x1.058)
+[engineA] combine gate T=8 zipf round 1 (graph baseline 5.54 us subtracted): triton 180.80 us (IQR 1.25) | cuda 179.55 us (IQR 1.09, p10/p90 178.30/180.93, x1.007)
+[engineA] combine gate T=8 zipf round 2 (graph baseline 5.50 us subtracted): triton 180.80 us (IQR 1.38) | cuda 180.22 us (IQR 1.60, p10/p90 178.62/181.18, x1.003)
+[engineA] combine gate T=8 random round 1 (graph baseline 5.50 us subtracted): triton 126.91 us (IQR 0.80) | cuda 126.34 us (IQR 1.06, p10/p90 125.44/127.30, x1.005)
+[engineA] combine gate T=8 random round 2 (graph baseline 5.54 us subtracted): triton 126.88 us (IQR 0.83) | cuda 126.34 us (IQR 1.34, p10/p90 125.47/127.65, x1.004)
+[engineA] combine gate T=16 zipf round 1 (graph baseline 5.41 us subtracted): triton 224.61 us (IQR 1.25) | cuda 223.68 us (IQR 1.28, p10/p90 222.56/225.18, x1.004)
+[engineA] combine gate T=16 zipf round 2 (graph baseline 5.38 us subtracted): triton 224.42 us (IQR 1.02) | cuda 224.13 us (IQR 1.50, p10/p90 222.75/225.22, x1.001)
+[engineA] combine gate T=16 random round 1 (graph baseline 5.54 us subtracted): triton 118.40 us (IQR 1.09) | cuda 117.66 us (IQR 1.22, p10/p90 116.96/119.01, x1.006)
+[engineA] combine gate T=16 random round 2 (graph baseline 5.47 us subtracted): triton 118.82 us (IQR 0.86) | cuda 117.41 us (IQR 0.61, p10/p90 116.90/118.27, x1.012)
+[engineA] combine gate T=32 zipf round 1 (graph baseline 5.22 us subtracted): triton 319.90 us (IQR 1.15) | cuda 319.04 us (IQR 1.12, p10/p90 317.95/319.90, x1.003)
+[engineA] combine gate T=32 zipf round 2 (graph baseline 5.18 us subtracted): triton 320.00 us (IQR 1.18) | cuda 319.49 us (IQR 1.31, p10/p90 318.24/320.90, x1.002)
+[engineA] combine gate T=32 random round 1 (graph baseline 5.54 us subtracted): triton 195.26 us (IQR 0.83) | cuda 194.72 us (IQR 1.50, p10/p90 193.70/195.97, x1.003)
+[engineA] combine gate T=32 random round 2 (graph baseline 5.41 us subtracted): triton 195.01 us (IQR 1.41) | cuda 194.78 us (IQR 1.22, p10/p90 193.22/196.16, x1.001)
+[engineA] ===== ENGINE A SUMMARY (51.2 s; module okc_campaign_engine_a_v2) =====
+[engineA] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 41.5 s
+[engineA] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.004
+[engineA] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.004
+[engineA] canary v3: T 1..32 clean; worst rel-L2 vs fp32 0.004
+[engineA] kernel-only v1 T=1 zipf active=2: w13 14.37 us (2.63 TB/s), w2 13.44 us (1.40 TB/s), sum 27.81 us for 56.6 MB
+[engineA] kernel-only v2 T=1 zipf active=2: w13 15.84 us (2.38 TB/s), w2 14.43 us (1.31 TB/s), sum 30.27 us for 56.6 MB
+[engineA] kernel-only v3 T=1 zipf active=2: w13 16.70 us (2.26 TB/s), w2 14.18 us (1.33 TB/s), sum 30.88 us for 56.6 MB
+[engineA] kernel-only v1 T=8 zipf active=19: w13 119.71 us (3.00 TB/s), w2 63.68 us (2.82 TB/s), sum 183.39 us for 537.9 MB
+[engineA] kernel-only v2 T=8 zipf active=19: w13 118.11 us (3.04 TB/s), w2 63.62 us (2.82 TB/s), sum 181.73 us for 537.9 MB
+[engineA] kernel-only v3 T=8 zipf active=19: w13 118.02 us (3.04 TB/s), w2 63.97 us (2.80 TB/s), sum 181.98 us for 537.9 MB
+[engineA] kernel-only v2 T=16 zipf active=24: w13 149.54 us (3.03 TB/s), w2 80.48 us (2.81 TB/s), sum 230.02 us for 679.5 MB
+[engineA] kernel-only v3 T=16 zipf active=24: w13 156.10 us (2.90 TB/s), w2 83.62 us (2.71 TB/s), sum 239.71 us for 679.5 MB
+[engineA] kernel-only v2 T=32 zipf active=28: w13 192.32 us (2.75 TB/s), w2 100.61 us (2.63 TB/s), sum 292.93 us for 792.7 MB
+[engineA] kernel-only v3 T=32 zipf active=28: w13 197.92 us (2.67 TB/s), w2 104.83 us (2.52 TB/s), sum 302.75 us for 792.7 MB
+[engineA] gate T=1: worst ratio v1 1.178, v2 1.128, v3 1.136 -> ENGINE A v1
+[engineA] gate T=8: worst ratio v1 1.149, v2 1.183, v3 1.170 -> ENGINE A v2
+[engineA] gate T=16: worst ratio v2 1.169, v3 1.140 -> ENGINE A v2
+[engineA] gate T=32: worst ratio v2 1.048, v3 1.097 -> ENGINE A v3
+[engineA] big canary v3 T=128: clean; worst rel-L2 vs fp32 0.00388 (master 0.00533)
+[engineA] big gate T=128: worst ratio v3 1.038 -> ENGINE A v3
+[engineA] big canary v3 T=256: clean; worst rel-L2 vs fp32 0.00388 (master 0.00428)
+[engineA] big gate T=256: worst ratio v3 0.615 -> master
+[engineA] k2 grid gate T=1 (v1): full/132-CTA worst ratio 0.886 -> full grid
+[engineA] combine check (CUDA vs Triton, T 1/8/16/32): worst rel-L2 5.95e-05 -> ok
+[engineA] combine gate T=1: Triton/CUDA worst ratio 1.016 -> CUDA
+[engineA] combine gate T=8: Triton/CUDA worst ratio 1.003 -> CUDA
+[engineA] combine gate T=16: Triton/CUDA worst ratio 1.001 -> CUDA
+[engineA] combine gate T=32: Triton/CUDA worst ratio 1.001 -> CUDA
+[engineA] combine verify T=1 (v1 + CUDA combine): rel-L2 0.00375 (<= 0.0075), worst row 0.00375 (<= 0.0375) -> ok
+[engineA] combine verify T=8 (v2 + CUDA combine): rel-L2 0.00386 (<= 0.0075), worst row 0.00405 (<= 0.0375) -> ok
+[engineA] combine verify T=16 (v2 + CUDA combine): rel-L2 0.00388 (<= 0.0075), worst row 0.00403 (<= 0.0375) -> ok
+[engineA] combine verify T=32 (v3 + CUDA combine): rel-L2 0.00385 (<= 0.0075), worst row 0.00417 (<= 0.0375) -> ok
+[engineA] copy check: 32 replays on two states, T [1, 2, 17, 128]: PASS
+[engineA] PATH CHOSEN T=1 = ENGINE A v1
+[engineA] PATH CHOSEN T=2..16 = ENGINE A v2
+[engineA] PATH CHOSEN T=17..32 = ENGINE A v3
+[engineA] PATH CHOSEN T=128 = ENGINE A v3
+[engineA] PATH CHOSEN T=256 = MASTER
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.36 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.28 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.29 s
+[hybrid-moe] first H=-32 launch: T=256 zipf (each step synced)
+[hybrid-moe]     [H=-32 T=256 zipf] launching _hm_align
+[hybrid-moe]     [H=-32 T=256 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, Engine A v3 cold w13 + w2, post-norm)
+[hybrid-moe]     [H=-32 T=256 zipf] _hm_experts ok
+[hybrid-moe] first H=-48 launch: T=256 zipf (each step synced)
+[hybrid-moe]     [H=-48 T=256 zipf] launching _hm_align
+[hybrid-moe]     [H=-48 T=256 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, Engine A v3 cold w13 + w2, post-norm)
+[hybrid-moe]     [H=-48 T=256 zipf] _hm_experts ok
+[hybrid-moe] first H=32 launch: T=256 zipf (each step synced)
+[hybrid-moe]     [H=32 T=256 zipf] launching _hm_align
+[hybrid-moe]     [H=32 T=256 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, post-norm)
+[hybrid-moe]     [H=32 T=256 zipf] _hm_experts ok
+[hybrid-moe] first H=48 launch: T=256 zipf (each step synced)
+[hybrid-moe]     [H=48 T=256 zipf] launching _hm_align
+[hybrid-moe]     [H=48 T=256 zipf] _hm_align ok; launching _hm_experts (Marlin hot w13, silu_and_mul, Marlin w2, post-norm)
+[hybrid-moe]     [H=48 T=256 zipf] _hm_experts ok
+[hybrid-moe] canary T=256 zipf: local routes 1149, distinct 32, hot experts 20 (979 rows, max 186), 16-row blocks 83; master vs fp32 0.00426
+[hybrid-moe] canary T=256 random: local routes 233, distinct 32, hot experts 0 (0 rows, max 15), 16-row blocks 32; master vs fp32 0.00427
+[hybrid-moe] canary T=256 local8: local routes 2048, distinct 32, hot experts 32 (2048 rows, max 235), 16-row blocks 144; master vs fp32 0.00427
+[hybrid-moe] canary T=256 skewed-4hot: local routes 1118, distinct 32, hot experts 4 (1024 rows, max 256), 16-row blocks 92; master vs fp32 0.00427
+[hybrid-moe] canary T=256 one-local: local routes 256, distinct 1, hot experts 1 (256 rows, max 256), 16-row blocks 16; master vs fp32 0.00427
+[hybrid-moe] canary T=256 two-local: local routes 512, distinct 2, hot experts 2 (512 rows, max 256), 16-row blocks 32; master vs fp32 0.00428
+[hybrid-moe] canary T=256 zero-local: local routes 0, distinct 0, hot experts 0 (0 rows, max 0), 16-row blocks 0; master vs fp32 0
+[hybrid-moe] canary T=256 max-active: local routes 2048, distinct 32, hot experts 32 (2048 rows, max 64), 16-row blocks 128; master vs fp32 0.00427
+[hybrid-moe] canary H=-32: T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00428)
+[hybrid-moe] canary H=-48: T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00428)
+[hybrid-moe] canary H=32: T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00428)
+[hybrid-moe] canary H=48: T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00428)
+[hybrid-moe] gate input T=256 zipf: local routes 1154, distinct 32, hot experts 24 (1043 rows, max 163), 16-row blocks 87
+[hybrid-moe] gate input T=256 random: local routes 252, distinct 32, hot experts 0 (0 rows, max 16), 16-row blocks 32
+[hybrid-moe] gate T=256 zipf round 1 (graph baseline 5.38 us subtracted): master 538.91 us (IQR 2.78) | H-32 767.14 us (IQR 5.12, p10/p90 764.42/771.62, x0.702, FAIL) | H-48 736.35 us (IQR 4.67, p10/p90 734.72/740.96, x0.732, FAIL) | H32 756.67 us (IQR 5.66, p10/p90 754.43/761.57, x0.712, FAIL) | H48 727.71 us (IQR 4.86, p10/p90 725.66/732.06, x0.741, FAIL)
+[hybrid-moe] gate T=256 zipf round 2 (graph baseline 5.54 us subtracted): master 541.89 us (IQR 2.08) | H-32 771.04 us (IQR 2.50, p10/p90 768.77/772.67, x0.703, FAIL) | H-48 741.38 us (IQR 1.86, p10/p90 739.49/742.94, x0.731, FAIL) | H32 760.64 us (IQR 1.57, p10/p90 759.71/762.40, x0.712, FAIL) | H48 731.94 us (IQR 1.28, p10/p90 730.85/733.28, x0.740, FAIL)
+[hybrid-moe] gate T=256 random round 1 (graph baseline 5.54 us subtracted): master 452.93 us (IQR 0.99) | H-32 358.43 us (IQR 2.66, p10/p90 356.51/364.32, x1.264) | H-48 358.85 us (IQR 1.86, p10/p90 357.06/365.09, x1.262) | H32 374.40 us (IQR 1.06, p10/p90 373.47/375.17, x1.210) | H48 374.02 us (IQR 1.25, p10/p90 372.70/375.20, x1.211)
+[hybrid-moe] gate T=256 random round 2 (graph baseline 5.54 us subtracted): master 452.86 us (IQR 0.93) | H-32 358.56 us (IQR 2.11, p10/p90 356.16/364.54, x1.263) | H-48 358.43 us (IQR 2.14, p10/p90 356.74/363.58, x1.263) | H32 374.40 us (IQR 1.31, p10/p90 373.34/375.58, x1.210) | H48 374.02 us (IQR 1.09, p10/p90 372.74/374.75, x1.211)
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-32 x0.702, H-48 x0.731, H32 x0.712, H48 x0.740 -> master
+[hybrid-moe] ===== MOE HYBRID (T (256,)) SUMMARY (2.3 s; prepare at 117.9 s) =====
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.36 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.28 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.29 s
+[hybrid-moe] canary H=-32: T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00428)
+[hybrid-moe] canary H=-48: T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00428)
+[hybrid-moe] canary H=32: T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00428)
+[hybrid-moe] canary H=48: T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.00428)
+[hybrid-moe] gate input T=256 zipf: local routes 1154, distinct 32, hot experts 24 (1043 rows, max 163), 16-row blocks 87
+[hybrid-moe] gate input T=256 random: local routes 252, distinct 32, hot experts 0 (0 rows, max 16), 16-row blocks 32
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-32 x0.702, H-48 x0.731, H32 x0.712, H48 x0.740 -> master
+[hybrid-moe] PATH CHOSEN T=256 = MASTER (fallback: no H wins every round (H-32 x0.702, H-48 x0.731, H32 x0.712, H48 x0.740); layer us zipf: master 540.4, H-32 769.1, H-48 738.9, H32 758.7, H48 729.8; random: master 452.9, H-32 358.5, H-48 358.6, H32 374.4, H48 374.0)
