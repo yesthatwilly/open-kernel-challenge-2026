@@ -83,6 +83,8 @@ submission_sha256: 1ed49c2ec768aba15650df07f73e25aa54f700875a1bcdd816bb55da5f584
 norm_sha256: adf5c5221ecf31df1fc106cc0d05df26528b73a50f155216a710ff0ed4577f93
 submission_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
 lint_warnings: 37
+attempt_file: 2026-10-26T012540Z-check-bf16-verify-deepgemm-sm90-explicit-instantiation-stage2.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
