@@ -14,7 +14,16 @@ controls_for: experts-rega-s4-bm256-wide-tile-high-ft
 confirm_of: experts-rega-s4-bm256-wide-tile-high-ft
 confirm_of_job: a6f6063051f14750
 review: proceed
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-26T214345Z
+base_sha: 97bc07f18b4cbc9aa9b228fdea23c980cefe6fc2
+base_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
+branch: hyp/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-cf
+worktree: .worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-cf
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft-cf
