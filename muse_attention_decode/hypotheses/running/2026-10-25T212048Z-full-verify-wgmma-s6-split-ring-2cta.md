@@ -92,7 +92,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212904Z
 base_sha: 99066e11fda854f911b0326172179d3ef997818c
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -109,6 +109,8 @@ submission_blob: 3cd54814f4dcbb30997660d9de6dfacd05908e07
 lint_warnings: 80
 attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-s6-split-ring-2cta.md
 prepared_at: 2026-10-26T012538Z
+job: 4899ab49d74f4df7
+dispatched_at: 2026-10-26T012615Z
 ---
 
 # full-verify-wgmma-s6-split-ring-2cta
