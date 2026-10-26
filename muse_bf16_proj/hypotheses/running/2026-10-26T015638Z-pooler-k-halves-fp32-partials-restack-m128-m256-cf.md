@@ -14,7 +14,16 @@ controls_for: pooler-k-halves-fp32-partials-restack-m128-m256
 confirm_of: pooler-k-halves-fp32-partials-restack-m128-m256
 confirm_of_job: de95f81782374124
 review: proceed
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-26T020127Z
+base_sha: 659ff4783582d8103e09cf89dd5fae13e57f96cf
+base_blob: ff7580f8edf36c612459db87204b32d412842b5b
+branch: hyp/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m256-cf
+worktree: .worktrees/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m256-cf
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256-cf
