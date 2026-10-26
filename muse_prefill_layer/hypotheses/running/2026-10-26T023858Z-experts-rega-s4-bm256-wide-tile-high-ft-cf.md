@@ -24,7 +24,7 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft-
 mode: null
 restack_of: null
 stale_base: true
-implemented_at: 2026-10-26T214356Z
+implemented_at: 2026-10-26T214402Z
 impl_commit: 912b3ea2ef4cfe5a47f0904e5d9a5ac38a8c92ea
 submission_sha256: 263f2e32390c52ac7c285f0b126d42ab3f13bacc3328fc182f1ab39ba25e52ba
 norm_sha256: 0c499f6341769f494a929dd9b5fdb8c2a8b71d1fea622a4e6f5687d48fc94a1b
