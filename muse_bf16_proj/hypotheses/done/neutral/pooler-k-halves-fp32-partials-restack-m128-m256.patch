@@ -1,0 +1,431 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..ff7580f8 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -1451,6 +1451,17 @@ def _ouns_check(cl: int, w: torch.Tensor) -> str:
+     return ""
+ 
+ 
++_PATH_LINES = []   # host-side text only: every PATH CHOSEN / Gate line, re-printed at the end of prepare()
++
++
++def _path_print(*parts, **kw) -> None:
++    """print() that also remembers the line, so prepare() can repeat every selector result as its
++    last lines (the judge keeps only the tail of the log). Strings only; no device state."""
++    msg = " ".join(str(p) for p in parts)
++    _PATH_LINES.append(msg)
++    print(msg, **kw)
++
++
+ def _ouns_median(v):
+     s = sorted(v)
+     return s[len(s) // 2]
+@@ -1533,7 +1544,7 @@ def _ouns_gate(cl: int, state: dict) -> bool:
+                 eager[name] = _ouns_median(vals)
+             win = ratio >= OUNS_MIN_WIN
+             wins.append(win)
+-            print(f"[ouns] gate m={m} (graph replay, {OUNS_FLUSH_BYTES >> 20} MB flush, {OUNS_GATE_REPS} reps, "
++            _path_print(f"[ouns] gate m={m} (graph replay, {OUNS_FLUSH_BYTES >> 20} MB flush, {OUNS_GATE_REPS} reps, "
+                   f"interleaved): cluster median {med['cluster']:.2f} us, {inc_name} median "
+                   f"{med['incumbent']:.2f} us, empty-graph baseline {base:.2f} us -> net "
+                   f"{adj['cluster']:.2f} vs {adj['incumbent']:.2f} us, incumbent/cluster {ratio:.3f}x "
+@@ -1558,13 +1569,13 @@ def _ouns_prepare(state: dict) -> None:
+     dim, run the graph-replay gate, and fix state["ouns_cl"] (0 = restack's path) for the run."""
+     state["ouns_cl"] = 0
+     if _OUNS_EXT is None:
+-        print("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module", flush=True)
++        _path_print("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module", flush=True)
+         return
+     w = state["unpooler"]
+     if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
+             and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
+             and w.data_ptr() % 16 == 0):
+-        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected",
++        _path_print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected",
+               flush=True)
+         return
+     chosen = 0
+@@ -1600,11 +1611,11 @@ def _ouns_prepare(state: dict) -> None:
+         if key in state:
+             state[key].zero_()
+     if state["ouns_cl"]:
+-        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
++        _path_print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
+               f"{state['ouns_cl']}; self-check passed (m {OUNS_CHECK_MS}) and graph-replay gate won at m "
+               f"{OUNS_GATE_MS} (see the [ouns] gate lines for both medians)", flush=True)
+     else:
+-        print("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
++        _path_print("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
+               "(see the [ouns] lines above for why)", flush=True)
+ 
+ 
+@@ -2044,7 +2055,7 @@ def _router_cluster_prepare(state: dict) -> None:
+         print(f"[router_cluster] prepare failed ({e!r}); swap-AB router path for every m", flush=True)
+         ok = False
+     state["router_cluster_ok"] = ok
+-    print("[router_cluster] PATH CHOSEN router m<=8 (n=256): "
++    _path_print("[router_cluster] PATH CHOSEN router m<=8 (n=256): "
+           + ("CUDA cluster kernel router_kernel<8,8>, no memset" if ok else "swap-AB Triton router (cluster off)")
+           + "; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo", flush=True)
+ 
+@@ -2096,7 +2107,19 @@ LT_WS_BYTES = 1 << 20        # per-state workspace handed to cublasLtMatmul
+ LT_MAX_ALGOS = 16
+ LT_PICK_REPS = 15
+ LT_ALIGN = 256
+-NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG)
++# Pooler K-halves (hypothesis pooler-k-halves-fp32-partials-restack-m128-m256): at cfg m in KHALF_MS the
++# pooler runs as a 2-batch cuBLAS GEMM over the two K halves of master's NN weight pooler_t plus one
++# add; candidates "a" (bf16 partials) and "b" (fp32 partials, one bf16 rounding). One flag per m, own
++# per-state kind dict; a miss falls back to master's NN torch.mm and never touches nn_ok/nn_p256_ok.
++KHALF_MS = (128, 256)
++KHALF_FLAGS = {128: "pooler_khalf128_ok", 256: "pooler_khalf256_ok"}
++KHALF_HALF = POOLER_K // 2
++KHALF_ROUNDS = 2                 # independent interleaved rounds; BOTH must clear the bar
++KHALF_MIN_RATIO = 1.03           # master / candidate, net of the empty-graph baseline, each round
++KHALF_MAX_IQR = 1.5              # candidate IQR <= this x master IQR, each round
++KHALF_PREFER_A = 1.01            # route bf16 partials only if they beat fp32 partials by this much
++KHALF_START_DEADLINE_S = 170.0   # no new khalf phase later than this after the state build began
++NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG) + tuple(KHALF_FLAGS.values())
+ 
+ _BULK_CPP = r"""
+ #include <torch/extension.h>
+@@ -2716,7 +2739,7 @@ def _bulk_prepare(state: dict, flags=None) -> None:
+     if _BULK_EXT is None:
+         if flags is None:
+             for layer, spec in BULK_CELLS.items():
+-                print(f"PATH CHOSEN {spec[0]} {layer} m={BULK_M}: master (cand n/a us vs master n/a us; "
++                _path_print(f"PATH CHOSEN {spec[0]} {layer} m={BULK_M}: master (cand n/a us vs master n/a us; "
+                       f"no bulk module)", flush=True)
+         return
+     dev = state["router"].device
+@@ -2793,7 +2816,7 @@ def _bulk_prepare(state: dict, flags=None) -> None:
+             state.pop("bulk_wt_" + layer, None)
+         state["bulk_err"].zero_()
+         print(f"[prepare-time] cell {src} {layer} m={BULK_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
+-        print(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
++        _path_print(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
+               f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
+               + ("" if state[flag] else f"; {why}"), flush=True)
+     torch.cuda.synchronize()
+@@ -2827,7 +2850,7 @@ def _lt_prepare(state: dict, flags=None) -> None:
+     state["lt_ws_qkv128"] = None
+     if _LT_EXT is None:
+         if flags is None:
+-            print(f"PATH CHOSEN B qkv_gate m={LT_M}: master (cand n/a us vs master n/a us; no Lt module)", flush=True)
++            _path_print(f"PATH CHOSEN B qkv_gate m={LT_M}: master (cand n/a us vs master n/a us; no Lt module)", flush=True)
+         return
+     w = state["qkv_gate"]
+     dev = w.device
+@@ -2910,11 +2933,231 @@ def _lt_prepare(state: dict, flags=None) -> None:
+         state["lt_ws_qkv128"] = None
+     torch.cuda.synchronize()
+     print(f"[prepare-time] cell B qkv_gate m={LT_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
+-    print(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
++    _path_print(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
+           f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
+           + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
+ 
+ 
++def _khalf_forward(x: torch.Tensor, state: dict, kind: str) -> torch.Tensor:
++    """Pooler as two K halves in one strided-batched cuBLAS GEMM over master's NN weight, then one
++    add. x [m, 8192] contiguous; xh is a strided view (no copy), wh = pooler_t.view(2, 4096, 4096).
++    kind "a": bf16 partials, out = p[0] + p[1]. kind "b": fp32 partials (bmm out_dtype=float32), one
++    fp32 add stored once as bf16 into a fresh output (one rounding, like cuBLAS's own split-K)."""
++    m = x.shape[0]
++    xh = x.view(m, 2, KHALF_HALF).permute(1, 0, 2)
++    wh = state["pooler_t"].view(2, KHALF_HALF, POOLER_N)
++    if kind == "a":
++        p = torch.bmm(xh, wh)
++        return torch.add(p[0], p[1])
++    p = torch.bmm(xh, wh, out_dtype=torch.float32)
++    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
++    torch.add(p[0], p[1], out=out)
++    return out
++
++
++def _khalf_route_ok(x: torch.Tensor, cfg, state: dict) -> bool:
++    """pooler at cfg m in KHALF_MS with its own flag set and a prepare()-fixed kind: cfg, shapes and
++    state only, never input values."""
++    m = cfg["m"]
++    flag = KHALF_FLAGS.get(m)
++    if flag is None or not state[flag]:
++        return False
++    wt = state["pooler_t"]
++    return (m in state["pooler_khalf_kind"] and cfg["n"] == POOLER_N and cfg["k"] == POOLER_K
++            and tuple(wt.shape) == (POOLER_K, POOLER_N) and wt.is_contiguous()
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == POOLER_K
++            and x.dtype == torch.bfloat16 and x.is_contiguous())
++
++
++def _khalf_names_ok(names: list) -> str:
++    """"" if the profiled kernels of a K-halves candidate are acceptable, else why not: needs a GEMM
++    kernel; rejects a copy/contiguous() of xh or wh and any split-K reduce node. Elementwise names
++    are printed, not matched (a mixed-dtype add may be unrolled_elementwise_kernel)."""
++    low = [n.lower() for n in names]
++    if not low:
++        return "profiler saw no CUDA kernels"
++    if any(("memcpy" in n or "copy" in n or "contiguous" in n) for n in low):
++        return "a copy kernel was launched (xh/wh not consumed in place)"
++    if any("splitkreduce" in n or "splitk_reduce" in n for n in low):
++        return "a split-K reduce kernel was launched"
++    if not any(("nvjet" in n or "gemm" in n or "cutlass" in n or "sm90" in n) for n in low):
++        return "no GEMM-like kernel name"
++    return ""
++
++
++def _khalf_cell(state: dict, m: int, dev, flush, g_base, scratch, ev) -> tuple:
++    """One m. Returns (kind or None, summary line). Candidates: valid ones of {"a", "b"}, each
++    numerics-checked through kernel_fn (state copy with the flag on) and kernel-name-checked; then
++    KHALF_ROUNDS independent interleaved rounds (41 reps, 256 MB flush, own empty-graph baseline)
++    of master's ACTUALLY ROUTED path (flag off) against each valid candidate. Routed only if every
++    round has master/cand >= KHALF_MIN_RATIO and cand IQR <= KHALF_MAX_IQR x master IQR."""
++    flag = KHALF_FLAGS[m]
++    cfg = {"m": m, "n": POOLER_N, "k": POOLER_K, "layer": "pooler"}
++    st_i = dict(state)
++    st_i[flag] = False
++    st_c = {}
++    for kind in ("a", "b"):
++        s = dict(state)
++        s[flag] = True
++        s["pooler_khalf_kind"] = {m: kind}
++        st_c[kind] = s
++    x = torch.randn((m, POOLER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": cfg}
++    xh = x.view(m, 2, KHALF_HALF).permute(1, 0, 2)
++    print(f"[khalf] m={m}: xh.stride()={tuple(xh.stride())} xh.is_contiguous()={xh.is_contiguous()}", flush=True)
++    try:
++        mnames = _cell_kernels(lambda: kernel_fn(data, st_i))
++    except Exception as e:
++        mnames = [f"profiler unavailable ({type(e).__name__}: {e})"]
++    print(f"[khalf] m={m}: master (flag off, actually routed) kernels {mnames}", flush=True)
++    valid = {}
++    for kind in ("a", "b"):
++        why = ""
++        try:
++            if _khalf_route_ok(x, cfg, st_c[kind]) is not True:
++                why = "route check failed"
++            if not why:
++                why = _cell_check(f"khalf-{kind}", lambda xx, kind=kind: kernel_fn({"x": xx, "config": cfg}, st_c[kind]),
++                                  state["pooler"], m, POOLER_N, POOLER_K)
++            names = []
++            if not why:
++                names = _cell_kernels(lambda kind=kind: kernel_fn(data, st_c[kind]))
++                why = _khalf_names_ok(names)
++            print(f"[khalf] m={m} cand {kind} ({'bf16' if kind == 'a' else 'fp32'} partials): kernels {names}"
++                  + (f" EXCLUDED: {why}" if why else " valid"), flush=True)
++        except Exception as e:
++            why = f"raised {type(e).__name__}: {str(e)[-200:]}"
++            print(f"[khalf] m={m} cand {kind}: EXCLUDED: {why}", flush=True)
++        if not why:
++            valid[kind] = True
++    if not valid:
++        return None, f"PATH CHOSEN khalf pooler m={m}: master (no valid candidate; gate not run, not a measured loss)"
++    graphs = {"master": _cell_capture(lambda: kernel_fn(data, st_i))}
++    for kind in valid:
++        graphs[kind] = _cell_capture(lambda kind=kind: kernel_fn(data, st_c[kind]))
++    live = list(graphs)
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    rounds = []
++    for rnd in range(KHALF_ROUNDS):
++        base = _ouns_median([replay_us(g_base) for _ in range(CELL_GATE_REPS)])
++        times = {n: [] for n in live}
++        for rep in range(CELL_GATE_REPS):
++            sh = (rep + rnd) % len(live)
++            order = live[sh:] + live[:sh]
++            if rep % 2:
++                order = order[::-1]
++            for n in order:
++                times[n].append(replay_us(graphs[n]))
++        res = {}
++        for n, v in times.items():
++            sv = sorted(v)
++            med = sv[len(sv) // 2]
++            res[n] = (med, sv[(3 * len(sv)) // 4] - sv[len(sv) // 4], max(med - base, 0.25))
++        rounds.append(res)
++        for n in live:
++            if n == "master":
++                continue
++            print(f"[khalf] gate m={m} round {rnd + 1}/{KHALF_ROUNDS} cand {n}: master median {res['master'][0]:.2f} us "
++                  f"(IQR {res['master'][1]:.2f}), cand median {res[n][0]:.2f} us (IQR {res[n][1]:.2f}), "
++                  f"baseline {base:.2f} us -> net {res['master'][2]:.2f} vs {res[n][2]:.2f} us, "
++                  f"master/cand {res['master'][2] / res[n][2]:.3f}", flush=True)
++    del graphs
++    torch.cuda.synchronize()
++    score, passed = {}, {}
++    for kind in valid:
++        ratios = [r["master"][2] / r[kind][2] for r in rounds]
++        iqr_ok = all(r[kind][1] <= KHALF_MAX_IQR * max(r["master"][1], 0.5) for r in rounds)
++        score[kind] = min(ratios)
++        passed[kind] = score[kind] >= KHALF_MIN_RATIO and iqr_ok
++        print(f"[khalf] gate m={m} cand {kind}: ratios {[round(v, 3) for v in ratios]} (need all >= "
++              f"{KHALF_MIN_RATIO}), IQR ok {iqr_ok} (cand <= {KHALF_MAX_IQR}x master) -> "
++              f"{'PASS' if passed[kind] else 'REJECT'}", flush=True)
++    chosen = None
++    if passed.get("a") and (not passed.get("b") or score["a"] >= KHALF_PREFER_A * score["b"]):
++        chosen = "a"
++    elif passed.get("b"):
++        chosen = "b"
++    desc = " ".join(f"{k}:min-ratio {score[k]:.3f}" for k in score)
++    if chosen:
++        return chosen, (f"PATH CHOSEN khalf pooler m={m}: K-halves bmm cand {chosen} "
++                        f"({'bf16' if chosen == 'a' else 'fp32'} partials) ({desc}; master med/IQR "
++                        f"{[(round(r['master'][0], 2), round(r['master'][1], 2)) for r in rounds]}, cand med/IQR "
++                        f"{[(round(r[chosen][0], 2), round(r[chosen][1], 2)) for r in rounds]})")
++    return None, (f"PATH CHOSEN khalf pooler m={m}: master (gate rejected, not a measured loss of the row; {desc}; "
++                  f"master med/IQR {[(round(r['master'][0], 2), round(r['master'][1], 2)) for r in rounds]})")
++
++
++def _khalf_prepare(state: dict, t_start: float) -> None:
++    """State A only. Sets state[KHALF_FLAGS[m]] and state['pooler_khalf_kind'] ({m: 'a' | 'b'}); every
++    surprise leaves master's NN path. Own start deadline; prints 'skipped: deadline'. Never raises."""
++    for flag in KHALF_FLAGS.values():
++        state[flag] = False
++    state["pooler_khalf_kind"] = {}
++    t0 = time.perf_counter()
++    lines = []
++    try:
++        if t0 - t_start > KHALF_START_DEADLINE_S:
++            for m in KHALF_MS:
++                _path_print(f"PATH CHOSEN khalf pooler m={m}: master (skipped: deadline, {t0 - t_start:.0f}s into "
++                            f"prepare > {KHALF_START_DEADLINE_S:.0f}s)", flush=True)
++            print("[khalf] skipped: deadline", flush=True)
++            return
++        w, wt = state["pooler"], state["pooler_t"]
++        if not (tuple(w.shape) == (POOLER_N, POOLER_K) and w.dtype == torch.bfloat16 and w.is_contiguous()
++                and tuple(wt.shape) == (POOLER_K, POOLER_N) and wt.dtype == torch.bfloat16 and wt.is_contiguous()):
++            for m in KHALF_MS:
++                _path_print(f"PATH CHOSEN khalf pooler m={m}: master (weight layout unexpected)", flush=True)
++            return
++        try:
++            xs = torch.zeros((KHALF_MS[0], POOLER_K), device=w.device, dtype=torch.bfloat16)
++            torch.bmm(xs.view(KHALF_MS[0], 2, KHALF_HALF).permute(1, 0, 2), wt.view(2, KHALF_HALF, POOLER_N),
++                      out_dtype=torch.float32)
++            torch.cuda.synchronize()
++            print("[khalf] torch.bmm(out_dtype=torch.float32) accepted on this image", flush=True)
++        except Exception as e:
++            print(f"[khalf] torch.bmm(out_dtype=torch.float32) rejected ({type(e).__name__}: {str(e)[-160:]}); "
++                  f"candidate b will be excluded by its check, a only", flush=True)
++        dev = w.device
++        flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++        scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++        ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++        g_base = _cell_capture(lambda: scratch.add_(1.0))
++        for m in KHALF_MS:
++            tm = time.perf_counter()
++            if tm - t_start > KHALF_START_DEADLINE_S + 40.0:
++                line = f"PATH CHOSEN khalf pooler m={m}: master (skipped: deadline)"
++                print("[khalf] skipped: deadline", flush=True)
++            else:
++                try:
++                    kind, line = _khalf_cell(state, m, dev, flush, g_base, scratch, ev)
++                    if kind is not None:
++                        state[KHALF_FLAGS[m]] = True
++                        state["pooler_khalf_kind"][m] = kind
++                except Exception as e:
++                    line = f"PATH CHOSEN khalf pooler m={m}: master (raised {type(e).__name__}: {str(e)[-200:]})"
++                    state[KHALF_FLAGS[m]] = False
++                    state["pooler_khalf_kind"].pop(m, None)
++            lines.append(line)
++            _path_print(line, flush=True)
++            print(f"[prepare-time] khalf pooler m={m}: {time.perf_counter() - tm:.2f}s", flush=True)
++        del g_base, flush
++    except Exception as e:  # never raises
++        print(f"[khalf] prepare raised {type(e).__name__}: {str(e)[-200:]}; master path for both cells", flush=True)
++        for flag in KHALF_FLAGS.values():
++            state[flag] = False
++        state["pooler_khalf_kind"] = {}
++    torch.cuda.synchronize()
++    print(f"[prepare-time] khalf total: {time.perf_counter() - t0:.2f}s", flush=True)
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -2941,6 +3184,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         state[name + "_t"] = state[name].t().contiguous()
+     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
++    for name in KHALF_FLAGS.values():   # K-halves cells: off until state A's selector (or B's inherit) says so
++        state[name] = False
++    state["pooler_khalf_kind"] = {}
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
+@@ -3005,11 +3251,17 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
++        # (10) pooler K-halves at m in KHALF_MS (own flags, own start deadline), after every other cell.
++        _khalf_prepare(state, t_all)
++        t = tick("pooler k-halves selector (2 rounds, bf16 + fp32 partials)", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+         state["nn_ok"] = flags["nn_ok"]
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
++        for name in KHALF_FLAGS.values():
++            state[name] = bool(flags[name])
++        state["pooler_khalf_kind"] = dict(flags["pooler_khalf_kind"])
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _lt_prepare(state, flags=flags)
+@@ -3024,12 +3276,17 @@ def _ab_flags(state: dict) -> dict:
+              "nn_ok": state["nn_ok"], "nn_p256_ok": state["nn_p256_ok"]}
+     for name in NEW_CELL_FLAGS:
+         flags[name] = state[name]
++    flags["pooler_khalf_kind"] = dict(state["pooler_khalf_kind"])
+     return flags
+ 
+ 
+-def _ab_component(layer: str, m: int) -> str:
++def _ab_component(layer: str, m: int, state: dict) -> str:
+     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
+-    new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
++    new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell. A
++    routed K-halves cell is checked FIRST, so its miss turns off only its own flag (master's NN
++    torch.mm then serves the cell) and never nn_ok, which unpooler m=128 shares."""
++    if layer == "pooler" and m in KHALF_FLAGS and state[KHALF_FLAGS[m]]:
++        return KHALF_FLAGS[m]
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
+     if layer == "qkv_gate" and m == LT_M:
+@@ -3075,7 +3332,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     bad = {}
+     wf = {}
+     for layer, n, k, m in AB_CASES:
+-        comp = _ab_component(layer, m)
++        comp = _ab_component(layer, m, state_a)
+         graphs, xs, outs = {}, {}, {}
+         try:
+             cfg = {"m": m, "n": n, "k": k, "layer": layer}
+@@ -3158,7 +3415,12 @@ def prepare(weights: Weights) -> dict:
+     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
+-          + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++          + f" khalf_kind={state['pooler_khalf_kind']}; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++    # The judge keeps only the log tail: repeat every PATH CHOSEN / gate result compactly, last.
++    print(f"[summary] {len(_PATH_LINES)} PATH CHOSEN/GATE lines (compact repeat; prepare total "
++          f"{time.perf_counter() - t0:.1f}s):", flush=True)
++    for line in _PATH_LINES[-40:]:
++        print("[summary] " + line[:260], flush=True)
+     return state
+ 
+ 
+@@ -3190,6 +3452,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
+     if layer != "router":
++        if layer == "pooler" and _khalf_route_ok(x, cfg, state):   # m in {128, 256}: K-halves bmm, own flag
++            return _khalf_forward(x, state, state["pooler_khalf_kind"][cfg["m"]])
+         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
+                 and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
+                      or (layer == "pooler" and state["nn_p256_ok"]

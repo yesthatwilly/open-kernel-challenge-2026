@@ -51,10 +51,10 @@ kind: primary
 controls_for: null
 prior: "pooler-k-halves-batched-gemm-m65-m256: same mechanism, now rebased onto the combo master 36c26199 (bulk row-owner, Lt cell B), with an fp32-partials candidate added and the hardened two-round 1.03 gate; the bf16-partials form already won pooler verify_16 23.2->21.43 and verify_32 29.94->26.75 on the 67b46a57 base"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212546Z
 base_sha: c1d4c033dc83025d0a9fec3357e4d7f493a6c1b0
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -73,6 +73,13 @@ attempt_file: 2026-10-26T012539Z-check-pooler-k-halves-fp32-partials-restack-m12
 prepared_at: 2026-10-26T012539Z
 job: de95f81782374124
 dispatched_at: 2026-10-26T012616Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2682668011504035
+speedup_ci: [1.2492427991331474, 1.2872908031676593]
+harvested_at: 2026-10-26T015638Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256
@@ -157,3 +164,53 @@ Audited 2026-10-25 (opus) by reading, plus a numpy emulation of the numerics. **
 - Rules: the kernel_fn branch reads only cfg, shapes and flags, with no sync, print or try, and it returns a fresh output. pooler_t is master's lossless bf16 NN repack. fp32 appears only in the internal partials.
 
 Residual risk: the hardened gate (two rounds at 1.03, IQR <= 1.5x) may keep master at m=256, which is a gate false negative and is printed as one. Candidate b is excluded if cuBLAS picks a split-K plan for the fp32 bmm.
+
+## Result
+
+- job `de95f81782374124` (check), status done, passed True, tests 9/9
+- speedup 1.2683x, 95% CI [1.2492, 1.2873], score 3808.9777289905714 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/pooler-k-halves-fp32-partials-restack-m128-m256.result.json`, `muse_bf16_proj/hypotheses/done/neutral/pooler-k-halves-fp32-partials-restack-m128-m256.patch`; branch `hyp/muse_bf16_proj/pooler-k-halves-fp32-partials-restack-m128-m256`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 10.92 | 0.9965 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.11 | 1.0129 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.81 | 1.0033 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 4.96 | 1.0347 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 4.87 | 1.0404 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 12.99 | 1.0707 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 5.9 | 1.028 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.52 | 0.9996 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.4 | 1.0 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.5 | 0.9994 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.63 | 1.0455 | gained |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.35 | 0.9949 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 19.98 | 0.9943 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.72 | 1.0064 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.31 | 0.956 | lost |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.74 | 0.9963 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.12 | 0.9874 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 19.27 | 1.0058 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 5.27 | 1.012 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 5.49 | 0.9995 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 15.99 | 1.0147 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.54 | 1.0044 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 21.36 | 1.0677 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 18.54 | 1.0086 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.54 | 1.0138 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 19.7 | 0.9918 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.23 | 0.9998 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 28.59 | 0.9876 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.54 | 1.0085 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.24 | 1.0382 | gained |
+
+gained on unpooler decode_1; router decode_1, verify_32; qkv_gate decode_16, decode_32; pooler verify_16; lost on router decode_32. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

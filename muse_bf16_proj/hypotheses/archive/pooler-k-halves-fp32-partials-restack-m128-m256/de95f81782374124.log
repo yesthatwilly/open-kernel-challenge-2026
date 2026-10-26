@@ -1,0 +1,112 @@
+guous()=False
+[khalf] m=256: master (flag off, actually routed) kernels ['nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT']
+[cell] LAUNCH khalf-a random m=256 ...
+[cell] DONE   khalf-a random m=256 (synced, error word 0)
+[cell] LAUNCH khalf-a random-again m=256 ...
+[cell] DONE   khalf-a random-again m=256 (synced, error word 0)
+[cell] LAUNCH khalf-a probe m=256 ...
+[cell] DONE   khalf-a probe m=256 (synced, error word 0)
+[cell] check khalf-a m=256: rel L2 2.448e-03 (<= 0.003), probe row rel 0.000e+00 (<= 0.0001)
+[khalf] m=256 cand a (bf16 partials): kernels ['nvjet_sm90_tst_128x128_64x6_2x1_v_bz_NNT', 'void at::native::vectorized_elementwise_kernel<8, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>, false>(int, at::native::CUDAFunctor_add<c10::BFloat16>, std::array<char*, 3ul>)'] valid
+[cell] LAUNCH khalf-b random m=256 ...
+[cell] DONE   khalf-b random m=256 (synced, error word 0)
+[cell] LAUNCH khalf-b random-again m=256 ...
+[cell] DONE   khalf-b random-again m=256 (synced, error word 0)
+[cell] LAUNCH khalf-b probe m=256 ...
+[cell] DONE   khalf-b probe m=256 (synced, error word 0)
+[cell] check khalf-b m=256: rel L2 1.661e-03 (<= 0.003), probe row rel 0.000e+00 (<= 0.0001)
+[khalf] m=256 cand b (fp32 partials): kernels ['nvjet_sm90_tss_128x128_64x6_2x1_v_bz_NNT', 'void at::native::unrolled_elementwise_kernel<at::native::CUDAFunctor_add<float>, std::array<char*, 3ul>, 4, TrivialOffsetCalculator<2, unsigned int>, TrivialOffsetCalculator<1, unsigned int>, at::native::memory::LoadWithCast<2>, at::native::memory::StoreWithCast<1> >(int, at::native::CUDAFunctor_add<float>, std::array<char*, 3ul>, TrivialOffsetCalculator<2, unsigned int>, TrivialOffsetCalculator<1, unsigned int>, at::native::memory::LoadWithCast<2>, at::native::memory::StoreWithCast<1>)'] valid
+[khalf] gate m=256 round 1/2 cand a: master median 36.61 us (IQR 0.64), cand median 35.94 us (IQR 0.86), baseline 5.12 us -> net 31.49 vs 30.82 us, master/cand 1.022
+[khalf] gate m=256 round 1/2 cand b: master median 36.61 us (IQR 0.64), cand median 38.62 us (IQR 0.93), baseline 5.12 us -> net 31.49 vs 33.50 us, master/cand 0.940
+[khalf] gate m=256 round 2/2 cand a: master median 36.58 us (IQR 0.74), cand median 35.90 us (IQR 1.02), baseline 5.15 us -> net 31.42 vs 30.75 us, master/cand 1.022
+[khalf] gate m=256 round 2/2 cand b: master median 36.58 us (IQR 0.74), cand median 38.78 us (IQR 0.93), baseline 5.15 us -> net 31.42 vs 33.63 us, master/cand 0.934
+[khalf] gate m=256 cand a: ratios [1.022, 1.022] (need all >= 1.03), IQR ok True (cand <= 1.5x master) -> REJECT
+[khalf] gate m=256 cand b: ratios [0.94, 0.934] (need all >= 1.03), IQR ok True (cand <= 1.5x master) -> REJECT
+PATH CHOSEN khalf pooler m=256: master (gate rejected, not a measured loss of the row; a:min-ratio 1.022 b:min-ratio 0.934; master med/IQR [(36.61, 0.64), (36.58, 0.74)])
+[prepare-time] khalf pooler m=256: 0.07s
+[prepare-time] khalf total: 0.16s
+[prepare-time] pooler k-halves selector (2 rounds, bf16 + fp32 partials): 0.16s
+[prepare-time] state build (A) total: 3.81s
+[prepare-time] weight splits + NN copies: 0.00s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.01s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] bulk / lt per-state buffers (flags inherited): 0.00s
+[prepare-time] state build (B) total: 0.01s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.54e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.44e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component master path) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component master path) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.74e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.70e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component bulk_pooler_ok) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component bulk_pooler_ok) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component pooler_khalf128_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component pooler_khalf128_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 2.46e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state A (component bulk_qkv_ok) ...
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state B (component bulk_qkv_ok) ...
+[ab] qkv_gate m=1 n=2304: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn o m=1 n=8192 state A (component bulk_o_ok) ...
+[ab] capture kernel_fn o m=1 n=8192 state B (component bulk_o_ok) ...
+[ab] o m=1 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state A (component lt_qkv128_ok) ...
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state B (component lt_qkv128_ok) ...
+[ab] qkv_gate m=128 n=2304: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] done in 0.1s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': False, 'lt_qkv128_ok': True, 'pooler_khalf128_ok': True, 'pooler_khalf256_ok': False, 'pooler_khalf_kind': {128: 'a'}}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=False lt_qkv128_ok=True pooler_khalf128_ok=True pooler_khalf256_ok=False khalf_kind={128: 'a'}; prepare total 3.9s
+[summary] 10 PATH CHOSEN/GATE lines (compact repeat; prepare total 3.9s):
+[summary] [ouns] gate m=1 (graph replay, 256 MB flush, 41 reps, interleaved): cluster median 9.98 us, swapab16 median 10.56 us, empty-graph baseline 5.12 us -> net 4.86 vs 5.44 us, incumbent/cluster 1.118x (need >= 1.02) -> WIN; eager-cold (not used) cluster 10.18 / swa
+[summary] [ouns] gate m=8 (graph replay, 256 MB flush, 41 reps, interleaved): cluster median 10.37 us, swapab16 median 10.75 us, empty-graph baseline 5.12 us -> net 5.25 vs 5.63 us, incumbent/cluster 1.073x (need >= 1.02) -> WIN; eager-cold (not used) cluster 10.59 / sw
+[summary] [ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+[summary] [router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+[summary] PATH CHOSEN A pooler m=1: candidate (cand 22.11 us vs master 23.10 us)
+[summary] PATH CHOSEN A2 qkv_gate m=1: candidate (cand 13.44 us vs master 14.46 us)
+[summary] PATH CHOSEN A3 o m=1: master (cand 6.62 us vs master 6.72 us); gate: cand/master 0.986 > 0.98
+[summary] PATH CHOSEN B qkv_gate m=128: candidate (cand 17.82 us vs master 19.55 us)
+[summary] PATH CHOSEN khalf pooler m=128: K-halves bmm cand a (bf16 partials) (a:min-ratio 1.053 b:min-ratio 0.991; master med/IQR [(32.45, 0.99), (32.7, 0.93)], cand med/IQR [(31.07, 0.74), (30.78, 0.67)])
+[summary] PATH CHOSEN khalf pooler m=256: master (gate rejected, not a measured loss of the row; a:min-ratio 1.022 b:min-ratio 0.934; master med/IQR [(36.61, 0.64), (36.58, 0.74)])
