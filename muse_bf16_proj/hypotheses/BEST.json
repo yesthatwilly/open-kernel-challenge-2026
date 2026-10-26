@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "741072dca5fc4c9d",
- "check_job": "741072dca5fc4c9d",
- "mode": "check",
- "speedup": 1.2566457115954903,
+ "job": "3834ceeca7c0410d",
+ "check_job": "474490c8258d4521",
+ "mode": "submit",
+ "speedup": 1.266355805796172,
  "ci": [
-  1.237796025921558,
-  1.2754953972694225
+  1.2473604687092292,
+  1.2853511428831144
  ],
- "score_us": 3844.2020335760453,
- "commit": "36c26199f24a1b0d49cb3f63d518a67cfd388f04",
- "submission_blob": "ad8d7254a64a52db2a8f56ec0ad262748153a2e8",
- "slug": "combo-rowowner-reduce-free-m1-qkv-o-plus-naive",
- "result": "muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json",
- "updated_at": "2026-10-25T185544Z"
+ "score_us": 3814.7,
+ "commit": "5325ea40",
+ "submission_blob": "2bcfe7d40e5d58ddc0305221301ee1fce58d5578",
+ "slug": "campaign-bulk12-lossless-12bit-m1",
+ "result": null,
+ "updated_at": "2026-10-26T215711Z"
 }

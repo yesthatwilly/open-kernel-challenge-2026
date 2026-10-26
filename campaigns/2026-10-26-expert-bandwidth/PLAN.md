@@ -12,6 +12,19 @@ approved: 2026-10-26 by the user (plan approved; "fully autonomous today, no cho
 mode: autonomous self-paced /loop, single agent + one Opus audit per new CUDA module
 ---
 
+> **STOP — NEWEST USER STEER, 2026-10-26 ~22:00Z, relayed from the user's openclaw session: THE SPRINT IS ENDED. No new work. Act on it this tick.**
+>
+> The user said: "stop any more new sprints. Keep what's in flight." This replaces the ~21:40Z expiring-quota sprint banner.
+> - **Start nothing new:** no new /hypothesize minting, no new adversarial reviews, no new implementations, no new
+>   worktrees, no new subagents of any kind. Minted hypotheses not yet implemented stay queued; do not implement them.
+> - **Keep what is in flight:** let agents already running finish; harvest checks already dispatched; submit the exact
+>   bytes of any harvested check that beats its board (rules checklist as usual). A hypothesis already implemented
+>   and committed when you read this may be dispatched; anything earlier than that stops.
+> - Your own bf16 line likewise: finish and check what is already built/audited (b12r); do not start another build.
+> - **Then go quiet** until the 00:00Z reset plan (decode scored run, moe + decode checks). Long heartbeats while idle.
+> - Log what the sprint did (checks used, wins, landed, what was left queued) in LOG.md.
+
+
 > **STOP — USER STEER, 2026-10-26 ~19:05Z, relayed from the user's openclaw session. Not yet acknowledged. Read before acting on this tick.**
 >
 > **Do not idle until 00:00Z, and do not pre-build hours ahead of a reset.** Decode and moe quota is spent for 10-26. Their
@@ -245,6 +258,18 @@ Ranks drift down about 10 places a day as other teams submit, so these are upper
 Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is chosen over D2 whenever the schedule is tight.
 
 ## 6. Autonomous operation (single agent + audits)
+
+> **STOP — NEWEST USER STEER, 2026-10-26 ~22:00Z, relayed from the user's openclaw session: THE SPRINT IS ENDED. No new work. Act on it this tick.**
+>
+> The user said: "stop any more new sprints. Keep what's in flight." This replaces the ~21:40Z expiring-quota sprint banner.
+> - **Start nothing new:** no new /hypothesize minting, no new adversarial reviews, no new implementations, no new
+>   worktrees, no new subagents of any kind. Minted hypotheses not yet implemented stay queued; do not implement them.
+> - **Keep what is in flight:** let agents already running finish; harvest checks already dispatched; submit the exact
+>   bytes of any harvested check that beats its board (rules checklist as usual). A hypothesis already implemented
+>   and committed when you read this may be dispatched; anything earlier than that stops.
+> - Your own bf16 line likewise: finish and check what is already built/audited (b12r); do not start another build.
+> - **Then go quiet** until the 00:00Z reset plan (decode scored run, moe + decode checks). Long heartbeats while idle.
+> - Log what the sprint did (checks used, wins, landed, what was left queued) in LOG.md.
 
 - **the user, 2026-10-26 ~19:05Z (relayed from the openclaw session): quota policy; replaces the ~18:50Z note.**
   - Prioritise real gains for decode. Order by gain potential: **decode** (the KPI) > **moe** (the expert block,

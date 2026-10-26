@@ -11,10 +11,11 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T21:45Z
-- **Sprint (the user's 21:40Z steer, this window only):** spend bf16 / attention / prefill quota before 00:00Z on ~30
-  hypotheses via /hypothesize + /churnsubs with ~8-10 agents. No dispatch after ~23:45Z; harvest and land winners;
-  at 00:00Z back to the reset plan and the 19:05Z policy.
+- updated: 2026-10-26T21:58Z
+- **The sprint is ended (the user, ~22:00Z):** start nothing new (no minting, reviews, implementations, worktrees or
+  subagents). Finish and harvest what is in flight, submitting only a check that beats its board. Then go quiet with
+  long heartbeats until the 00:00Z reset plan.
+- in flight: prefill confirm 13cfaf1e25c341af, bf16 b12r 6617f94dd1ce459f, 3 minting agents, 1 review (attention).
 - step: **bf16_proj**.
   - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
   - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
@@ -421,3 +422,19 @@ append-only, newest last.
 - Started: three /hypothesize minting agents (bf16 6, attention 12, prefill 12). My bulk12 line continues alongside:
   - router-ticket check 7e8be36a is in flight;
   - the b12x chunk-rotation build a7da6fa9 is audited (ship) and waits for that result.
+
+## 2026-10-26T21:58Z: user steer acknowledged (~22:00Z: the sprint is ended; keep what is in flight, then go quiet)
+
+- Read at ~21:57Z in the campaign CLAUDE.md / PLAN / INDEX: "stop any more new sprints. Keep what's in flight."
+- Starting nothing new: no minting, reviews, implementations, worktrees or subagents.
+- In flight, finishing:
+  - three /hypothesize minting agents (their files stay queued, unimplemented);
+  - the adversarial review of attention `sliding-decode-sk-s3-fused-preattn-rope` (recorded, not implemented);
+  - prefill confirm check 13cfaf1e25c341af;
+  - my bf16 b12r check 6617f94dd1ce459f (resident-x m=8, audited, dispatched 21:56Z).
+- Sprint so far (21:40-21:58Z): one sprint check used (prefill confirm). Reviews: prefill
+  `experts-rega-mc4-cluster-high-ft` hold (its mc2 premise falsified); bf16 `combo-verify-cells-...` held by me
+  (its only routable cell, K-halves kind (a), rounds fp32 partials to bf16: fails our fp32-accumulation rules gate).
+  The moe submit picks were skipped (steer: moe quota untouched). Daily diagnoses skipped.
+- bf16 BEST.json registered by hand to the landed bulk12 run (3834ceec 1.2664, blob 2bcfe7d4), noted in DECISIONS.
+  Churn could not see it: it was submitted from a worktree copy.
