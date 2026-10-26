@@ -58,7 +58,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212549Z
 base_sha: 8dd2a8d59b8619aeeb15dc4ebd6d2939f2eab87e
 base_blob: 095978ec904ee937a4b5b039bf2b47b911801fa6
@@ -67,6 +67,12 @@ worktree: .worktrees/muse_bf16_proj/router-m128-m256-wgmma-swapab-tall-cluster-s
 mode: check
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-26T011617Z
+impl_commit: 6bfb294589ecfc9341bcdc4eb217f7d1a206e532
+submission_sha256: b2f154c5c2c58bb8fc92a8b25638a0d2f163174a1f11b6878a87704f39ffb26d
+norm_sha256: 0eb8636ce0288818fc5074ad949dcd28aae5a0a8919517e00fd2037c9a0838e3
+submission_blob: 6c52162510bc950d3e53196acc57c9df34525b5d
+lint_warnings: 38
 ---
 
 # router-m128-m256-wgmma-swapab-tall-cluster-stage2
@@ -119,3 +125,48 @@ No companion is warranted. This is a rewrite, judged on the replaced kernel's ow
 - wgmma B operand = the x tile [BLOCK_T x 64K] in K-major layout with 128B swizzle: confirm that the descriptor's LBO/SBO match the TMA box (64 bf16 = 128 B rows). A silent layout mismatch would pass small-m self-checks and only show on outlier rows, so run the outlier and power-of-two rows at every self-check m.
 - Should TMA multicast of the weight tile across token tiles (m=256, 2 token tiles) be staged now or left to stage 3? It would cut weight L2->SM bytes from 16.8 MB to 8.4 MB.
 
+
+## Implementation notes
+
+Built 2026-10-26 on CURRENT master: `git checkout master -- muse_bf16_proj/submission.py` in the worktree (blob ad8d7254, as the review requires, not the stale 353e3b19 / stage-1 branch). Only `<worktree>/muse_bf16_proj/submission.py` changed (+834/-5 vs master). Stage 1's mma.sync kernel was NOT ported; its scaffold ideas (cluster launch, reduce, self-check, occupancy gate, per-launch prints) were rewritten around wgmma. Nothing was run (no GPU on this node); the CUDA source was never compiled here.
+
+What changed (new section (10), inserted before `_prepare_state`; hooks in `NEW_CELL_FLAGS`, `AB_CASES`, `_ab_flags`, `_ab_component`, `_prepare_state`, `prepare()`, `kernel_fn`):
+- `rt2_wgmma_swapab_kernel<BT, CS, ST>` (load_inline, sm_90a only): 160 threads, warps 0-3 consumer warpgroup, warp 4 lane 0 producer. Per 64-K step the producer TMA-loads hi tile [64 rows x 64 K], lo tile of the same rows and the x tile [BT x 64 K] (128B swizzle) into an ST-deep full/empty mbarrier ring; the consumer issues wgmma m64nBTk16 twice per k16 (A = hi rows then lo rows, B = x tile, both K-major smem descriptors, SBO 1024 B, LBO 1) into ONE fp32 accumulator. D[weight row][token] goes to smem P[token][68] (aliasing the consumed ring), barrier.cluster, rank r reduce-scatters tokens [r*BT/CS, +BT/CS) by 16-B `ld.shared::cluster` reads of all CS peers in fixed rank order, one fp32 store, second barrier.cluster. Output is `torch.empty` (no memset node). Instances (BT, CS, stages): (64,16,4), (128,16,3), (128,8,3); smem about 97-99 KB so 2 CTAs/SM fit.
+- Candidates per band: a (m 65..128, rep m 128): (64,16)=128 CTAs, (128,16)=64 CTAs; b (m 129..256, rep m 256): (128,16)=128 CTAs, (128,8)=64 CTAs (this is the review's cluster-8 / K-slice-1024 open question, offered to the selector). L2->SM bytes are printed per tiling vs master's hilo tiles.
+- Per-band state flags `rt2_a_ok` / `rt2_b_ok` (+ `rt2_cfg_a/b`, per-state error word `rt2_err`), in `NEW_CELL_FLAGS` so the A/B/A/B two-state graph check inherits and can switch them off; `AB_CASES` gained router m = 65, 200, 256 (m = 128 was already there and now maps to band a). Flag off or any miss = master's exact `_router_hilo_forward` path; no unrelated flag is touched.
+- Self-check (`_rt2_check`) per instance at m = 65, 128, 129, 200, 256: random rows, x64 outlier rows, x1024 outlier entries, about one row in eight (plus the last) a single power-of-two entry; rel L2 vs fp64 router <= 1e-5, vs fp64 hi+lo <= 5e-6, worst row <= 5e-5, one-hot rows <= 1e-3 of the original column, finite, second launch bit-identical, error word 0; flushed print before and synchronize + error word + flushed print after every launch.
+- Selector (`_rt2_gate`): master's ACTUALLY ROUTED path (kernel_fn, band flag off = hilo + torch.zeros) and each candidate (kernel_fn, flag on) captured as graphs on the same synthetic x, 256 MB flush before each replay, 41 reps x 2 interleaved rounds (all graphs once per rep, rotating order), empty-graph baseline subtracted. A candidate wins only if BOTH rounds reach master/cand >= 1.03 AND its IQR <= 1.5x master's in both rounds. Per round it prints master and candidate medians/IQRs and the mode-0 no-DSMEM-reduce graph-replay median (the kill-criterion read, in graph-replay terms). The winner gets one torch.profiler call asserting exactly one `rt2_wgmma_swapab_kernel` (no memset node) before the flag is set. PATH CHOSEN per band is printed even when master is kept, and repeated (with the final post-A/B flags) as the LAST lines of prepare().
+
+Review fixes applied (where the review corrected the spec, the review won):
+1. Base: built on master blob ad8d7254 (36c26199), not 353e3b19.
+2. Gate: single-round 1.02x replaced by two interleaved rounds, both >= 1.03, candidate IQR <= 1.5x master's; master timed through kernel_fn with the flag off.
+3. setmaxnreg/producer mismatch: removed setmaxnreg altogether. It is warpgroup-wide, a lone producer warp cannot run it legally, an unbalanced `.inc` can block without bound, and the kernel is not register-limited (about 64 accumulator regs at BT 128). Deviation from the spec's "setmaxnreg", per the review's own framing.
+4. No cached x descriptor: x's tensor map is re-encoded on the host on every call from that call's pointer and stride and baked into the graph like a pointer argument; hi/lo maps are re-encoded per call from the state's own tensors; nothing in state or module globals (only a host function pointer to cuTensorMapEncodeTiled, resolved via dlsym).
+5. Kill criterion restated in graph-replay terms (the printed no-reduce median is compared against master's net ~6.9 us at m=256).
+Open questions answered in code: reduce-scatter, not gather (each rank owns BT/CS tokens x 64 rows, 16-B peer reads); cluster-8 candidate offered at m 129..256; both m=128 candidates timed by the selector, not picked on bytes; descriptors K-major 128B swizzle with SBO 1024 B matching the 128-B TMA box rows, and outlier plus power-of-two rows run at every self-check m; weight-tile multicast left to stage 3.
+
+Deviations / things to know: TORCH_CUDA_ARCH_LIST=9.0a around the build, `-O3 -lineinfo -std=c++20`, arch flags printed, `#if __CUDA_ARCH_FEAT_SM90_ALL` guards wgmma with an `#else` that sets error bit 1<<30 (self-check reads it). Smem is sized for 2 CTAs/SM because at 1 CTA/SM only about 7 clusters of 16 can be co-resident (< the 8 needed); every instance must pass spill == 0, CTAs/SM >= 2 and max active clusters >= tiles x 4. Bounded waits: clock64, about 0.6 s, then the error word. The phase starts only if state-A's build is under 150 s old and stops starting steps after 70 s, printing `skipped: deadline`. Build time and regs/spills are printed. No subprocess, host sync, allocation on values or data-derived caching in kernel_fn; the only per-call host work is descriptor encoding and one `torch.empty`.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn's new branch does only shape/cfg/state-flag tests, `torch.empty`, host-side cuTensorMapEncodeTiled and cudaLaunchKernelEx; no `.item()`/`.cpu()`/synchronize in kernel_fn (diff checked; every synchronize/.item() is in prepare-only helpers).
+- [x] Nothing derived from `data` is cached across calls: x's tensor map is rebuilt every call; routing constants come from synthetic data and the weights in prepare().
+- [x] Weights: hi/lo are master's existing lossless prepare()-time router split (BF16 hi + lo, FP32 accumulation, the permitted exception); no new weight copies.
+- [x] Activations BF16 where SGLang keeps BF16: x stays bf16; the router output stays fp32 as in master.
+- [x] n/a: attention rules (this is the router GEMM; no attention in the diff).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: dlopen/dlsym only resolves the CUDA driver's tensor-map function; no child process anywhere in the diff.
+- [x] All work happens inside the timed call; no output caching or replay (one kernel per call into a fresh `torch.empty`).
+
+okc_lint (python3 -I okc_lint.py ... --problem muse_bf16_proj): `OK with warnings` (rc 0); the warnings are host-sync / dtype notes on prepare()-only code (synchronize, `.item()` on the error word, 256 MB uint8 flush buffers), none inside kernel_fn's call graph. `python3 -I -m py_compile` passes; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Read-only audit (no GPU/nvcc on the node); nothing was compiled.
+
+- Fix 1: the gate's IQR veto floored master's IQR at 0.05 us (`max(im, 0.05)`); a timer-resolution IQR could veto a real win. Now `max(im, RT2_IQR_FLOOR_US)` with RT2_IQR_FLOOR_US = 0.5. okc_lint OK with warnings (prepare-only syncs), py_compile OK, __pycache__ removed.
+- Per-call x descriptor: graph-capture safe. cuTensorMapEncodeTiled is a pure host encode into a stack CUtensorMap passed by value as __grid_constant__ (baked into the kernel node like a pointer; the A/B check refills x in place, so replay stays correct). No sync, no allocation, no cached encode (only the function pointer, resolved in the first self-check launch, before any capture). Same per-call pattern as muse_prefill_layer and muse_moe_w4a16; master's own TMA is raw cp.async.bulk, no tensor maps.
+- Cluster 16: cudaFuncAttributeNonPortableClusterSizeAllowed is set when CS > 8 (set_attr, before info() and every launch); candidates need spill 0, CTAs/SM >= 2 and cudaOccupancyMaxActiveClusters >= tiles x 4 before any launch; failures land on master with a PATH CHOSEN line.
+- Output: torch.empty, every element written exactly once (emulated for all m 65..256, BT 64/128, CS 8/16; tail tokens guarded by m0 + tl < m, OOB x rows TMA-zero-filled).
+- Emulation: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/emu_rt2_wgmma_swapab_cluster.py (128B swizzle store, descriptor reads, accumulator fragment map is a bijection, P layout, reduce-scatter, K slicing); rel L2 vs fp64(hi+lo) about 2e-7, ALL OK.
+- Deadlines: master prepare is about 4.5 s (archive log 741072dc); the file has no import clock; sibling load_inline builds take 30-49 s each, so rt2's compile adds roughly 40-60 s at import, well inside 10 min. Phase start deadline 150 s is measured from state-build start (about 4.4 s in), so it will not skip.
+- Residual: unverified by compile or hardware (wgmma asm, 160-thread layout, 16-cluster co-residency); any miss falls back to master.
