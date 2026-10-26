@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212547Z
 base_sha: e90069716dd467a3801b43a8166dedef6c2ed987
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -66,6 +66,8 @@ submission_blob: 463e7b309adf7b48cc294b2f9cff0d85dd4fb9ae
 lint_warnings: 36
 attempt_file: 2026-10-26T012539Z-check-qkv-rowowner-a2-widen-m8-m16.md
 prepared_at: 2026-10-26T012539Z
+job: 0124ea8fcaf14b3c
+dispatched_at: 2026-10-26T012616Z
 ---
 
 # qkv-rowowner-a2-widen-m8-m16
