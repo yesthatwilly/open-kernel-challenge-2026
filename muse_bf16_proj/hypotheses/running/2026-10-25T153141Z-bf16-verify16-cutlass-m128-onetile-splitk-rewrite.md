@@ -70,7 +70,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212614Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212614Z
 base_sha: f8d14416f350af92938d3e41f3256af4aa532299
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -79,6 +79,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-re
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T010753Z
+impl_commit: f1adab325b6c9225785a9d72c237374e50c0366e
+submission_sha256: 6f4f815ba8afe271d06d8512e6c879a259027f19ff8c799288664833232fa5fb
+norm_sha256: 89033c648111f6a5bba3a295216709f0c559d26cc8451e5ddc9032d34adbfe3d
+submission_blob: 18bc92b5a7d3cfa10ac6120d8ab524a4fd8cb25a
+lint_warnings: 35
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
@@ -148,3 +154,92 @@ No companion is warranted. This is a rewrite stage judged on the replaced kernel
 - Confirm that kernel-name assertion and harvest grep pick up a cutlass::device_kernel<...GemmUniversal...> row on each routed m=128 row before any number is read. The m=256 run proved the selector prints, not the routed kernel.
 - If the per-cell cuBLASLt selector (action 2) or the pooler K-halves restack lands first, which incumbent will tonight's build race? The build should rebase on whatever master holds at build time.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite/muse_bf16_proj/submission.py` (+714/-4 vs the worktree's HEAD, master blob ad8d7254, which already is the review's rebase base). Everything outside the new code is unchanged except the small hooks listed below.
+
+What changed:
+- New load_inline module `muse_bf16_cut128_v1_c<ver>` (`_CUT_CPP`/`_CUT_CUDA`, `_cut_build`), built at import after master's own modules. Scaffold = stage-1 streamk patch: CUTLASS header discovery (flashinfer / deep_gemm / sgl_kernel / tilelang / cutlass_library, newest 3.x+ tree), `TORCH_CUDA_ARCH_LIST=9.0a` set around the build and restored, `-gencode=arch=compute_90a,code=sm_90a`, `-std=c++20`, `-lineinfo`, arch flags and build seconds printed, an `#error` if a non-sm_90a device pass is ever compiled (build then fails loudly and master runs). No subprocess/fork anywhere.
+- Kernel: TileShape 128x128x64, ClusterShape 1x2x1, KernelTmaWarpSpecializedCooperative + TmaWarpSpecializedCooperative epilogue, StreamKScheduler with DecompositionMode::SplitK, runtime `splits`, ReductionMode::Deterministic, StageCountAutoCarveout, TN operands (x [m,k] A, W [n,k] B, no repack), bf16 out / fp32 accumulate, rows >= m by TMA OOB zero-fill and clipped TMA store (no padding, no copy). Distinct symbols (`c128::GemmKernel`, `cut128_*`).
+- Per-layer state flags `cut_qkv_ok / cut_o_ok / cut_pooler_ok / cut_unpooler_ok` (CUT_LAYERS), added to NEW_CELL_FLAGS so the A/B state B inherits them; a miss in one cell touches no other flag. Splits: qkv 7 (fallback 8, 4), o 2 (4), pooler 4 (2), unpooler 2 (4); first candidate with can_implement, split mode applied and grid <= SM count is used (grid, splits, smem, workspace, sk_tiles/sk_units, regs/spills, decomposition applied are printed).
+- Routing in kernel_fn: one new branch after the swapab routes and BEFORE the nn_ok / Lt / cuBLAS block, gated on layer flag, 65 <= cfg m <= 128, cfg n/k == full weight, x contiguous bf16 [m,k] 16-B aligned. Every m <= 64 and m > 128 path is byte-identical to master; with a flag off the call falls through to master's exact route (nn_ok, Lt, cuBLAS).
+- prepare(): `_cut_prepare` after `_lt_prepare` (state A). Per layer: self-check at m 65/100/128 through `_cell_check` (announced launches, sync after each, rel L2 vs fp64 <= 3e-3, finite, run2 bit-identical, one-hot probe row), then `_cut_gate` at m=128, then a profiler kernel-name assertion (exactly one cutlass device_kernel<GemmUniversal> plus memset). One workspace per state (state B allocates its own); no module-global workspace or descriptors. A/B/A/B graph check extended with an o m=128 case and `_ab_component` now takes state and blames the cut flag when it serves the cell.
+- Last lines of prepare() repeat every `PATH CHOSEN CUT <layer>` line and a `[cut128] FINAL` flags line.
+
+Review fixes applied:
+- Rebase: worktree already at blob ad8d7254 (checked with git rev-parse). The qkv incumbent is the B-cell cuBLASLt single-node plan (15.5 us), not 12.7+3.1: the gate races kernel_fn flag-off, which routes through `_lt_route_ok` first, so the qkv cell must beat 15.5 us (M2 target for qkv = below 15.5). Pooler judged as cutlass kernel + Memset vs 23.8 us.
+- Selector reuses master's flag-on / flag-off kernel_fn capture (`_cut_gate`, modelled on `_cell_gate`) instead of a copy of `_ouns_gate` racing plain dispatch; nn_ok keeps being master's route for pooler/unpooler.
+- Two interleaved rounds, both master/cand >= 1.03x (net of empty-graph baseline), candidate IQR <= 1.5x master's; both rounds' medians and IQRs, both sides' profiled kernel names and PATH CHOSEN are printed even when master is kept.
+- Open questions answered in code: can_implement / splits-applied / sk_units / grid printed per layer, qkv falls back 7 -> 8 -> 4 splits rather than disabling; fixup serialisation is not directly observable, the printed per-layer gate times decide whether stage 2 (DSMEM reduce) is needed; the kernel-name assertion requires a cutlass device_kernel<GemmUniversal> row per routed cell; rebase on whatever master holds at build time (done, no unlanded companion present in this tree).
+
+Deviations:
+- CUTLASS owns the mainloop, so its mbarrier waits are not bounded by us (cannot patch them); mitigation: the canary runs every launch announced and synced before anything is routed, and the module is never run on an unchecked shape. A hang would still run to the timeout.
+- The brief's `#if __CUDA_ARCH_FEAT_SM90_ALL ... #else error flag` is realised as the scaffold's `#error` (loud build failure -> master), since CUTLASS itself is only usable on sm_90a.
+- IQR rule has a 0.5 us absolute floor (event timer resolution), else a master IQR of 0 makes the rule unsatisfiable.
+- The gate runs at m=128 only (the scored cell); the 65..127 band is routed by the same flag on the strength of the m 65/100/128 self-checks, untimed.
+- Deadlines: build skipped if import took > 180 s; phase skipped (prints "skipped: deadline") if state A's build is > 150 s in; each layer skipped if > 200 s in.
+- Nothing could be compiled or run on this node (no nvcc/GPU/CUTLASS); the CUTLASS scheduler member names (`splits`, `decomposition_mode`) are detected by SFINAE, and if absent the split mode reports not applied and the layers are DISABLED (master).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds one branch calling `cut128_gemm` (host-side TMA descriptor build, stream memset, cluster launch), a fixed-shape torch.empty, no .item()/.cpu()/sync; branches on cfg, shapes and state flags only. Same structure as stage 1, which was graph-captured by the judge.
+- [x] Nothing derived from `data` is cached: workspace and splits are weight/shape constants made in prepare(); descriptors are rebuilt per call from the live pointers.
+- [x] Weights: untouched (read in place as [N, K] bf16, no repack, no dtype change).
+- [x] Activations BF16, output bf16 as SGLang's; fp32 accumulation.
+- [x] n/a: attention rules (no attention in this problem).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network (load_inline compile only, no child process of our own, no subprocess import).
+- [x] All work inside the timed call; no output caching or replay (checked against `git -C .worktrees/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite diff`: new branch returns the fresh CUTLASS output).
+- [x] Per-layer flags, own workspace per state, a miss falls back to master's exact path and never disables an unrelated flag (state B inherits via _ab_flags / flags["_cut_*"]).
+
+okc_lint (warnings only, all in prepare()-time code; tail of output):
+```
+warn  host-sync    L1452: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L1498: flush = torch.empty(OUNS_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L1507: ev[1].synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1513: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1517: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1546: ev[1].synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1567: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L1613: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2013: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2647: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2650: code = int(err.item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2679: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2683: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L2700: flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L2709: ev[1].synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2729: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2738: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2741: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2807: code = int(state["bulk_err"].item())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2838: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2851: ev[1].synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L2876: state["lt_ws_qkv128"] = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  dtype        L2887: ws = torch.empty(LT_WS_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L2892: algo_id, tile, stg, splitk, red, ws_need, waves, st = (int(v) for v in info[i].tolist())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L2898: key = tuple(int(v) for v in algos[i].tolist())  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L2903: flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L2950: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  dtype        L3385: flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)  (allowed only where SGLang does the same)
+warn  host-sync    L3394: ev[1].synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3427: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3604: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3791: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3795: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3808: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L3847: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite/muse_bf16_proj/submission.py
+```
+py_compile: OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch (no fixes). Read-only audit; no CUDA run possible here.
+- Scheduler API: no CUTLASS gemm/ headers on disk (only a partial 4.8.1 cute/cutlass tree without gemm/). The judge image's flashinfer tree is CUTLASS 4.5.0 (log f5b1361a, built in 49.0 s, same scaffold, `scheduler` arg, initialize_workspace / to_underlying_arguments / Gemm::run all compiled there). `splits`, `decomposition_mode`, `reduction_mode` are StreamK scheduler Arguments members in 3.x/4.x; each is SFINAE-detected, so a missing member gives applied=0 and the layer prints DISABLED. Only `DM::SplitK` is a hard reference, and a miss is a compile error caught by load_inline's except, so _CUT_EXT=None and master everywhere. Nothing raises past the guards.
+- Split fallback: qkv 7 -> 8 -> 4 is only reached if can_implement or split mode fails; 8 gives 144 units, and the grid<=132 check rejects it if CUTLASS does not cap it, else the correctness check and 1.03x gate decide. Waves: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/b16_waves.py (N-tile counts all even, so cluster 1x2x1 fits; qkv 7 splits is uneven over 128 k-tiles, covered by the self-check at m 65/100/128).
+- Shadowing: the cut route sits after every earlier landed route, all m<=32 or m==1, and requires 65<=cfg m<=128 plus per-layer flag, so nothing outside 65..128 reaches it and it only preempts nn_ok / Lt / cuBLAS in-band; the gate races exactly those.
+- Determinism: reduction_mode=Deterministic set (fp32 workspace accumulate, fixed order); the self-check asserts run2 bit-identical.
+- Deadlines: _MODULE_T0 is set after import torch/triton/sglang, and the cut build runs last at module level so earlier builds count against its 180 s cap; master prepare is about 4 s (logs), build about 49 s, caps 180/150/200 s against a 600 s budget. IQR veto has a 0.5 us floor.
+- Lint OK, py_compile OK, __pycache__ removed.
+Residual risk: a device fault or deadlock in the deterministic split-K fixup with cluster 1x2x1 would crash prepare rather than fall back.
