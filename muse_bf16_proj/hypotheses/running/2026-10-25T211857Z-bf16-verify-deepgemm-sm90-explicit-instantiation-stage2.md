@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212548Z
 base_sha: e4008591fb186026deeb850980bc31aed9fbe89a
 base_blob: 489174846c51a034e3c119f0f67cec9c213404f5
@@ -77,6 +77,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-explicit-instantia
 mode: check
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-26T011203Z
+impl_commit: 0dc50d0a5d027659c02f0e6a45778fa2662139e4
+submission_sha256: 1ed49c2ec768aba15650df07f73e25aa54f700875a1bcdd816bb55da5f584b2c
+norm_sha256: adf5c5221ecf31df1fc106cc0d05df26528b73a50f155216a710ff0ed4577f93
+submission_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
+lint_warnings: 37
 ---
 
 # bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
@@ -132,3 +138,60 @@ No companion. This is a rewrite stage, and each target cell attributes itself wh
 - If DIAGNOSIS Action 1 (pooler K-halves restack) or Action 2 (per-cell Lt selector) lands first, the pooler incumbents fall to 26.75/21.43 and the DG pooler cells need about 25.9/20.8 to pass the 1.03 two-round gate. The milestone targets (24/18) still clear that.
 - Two-round gate with IQR <= 1.5x master's: print per-round ratios so a cell that passes one round and fails the other is visible as a near-miss for stage 3 rather than a silent master.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2`, `muse_bf16_proj/submission.py` only. The claim was on the parent's commit (stale_base), so I ran `git checkout master -- muse_bf16_proj/submission.py` (master 36c26199, 3212 lines) and ported the parent's `[dg]` scaffold by hand (the parent patch targeted an older base). Net diff vs master: +986/-5.
+
+What changed:
+- New section (10) before `_prepare_state`: `_dg_*` helpers (discovery, parse by name, config picker, source generator, load_inline build, self-check, two-round gate, per-cell PATH CHOSEN, route/forward, final summary). Called last in `_prepare_state` (after `_lt_prepare`, so the gate's incumbent is master's full routing incl. the Lt cell); state B inherits flags via `flags["_dg_route"]` and re-encodes its own weight descriptors.
+- kernel_fn: `if layer in DG_LAYERS: _dg_route_ok(...)` is the first thing inside `if layer != "router":`, i.e. ABOVE the NN_GATED block and the `_lt_route_ok` return (the review's main trap; nothing earlier in kernel_fn catches m = 128 / 256 for these layers).
+- Six per-cell flags `dg_<layer>_<m>_ok` (layers pooler, qkv_gate, unpooler; m 128, 256) added to `NEW_CELL_FLAGS`, so `_ab_flags` / the A/B self-check / the state-B failure path carry them. `_ab_component` maps a cell to its dg flag only while that flag is on. `AB_CASES` gains (qkv_gate 256) and (unpooler 256) so every DG cell gets the A,B,A,B graph check.
+- Weight descriptors are CPU uint8 tensors in `state["dg_wdesc"]` (no module-global device or host state in the extension); x / out descriptors are encoded per call from data_ptr and shape.
+
+Review fixes applied:
+1. DG branch above the NN block and the Lt return, own flag per (layer, m).
+2. No TMA multicast: BLOCK_M 64/128, BLOCK_N multiple of 32 dividing n, BLOCK_K 64, multicast 1, no cluster launch attribute (the stage-1 audit removed it: tx-byte mismatch = unbounded mbarrier hang in the shipped header). This corrects the spec's "multicast 1 or 2"; the review wins.
+3. Discovery is compact (about 2 KB) and printed before any build: sm90 impls only (not the full listing), kernel name, template params, kernel params, runtime-M support, JIT-source hits, enum/epilogue names. On a parse failure it prints a capped context of the lines around the kernel name / `__global__` / `CUTLASS_GLOBAL` / `__launch_bounds__`. One-line summaries (signature, build time, regs/spills per variant, self-check results, per-cell PATH CHOSEN with both rounds' ratios, final flags) are re-printed as the LAST lines of prepare (`_dg_final_summary`, after FINAL FLAGS; the PATH CHOSEN lines there carry the final flag after the A/B check).
+4. The kernel is found BY NAME (definition of `sm90_bf16_gemm_impl`, else any `sm90_*gemm*_impl`: name followed by balanced (...) then `{`, with the nearest preceding `template<...>` and only `__global__` / `void` / attribute words between; `__launch_bounds__(...)`, comments and preprocessor lines stripped). Tested offline on a mock header with CUTLASS_GLOBAL, a launch-bounds expression, an earlier helper template and `#if` guards. The "reuse the JIT generator's argument order" branch is print-only (the generator is in compiled csrc; its string has no machine-readable order): the primary and only instantiation path is by printed template-parameter NAME; an unknown name without a default prints "signature mismatch" and master runs; trailing parameters that all have defaults are left to the header.
+5. Runtime M (open question): `runtime_m` = no SHAPE_M-like template parameter, or the header text contains `SHAPE_M != 0`. If True, group {130, 200, 256} is built with SHAPE_M = 0 (TMA OOB zero-fill, clipped stores); if False, that group is compiled for m = 256 only and 130 / 200 stay on master. Group {128} always compiles m = 128 exactly.
+6. Gate: `_dg_gate` = the `_cell_gate` method (graph replay of kernel_fn flag on vs off, 256 MB flush before each replay, 41 interleaved reps, empty-graph baseline subtracted), run in TWO independent rounds (fresh x, fresh graphs, order phase flipped); route only if BOTH rounds give master/cand >= 1.03 AND cand IQR <= 1.5 x master IQR (master IQR floored at 0.1 us for timer granularity). Per-round medians, IQRs and ratios are printed, so a one-round near-miss is visible.
+7. Profiler assert (`_cell_kernels` on the flag-on path): exactly one kernel, its name contains the DeepGEMM symbol, no nvjet / cublas; a profiler failure drops the cell. Master's kernel names are profiled too and printed in every PATH CHOSEN line, including kept-master cells.
+8. Build/deadlines: the build is skipped past 110 s of prepare ("build skipped: deadline"), self-checks past 200 s and gates past 235 s print "skipped: deadline"; `[build-time]`, regs, local (spill) bytes, sass sm_90 are printed; a variant with sass != 90 or > 512 B local is rejected. A self-check miss or skipped m makes the whole variant unusable.
+
+Deviations / clarifications:
+- m = 130 and 200 are self-checked (M1) but NOT routed: only the scored m = 128 / 256 have a gate, so only they can be routed ("routed only at exact verified pairs" read narrowly). o stays on cuBLAS.
+- Expected-shape globs follow the review: unpooler verify_1 (m=8) is not DeepGEMM (ouns path); read the cells as verify_16 / verify_32.
+- Imports of `deep_gemm` are lazy (inside `_dg_discover`), so flag-off master behaviour is untouched when it is missing.
+- Not runnable on this node (no GPU, torch or deep_gemm): nothing here has been compiled with nvcc; only py_compile, okc_lint and an offline test of the parser / config picker / source generator on a mock header.
+
+Biggest risks: (a) nvcc compile of the header with our template args (cute C++20, six instantiations; a build error lands on master and the log's discovery lines still name the signature); (b) a hang inside DeepGEMM's unbounded mbarrier waits (host watchdog only logs, the run is then lost); (c) qkv_gate is expected to fail its gate (no split-K, 36-96 tiles), which is not a design kill.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `_dg_route_ok` / `_dg_forward` (the only code added to kernel_fn's path) read cfg / shapes / state flags, call `torch.empty` and one extension launch; the tensor-map encode is host-only; no `.item()` / `.cpu()` / `synchronize()` / tensor print there (all syncs are in prepare-time `_dg_*` helpers, outside kernel_fn's call graph). Checked in the diff and by okc_lint.
+- [x] Nothing derived from `data` is cached across calls: x / out descriptors are re-encoded each call from data_ptr and shape; the weight descriptors derive from weights in prepare().
+- [x] Weights: no new weight copy, BF16 stays BF16 (the DeepGEMM kernel reads the existing `state[layer]`); router untouched.
+- [x] Activations BF16 as SGLang keeps them; output BF16; fp32 accumulation inside the kernel.
+- [x] n/a: attention sees every key: not an attention problem; no keys, no skipping.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added; `grep` for subprocess / multiprocessing / Popen / os.fork finds nothing; load_inline is the same mechanism master already uses.
+- [x] All work happens inside the timed call; no output caching or replay (a fresh `torch.empty` output per call).
+- [x] Any build error, self-check miss, deadline or unsupported shape lands on master's exact path and never raises (every `_dg_prepare` branch is try/except; per-cell flags default False; a miss never touches an unrelated flag).
+- [x] Bounded waits: DeepGEMM's mbarrier waits are in the shipped header and cannot be bounded; mitigated by the host watchdog (10 s per launch, prepare-time only), flushed LAUNCH / DONE prints before and after every launch, and no multicast.
+- [x] Distinct symbol names: extension `muse_bf16_dgx_<hash>`, functions `dg_*` / `dgx_*`, kernel is DeepGEMM's own symbol.
+- [x] sm_90a: `TORCH_CUDA_ARCH_LIST=9.0a` set around load_inline and restored; `-gencode=arch=compute_90a,code=sm_90a`; TU-level `#error` if a device pass lacks `__CUDA_ARCH_FEAT_SM90_ALL`; flags printed; `-lineinfo`.
+
+okc_lint (`python3 -I .../okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): `OK with warnings: submission.py` (warnings only: host-sync in prepare-time code outside kernel_fn's call graph and uint8 workspace / flush buffers, the same classes master already carries). `python3 -I -m py_compile` passes; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Evidence scripts: scratchpad/audits26/dg_parser_test.py (parser on 9 header variants), scratchpad/audits26/dg_diff.txt (diff vs master).
+
+- Parser/discovery: the builder's mock header was not saved. I re-tested the real `_dg_clean/_dg_parse_kernel` on upstream-style headers (namespace, helper template first, `__global__ __launch_bounds__(a+b,1) void\nname(`, CUTLASS_GLOBAL, attribute after void, `#if` guards, comment mentioning the name) and on absent/declaration-only/empty/garbage/`1 << 3` default headers: only ValueError, which `_dg_discover` prints and `_dg_prepare` turns into master. Unknown template or kernel argument names go to a printed "signature mismatch" and master. A newer fork with extra template params (this image is deep_gemm 0.2.1.post1+muse with sm120/mega_moe) lands on master, not a raise.
+- Routing: every earlier kernel_fn branch is m <= 32; `_dg_route_ok` returns None unless m is 128 or 256, the cell flag is on and n/k/dtype/contiguity/alignment match, so it cannot shadow any cell at other m, and at 128/256 it shadows only gated incumbents (NN, Lt, dispatch).
+- Profiler assert (`_cell_kernels`, exactly one kernel containing the DeepGEMM name, no nvjet/cublas) is only in `_dg_prepare_a`; dg_run launches a single kernel with no memset and no host sync.
+- Fix 1: deadlines ran on `_prepare_state`'s own clock, which starts after master's import-time builds (ouns 37 s + router_cluster 37 s + bulk 37 s + lt 15 s, plus torch/triton/sglang import, about 150 s per the archived logs). Added `_DG_T_MODULE` (set before `import torch`) and moved the build/check/gate deadlines onto it, rebased to 260/360/400 s (was 110/200/235 s on the prepare clock, which is about 260/350/385 s of real time).
+- Fix 2: `DG_IQR_FLOOR_US` 0.1 to 0.5 us so a timer-resolution IQR on master cannot veto a real win.
+- okc_lint: OK with warnings (prepare-time syncs only); py_compile passes; __pycache__ removed.
+
+Residual risk: nvcc has no timeout, so a very slow 6-instantiation C++20 build or a hang in the header's unbounded mbarrier waits can still cost the run; qkv_gate cells are expected to lose the gate.
