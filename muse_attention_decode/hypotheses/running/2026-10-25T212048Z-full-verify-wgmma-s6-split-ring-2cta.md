@@ -98,7 +98,7 @@ base_sha: 99066e11fda854f911b0326172179d3ef997818c
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
 worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-26T010520Z
@@ -107,6 +107,8 @@ submission_sha256: c760577ce11e687c7ba00b681bd2d8fade2e4e05b5641b77077c422fae1b0
 norm_sha256: b8c90e0254a429139cab95fd59549a43a21d1cbff537bcf26aa7aec1eccc4f00
 submission_blob: 3cd54814f4dcbb30997660d9de6dfacd05908e07
 lint_warnings: 80
+attempt_file: 2026-10-26T012538Z-check-full-verify-wgmma-s6-split-ring-2cta.md
+prepared_at: 2026-10-26T012538Z
 ---
 
 # full-verify-wgmma-s6-split-ring-2cta
