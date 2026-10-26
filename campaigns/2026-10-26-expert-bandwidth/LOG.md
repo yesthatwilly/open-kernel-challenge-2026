@@ -11,13 +11,14 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T20:20Z
-- step: **bf16_proj** (12 checks / 10 scored left today; board 1.2566, rank 381 of 1090). Building "bulk12": the m=1
-  row-owner bulk kernel (pooler / qkv_gate / o cells) streaming lossless 12-bit weights (a raw L byte plus a 4-bit code
-  for the high byte; rare escapes corrected exactly in the epilogue). The existing cell gate routes it only at
-  <= 0.98 of master.
-  - Expected: decode1 load 44.8 -> ~38 us, about x1.03 on the bf16 headline.
-  - Then the same codec at m=8..32. Both port into decode's dense GEMMs.
+- updated: 2026-10-26T20:57Z
+- step: **bf16_proj**.
+  - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
+  - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
+    streams the NT token rows of x with each chunk.
+    - Cells: pooler / qkv / o at m=8, then pooler / o / full unpooler at m=16 / 32.
+    - Each layer's codec stats, instance gates and PATH CHOSEN lines are re-printed at the end of prepare.
+  - Next: audit, then one check. Submit if it beats 1.2664.
 - in flight: nothing
 - at 00:00Z (10-27), decode / moe, from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
   anat_attempt.md):
@@ -28,9 +29,9 @@ append-only, newest last.
      - H=-8;
      - v4c.
   3. decode check at eacf0722: H=-8, v4c, and the anatomies.
-- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 12 / 10, attention 14 / 10, prefill 16 / 10
+- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 11 / 9, attention 14 / 10, prefill 16 / 10
 - boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
-  bf16 **1.2566** (rank 381 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
+  bf16 **1.2664** (rank 355 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -318,3 +319,27 @@ append-only, newest last.
   - The earlier lossless line (exp4, killed at 1.4-1.6 TB/s) ran 4 warps at 1 CTA/SM with escape groups.
 - First target: the judge-proven m=1 row-owner bulk kernel (pooler A, qkv A2, o A3) with the codec in its consumer,
   behind the existing cell gate (canary, fp64 checks, routed only at <= 0.98 of master).
+
+## 2026-10-26T20:57Z: bf16 bulk12 (lossless 12-bit weights) m=1: check 1.2699, scored 1.2664 (rank 381 -> 355), landed
+
+- Code 4b79139c on campaign/expert-bandwidth, audited (no BLOCKER / MAJOR, verdict ship; MINORs applied).
+  - Codec: each bf16 weight is L (raw low byte: exponent bit 0 + mantissa) plus a 4-bit code for H (sign + exponent
+    bits 7..1) over the 8 most-used values. Escapes (~1.2e-4, at most 58 per CTA) decode to the window floor and are
+    corrected exactly in the epilogue.
+  - The m=1 row-owner bulk kernel decodes it in the consumer: 2 integer ops per element (IMAD + byte_perm), x resident
+    in smem.
+- check 474490c8258d4521: passed 9/9, **1.2699** [1.2508, 1.2889]. All three m=1 cells routed.
+
+  | row | board us | check us |
+  |---|---|---|
+  | pooler m=1 | 17.72 | **14.8** |
+  | o m=1 | 6.32 | 5.9 |
+  | qkv m=1 | 10.54 | 10.7 (flat; 144 CTAs at 2/SM) |
+
+  - pooler streams 50.3 MB at ~3.6 TB/s, i.e. **~4.8 TB/s raw-equivalent**. For the first time a bf16 row runs below
+    its raw-byte floor rate.
+- scored 3834ceeca7c0410d: **1.2664** [1.2474, 1.2854], same content hash. The bf16 board moves 1.2566 -> **1.2664**,
+  rank 381 -> **355**. Landed on master.
+- The 16 KB tail cut the per-instance gate lines. The next build re-prints them at the end of prepare.
+- Port value for decode: the codec and decode step drop into decode's P (pooler + router), qkv and o kernels. pooler
+  alone is ~67 MB per layer row at every T. Campaign #2 material once bf16 shows the m=8..32 rates.
