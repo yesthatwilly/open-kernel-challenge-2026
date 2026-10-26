@@ -79,6 +79,8 @@ submission_sha256: 6acb348c520b8f6e4d9575c4406c961607a57df50925e8143d0868ac857df
 norm_sha256: 40c1ebf8b9037d1428d7e00f4ef6ff74e0d891c00df03c9c1d5f7775c570ad59
 submission_blob: 0689e0198fcf8c7a711b4f69ce2c1972c9970cb9
 lint_warnings: 78
+attempt_file: 2026-10-26T012540Z-check-experts-rega-mc2-slab-multicast-all-t.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # experts-rega-mc2-slab-multicast-all-t
