@@ -5,13 +5,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:22Z
-- step: S1 (v4) checks in flight; X2/D1 (v5) built (de1be708), syntax-clean on all three build variants, Opus audit
-  running
-- in flight: decode check ff2bd9182fa04636 and moe check 54f63952015c4d3b (v4, 666eb1d7); v5 audit
-- next action: harvest v4 (score on improvement); apply v5 audit fixes; v5 attempt files + decode/moe checks
-- quota left 10-26: decode 4 checks / 1 scored, moe 3 / 6
-- boards: decode **1.4466** (rank 370 of 734), moe 1.5762, overall 376 of 1225
+- updated: 2026-10-26T16:31Z
+- step: v4 harvested (moe landed; decode faulted in the copy check); v5 audit running; decode diagnostics built
+
+- in flight: v5 audit (read-only agent)
+- next action: v5 audit fixes; decode check v4+v5 with plain K1 + sweep + copy-check prints; moe check v5
+- quota left 10-26: decode 4 checks / 1 scored, moe 3 / 5
+- boards: decode 1.4466 (rank 370), moe **1.6389** (rank 395 of 843), overall 376
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -110,3 +110,22 @@ append-only, newest last.
     may also compete at T=256.
   - Engine gates prefer the earlier engine within 1% (`_rt_select(prefer_within)`) against near-tie flips.
   - The build chain is v4+v5, then v4, then base; all three variants pass cuda_syntax.py.
+
+## 2026-10-26T16:30Z: v4 harvested: moe landed (1.6389, rank 395); decode check faulted in the copy check
+
+- moe 54f63952015c4d3b (check, 666eb1d7): passed, **1.6412** [1.6166, 1.6658].
+  - v4 won T=2..32, T=128 (worst x1.159 vs master; v3 x1.064) and T=256 (x1.023 vs the wg path; v3 x0.930).
+  - Kernel-only w13: T=8 3.07 -> 3.23 TB/s, T=16 2.88 -> 3.09, T=32 2.66 -> 2.92 (v3 -> v4). That is +5-10%, short of
+    the 3.4-3.7 the research expected.
+  - Rows vs the X0b check: T=8 +3.9%, T=16 +3.3%, T=32 +3.6%, T=128 +5.5%, T=256 +1.3% (the gate's p50 said x1.12; the
+    judge's T=256 draws may sit nearer our p90). Copy check T [1, 2, 256] PASS.
+- moe scored 35b55c74ee964187: **1.6389** [1.6144, 1.6635]. Board 1.5762 -> **1.6389**, rank 428 -> **395 of 843**.
+  Landed on master.
+- decode ff2bd9182fa04636 (check, 666eb1d7): **failed**.
+  - The gates ran: v4 won T=8 (x1.095; v3 1.068), T=16 (1.127; 1.074), T=32 (1.070; 1.040) and T=128 (1.090; 1.029).
+  - Then "illegal memory access" in `_ead_copy_check` (picks T 1 / 2 / 128) poisoned the context: every path fell back
+    to master, the run failed.
+  - Not found by reading: v4's bounds, smem layout and sync match v3, and moe's copy check passed with v4 at T=2.
+  - The decode-only factor at T=2 is K1 launched with PDL after kernel R. The PDL gate kept PDL at x0.998-1.000 (no gain).
+  - Next decode check: v4 / v5 K1 plain; an eager kernel_fn sweep at T 1,2,3,5,8,9,12,16,17,24,32,128,256 before the
+    copy check; step prints in the copy check, so a repeat names its T and phase.
