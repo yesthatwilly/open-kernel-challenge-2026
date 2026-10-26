@@ -1,0 +1,109 @@
+0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 5/5, distinct 4/4, finite True, counters 0 -> ok
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 3 on state 1: launching graph
+[skw] SKW layer v1 agentic ctx 80000 kv 1: replay 3 state 1: hidden 3.76e-03 (<= 0.1), stream 3.19e-03 (<= inf), update 5.82e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 7/7, distinct 5/5, finite True, counters 0 -> ok
+[skw] launching SKW layer v1 ragged kv 1/64: eager warm-up state 0
+[skw] ok        SKW layer v1 ragged kv 1/64: eager warm-up state 0 (0.00s)
+[skw] launching SKW layer v1 ragged kv 1/64: eager warm-up state 1
+[skw] ok        SKW layer v1 ragged kv 1/64: eager warm-up state 1 (0.00s)
+[skw] SKW layer v1 ragged kv 1/64: replay 0 on state 0: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 0 state 0: hidden 3.92e-03 (<= 0.1), stream 3.37e-03 (<= inf), update 6.14e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 7/7, distinct 7/7, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 1 on state 1: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 1 state 1: hidden 4.05e-03 (<= 0.1), stream 3.51e-03 (<= inf), update 6.26e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 5/5, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 2 on state 0: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 2 state 0: hidden 3.84e-03 (<= 0.1), stream 3.29e-03 (<= inf), update 5.98e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 1/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 9/9, distinct 8/8, finite True, counters 0 -> ok
+[skw] SKW layer v1 ragged kv 1/64: replay 3 on state 1: launching graph
+[skw] SKW layer v1 ragged kv 1/64: replay 3 state 1: hidden 3.87e-03 (<= 0.1), stream 3.31e-03 (<= inf), update 6.11e-03 (<= 0.1), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True, counters 0 -> ok
+[skw] SKW layer v1: max error per output: hidden 0.00405, stream 0.00351, update 0.00626, k_cache 0, k_gap 0, ids_tokens_differ 1
+[skw] v1 whole-layer check: ok
+[combo] phase SKW: 1.6s wall, this prepare() 10.4s, all prepare() calls 10.4s
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 2 <= B <= 16: NEW _sliding_fused_kernel S=16 (per-state counters) [new 28.06 us vs master 38.88 us]
+PATH CHOSEN: S1 sliding decode q_len 1 page 1, 17 <= B <= 32: NEW _sliding_fused_kernel S=16 (per-state counters) [new 38.27 us vs master 44.96 us]
+PATH CHOSEN: S2a routing kernel R, 2 <= T <= 8: NEW per-warp top-8 R (variant 0), PDL after P [new 26.30 us vs master 28.19 us]
+PATH CHOSEN: S2a routing kernel R, 9 <= T <= 16: NEW per-warp top-8 R (variant 0), PDL after P [new 27.49 us vs master 29.18 us]
+PATH CHOSEN: S2a routing kernel R, 17 <= T <= 32: NEW per-warp top-8 R (variant 0), PDL after P [new 30.53 us vs master 32.67 us]
+PATH CHOSEN: S2b unpooler, 2 <= T <= 8: NEW dl_unpool_kernel NF=1 [new 5.28 us vs master 9.95 us]
+PATH CHOSEN: S3 full decode 2 <= B <= 23 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 121.50 us vs master 128.32 us]
+PATH CHOSEN: S3 full decode 24 <= B <= 64 (sk / split-KV feed): NEW _pre_attention_kernel unpaired [new 230.56 us vs master 237.73 us]
+PATH CHOSEN: S3 sliding verify B = 1: NEW _pre_attention_kernel unpaired [new 30.62 us vs master 36.32 us]
+PATH CHOSEN: S3 sliding verify 2 <= B <= 23: NEW _pre_attention_kernel unpaired [new 38.78 us vs master 44.93 us]
+PATH CHOSEN: S3 sliding verify 24 <= B <= 64: NEW _pre_attention_kernel unpaired [new 48.32 us vs master 54.56 us]
+PATH CHOSEN: S3 full verify 2 <= B <= 23 (paired FA3): NEW _pre_attention_kernel PAIRED + _paired_norm_gate_kernel [new 177.86 us vs master 195.10 us]
+PATH CHOSEN: S3 full verify 24 <= B <= 64 (paired FA3): NEW _pre_attention_kernel PAIRED + _paired_norm_gate_kernel [new 320.51 us vs master 335.14 us]
+PATH CHOSEN: S3 full verify B = 1: NEW _pre_attention_kernel unpaired [new 44.00 us vs master 49.02 us]
+PATH CHOSEN: SKW sliding decode 17 <= B <= 32 (q_len 1, page 1): NEW skw_pre_kernel + skw_attn_kernel (PSEUDO TOK=1) variant 6 grid p4 [new 38.46 us vs master 45.65 us]
+PATH CHOSEN: SKW sliding verify B = 1 (q_len 8, page 1): NEW skw_pre_kernel + skw_attn_kernel (PSEUDO TOK=8) variant 4 grid p8 [new 33.86 us vs master 38.10 us]
+[prepare] this call 10.4s, cumulative 10.4s
+[summary] PATH CHOSEN S1 A: NEW [new 28.06 us vs master 38.88 us]
+[summary] PATH CHOSEN S1 B: NEW [new 38.27 us vs master 44.96 us]
+[summary] PATH CHOSEN S2a 8: NEW [new 26.30 us vs master 28.19 us]
+[summary] PATH CHOSEN S2a 16: NEW [new 27.49 us vs master 29.18 us]
+[summary] PATH CHOSEN S2a 32: NEW [new 30.53 us vs master 32.67 us]
+[summary] PATH CHOSEN S2b 8: NEW [new 5.28 us vs master 9.95 us]
+[summary] PATH CHOSEN S3 c1-b16: NEW [new 121.50 us vs master 128.32 us]
+[summary] PATH CHOSEN S3 c1-b32: NEW [new 230.56 us vs master 237.73 us]
+[summary] PATH CHOSEN S3 c2-t8: NEW [new 30.62 us vs master 36.32 us]
+[summary] PATH CHOSEN S3 c2-t128: NEW [new 38.78 us vs master 44.93 us]
+[summary] PATH CHOSEN S3 c2-t256: NEW [new 48.32 us vs master 54.56 us]
+[summary] PATH CHOSEN S3 c3-t128: NEW [new 177.86 us vs master 195.10 us]
+[summary] PATH CHOSEN S3 c3-t256: NEW [new 320.51 us vs master 335.14 us]
+[summary] PATH CHOSEN S3 c4-t8: NEW [new 44.00 us vs master 49.02 us]
+[summary] PATH CHOSEN SKW b32: NEW variant 6 grid p4 [new 38.46 us vs master 45.65 us]
+[summary] PATH CHOSEN SKW v1: NEW variant 4 grid p8 [new 33.86 us vs master 38.10 us]
+[summary] dense-chain ON, w2 atomic, full-decode sk on=True b1=True n={16: True, 32: True}
+[summary] [skw] module built, routes b32=(6, 'p4') v1=(4, 'p8') (None = master's chain), prepare wall 10.4s
+[engineA-dl] load_inline okc_campaign_engine_a_v2_dl compiled in 32.0s (TORCH_CUDA_ARCH_LIST=9.0a, ['-O3', '-std=c++20', '-lineinfo'])
+[engineA-dl] kernel v1 w13/dq1: attrs ok True, 106 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v1 w13/dq2: attrs ok True, 83 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v1 w2/dq1: attrs ok True, 111 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v1 w2/dq2: attrs ok True, 89 regs, 0 B spill, 104 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v2 w13/dq1: attrs ok True, 95 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v2 w13/dq2: attrs ok True, 79 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v2 w2/dq1: attrs ok True, 94 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA-dl] kernel v2 w2/dq2: attrs ok True, 85 regs, 0 B spill, 107 KB smem, 2 CTAs/SM
+[engineA-dl] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 32.0 s
+[engineA-dl] first v1 launch: T=1 judge (each launch named, synced)
+[engineA-dl]     [v1 T=1 judge] before ea_w13
+[engineA-dl]     [v1 T=1 judge] after ea_w13 / before ea_w2
+[engineA-dl]     [v1 T=1 judge] after ea_w2 / before post-expert norm
+[engineA-dl]     [v1 T=1 judge] after post-expert norm
+[engineA-dl] first v2 launch: T=1 judge (each launch named, synced)
+[engineA-dl]     [v2 T=1 judge] before ea2_w13
+[engineA-dl]     [v2 T=1 judge] after ea2_w13 / before ea2_w2
+[engineA-dl]     [v2 T=1 judge] after ea2_w2 / before post-expert norm
+[engineA-dl]     [v2 T=1 judge] after post-expert norm
+[engineA-dl] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.00395
+[engineA-dl] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.00395
+[engineA-dl] gate T=1 judge (active 2) round 1 (graph baseline 5.38 us subtracted): master 41.34 us (IQR 0.93) | v1 33.89 us (IQR 1.18, p10/p90 33.50/35.33, x1.220) | v2 36.29 us (IQR 0.64, p10/p90 35.81/37.66, x1.139)
+[engineA-dl] gate T=1 judge (active 2) round 2 (graph baseline 5.50 us subtracted): master 40.58 us (IQR 0.58) | v1 33.86 us (IQR 1.02, p10/p90 33.41/34.88, x1.198) | v2 36.80 us (IQR 1.47, p10/p90 35.81/37.70, x1.103)
+[engineA-dl] gate T=1 one (active 1) round 1 (graph baseline 5.54 us subtracted): master 33.63 us (IQR 0.61) | v1 23.04 us (IQR 0.45, p10/p90 22.78/23.81, x1.460) | v2 25.95 us (IQR 0.58, p10/p90 25.63/26.59, x1.296)
+[engineA-dl] gate T=1 one (active 1) round 2 (graph baseline 5.50 us subtracted): master 33.54 us (IQR 0.67) | v1 22.94 us (IQR 0.29, p10/p90 22.69/23.46, x1.462) | v2 25.89 us (IQR 0.61, p10/p90 25.47/26.69, x1.295)
+[engineA-dl] gate T=8 judge (active 9) round 1 (graph baseline 5.50 us subtracted): master 110.37 us (IQR 0.80) | v1 95.74 us (IQR 0.67, p10/p90 95.36/96.61, x1.153) | v2 94.27 us (IQR 1.02, p10/p90 93.25/94.91, x1.171)
+[engineA-dl] gate T=8 judge (active 9) round 2 (graph baseline 5.50 us subtracted): master 110.21 us (IQR 0.64) | v1 95.94 us (IQR 0.90, p10/p90 95.10/96.90, x1.149) | v2 93.95 us (IQR 0.99, p10/p90 93.34/94.88, x1.173)
+[engineA-dl] gate T=8 skew (active 4) round 1 (graph baseline 5.34 us subtracted): master 62.94 us (IQR 1.06) | v1 54.82 us (IQR 0.67, p10/p90 54.24/55.42, x1.148) | v2 55.90 us (IQR 0.83, p10/p90 55.62/57.25, x1.126)
+[engineA-dl] gate T=8 skew (active 4) round 2 (graph baseline 5.50 us subtracted): master 62.75 us (IQR 0.99) | v1 54.69 us (IQR 0.51, p10/p90 54.18/55.68, x1.147) | v2 56.10 us (IQR 0.90, p10/p90 55.55/57.25, x1.119)
+[engineA-dl] gate T=16 judge (active 11) round 1 (graph baseline 5.47 us subtracted): master 131.55 us (IQR 1.12) | v2 107.39 us (IQR 0.90, p10/p90 106.94/108.51, x1.225)
+[engineA-dl] gate T=16 judge (active 11) round 2 (graph baseline 5.50 us subtracted): master 131.30 us (IQR 1.02) | v2 107.52 us (IQR 0.67, p10/p90 106.91/108.58, x1.221)
+[engineA-dl] gate T=16 skew (active 4) round 1 (graph baseline 5.50 us subtracted): master 101.66 us (IQR 0.86) | v2 87.49 us (IQR 0.67, p10/p90 87.14/88.42, x1.162)
+[engineA-dl] gate T=16 skew (active 4) round 2 (graph baseline 5.50 us subtracted): master 101.22 us (IQR 0.90) | v2 87.58 us (IQR 0.42, p10/p90 87.14/88.00, x1.156)
+[engineA-dl] gate T=32 judge (active 11) round 1 (graph baseline 5.47 us subtracted): master 138.40 us (IQR 0.99) | v2 110.88 us (IQR 1.18, p10/p90 109.57/111.62, x1.248)
+[engineA-dl] gate T=32 judge (active 11) round 2 (graph baseline 5.50 us subtracted): master 138.50 us (IQR 0.64) | v2 110.66 us (IQR 0.86, p10/p90 110.11/111.90, x1.252)
+[engineA-dl] gate T=32 skew (active 4) round 1 (graph baseline 5.47 us subtracted): master 108.32 us (IQR 0.74) | v2 155.20 us (IQR 0.70, p10/p90 154.82/156.10, x0.698, FAIL)
+[engineA-dl] gate T=32 skew (active 4) round 2 (graph baseline 5.57 us subtracted): master 108.70 us (IQR 0.61) | v2 155.81 us (IQR 0.77, p10/p90 155.10/156.90, x0.698, FAIL)
+[engineA-dl] layer v1 T=1 rep 0 (local routes 3): hidden 1.92e-03 (<= 0.02), stream 1.65e-03 (<= 0.01), update 2.89e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v1 T=1 rep 1 (local routes 3): hidden 1.95e-03 (<= 0.02), stream 1.78e-03 (<= 0.01), update 3.18e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v1 T=8 rep 0 (local routes 12): hidden 1.86e-03 (<= 0.02), stream 1.64e-03 (<= 0.01), update 2.90e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 12/12, distinct 10/10, finite True -> ok
+[engineA-dl] layer v1 T=8 rep 1 (local routes 10): hidden 1.72e-03 (<= 0.02), stream 1.56e-03 (<= 0.01), update 2.80e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 10/10, distinct 8/8, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 0 (local routes 24): hidden 1.92e-03 (<= 0.02), stream 1.37e-03 (<= 0.01), update 2.47e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 24/24, distinct 18/18, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 1 (local routes 20): hidden 1.86e-03 (<= 0.02), stream 1.33e-03 (<= 0.01), update 2.40e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 20/20, distinct 13/13, finite True -> ok
+[engineA-dl] ===== ENGINE A (decode) SUMMARY (36.4 s; module okc_campaign_engine_a_v2_dl) =====
+[engineA-dl] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 32.0 s
+[engineA-dl] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.00395
+[engineA-dl] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.00395
+[engineA-dl] gate T=1: worst ratio v1 1.198, v2 1.103 -> ENGINE A v1
+[engineA-dl] gate T=8: worst ratio v1 1.147, v2 1.119 -> ENGINE A v1
+[engineA-dl] gate T=16: worst ratio v2 1.156 -> ENGINE A v2
+[engineA-dl] gate T=32: worst ratio v2 0.698 -> master
+[engineA-dl] copy check: 24 replays on two states, T [1, 9, 16]: PASS
+[engineA-dl] PATH CHOSEN T=1..8 = ENGINE A v1
+[engineA-dl] PATH CHOSEN T=9..16 = ENGINE A v2
+[engineA-dl] PATH CHOSEN T=17..32 = MASTER

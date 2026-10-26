@@ -130,3 +130,21 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
   20.9 (75.5 MB bf16: ~3.6 TB/s, near floor), sliding attention 13.2, qkv nvjet 12.2 + splitK reduce 1.7, o 7.0,
   R 6.6, unpool 6.0, boundaries 3.6 + 3.4, combine 3.4. Remaining T=1 slack is launch gaps and PDL breaks (W4).
 
+## 2026-10-26T07:45Z: rounds 3-4 on the boards (moe 1.5539, decode 1.3840, overall 412); Engine B correct but slow
+
+- moe round 3 (223452681ddb4a22) 1.5564 -> scored 328765a2ec954204 **1.5539** (rank 423). Aligned split: v1 T=1 w13
+  19.8 -> 14.3 us, decode 1 row 39.9 -> 35.4 us. CUDA combine kept in every class (x1.001-1.015).
+- decode round 3 (7f0f22f40f694929) 1.3895 and round 4 (789307a59c0c4366, + R -> K1 PDL, neutral) 1.3876: d1s 115.1
+  -> 107.0, v1s 158.6 -> 154, d32s 231.3 -> 222-228 (whole-layer gate put T=32 on v2: x1.136-1.157 on its inputs, but
+  only x1.01-1.03 on the judge's skewed T=32 routing). Scored efa0e184b7914d80 **1.3840** (rank 398). The board keeps
+  the best run (technical rules: withdrawing a run hands its row to the next-best), so confirmed sub-margin gains can
+  be submitted without risk to the row.
+- Engine B first run (3f402ec33b094c2e, merged at 66b6f501): builds in 34 s, canary clean in both cells, but streams
+  only 1.5-1.95 TB/s (T=128 c2 345.5 us kernel-only vs master's wg ~316 us row) -> gates keep master. Builder resumed
+  for a throughput iteration (branch campaign/engine-b2); its audit was stopped (code about to change).
+- Round-3 diff audit: clean; three hardening notes applied (7e126457): the CUDA combine is verified end to end per class
+  after its gate, NaN visible in the combine check, out.is_cuda.
+- Agents now: v3 builder (campaign/ea-v3: passes of up to 16 routes for hot experts), Engine B iteration
+  (campaign/engine-b2), dense port builder (campaign/dense-port: bf16_proj's swap-AB GEMMs for decode's qkv / o /
+  unpooler at T <= 32, about +3% expected).
+
