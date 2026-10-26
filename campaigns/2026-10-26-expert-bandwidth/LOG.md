@@ -5,26 +5,32 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T19:05Z
-- step: waiting for the 00:00Z reset. Ready: a decode scored run, a moe dequant A/B check and a decode anatomy check.
-  Engine D is killed.
+- **Quota policy (the user, 2026-10-26 ~19:05Z, PLAN §6 top and §11; keep this bullet first):** never idle until a
+  reset, and never pre-build hours ahead of one. When a problem's checks run out, write its reset plan, then work on the
+  highest-gain problem that still has checks today, with immediate check feedback. Order: decode > moe > bf16_proj >
+  attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
+  beats that board. Every check must answer a new question; using every check is not required; no identical bytes
+  re-rolled.
+- updated: 2026-10-26T20:20Z
+- step: **bf16_proj** (12 checks / 10 scored left today; board 1.2566, rank 381 of 1090). Building "bulk12": the m=1
+  row-owner bulk kernel (pooler / qkv_gate / o cells) streaming lossless 12-bit weights (a raw L byte plus a 4-bit code
+  for the high byte; rare escapes corrected exactly in the epilogue). The existing cell gate routes it only at
+  <= 0.98 of master.
+  - Expected: decode1 load 44.8 -> ~38 us, about x1.03 on the bf16 headline.
+  - Then the same codec at m=8..32. Both port into decode's dense GEMMs.
 - in flight: nothing
-- next action at 00:00Z (10-27), from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
+- at 00:00Z (10-27), decode / moe, from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
   anat_attempt.md):
   1. `okc submit` of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347). Verify that the content hash is
      613b6c2d..., then land it on master.
   2. moe check at eacf0722:
-     - the ladder dq A/B (dq2 production vs dq3 rot-shf vs dq4 rot-mul in v4's geometry; dq_exact with crosstalk
-       filler). If dq3 or dq4 wins by 5% or more at C-R4, switch the production layout. For dq4 the multipliers come
-       from __constant__ memory, so there is no signature change.
-     - the hybrid's new candidate H=-8: wgmma-hot above 8 routes, so Engine A keeps only one-tile cold passes.
-     - v4c: v4 with a cost-weighted stream-K split, raced against v4 in every engine gate; the hybrid's cold
-       half follows Engine A's split per class.
-  3. decode check at eacf0722: H=-8 and v4c too, plus the anatomies (expert block alone at T=1/8/16/32; the T=128/256 hybrid
-     whole / hot / cold). They choose the next lever: T=1 fixed costs (glue), cold-engine rate, or hot (wgmma).
-- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
-- boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318, 1.552 is rank 300, 1.707 rank 200),
-  moe **1.6851** (rank 370 of 844), overall 347 of 1228
+     - the ladder dq A/B (dq2 / dq3 / dq4);
+     - H=-8;
+     - v4c.
+  3. decode check at eacf0722: H=-8, v4c, and the anatomies.
+- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 12 / 10, attention 14 / 10, prefill 16 / 10
+- boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
+  bf16 **1.2566** (rank 381 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -280,3 +286,35 @@ append-only, newest last.
   - Found by an exhaustive search: four pure rotations cannot tile the word, and 9 is the minimum.
   - Verified on CPU over all codes with crosstalk.
   - One moe check at 00:00Z re-measures the ladder rungs and dq_exact on the device.
+
+## 2026-10-26T20:20Z: user steer acknowledged (19:05Z quota policy); work moves to bf16_proj until 00:00Z
+
+- Read at 20:05Z: the user's steer (relayed from the openclaw session) in INDEX.md, PLAN.md §6 / §11 and the campaign
+  CLAUDE.md. My 18:49Z and 19:05Z Now rewrites had overwritten earlier copies of it unread.
+  - The policy is now the first bullet of the Now block.
+  - From now on, every Now rewrite starts from the current LOG.md block, not from a scratch copy.
+- Applied: decode / moe have no checks until 00:00Z and their reset plan is written. Work moves to bf16_proj
+  (12 checks left), then attention_decode.
+- bf16 board 741072dc 1.2566 per load:
+
+  | load | ours us | SGLang us | speedup |
+  |---|---|---|---|
+  | d1 | 44.8 | 59.5 | x1.33 |
+  | d16 | 62.6 | 76.3 | x1.22 |
+  | d32 | 64.5 | 76.9 | x1.19 |
+  | v1 | 48.6 | 75.2 | x1.55 |
+  | v16 | 72.6 | 86.5 | x1.19 |
+  | v32 | 90.8 | 100.5 | x1.11 |
+
+  - Today's 8 churn checks were all neutral (1.242-1.268). The only repeatable row win is pooler k-halves at m=128
+    (22.9 -> 21.4 / 21.8 us).
+  - The raw-byte floor caps us at about x2.03. The leaders (1.52-1.64) sit at about 80% of it. Lossless compression is
+    the one lever that goes below the raw floors.
+- Chosen: "bulk12". The weights are N(0, 1/k) bf16, so the high byte (sign + exponent bits 7..1) needs about 4 bits
+  over a 16-binade window, and the low byte (exponent bit 0 + mantissa) stays raw. That is 12 bits per element.
+  - Escapes are |w| < 2^-19 (about 0.014%). They decode to the window floor and are corrected exactly in the epilogue
+    (two fp32 FMAs per token).
+  - Decode costs about 2 integer ops per element, below Engine A's NVFP4 dequant.
+  - The earlier lossless line (exp4, killed at 1.4-1.6 TB/s) ran 4 warps at 1 CTA/SM with escape groups.
+- First target: the judge-proven m=1 row-owner bulk kernel (pooler A, qkv A2, o A3) with the codec in its consumer,
+  behind the existing cell gate (canary, fp64 checks, routed only at <= 0.98 of master).

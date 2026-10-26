@@ -12,6 +12,22 @@ approved: 2026-10-26 by the user (plan approved; "fully autonomous today, no cho
 mode: autonomous self-paced /loop, single agent + one Opus audit per new CUDA module
 ---
 
+> **STOP — USER STEER, 2026-10-26 ~19:05Z, relayed from the user's openclaw session. Not yet acknowledged. Read before acting on this tick.**
+>
+> **Do not idle until 00:00Z, and do not pre-build hours ahead of a reset.** Decode and moe quota is spent for 10-26. Their
+> 00:00Z plan is already written (submit 1.5347, moe dq A/B + H=-8 + v4c, decode H=-8 + v4c + anatomy). Stop adding to it.
+> **Now:** move to the highest-gain problem that still has checks today and work there with immediate check feedback.
+> Priority by gain for decode: decode > moe (~53% of weighted decode time, x1.19-1.27) > **bf16_proj** (~26%, x1.03-1.04)
+> > **attention_decode** (~15%, x1.01-1.06) > prefill (no decode value; last). So bf16_proj now, then attention_decode,
+> favouring kernels that port into decode (campaign #2/#3: CUDA qkv/o/P on bf16, B=1 attention ports). Submit when a
+> check beats that board. Return to decode/moe at 00:00Z. Apply the same rule every day: when a problem's checks run
+> out, write its reset plan, then switch to a problem with checks left.
+> Using every check is not required; never spend checks on low-value questions. Unchanged: every check answers a new
+> question, no identical bytes re-rolled, challenge rules apply. Full text: PLAN.md section 6 (top) and section 11.
+> **Acknowledge in LOG.md with a dated entry and keep this policy in the Now block.** Your Now rewrites at 18:49Z and
+> 19:05:50Z overwrote earlier copies of this note unread.
+
+
 # Campaign `2026-10-26-expert-bandwidth`: the NVFP4 expert block at full bandwidth
 
 Durable home: `campaigns/2026-10-26-expert-bandwidth/` on master.
@@ -230,6 +246,22 @@ Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is ch
 
 ## 6. Autonomous operation (single agent + audits)
 
+- **the user, 2026-10-26 ~19:05Z (relayed from the openclaw session): quota policy; replaces the ~18:50Z note.**
+  - Prioritise real gains for decode. Order by gain potential: **decode** (the KPI) > **moe** (the expert block,
+    ~53% of judge-weighted decode time in f59cb301; optimistic x1.19-1.27) > **bf16_proj** (dense GEMMs, ~26%;
+    x1.03-1.04, incumbents already at 3.4-3.9 TB/s) > **attention_decode** (~15%; x1.01-1.06) > **prefill** (no
+    decode value; last, only when nothing above has a useful question).
+  - Even use of quota is not required. Do not spend checks on low-value questions just to use them up.
+  - Do not let time go to work that waits hours for feedback. When a problem's checks are exhausted, do not build
+    for it hours ahead of the 00:00Z reset: write the reset plan (what to build and check first at reset; finishing
+    an audit already under way is fine), then move to the highest-priority problem that still has checks today and
+    work there with immediate check feedback. Come back to decode/moe at the reset.
+  - On bf16_proj and attention_decode, favour work that can be ported into decode (campaign #2/#3 kernels); submit
+    their bytes when they beat that board.
+  - Unchanged: every check answers a new question, no identical bytes re-rolled, the challenge rules apply.
+    Supersedes section 11's "bf16 / attention quota only as testbeds" and "prefill stays idle", in the order above.
+  - Read this before every tick. Your Now rewrites at 18:49Z and 19:05:50Z overwrote it in LOG.md unread; it also stands in section 11.
+
 **Driver: a self-paced `/loop` in this session.**
 - Started after approval with the tick prompt `okc campaign tick: continue the active campaign (campaigns/INDEX.md -> its PLAN.md §6)`.
 - It runs until the user says stop or the kernel track closes.
@@ -371,6 +403,22 @@ Each campaign is opened by the loop itself in `campaigns/<date>-<slug>/`, with P
    - Build ladder-2, run its audit, and dispatch the moe ladder check before 00:00Z.
 
 ## 11. Standing answers (the user asked for no further questions, 2026-10-26 ~15:20Z)
+
+- **the user, 2026-10-26 ~19:05Z (relayed from the openclaw session): quota policy; replaces the ~18:50Z note.**
+  - Prioritise real gains for decode. Order by gain potential: **decode** (the KPI) > **moe** (the expert block,
+    ~53% of judge-weighted decode time in f59cb301; optimistic x1.19-1.27) > **bf16_proj** (dense GEMMs, ~26%;
+    x1.03-1.04, incumbents already at 3.4-3.9 TB/s) > **attention_decode** (~15%; x1.01-1.06) > **prefill** (no
+    decode value; last, only when nothing above has a useful question).
+  - Even use of quota is not required. Do not spend checks on low-value questions just to use them up.
+  - Do not let time go to work that waits hours for feedback. When a problem's checks are exhausted, do not build
+    for it hours ahead of the 00:00Z reset: write the reset plan (what to build and check first at reset; finishing
+    an audit already under way is fine), then move to the highest-priority problem that still has checks today and
+    work there with immediate check feedback. Come back to decode/moe at the reset.
+  - On bf16_proj and attention_decode, favour work that can be ported into decode (campaign #2/#3 kernels); submit
+    their bytes when they beat that board.
+  - Unchanged: every check answers a new question, no identical bytes re-rolled, the challenge rules apply.
+    Supersedes section 11's "bf16 / attention quota only as testbeds" and "prefill stays idle", in the order above.
+  - Keep this bullet at the top of the Now block when rewriting it (the 18:49Z rewrite dropped the first version).
 
 - Scored runs, commits, merges into master, closing a campaign and opening the next one: done without asking.
 - A rule-breaking scored run is withdrawn without asking; no other outward-facing action is taken.
