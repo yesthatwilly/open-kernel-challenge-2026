@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212550Z
 base_sha: 98cd3251d87b4318340450cec6f52e37f574895c
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -73,6 +73,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-mc2-slab-multicast-all-t
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T004959Z
+impl_commit: c6815034ebe12c1593e9e10d06b41ab1d245902e
+submission_sha256: 6acb348c520b8f6e4d9575c4406c961607a57df50925e8143d0868ac857dff6b
+norm_sha256: 40c1ebf8b9037d1428d7e00f4ef6ff74e0d891c00df03c9c1d5f7775c570ad59
+submission_blob: 0689e0198fcf8c7a711b4f69ce2c1972c9970cb9
+lint_warnings: 78
 ---
 
 # experts-rega-mc2-slab-multicast-all-t
@@ -132,3 +138,44 @@ No companion is warranted. This is kind: rewrite, judged on the replaced kernels
 - After the change, the dequant inside each consumer warpgroup is exposed serially before its MMAs. If the printed issued TB/s drops but the time drops less than ~15%, retry DIAGNOSIS's banned consumer-overlap items (pingpong, scale-expand) on top. DIAGNOSIS says they are dead only until the ingest cap moves.
 - Is the deleted _rega_lo_phase code needed by DIAGNOSIS action 3 (full slab, 2 CTAs/SM, plus multicast)? If so, keep it in git history or the archive, or move the deletion to a separate cleanup.
 
+
+## Implementation notes
+
+Edited only `<worktree>/muse_prefill_layer/submission.py` (cannot run: no GPU or nvcc on this node; CUDA reviewed by eye only).
+
+What changed:
+- New CUDA block `_REGA_MC_BODY` (+ `_REGA_CPP_MC`, `_rega_mc_src`) appended by `_rega_src(mc=True)`: `rega_mc_kernel<G,BIG>`, host `rega_mc_info` (regs/spill, max active 2-CTA clusters via cudaOccupancyMaxActiveClusters at Smem<G>::BYTES) and `rega_gemm_mc` (rega_gemm's exact signature; cudaLaunchKernelEx with cudaLaunchAttributeClusterDimension (2,1,1); grid must be even, n_tiles even). Master's `_REGA_HEAD` / `_REGA_BODY` strings are byte-untouched (v1 fallback hash intact); `consume_item_mc` is master's consume_item text copied at assembly time with three asserted edits (name, `peer` parameter, stage release = own empty barrier + peer's via mapa + mbarrier.arrive.release.cluster).
+- Producer: own 9216 B weight record as master, plus ONE slab half by `cp.async.bulk.tensor.2d...multicast::cluster` (rank 0 k 0-63 at st+WST, rank 1 k 64-127 at st+WST+SLAB_HALF, ctaMask 0b11); expect_tx unchanged (WST + 2*(16<<bucket)*128); empty barrier init count 16; fence.mbarrier_init + cluster barrier before any TMA; cluster barrier at the end. All waits remain master's bounded `mbar_wait`.
+- Python: `_rega_mc_phase` (after norm-gather's setup, so it gates the routed block with its fused-gather flags): occupancy/regs print, exact compare, two-state replay check, per-kernel us + achieved L2->SM TB/s (issued weight + slab bytes), two interleaved rounds of the whole routed `_experts(pre_norm=True)` flag-off vs flag-on. `state['rega_mc_ok'][cls]` (plain bool) and `state['rega_mc_grid']` (plain ints) are in REGA_STATE_KEYS; `_experts_rega` reads them by shape (class from T, capacity class from the block-table length).
+- Build safety: the mc module is built under its own name `muse_prefill_rega_mc_v3`; if it fails, master's exact v2 module is built (so a bug in the new kernel never costs the ft class), then master's v1 fallback.
+- Prepare budget: deleted `_ssdq_setup`, `_ssdq_build`, `_ssdq_gate`, `_ssdq_replay_check`, `_ssdq_reference_y`, `_ssdq_source_audit` and the ssdq call, and the whole combo-b low-class module (`_rega_lo_phase` and everything it used: muse_prefill_rega_lo source/build/gate, pop-count helpers; `_rega_pop_case` kept, `_rega_case` uses it). Dead ssdq CUDA source strings and `_experts_ssdq` were left (never built; `state.get('ssdq_ok')` is simply absent).
+
+Review fixes applied (review wins over the spec):
+1. BLOCKING pairing defect: `decode_item_mc(pi, T, rank)`: group `cg = 2pi/T`, `pl = pi - f*T/2`, `c = f + pl % k`, `j = 2*(pl/k) + rank`, so both CTAs of a cluster share chunk, bucket, tx and KS and take adjacent tiles; the loop walks pair index `pi = cluster; pi < total/2; pi += clusters`.
+2. Exact-compare forces k >= 2 experts in EVERY class (cases: low 753 skewed/one/local, 1024 local; high 3012 skewed/one, 4096 local; ft 16384 skewed/one/local, 4500 local), prints max k per case and turns the class OFF unless >= 3 cases contain a k >= 2 expert.
+3. Two interleaved rounds, ON only if BOTH <= 0.97 and candidate IQR <= 1.5x master's; master timed as its actually routed path (flag off, same norm-gather flags); both rounds' medians/IQRs, kernel names and a compact PATH CHOSEN summary are the last prepare() lines.
+4. Open questions: grid is the occupancy query's cluster count x 2, printed per instantiation; `_rega_lo_phase` deleted per the spec (it stays in git history at master's blob f4751fc0, DIAGNOSIS action 3 can restore it); post-change TB/s/time are printed so the consumer-overlap retry decision can be read from the log.
+
+Deviations: (a) separate module name for the mc build instead of the same module, for fallback safety; (b) the gate times the whole routed block (not only the rega pair) plus a per-kernel print; (c) compile-time risks I could not check: ptxas register fit of the producer under setmaxnreg 40, cudaLaunchKernelEx template argument coercion of the `__grid_constant__ Maps` parameter.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path adds only a per-state bool/int lookup and the cudaLaunchKernelEx host launch (capturable); every sync/.cpu() is in prepare() only (lint: host-sync warnings all "outside kernel_fn's call graph").
+- [x] Nothing derived from `data` is cached across calls: flags and grids are prepare-time plain data of the state; nothing new at module/file scope (the C++ audit finds no file-scope variable).
+- [x] Weights: unchanged retiled bank, NVFP4 stays NVFP4; mc kernel reads the same bank.
+- [x] Activations BF16, KV FP8, queries unchanged: the slab is the same bf16 xs, consumers are master's code.
+- [x] Attention untouched: n/a, no attention code changed.
+- [x] No timing patches, harness access, module edits, subprocesses or network (grep for subprocess/Popen/os.system/fork: none).
+- [x] All work inside the timed call; no output caching or replay: the mc kernels run inside _experts_rega each call.
+- [x] Prepare-time selector, flags and fallback: per-class `rega_mc_ok`, a miss/exception/deadline lands on master's rega_kernel and never disables rega_ok or other flags; 'skipped: deadline' printed.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare() and pre-existing dtype warnings; zero errors). `python3 -I -m py_compile` passed; `__pycache__` removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes (audited by reading; no GPU/nvcc here).
+- ssdq / rega_lo deletion: an AST undefined-name scan finds no dangling names; no code reads rega_lo_ext / rega_low_variant / rega_low_grid; ssdq_ok is only read through state.get (absent = off); unreachable `_experts_ssdq` and dead ssdq source strings remain, harmless.
+- Pairing: total = nc * n_tiles is always even (n_tiles 64 / 32), so there is never an odd last pair; both CTAs run pi = cid; pi < npairs; pi += ncl, share chunk / bucket / KS, so the 16-arrival empty barrier, the peer arrives and the stage counters stay in lockstep. (c, j) is a bijection per expert group. Final cluster_sync_all is reached by every thread of both CTAs.
+- Fix 1: `_experts_rega` fell to a KeyError on `state["rega_mc_grid"][...]` if a capacity-class instantiation had failed its prepare check but the class was ON; it now falls back to master's rega_gemm.
+- Fix 2: the gate's IQR veto (candidate IQR <= 1.5x master's over 11 samples) could reject a real win on a near-zero master IQR; added 1% of master's time as slack. The ratio <= 0.97 in both rounds is unchanged and times master's routed `_experts(pre_norm=True)` with the flag off.
+Residual risk: nvcc/ptxas compile of the cluster/multicast PTX and the producer register fit at setmaxnreg 40 are unverified; any build failure lands on master's v2 module.
