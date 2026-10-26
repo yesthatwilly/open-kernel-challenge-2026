@@ -92,7 +92,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212904Z
 base_sha: 99066e11fda854f911b0326172179d3ef997818c
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -101,6 +101,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T005058Z
+impl_commit: 70430b0a3e21171b7f70abbeb3a0358eec70e1ad
+submission_sha256: f0af4d4c39b3db7c6275a2c5c50251f69e996d6e8d7329efeb65875f0b402cc6
+norm_sha256: 32b53af4bd6ac7373ebfb6ba7fc2f5ea87b628086dd335a460ec1c34a9ef2025
+submission_blob: d5dc8fd50cef373b8e19f5d0c868b0a78a195155
+lint_warnings: 80
 ---
 
 # full-verify-wgmma-s6-split-ring-2cta
@@ -154,3 +160,49 @@ No companions. This is kind: rewrite, and its readout is the replaced kernels' o
 - Does OVL=1 at 1 CTA/SM fit within 232448 B with 12 stages and no spill (+32 regs over 127 at 256 threads leaves room under 255, but check local bytes)? Would STAGES_WG 10 give more margin with no loss?
 - The gate times only B=16 (band 2..24) and B=32 (25..64). Small-B rows inside the band (correctness tests B=2 ctx 100000, B=4 ctx 6000) are correctness-only, but confirm that the gate predicate excludes page_size 64 and the dp heads that s5's kernel does not support.
 
+
+## Implementation notes
+
+Edited only `.worktrees/muse_attention_decode/full-verify-wgmma-s6-split-ring-2cta/muse_attention_decode/submission.py` (+1748/-1). New block before the import-time setup: CUDA source `_W6_CUDA` (ported from s5's `splitkv_verify_wgmma_kernel` on a new template `w6_kernel<RING,STAGES,MINB,OVL,EPI,GATHER>`), two load_inline modules (`muse_full_verify_wgmma_s6`: variants 0/1; `muse_full_verify_wgmma_s6d`: DIAG-only variants 2..8), image check, 19-case bisect per variant, two-round gate, two-state replay (`_alt_check`), DIAG, `_w6_setup()` called last at import. kernel_fn: `w6 = _w6_gate(cfg)`, `paired` excludes it, `_full_verify_w6` after pre-attention. Syntax-checked the CUDA with a g++ stub (no nvcc/GPU here); nothing was run.
+
+Review fixes applied (review wins over spec):
+- smem math: 4 stages for OVL=0; printed `CTAs/SM` line per variant; variant 0 is REFUSED if CTAs/SM < 2. Layout 108,192 B (2 CTAs/SM fit).
+- Primary design = the review's alternative: s5's exact SW128 128-B-row 4-stage ring and descriptors, per-warpgroup FULL_w/EMPTY_w (128 arrivals). No SWIZZLE_64B descriptor. Each warpgroup also prefetches its own page indices (private 16-tile block pair; needed so no cross-warpgroup visibility path exists; requires STAGES <= 16).
+- OVL=1: 12 stages does not fit with the private idx blocks (239,520 B > 232,448), so the constexpr picks 10 (206,688 B); the build prints it. Local bytes > 0 refuses a variant.
+- Gate: two interleaved rounds of 40, both >= 1.05x vs master's ROUTED paired path (route off via `_W6_FORCE=-1`), candidate IQR <= 1.5x master's, rel L2 < 3e-2, finite, error word 0; medians/IQRs and kernel names printed per round.
+- DIAG: full s5-ring/A/B at B=8/16/32 with fit a (fixed) and b (per tile/CTA); gather-only for s5 ring, split 2 CTA/SM, split 1 CTA/SM, each with and without the ticket epilogue ('[s6-diag] gather-only <design>: X us, Y TB/s').
+- Elapsed-time check before the build and before every later phase on the import clock (`_IMPORT_T0`); per the coordinator's note the deadlines are set against the 480 s start rule (build <=330 s, checks <=385, gate <=415, DIAG build <=360, DIAG <=430), printing 'skipped: deadline'. Final lines of prepare are the PATH CHOSEN / GATE summary.
+- Gate predicate: window 0, q_len 8, 1<B<=64 (B=1 only during self-check), 16 q / 2 kv heads (excludes dp 128/16), head dim 64, page_size 1 (excludes page 64).
+
+Deviations: dropped s5's TICKET=false/B8 mode and its DBG kernel (compile time); warpgroup cp.async mapping uses adjacent chunk pairs (full 32-B sectors) instead of s5's strided chunks; OVL=1 copies the second S accumulator into the first after PV's wait_group 0 (which also drains S(n+1)) instead of unrolling by two (no dynamic register indexing).
+
+Risks: register spill at 128 regs for variant 0 (s5 was at 127; refused if local>0); OVL=1 untested PTX ordering; build time of two modules; first measurement must be an okc check.
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn path = pre-attention + one w6_run launch; shape/config-only allocations; no sync/print/.item in kernel_fn (checked diff: syncs only in prepare helpers).
+- [x] Nothing derived from `data` cached: only a self-resetting int32[128] ticket array zeroed once from the device.
+- [x] Weights: n/a (attention problem, no weights repacked).
+- [x] Activations BF16 out, KV FP8, q FP8 E4M3 (as s5), fp32 softmax and merges.
+- [x] Attention sees every key: stream-K over all 64-token tiles; causal mask only; no skipping.
+- [x] No timing patches, harness access, subprocesses or network (lint clean of errors).
+- [x] All work inside the timed call; no output caching; routes frozen config-only tables.
+- [x] Two-state: no module global holds device pointers into states; two-state alternating replay in prepare.
+
+okc_lint: `OK with warnings` (only host-sync warnings in prepare code and the uint8 flush buffer dtype warning); py_compile ok; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Audited by reading (no GPU); okc_lint OK with warnings (prepare-only host syncs), py_compile ok.
+
+Checked and found sound:
+- Barrier counts: with RING=1 FULL_w and EMPTY_w are initialised to 128. All 128 threads of a warpgroup issue the stage's cp.async half (chunks 4g..4g+3) and do one cp.async.mbarrier.arrive.noinc per tile, uniformly, including the prologue. All 128 arrive on EMPTY_w once per tile, after wg_wait0 and the V transpose. A warpgroup reads only its own K half (descriptor +64g) and V half, so FULL_w covers exactly what it consumes. Barrier indexing and parity are right, and the private page-index blocks rotate safely for STAGES <= 16.
+- Smem: Lay<1,4> is 108,192 B, so 2 CTAs/SM need 218,432 B of 233,472 B. Lay<1,10> is 206,688 B, under 232,448. 12 stages needs 239,520 B and does not fit, so the constexpr picks 10. Variant 0 is refused if CTAs/SM < 2.
+- Gate: window 0, q_len 8, 1<B<=64, 16/2 heads, head dim 64, page_size 1. Page 64 and dp heads are excluded and stay on master paired FA3.
+- No module, kernel or global symbol collides with master or the ws-s1 sibling (modules muse_full_verify_wgmma_s6 and _s6d; no duplicate top-level names in the file).
+
+Fixes:
+1. `_IMPORT_T0` was set after the torch/triton/sgl_kernel/sglang imports, so the prepare clock under-read and every phase deadline (build 330, checks 385, gate 415, diag build 360, diag 430) was late by the import time. It now sits before the heavy imports, as in the earlier c320 submissions, so the 480 s start rule is measured from the true import start.
+2. A phase that finishes past the 480 s budget must route nothing (the convention from the c320 submits). The gate and two-state phases had no end check, so routes are now discarded with a printed line if the clock is over 480 s once they finish.
+
+Residual risk: first execution of new wgmma/mbarrier code (OVL=1 register-pipelined S(n+1) may serialize, variant 0 may spill at the 128-reg cap and be refused); the DIAG build may be skipped by its 360 s start deadline.
