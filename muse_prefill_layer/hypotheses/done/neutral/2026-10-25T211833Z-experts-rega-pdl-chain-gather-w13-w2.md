@@ -43,10 +43,10 @@ kind: primary
 controls_for: null
 prior: none
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212551Z
 base_sha: 30f67a9af087bff842ec0bd3a8a3ea252c962f52
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -65,6 +65,13 @@ attempt_file: 2026-10-26T012540Z-check-experts-rega-pdl-chain-gather-w13-w2.md
 prepared_at: 2026-10-26T012540Z
 job: 8e4685f303c143a8
 dispatched_at: 2026-10-26T012831Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.462188844487443
+speedup_ci: [1.4402560118201313, 1.4841216771547545]
+harvested_at: 2026-10-26T023900Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # experts-rega-pdl-chain-gather-w13-w2
@@ -161,3 +168,31 @@ Verdict: dispatch-with-fixes. Nothing could be compiled or run (no GPU/nvcc); au
 Fix: the candidate-IQR veto (pdl IQR <= 1.5 x master IQR) had no absolute floor; added REGA_PDL_IQR_FLOOR_US = 1.0 on master's IQR so a timer-resolution spread cannot veto a real win. okc_lint OK (0 errors), py_compile ok, __pycache__ removed.
 
 Residual risk: untested CUDA (never compiled); the PDL win (~4-12 us per shape) is near the 1.005 gate and may only turn ON at turn_1, and late-prepare classes (ft) may be skipped by deadline.
+
+## Result
+
+- job `8e4685f303c143a8` (check), status done, passed True, tests 5/5
+- speedup 1.4622x, 95% CI [1.4403, 1.4841], score 264947.92479134316 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-pdl-chain-gather-w13-w2.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-pdl-chain-gather-w13-w2.patch`; branch `hyp/muse_prefill_layer/experts-rega-pdl-chain-gather-w13-w2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 756.7 | 713.17 | 0.9917 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1150.28 | 1070.96 | 0.9816 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2197.82 | 2041.42 | 1.0032 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3744.83 | 3616.5 | 0.983 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11889.83 | 11349.07 | 0.9913 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11119.71 | 11087.43 | 1.0099 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15073.37 | 14887.63 | 0.996 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18589.69 | 17973.05 | 0.9906 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-pdl-chain-gather-w13-w2`) that adds a further change in the same area is the only way to learn more.
+

@@ -1,0 +1,86 @@
+(1080 local routes = 1.46x random, 32 experts, max 183 routes/expert): master block 531.6 us (ratio vs master 1.000); KERNELS w13 339.0 us 1.78 TB/s, w2 166.6 us 1.81 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE diag 1.5x T=753 pop:1.6 (1080 local routes = 1.46x random, 32 experts, max 183 routes/expert): V64 block 513.7 us (ratio vs master 0.966); KERNELS w13 317.9 us 1.90 TB/s, w2 170.6 us 1.77 TB/s; chunks 37 (max 3 per expert); grid 264
+[rega-lo] SKEW CURVE 1.0x 0.878 1.2x 0.988 1.5x 0.966 1.8x 1.034 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[rega-pdl] derived source sha256 94a4a76f77a2aae7 (40029 chars); source audit ok (no templated accessor, no file-scope / static / device globals)
+[rega-pdl] build muse_prefill_rega_pdl: TORCH_CUDA_ARCH_LIST='9.0a' -> ['-gencode=arch=compute_90a,code=sm_90a']; extra_cuda_cflags ['-O3', '-std=c++20', '-lineinfo', '-gencode=arch=compute_90a,code=sm_90a']
+[rega-pdl] nvcc + load 32.5s
+[rega-pdl] kernel rega_kernel_pdl<true, false> (w13+silu, stage-1 class): attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 14336 B, dynamic smem 187392 B, CTAs/SM 1, binaryVersion 90
+[rega-pdl] kernel rega_kernel_pdl<false, false> (w2, stage-1 class): attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 14336 B, dynamic smem 203776 B, CTAs/SM 1, binaryVersion 90
+[rega-pdl] kernel rega_kernel_pdl<true, true> (w13+silu, first-turn class): attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 9216 B, dynamic smem 187392 B, CTAs/SM 1, binaryVersion 90
+[rega-pdl] kernel rega_kernel_pdl<false, true> (w2, first-turn class): attrs ok True (SetAttribute rc 0), regs 168, local bytes 0, static smem 9216 B, dynamic smem 203776 B, CTAs/SM 1, binaryVersion 90
+[rega] [pdl canary low] launching align
+[rega] [pdl canary low] align done (171 us eager)
+[rega] [pdl canary low] launching rega_gather
+[rega] [pdl canary low] rega_gather done (42 us eager)
+[rega] [pdl canary low] launching rega_kernel<w13+silu>
+[rega] [pdl canary low] rega_kernel<w13+silu> done (345 us eager)
+[rega] [pdl canary low] launching rega_kernel<w2>
+[rega] [pdl canary low] rega_kernel<w2> done (163 us eager)
+[rega-pdl] low T=753 canary: error word 0 (ok), launch markers w13 0x57474d4d w2 0x57474d4d
+[rega-pdl] low T=753 exact compare: pdl output bit-identical to master's in 9 cold-L2 graph replays over random, skewed, one; error word 0, both launch markers set
+[rega-pdl] low T=753 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 476.4 us (IQR 1.3) pdl 470.5 us (IQR 2.2) ratio 0.988 IQR ok False; round 2 master 475.9 us (IQR 2.7) pdl 471.6 us (IQR 2.3) ratio 0.991 IQR ok True; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: MISS
+[rega] [pdl canary high] launching align
+[rega] [pdl canary high] align done (125 us eager)
+[rega] [pdl canary high] launching rega_gather
+[rega] [pdl canary high] rega_gather done (52 us eager)
+[rega] [pdl canary high] launching rega_kernel<w13+silu>
+[rega] [pdl canary high] rega_kernel<w13+silu> done (501 us eager)
+[rega] [pdl canary high] launching rega_kernel<w2>
+[rega] [pdl canary high] rega_kernel<w2> done (247 us eager)
+[rega-pdl] high T=3012 canary: error word 0 (ok), launch markers w13 0x57474d4d w2 0x57474d4d
+[rega-pdl] high T=3012 exact compare: pdl output bit-identical to master's in 6 cold-L2 graph replays over random, skewed; error word 0, both launch markers set
+[rega-pdl] high T=3012 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 727.1 us (IQR 3.1) pdl 718.3 us (IQR 2.1) ratio 0.988 IQR ok True; round 2 master 726.7 us (IQR 1.2) pdl 719.4 us (IQR 2.9) ratio 0.990 IQR ok False; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: MISS
+[rega] [pdl canary ft] launching align
+[rega] [pdl canary ft] align done (135 us eager)
+[rega] [pdl canary ft] launching rega_gather
+[rega] [pdl canary ft] rega_gather done (112 us eager)
+[rega] [pdl canary ft] launching rega_kernel<w13+silu>
+[rega] [pdl canary ft] rega_kernel<w13+silu> done (1933 us eager)
+[rega] [pdl canary ft] launching rega_kernel<w2>
+[rega] [pdl canary ft] rega_kernel<w2> done (951 us eager)
+[rega-pdl] ft T=16384 canary: error word 0 (ok), launch markers w13 0x57474d4d w2 0x57474d4d
+[rega-pdl] ft T=16384 exact compare: pdl output bit-identical to master's in 6 cold-L2 graph replays over random, local; error word 0, both launch markers set
+[rega-pdl] ft T=16384 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 3405.5 us (IQR 231.5) pdl 3408.7 us (IQR 258.2) ratio 1.001 IQR ok True; round 2 master 3292.1 us (IQR 12.5) pdl 3279.5 us (IQR 13.2) ratio 0.996 IQR ok True; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: pass
+[rega] copy B: bank 0xdbb3e000000 vs A 0xdbcdc000000, err 0xdbf7bf5e800 vs A 0xdbf7bf2d800 (shared: False)
+[rega] copy C: bank 0xdbd3c000000 vs A 0xdbcdc000000, err 0xdbf7bf61c00 vs A 0xdbf7bf2d800 (shared: False)
+[rega] replay T=16384 random state A: rega rel L2 5.608e-04 worst row 2.365e-03; triton 4.505e-03; bound 9.010e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state B: rega rel L2 5.562e-04 worst row 2.366e-03; triton 4.498e-03; bound 8.996e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state C: rega rel L2 5.555e-04 worst row 2.190e-03; triton 4.505e-03; bound 9.009e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state A: rega rel L2 5.590e-04 worst row 2.573e-03; triton 4.507e-03; bound 9.014e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 random state B: rega rel L2 5.468e-04 worst row 2.805e-03; triton 4.507e-03; bound 9.015e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state A: rega rel L2 7.527e-04 worst row 1.957e-03; triton 4.674e-03; bound 9.348e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state B: rega rel L2 7.541e-04 worst row 2.071e-03; triton 4.674e-03; bound 9.347e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state C: rega rel L2 7.555e-04 worst row 2.074e-03; triton 4.674e-03; bound 9.349e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state A: rega rel L2 7.490e-04 worst row 2.030e-03; triton 4.674e-03; bound 9.347e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384 local state B: rega rel L2 7.526e-04 worst row 1.814e-03; triton 4.673e-03; bound 9.347e-03; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=16384: graphs freed; max_memory_allocated 16.52 GiB
+[rega-pdl] ft T=16384 two-state replay check (pdl ON): 10 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(16384, ('random', 'local'))]; LAUNCHED = rega on 10/10 (both launch markers); worst rel L2 7.55e-04 (incumbent 4.67e-03)
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 18.1 us; chunk 512 9.0 us; chunk 1024 20.7 us; chunk chosen 512 ratio 0.499 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 69.7 us; chunk 512 8.7 us; chunk 1024 21.6 us; chunk chosen 512 ratio 0.125 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 391.5 us; chunk 512 26.8 us; chunk 1024 23.2 us; chunk chosen 1024 ratio 0.059 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8025.5 us, contig-varlen 7625.0 us, contig-batched n/a us (gather alone 16.9 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4468.4 us, contig-varlen 4251.5 us, contig-batched n/a us (gather alone 12.6 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 902.6 us, contig-varlen 863.9 us, contig-batched n/a us (gather alone 8.8 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1630.5 us, contig-varlen 1589.0 us, contig-batched n/a us (gather alone 50.4 us; bar 0.97 x paged, best/paged 0.975) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 426.4 us, contig-varlen 419.3 us, contig-batched n/a us (gather alone 17.1 us; bar 0.97 x paged, best/paged 0.983) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 106.2s
+[rega-lo] guard routing at T=753: alpha 2.2 -> 1356 local routes (target 1350, the TASK.md floor-implied judge turn_1 load) = 1.83x the uniform 742; calibration 1:725, 1.1:827, 1.2:891, 1.3:932, 1.4:987, 1.5:998, 1.6:1114, 1.7:1150, 1.8:1194, 1.9:1266, 2:1290, 2.1:1338, 2.2:1356, 2.3:1416, 2.4:1485, 2.5:1534, 2.6:1567, 2.7:1625, 2.8:1665, 2.9:1676, 3:1725
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): master block 475.2 us (ratio vs master 1.000); KERNELS w13 303.6 us 1.99 TB/s, w2 148.3 us 2.04 TB/s; chunks 32 (max 1 per expert); grid 132
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V64 block 417.0 us (ratio vs master 0.878); KERNELS w13 264.0 us 2.29 TB/s, w2 130.0 us 2.32 TB/s; chunks 32 (max 1 per expert); grid 264
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V32 block 415.3 us (ratio vs master 0.874); KERNELS w13 261.2 us 2.31 TB/s, w2 132.0 us 2.29 TB/s; chunks 33 (max 2 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): master block 543.8 us (ratio vs master 1.000); KERNELS w13 344.9 us 1.75 TB/s, w2 173.4 us 1.74 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V64 block 562.5 us (ratio vs master 1.034); KERNELS w13 354.9 us 1.70 TB/s, w2 177.5 us 1.70 TB/s; chunks 39 (max 4 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V32 block 718.8 us (ratio vs master 1.322); KERNELS w13 459.3 us 1.32 TB/s, w2 232.9 us 1.30 TB/s; chunks 58 (max 8 per expert); grid 264
+[rega-lo] LOW GATE verdict (norm-gather-ON block): no candidate at <= 0.95 random AND <= 1.0 guard (random, guard ratios {'V64': (0.878, 1.034), 'V32': (0.874, 1.322)}): master kept
+[rega-lo] SKEW CURVE 1.0x 0.878 1.2x 0.988 1.5x 0.966 1.8x 1.034 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[rega-lo] phase took 33.1s; prepare total 139.9s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)
+[rega-pdl] low T=753 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 476.4 us (IQR 1.3) pdl 470.5 us (IQR 2.2) ratio 0.988 IQR ok False; round 2 master 475.9 us (IQR 2.7) pdl 471.6 us (IQR 2.3) ratio 0.991 IQR ok True; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: MISS
+[rega-pdl] high T=3012 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 727.1 us (IQR 3.1) pdl 718.3 us (IQR 2.1) ratio 0.988 IQR ok True; round 2 master 726.7 us (IQR 1.2) pdl 719.4 us (IQR 2.9) ratio 0.990 IQR ok False; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: MISS
+[rega-pdl] ft T=16384 GATE cold-L2 graph, whole _experts_rega call (_norm_gather_kernel (Triton) -> rega_kernel_pdl<true,*> w13 -> rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), 11 alternations x 2 rounds, empty-graph baseline subtracted: round 1 master 3405.5 us (IQR 231.5) pdl 3408.7 us (IQR 258.2) ratio 1.001 IQR ok True; round 2 master 3292.1 us (IQR 12.5) pdl 3279.5 us (IQR 13.2) ratio 0.996 IQR ok True; ON needs both ratios <= 1.005 and pdl IQR <= 1.5x master's: pass
+[rega-pdl] PATH CHOSEN low: pdl=OFF (timing gate missed (slower than master or IQR too wide))
+[rega-pdl] PATH CHOSEN high: pdl=OFF (timing gate missed (slower than master or IQR too wide))
+[rega-pdl] PATH CHOSEN ft: pdl=ON
+[rega-pdl] phase took 35.0s; prepare total 174.9s; flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, rega_low_variant 0, zero_nonlocal_w2 False
+[rega-pdl] PATH CHOSEN: rega_pdl {'low': 0, 'high': 0, 'ft': 1} (1 = w13 programmatically chained to the gather and w2 to w13, w2 forced 0 when zero_nonlocal_w2; 0 = master's exact launches)

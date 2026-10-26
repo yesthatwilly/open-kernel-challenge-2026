@@ -1,0 +1,543 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f4751fc0..1834ae36 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -635,6 +635,10 @@ def prepare(weights):
+     # its checks and its gate on the norm-gather-ON block. Never raises; any failure keeps master's low class.
+     lo_lines = _rega_lo_phase(state, weights, device, t_prepare0)
+     torch.cuda.synchronize()
++    # experts-rega-pdl-chain-gather-w13-w2: after the low-class phase (it needs that phase's variant int): the
++    # separate muse_prefill_rega_pdl module, per-class exact compare / replay / timing gates; its own deadlines.
++    pdl_lines = _rega_pdl_phase(state, weights, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+@@ -643,6 +647,9 @@ def prepare(weights):
+     # The low-class candidates' summary; its '[rega-lo] PATH CHOSEN low: ...' line is the last prepare() line.
+     for line in lo_lines:
+         print(line[:1200], flush=True)
++    # The PDL phase's gate and PATH CHOSEN lines: the last lines of prepare() (the judge keeps the log tail).
++    for line in pdl_lines:
++        print(line[:1500], flush=True)
+     return state
+ 
+ 
+@@ -3539,6 +3546,10 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # shape (the token count) and two prepare-time ints of this state decide; never a tensor value or a pointer.
+     variant = state.get("rega_low_variant", 0) if num_tokens <= REGA_LOW_MAX else 0
+     grid_lo = state.get("rega_low_grid", grid)
++    # experts-rega-pdl-chain-gather-w13-w2: per-class prepare-time ints; both 0 on the rega_gemm_lo path, w2 also 0
++    # when a memset node (zero_nonlocal_w2) sits between w13 and w2. Shapes and prepare-time ints only.
++    pdl13, pdl2 = _rega_pdl_flags(state, num_tokens, variant)
++    pdl_ext = state.get("rega_pdl_ext")
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+         tracer("before", "align")
+@@ -3563,6 +3574,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
+                                           n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
++    elif pdl13:
++        pdl_ext.rega_gemm_pdl(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                              D_EXPERT // 64, size_k, hs, grid, err, 1)
+     else:
+         ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                       D_EXPERT // 64, size_k, hs, grid, err)
+@@ -3579,6 +3593,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(1, variant, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts,
+                                           n_padded, num_slots, size_k // 128, D_EXPERT, y, grid_lo, err)
++    elif pdl2:
++        pdl_ext.rega_gemm_pdl(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                              size_k // 128, D_EXPERT, y, grid, err, 1)
+     else:
+         ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
+                       size_k // 128, D_EXPERT, y, grid, err)
+@@ -5760,6 +5777,486 @@ def _rega_lo_run(state, weights, device, t_start, sm, lines):
+     return None, chosen
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-pdl-chain-gather-w13-w2: programmatic dependent launch across the expert block
++# (_norm_gather_kernel | rega_gather -> rega w13 -> rega w2), as a SEPARATE extension muse_prefill_rega_pdl built
++# only after master's whole setup (rega v2 + its gates, norm-gather, the low-class phase). Master's muse_prefill_rega_v2
++# strings, its v1 fallback and their sha256 checks are untouched: the PDL source is DERIVED from them by exact-once
++# text edits (any miss -> no PDL build). The kernel is renamed rega_kernel_pdl, the host entry rega_gemm_pdl (one
++# trailing int pdl: 0 = a plain launch, 1 = cudaLaunchKernelEx with ProgrammaticStreamSerialization). With pdl=1
++# everything that reads only align outputs and static weights runs BEFORE griddepcontrol.wait: barrier init, the
++# table decode, and the producer's first STAGES weight bulk copies (the full barrier's expect_tx is armed ONCE per
++# stage, before that stage's weight copy; the stage's activation TMAs follow the wait and complete the same
++# transaction, no re-arm). The producer waits before its FIRST activation TMA, every consumer thread waits right
++# after setmaxnreg (before any smem read of activations and before any store to out), and each CTA's producer
++# issues griddepcontrol.launch_dependents after its last stage. Output is bit-identical to master's: per class a
++# prepare-time exact compare under graph replay, a two-state replay check and a cold-L2 two-round interleaved
++# timing of the whole _experts_rega call against master's ACTUALLY ROUTED path (flag off) gate it; ON when both
++# rounds are 'not slower' (<= REGA_PDL_RATIO) with the candidate's IQR <= REGA_PDL_IQR_MAX x master's.
++# state['rega_pdl'][class] is a plain int, state['rega_pdl_ext'] the module (shared like rega_ext). The w2 launch is
++# forced to pdl=0 when state['zero_nonlocal_w2'] (a memset node sits between w13 and w2) and BOTH launches are
++# pdl=0 on the rega_gemm_lo path (the low-class candidates' module is untouched).
++# ---------------------------------------------------------------------------------------------------------------
++REGA_PDL_TAG = "[rega-pdl]"
++REGA_PDL_EXT_NAME = "muse_prefill_rega_pdl"
++REGA_PDL_FUNCS = ("rega_init_pdl", "rega_gemm_pdl")
++REGA_PDL_CLASSES = ("low", "high", "ft")
++REGA_PDL_STATE_KEYS = REGA_STATE_KEYS + ("rega_pdl_ext", "rega_pdl")
++REGA_PDL_START_DEADLINE_S = 195.0   # no PDL build once prepare() has used this many seconds ('skipped: deadline')
++REGA_PDL_CLASS_DEADLINE_S = {"low": 255.0, "high": 255.0, "ft": 235.0}  # no step of a class starts after this
++REGA_PDL_RATIO = 1.005              # 'not slower': both rounds pdl / master <= this (bit-identical output, ~1% win)
++REGA_PDL_IQR_MAX = 1.5              # candidate IQR <= this x master's, both rounds
++REGA_PDL_IQR_FLOOR_US = 1.0         # absolute floor on master's IQR in that veto (timer resolution is ~0.5 us)
++REGA_PDL_ROUNDS = 2                 # interleaved rounds per class gate
++REGA_PDL_ALTERNATIONS = 11          # interleaved cold-L2 alternations per round
++REGA_PDL_EXACT_REPS = 3             # cold-L2 pdl replays compared bit for bit with master's, per routing
++REGA_PDL_EXACT_KINDS = {"low": ("random", "skewed", "one"), "high": ("random", "skewed"), "ft": ("random", "local")}
++REGA_PDL_REPLAY_PLAN = {"low": ((753, ("random", "skewed", "one")),), "high": ((3012, ("random", "skewed")),),
++                        "ft": ((16384, ("random", "local")),)}
++
++_REGA_PDL_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> rega_init_pdl();
++void rega_gemm_pdl(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t pdl);
++"""
++
++_REGA_PDL_HELPERS = r"""// Programmatic dependent launch (sm_90): wait = every prerequisite grid complete and its memory visible; launch =
++// this CTA lets the dependent grid be scheduled (it still waits at its own griddepcontrol.wait).
++__device__ __forceinline__ void pdl_wait() {
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
++  asm volatile("griddepcontrol.wait;\n" ::: "memory");
++#endif
++}
++__device__ __forceinline__ void pdl_launch() {
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
++  asm volatile("griddepcontrol.launch_dependents;\n" ::: "memory");
++#endif
++}
++"""
++
++_REGA_PDL_PREFETCH = r"""      const int KC = K / 64;
++      // PDL: the first P stages' WEIGHTS go out before griddepcontrol.wait (static; addresses decoded from align
++      // tables produced two grids back). expect_tx is armed once per stage here, for the whole stage (weights +
++      // both activation slabs); the activation TMAs below complete the rest of the same transaction after the wait.
++      const int P = pdl ? STAGES : 0;
++      if (P > 0) {
++        int n0 = 0;
++        for (int it = blockIdx.x; it < total && n0 < P; it += gridDim.x) {
++          const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
++          const uint8_t* wsrc = wbank + (static_cast<size_t>(m.e) * n_tiles + m.j) * static_cast<size_t>(KC) * REC;
++          const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;
++          for (int kb = 0; kb < KS && n0 < P; ++kb, ++n0) {
++            const uint32_t fb = full0 + 8 * n0;
++            mbar_expect_tx(fb, tx);
++            bulk_g2s(smem_u32(smem + n0 * STAGE_BYTES), wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          }
++        }
++        pdl_wait();  // before the first read of the previous grid's output (the activation TMA)
++      }
++      int n = 0;
++"""
++
++_REGA_PDL_LAUNCH = r"""  TORCH_CHECK(pdl == 0 || pdl == 1, "rega_gemm_pdl: pdl");
++  uint8_t* wbank_p = reinterpret_cast<uint8_t*>(wbank.data_ptr());
++  float* gs_p = reinterpret_cast<float*>(gs.data_ptr());
++  int* sid_p = reinterpret_cast<int*>(sorted_ids.data_ptr());
++  int* be_p = reinterpret_cast<int*>(block_experts.data_ptr());
++  int* np_p = reinterpret_cast<int*>(n_padded.data_ptr());
++  __nv_bfloat16* out_p = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
++  int* err_p = reinterpret_cast<int*>(err.data_ptr());
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
++  attr[0].val.programmaticStreamSerializationAllowed = 1;
++  cudaError_t le = cudaSuccess;
++#define WG_LAUNCH(G_, B_)                                                                                     \
++  do {                                                                                                        \
++    cudaLaunchConfig_t lc;                                                                                    \
++    std::memset(&lc, 0, sizeof(lc));                                                                          \
++    lc.gridDim = dim3(static_cast<unsigned>(grid));                                                           \
++    lc.blockDim = dim3(THREADS);                                                                              \
++    lc.dynamicSmemBytes = Smem<G_>::BYTES;                                                                    \
++    lc.stream = stream;                                                                                       \
++    lc.attrs = attr;                                                                                          \
++    lc.numAttrs = pdl ? 1 : 0;                                                                                \
++    le = cudaLaunchKernelEx(&lc, rega_kernel_pdl<G_, B_>, mp, wbank_p, gs_p, sid_p, be_p, np_p, blocks_len,   \
++                            static_cast<int>(num_routes), static_cast<int>(n_tiles), static_cast<int>(K),     \
++                            static_cast<int>(gs.numel()), out_p, static_cast<int>(out.size(1)), err_p,        \
++                            static_cast<int>(pdl));                                                           \
++  } while (0)
++  if (which == 0) {
++    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);
++  } else {
++    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);
++  }
++#undef WG_LAUNCH
++  TORCH_CHECK(le == cudaSuccess, "rega_gemm_pdl: cudaLaunchKernelEx: ", cudaGetErrorString(le));
++"""
++
++# (part, text in master's source, replacement); every text must occur exactly once (else no PDL build)
++_REGA_PDL_EDITS = (
++    ("head", "// wgmma / setmaxnreg exist only for sm_90a: every such body is compiled only when\n",
++     _REGA_PDL_HELPERS + "// wgmma / setmaxnreg exist only for sm_90a: every such body is compiled only when\n"),
++    ("body", "\nrega_kernel(const __grid_constant__ Maps maps,", "\nrega_kernel_pdl(const __grid_constant__ Maps maps,"),
++    ("body", "int out_ld, int* __restrict__ err) {\n#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n  // Launch marker",
++     "int out_ld, int* __restrict__ err, int pdl) {\n#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n  // Launch marker"),
++    ("body", "      const int KC = K / 64;\n      int n = 0;\n", _REGA_PDL_PREFETCH),
++    ("body",
++     r"""          mbar_expect_tx(fb, tx);
++          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++          tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
++        }
++      }
++    }
++  } else {
++""",
++     r"""          if (n >= P) {  // the first P stages' weights were issued (and the barrier armed) before the wait
++            mbar_expect_tx(fb, tx);
++            bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
++          }
++          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
++          tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
++        }
++      }
++      if (pdl) pdl_launch();  // every item's last stage is issued: the dependent grid may be scheduled
++    }
++  } else {
++"""),
++    ("body", 'asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\\n" ::: "memory");\n',
++     'asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\\n" ::: "memory");\n'
++     "    if (pdl) pdl_wait();  // no activation read and no store to out before the previous grid's memory is visible\n"),
++    ("body", "  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);\n",
++     "  const void* fn = reinterpret_cast<const void*>(rega_kernel_pdl<G, BIG>);\n"),
++    ("body", "std::vector<int64_t> rega_init() {\n", "std::vector<int64_t> rega_init_pdl() {\n"),
++    ("body", "void rega_gather(torch::Tensor x,", "void rega_gather_pdl(torch::Tensor x,"),
++    ("body", "void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,",
++     "void rega_gemm_pdl(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,"),
++    ("body", "int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {\n",
++     "int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,\n"
++     "             int64_t pdl) {\n"),
++)
++
++
++def _rega_pdl_src():
++    """muse_prefill_rega_pdl's CUDA source, derived from master's head + wgmma wrappers + body by the exact-once
++    edits above plus two renames (the gather kernel, and the launch block, which is replaced between its
++    '#define WG_LAUNCH' and '#undef WG_LAUNCH' lines). None when any anchor does not occur exactly once.
++    Master's strings are read, never edited."""
++    parts = {"head": _REGA_HEAD, "body": _REGA_BODY}
++    for part, old, new in _REGA_PDL_EDITS:
++        if parts[part].count(old) != 1:
++            return None
++        parts[part] = parts[part].replace(old, new)
++    body = parts["body"]
++    begin, end = "#define WG_LAUNCH(G_, B_)", "#undef WG_LAUNCH\n"
++    if body.count(begin) != 1 or body.count(end) != 1 or body.index(begin) > body.index(end):
++        return None
++    body = body[:body.index(begin)] + _REGA_PDL_LAUNCH + body[body.index(end) + len(end):]
++    if body.count("rega_gather_kernel") != 2 or "rega_kernel<" in body or "rega_kernel(" in body:
++        return None
++    body = body.replace("rega_gather_kernel", "rega_gather_pdl_kernel")
++    return parts["head"] + _rega_wgmma_src() + body
++
++
++def _rega_pdl_audit(src):
++    """Pre-build audit of the PDL module: no templated Tensor accessor, no mutable file-scope / static / device
++    globals. Returns the findings."""
++    bad = []
++    for name, text in (("cpp", _REGA_PDL_CPP), ("cuda", src)):
++        for n, line in enumerate(text.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
++                bad.append(f"{name} line {n}: {line.strip()[:100]}")
++    return bad + _rega_audit_cpp(_REGA_PDL_CPP + "\n" + src)
++
++
++def _rega_pdl_build(src):
++    """Compile muse_prefill_rega_pdl (prepare only, after master's whole setup): ext or None. Same flags and
++    TORCH_CUDA_ARCH_LIST=9.0a handling as master's build; prints the arch flags and the build time."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    ext = None
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:
++            print(f"{REGA_PDL_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
++                  flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            arch_flags = ["<unknown>"]
++        print(f"{REGA_PDL_TAG} build {REGA_PDL_EXT_NAME}: TORCH_CUDA_ARCH_LIST="
++              f"{os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> {arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}",
++              flush=True)
++        ext = load_inline(name=REGA_PDL_EXT_NAME, cpp_sources=_REGA_PDL_CPP, cuda_sources=src,
++                          functions=list(REGA_PDL_FUNCS), extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
++    except Exception as e:
++        ext = None
++        print(f"{REGA_PDL_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {str(e)[-400:]!r}",
++              flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    if ext is not None:
++        print(f"{REGA_PDL_TAG} nvcc + load {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _rega_pdl_attrs(ext):
++    """Attributes of every instantiation BEFORE any launch (rega_init_pdl also sets each one's dynamic smem
++    attribute); prints regs / local bytes (spills) per instantiation. Returns {big: ok} (stage-1 tables, first-turn)."""
++    info = ext.rega_init_pdl()
++    ok = {False: True, True: True}
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
++        gated, big = bool(flag & 1), bool(flag & 2)
++        print(f"{REGA_PDL_TAG} kernel rega_kernel_pdl<{'true' if gated else 'false'}, {'true' if big else 'false'}> "
++              f"({'w13+silu' if gated else 'w2'}, {'first-turn' if big else 'stage-1'} class): attrs ok {bool(a_ok)} "
++              f"(SetAttribute rc {e1}), regs {regs}, local bytes {local_bytes}{' (SPILL)' if local_bytes > 0 else ''}, "
++              f"static smem {static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}", flush=True)
++        ok[big] = (ok[big] and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                   and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++    return ok
++
++
++def _rega_pdl_flags(state, num_tokens, variant):
++    """(pdl for w13, pdl for w2) of this call: shapes and prepare-time ints only. Both 0 on the rega_gemm_lo path
++    (variant != 0) and for a class prepare() did not turn ON; w2 is 0 whenever state['zero_nonlocal_w2'] (the
++    torch.zeros(y) memset node sits between w13 and w2, so w2's programmatic edge would not be against w13)."""
++    if variant or state.get("rega_pdl_ext") is None:
++        return 0, 0
++    on = int(state.get("rega_pdl", {}).get(_rega_class(num_tokens), 0))
++    return on, (0 if state["zero_nonlocal_w2"] else on)
++
++
++def _rega_pdl_stats(samples):
++    """(median, IQR) of a list of microsecond samples."""
++    s = sorted(samples)
++    return s[len(s) // 2], s[(3 * len(s)) // 4] - s[len(s) // 4]
++
++
++def _rega_pdl_class(state, device, cls, prenorm, weights, lines, t_start):
++    """prepare() only: one class's checks and gate; (on, reason). With st_on = state plus rega_pdl ON for every class,
++    1. an eager traced canary of st_on (flushed print before / sync + print after each launch), 2. CUDA graphs of the
++    whole _experts_rega call for master (state, flag off: the ACTUALLY ROUTED path) and st_on over ONE set of static
++    inputs; per routing the inputs are refilled in place and, after a 256 MB flush, master is replayed once and pdl
++    REGA_PDL_EXACT_REPS times: outputs must be bit-identical and the error word / launch markers clean, 3. the same
++    graphs timed over REGA_PDL_ROUNDS interleaved cold-L2 rounds (empty-graph baseline subtracted), 4. when the
++    timing says ON, the two-state replay check with the flag on. ON needs every step."""
++    tokens = REGA_GATE_TOKENS.get(cls, REGA_FT_GATE_TOKENS)
++    tag = f"{REGA_PDL_TAG} {cls} T={tokens}"
++    st_on = dict(state)
++    st_on["rega_pdl"] = {c: 1 for c in REGA_PDL_CLASSES}
++    err = state["rega_err"]
++    gen = torch.Generator(device=device).manual_seed(20261026)
++    x0, tw0, lids0 = _rega_case(tokens, "random", gen, device)
++    err.zero_()
++    out = _experts_rega(x0, tw0, lids0, st_on, tracer=_RegaTracer(f"pdl canary {cls}"), prenorm=prenorm)
++    torch.cuda.synchronize()
++    word, m13, m2 = _rega_marks(err)
++    print(f"{tag} canary: error word {word} ({REGA_ERR_TEXT.get(word, '?')}), launch markers w13 {m13:#x} w2 {m2:#x}",
++          flush=True)
++    if word != 0 or not _rega_launched(m13, m2) or not bool(torch.isfinite(out.float()).all()):
++        return False, f"canary failed (error word {word}, markers {m13:#x}/{m2:#x})"
++    del out
++    buf = [x0.clone(), tw0.clone(), lids0.clone()]
++    holders = {"master": {}, "pdl": {}}
++
++    def make(name, st):
++        def fn():
++            holders[name]["out"] = _experts_rega(buf[0], buf[1], buf[2], st, prenorm=prenorm)
++        return fn
++
++    graphs = {"master": _ssdq_graph_time(make("master", state), device),
++              "pdl": _ssdq_graph_time(make("pdl", st_on), device)}
++    tiny = torch.zeros(16, dtype=torch.float32, device=device)
++    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def once(name):
++        flush.zero_()
++        ev[0].record()
++        graphs[name].replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    try:
++        # 2. exact compare under graph replay, cold L2, per routing
++        n_cmp = 0
++        for kind in REGA_PDL_EXACT_KINDS[cls]:
++            x, tw, lids = _rega_case(tokens, kind, gen, device)
++            for dst, src in zip(buf, (x, tw, lids)):
++                dst.copy_(src)
++            err.zero_()
++            once("master")
++            ref = holders["master"]["out"].clone()
++            for _ in range(REGA_PDL_EXACT_REPS):
++                err.zero_()
++                once("pdl")
++                got = holders["pdl"]["out"]
++                word, m13, m2 = _rega_marks(err)
++                same = bool(torch.equal(got, ref))
++                n_cmp += 1
++                if word != 0 or not _rega_launched(m13, m2) or not same:
++                    diff = float((got.float() - ref.float()).abs().max()) if got.shape == ref.shape else float("nan")
++                    return False, (f"exact compare missed at {kind} (bit-identical {same}, max |diff| {diff:.3e}, "
++                                   f"error word {word}, markers {m13:#x}/{m2:#x})")
++            del ref
++        print(f"{tag} exact compare: pdl output bit-identical to master's in {n_cmp} cold-L2 graph replays over "
++              f"{', '.join(REGA_PDL_EXACT_KINDS[cls])}; error word 0, both launch markers set", flush=True)
++        # 3. timing: master's routed path vs pdl, two interleaved rounds (the buffers hold the last exact routing:
++        # refill the soft random one)
++        for dst, src in zip(buf, (x0, tw0, lids0)):
++            dst.copy_(src)
++        err.zero_()
++        names = ["master", "pdl", "empty"]
++        for name in names:
++            once(name)
++        rounds = []
++        for r in range(REGA_PDL_ROUNDS):
++            samples = {name: [] for name in names}
++            for i in range(REGA_PDL_ALTERNATIONS):
++                order = names[(i + r) % len(names):] + names[:(i + r) % len(names)]
++                if i % 2:
++                    order = order[::-1]
++                for name in order:
++                    samples[name].append(once(name))
++            base = _rega_pdl_stats(samples["empty"])[0]
++            rounds.append({n: (max(_rega_pdl_stats(samples[n])[0] - base, 0.0), _rega_pdl_stats(samples[n])[1])
++                           for n in ("master", "pdl")})
++        word = _rega_marks(err)[0]
++        if word != 0:
++            return False, f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})"
++    finally:
++        del graphs, flush, holders, buf
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    ratios = [rd["pdl"][0] / max(rd["master"][0], 1e-9) for rd in rounds]
++    iqr_ok = [rd["pdl"][1] <= REGA_PDL_IQR_MAX * max(rd["master"][1], REGA_PDL_IQR_FLOOR_US) for rd in rounds]
++    timing_on = all(r <= REGA_PDL_RATIO for r in ratios) and all(iqr_ok)
++    npg = "_norm_gather_kernel (Triton)" if prenorm else "rega_gather"
++    lines.append(
++        f"{tag} GATE cold-L2 graph, whole _experts_rega call ({npg} -> rega_kernel_pdl<true,*> w13 -> "
++        f"rega_kernel_pdl<false,*> w2 -> post-norm weighted sum), {REGA_PDL_ALTERNATIONS} alternations x "
++        f"{REGA_PDL_ROUNDS} rounds, empty-graph baseline subtracted: "
++        + "; ".join(f"round {r + 1} master {rd['master'][0]:.1f} us (IQR {rd['master'][1]:.1f}) pdl "
++                    f"{rd['pdl'][0]:.1f} us (IQR {rd['pdl'][1]:.1f}) ratio {ratios[r]:.3f} IQR ok {iqr_ok[r]}"
++                    for r, rd in enumerate(rounds))
++        + f"; ON needs both ratios <= {REGA_PDL_RATIO} and pdl IQR <= {REGA_PDL_IQR_MAX}x master's: "
++          f"{'pass' if timing_on else 'MISS'}")
++    print(lines[-1], flush=True)
++    if not timing_on:
++        return False, "timing gate missed (slower than master or IQR too wide)"
++    # 4. two-state replay check with pdl ON for this class (A, B, C states; tolerance + markers vs the fp32 reference)
++    if time.perf_counter() - t_start > REGA_COPY_DEADLINE_S:
++        return False, "two-state replay check skipped: deadline"
++    trial = dict(state)
++    trial["rega_pdl"] = {c: int(c == cls) for c in REGA_PDL_CLASSES}
++    cache = {}
++    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_PDL_REPLAY_PLAN[cls],
++                                   keys=REGA_PDL_STATE_KEYS)
++    del cache
++    torch.cuda.empty_cache()
++    if why:
++        return False, f"two-state replay check failed: {why}"
++    print(f"{tag} two-state replay check (pdl ON): {line}", flush=True)
++    return True, ""
++
++
++def _rega_pdl_phase(state, weights, device, t_start):
++    """prepare() only, LAST (after _rega_lo_phase). Builds the separate muse_prefill_rega_pdl module, checks its
++    attributes before any launch, then per routed class (state['rega_ok']) runs _rega_pdl_class; sets
++    state['rega_pdl'][class] (plain ints) and state['rega_pdl_ext']. A class whose low variant is not master's
++    (rega_gemm_lo) or whose steps hit a deadline stays 0. Never raises; every miss leaves master's exact path.
++    Returns the summary lines; the last is '[rega-pdl] PATH CHOSEN: ...'."""
++    t0 = time.perf_counter()
++    state["rega_pdl_ext"], state["rega_pdl"] = None, {c: 0 for c in REGA_PDL_CLASSES}
++    lines, verdict, off = [], {}, None
++    try:
++        used = time.perf_counter() - t_start
++        routed = [c for c in REGA_PDL_CLASSES if state.get("rega_ok", {}).get(c, False)]
++        if not routed:
++            off = "no class is on rega (master's gates), so there is no rega launch to chain"
++        elif used > REGA_PDL_START_DEADLINE_S:
++            off = (f"skipped: deadline (prepare already used {used:.0f}s > {REGA_PDL_START_DEADLINE_S:.0f}s PDL start "
++                   f"deadline)")
++        else:
++            src = _rega_pdl_src()
++            bad = ["a text anchor of master's source did not occur exactly once"] if src is None else _rega_pdl_audit(src)
++            if bad:
++                off = f"source derivation / audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_PDL_TAG} derived source sha256 {hashlib.sha256((_REGA_PDL_CPP + src).encode()).hexdigest()[:16]}"
++                      f" ({len(src)} chars); source audit ok (no templated accessor, no file-scope / static / device "
++                      f"globals)", flush=True)
++                ext = _rega_pdl_build(src)
++                if ext is None:
++                    off = "build failed"
++                else:
++                    attrs_ok = _rega_pdl_attrs(ext)
++                    state["rega_pdl_ext"] = ext
++                    stop = None
++                    for cls in routed:
++                        if stop:
++                            verdict[cls] = (False, stop)
++                        elif not attrs_ok[cls == "ft"]:
++                            verdict[cls] = (False, "attribute / register-pool check failed for this class's kernels")
++                        elif cls == "low" and int(state.get("rega_low_variant", 0)):
++                            verdict[cls] = (False, f"the low class runs rega_gemm_lo (variant "
++                                                   f"{int(state['rega_low_variant'])}); pdl forced 0 there")
++                        elif time.perf_counter() - t_start > REGA_PDL_CLASS_DEADLINE_S[cls]:
++                            verdict[cls] = (False, f"skipped: deadline (prepare already used "
++                                                   f"{time.perf_counter() - t_start:.0f}s > "
++                                                   f"{REGA_PDL_CLASS_DEADLINE_S[cls]:.0f}s)")
++                        else:
++                            prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++                            try:
++                                on, why = _rega_pdl_class(state, device, cls, prenorm, weights, lines, t_start)
++                            except Exception as e:  # stop here: anything after a fault would be unreliable
++                                on, why = False, f"raised {e!r}"[:300]
++                                stop = f"an earlier class raised ({why[:80]})"
++                            state["rega_pdl"][cls] = int(on)
++                            verdict[cls] = (bool(on), why)
++                        if verdict[cls][1].startswith("skipped"):
++                            lines.append(f"{REGA_PDL_TAG} {cls}: {verdict[cls][1]}")
++                            print(lines[-1], flush=True)
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
++        off = f"PDL phase raised {e!r}"[:400]
++        state["rega_pdl"] = {c: 0 for c in REGA_PDL_CLASSES}
++    finally:
++        if not any(state["rega_pdl"].values()):
++            state["rega_pdl_ext"] = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        if off:
++            lines.append(f"{REGA_PDL_TAG} OFF: {off}")
++            print(lines[-1], flush=True)
++        for cls in REGA_PDL_CLASSES:
++            if cls in verdict:
++                lines.append(f"{REGA_PDL_TAG} PATH CHOSEN {cls}: pdl={'ON' if verdict[cls][0] else 'OFF'}"
++                             + ("" if verdict[cls][0] else f" ({verdict[cls][1]})"))
++        lines.append(f"{REGA_PDL_TAG} phase took {time.perf_counter() - t0:.1f}s; prepare total "
++                     f"{time.perf_counter() - t_start:.1f}s; flags (echo for the log tail): rega_ok "
++                     f"{state.get('rega_ok')}, norm_gather_ok {state.get('norm_gather_ok')}, rega_low_variant "
++                     f"{state.get('rega_low_variant', 0)}, zero_nonlocal_w2 {state.get('zero_nonlocal_w2')}")
++        lines.append(f"{REGA_PDL_TAG} PATH CHOSEN: rega_pdl {state['rega_pdl']} (1 = w13 programmatically chained to "
++                     f"the gather and w2 to w13, w2 forced 0 when zero_nonlocal_w2; 0 = master's exact launches)"
++                     + (f"; OFF reason: {off}" if off else ""))
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
