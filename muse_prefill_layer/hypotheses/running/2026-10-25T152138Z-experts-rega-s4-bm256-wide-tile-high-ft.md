@@ -88,7 +88,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212551Z
 base_sha: d375dd60d9615046903966bfa1143a876e566b8a
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -105,6 +105,8 @@ submission_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
 lint_warnings: 106
 attempt_file: 2026-10-26T012540Z-check-experts-rega-s4-bm256-wide-tile-high-ft.md
 prepared_at: 2026-10-26T012540Z
+job: a6f6063051f14750
+dispatched_at: 2026-10-26T012820Z
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
