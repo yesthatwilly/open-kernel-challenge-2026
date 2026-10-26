@@ -1,0 +1,100 @@
+cold] align kernel H=32: compiled + ran in 0.24 s
+[hotcold] align kernel H=48: compiled + ran in 0.23 s
+[hotcold] align kernel H=64: compiled + ran in 0.22 s
+[hotcold] align kernel H=-32: compiled + ran in 0.28 s
+[hotcold] align kernel H=-48: compiled + ran in 0.28 s
+[hotcold] first H=32 launch: T=128 zipf ls=240 (each launch named, synced)
+[hotcold]     [H=32 T=128 zipf] launching _hc_align
+[hotcold]     [H=32 T=128 zipf] _hc_align ok; launching _hc_experts (2 x w13, silu_and_mul, 2 x w2, post-norm)
+[hotcold]     [H=32 T=128 zipf] _hc_experts ok
+[hotcold] first H=48 launch: T=128 zipf ls=240 (each launch named, synced)
+[hotcold]     [H=48 T=128 zipf] launching _hc_align
+[hotcold]     [H=48 T=128 zipf] _hc_align ok; launching _hc_experts (2 x w13, silu_and_mul, 2 x w2, post-norm)
+[hotcold]     [H=48 T=128 zipf] _hc_experts ok
+[hotcold] first H=64 launch: T=128 zipf ls=240 (each launch named, synced)
+[hotcold]     [H=64 T=128 zipf] launching _hc_align
+[hotcold]     [H=64 T=128 zipf] _hc_align ok; launching _hc_experts (2 x w13, silu_and_mul, 2 x w2, post-norm)
+[hotcold]     [H=64 T=128 zipf] _hc_experts ok
+[hotcold] first H=-32 launch: T=128 zipf ls=240 (each launch named, synced)
+[hotcold]     [H=-32 T=128 zipf] launching _hc_align
+[hotcold]     [H=-32 T=128 zipf] _hc_align ok; launching _hc_experts (2 x w13, silu_and_mul, 2 x w2, post-norm)
+[hotcold]     [H=-32 T=128 zipf] _hc_experts ok
+[hotcold] first H=-48 launch: T=128 zipf ls=240 (each launch named, synced)
+[hotcold]     [H=-48 T=128 zipf] launching _hc_align
+[hotcold]     [H=-48 T=128 zipf] _hc_align ok; launching _hc_experts (2 x w13, silu_and_mul, 2 x w2, post-norm)
+[hotcold]     [H=-48 T=128 zipf] _hc_experts ok
+[hotcold] kernel check T=128 zipf ls=240: local routes 205, distinct 26, hot experts 3 (101 rows, max 48), master's 16-row blocks 30
+[hotcold] kernel check T=128 uniform ls=0: local routes 256, distinct 32, hot experts 0 (0 rows, max 14), master's 16-row blocks 32
+[hotcold] kernel check T=128 mixed ls=96: local routes 384, distinct 32, hot experts 2 (256 rows, max 128), master's 16-row blocks 46
+[hotcold] kernel check T=128 one ls=240: local routes 128, distinct 1, hot experts 1 (128 rows, max 128), master's 16-row blocks 8
+[hotcold] kernel check T=128 remote ls=0: local routes 0, distinct 0, hot experts 0 (0 rows, max 0), master's 16-row blocks 0
+[hotcold] kernel check T=128 all8 ls=96: local routes 1024, distinct 32, hot experts 32 (1024 rows, max 42), master's 16-row blocks 79
+[hotcold] kernel check T=256 zipf ls=240: local routes 405, distinct 31, hot experts 5 (243 rows, max 92), master's 16-row blocks 43
+[hotcold] kernel check T=256 uniform ls=0: local routes 512, distinct 32, hot experts 15 (294 rows, max 25), master's 16-row blocks 47
+[hotcold] kernel check T=256 mixed ls=96: local routes 768, distinct 32, hot experts 2 (512 rows, max 256), master's 16-row blocks 62
+[hotcold] kernel check T=256 one ls=240: local routes 256, distinct 1, hot experts 1 (256 rows, max 256), master's 16-row blocks 16
+[hotcold] kernel check T=256 remote ls=0: local routes 0, distinct 0, hot experts 0 (0 rows, max 0), master's 16-row blocks 0
+[hotcold] kernel check T=256 all8 ls=96: local routes 2048, distinct 32, hot experts 32 (2048 rows, max 77), master's 16-row blocks 143
+[hotcold] kernel check H=32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00027; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000308; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=64: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000328; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=-32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00596; T=128 fp32 0.00468 (master 0.00516), T=256 fp32 0.00479 (master 0.00519)
+[hotcold] kernel check H=-48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00596; T=128 fp32 0.00468 (master 0.00516), T=256 fp32 0.00479 (master 0.00519)
+[hotcold] T=128 layer input 0 (local_start 128): local routes 179, distinct 16, hot experts 3 (117 rows, max 53), master's 16-row blocks 22
+[hotcold] T=128 layer input 1 (local_start 128): local routes 192, distinct 18, hot experts 3 (124 rows, max 65), master's 16-row blocks 25
+[hotcold] gate T=128 layer input 0 round 1 (graph baseline 5.86 us subtracted): master 352.54 us (IQR 1.57) | H32 376.99 us (IQR 2.56, p10/p90 374.66/378.72, x0.935, FAIL) | H48 378.24 us (IQR 1.66, p10/p90 376.42/379.58, x0.932, FAIL) | H64 379.01 us (IQR 1.86, p10/p90 377.63/380.35, x0.930, FAIL) | H-32 366.21 us (IQR 1.22, p10/p90 365.02/367.81, x0.963, FAIL) | H-48 367.84 us (IQR 1.66, p10/p90 366.75/369.70, x0.958, FAIL)
+[hotcold] gate T=128 layer input 0 round 2 (graph baseline 5.70 us subtracted): master 352.93 us (IQR 1.79) | H32 377.82 us (IQR 1.89, p10/p90 376.35/379.62, x0.934, FAIL) | H48 378.46 us (IQR 1.92, p10/p90 376.74/380.77, x0.933, FAIL) | H64 379.71 us (IQR 1.47, p10/p90 377.86/381.12, x0.929, FAIL) | H-32 366.82 us (IQR 1.25, p10/p90 365.41/368.19, x0.962, FAIL) | H-48 369.06 us (IQR 1.63, p10/p90 367.52/370.56, x0.956, FAIL)
+[hotcold] gate T=128 layer input 1 round 1 (graph baseline 5.79 us subtracted): master 385.86 us (IQR 1.54) | H32 413.31 us (IQR 2.53, p10/p90 411.74/415.42, x0.934, FAIL) | H48 399.52 us (IQR 1.79, p10/p90 398.02/401.38, x0.966, FAIL) | H64 416.83 us (IQR 1.70, p10/p90 415.30/420.19, x0.926, FAIL) | H-32 404.64 us (IQR 2.14, p10/p90 402.50/406.46, x0.954, FAIL) | H-48 392.38 us (IQR 2.08, p10/p90 390.43/394.56, x0.983, FAIL)
+[hotcold] gate T=128 layer input 1 round 2 (graph baseline 5.86 us subtracted): master 385.44 us (IQR 2.05) | H32 412.58 us (IQR 1.12, p10/p90 411.81/414.88, x0.934, FAIL) | H48 399.87 us (IQR 1.86, p10/p90 398.50/401.98, x0.964, FAIL) | H64 416.51 us (IQR 2.05, p10/p90 415.04/418.30, x0.925, FAIL) | H-32 404.67 us (IQR 1.89, p10/p90 403.04/406.94, x0.952, FAIL) | H-48 392.29 us (IQR 1.38, p10/p90 390.69/393.66, x0.983, FAIL)
+[hotcold] gate T=128 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.934, H48 0.932, H64 0.925, H-32 0.952, H-48 0.956 -> master
+[hotcold] T=256 layer input 0 (local_start 64): local routes 367, distinct 26, hot experts 5 (261 rows, max 79), master's 16-row blocks 39
+[hotcold] T=256 layer input 1 (local_start 128): local routes 371, distinct 21, hot experts 5 (273 rows, max 123), master's 16-row blocks 36
+[hotcold] gate T=256 layer input 0 round 1 (graph baseline 5.76 us subtracted): master 552.26 us (IQR 2.62) | H32 569.95 us (IQR 2.56, p10/p90 567.84/572.19, x0.969, FAIL) | H48 572.61 us (IQR 2.59, p10/p90 570.66/574.85, x0.964, FAIL) | H64 585.25 us (IQR 2.88, p10/p90 582.24/587.68, x0.944, FAIL) | H-32 553.89 us (IQR 2.34, p10/p90 551.81/555.78, x0.997, FAIL) | H-48 556.19 us (IQR 2.72, p10/p90 553.47/559.10, x0.993, FAIL)
+[hotcold] gate T=256 layer input 0 round 2 (graph baseline 5.86 us subtracted): master 552.93 us (IQR 2.78) | H32 571.17 us (IQR 2.27, p10/p90 569.12/572.58, x0.968, FAIL) | H48 573.15 us (IQR 2.24, p10/p90 571.36/575.58, x0.965, FAIL) | H64 585.76 us (IQR 1.95, p10/p90 583.78/587.20, x0.944, FAIL) | H-32 554.66 us (IQR 2.34, p10/p90 552.42/556.80, x0.997, FAIL) | H-48 556.51 us (IQR 3.10, p10/p90 554.14/559.52, x0.994, FAIL)
+[hotcold] gate T=256 layer input 1 round 1 (graph baseline 5.73 us subtracted): master 521.41 us (IQR 1.86) | H32 517.47 us (IQR 2.21, p10/p90 515.33/519.94, x1.008, FAIL) | H48 540.58 us (IQR 2.08, p10/p90 539.10/542.46, x0.965, FAIL) | H64 511.52 us (IQR 1.73, p10/p90 509.82/513.50, x1.019, FAIL) | H-32 515.68 us (IQR 1.50, p10/p90 513.47/517.89, x1.011, FAIL) | H-48 539.23 us (IQR 2.50, p10/p90 537.47/542.11, x0.967, FAIL)
+[hotcold] gate T=256 layer input 1 round 2 (graph baseline 5.73 us subtracted): master 522.30 us (IQR 1.50) | H32 518.08 us (IQR 2.46, p10/p90 515.71/521.22, x1.008, FAIL) | H48 542.78 us (IQR 2.43, p10/p90 539.62/544.19, x0.962, FAIL) | H64 513.02 us (IQR 2.30, p10/p90 510.56/514.40, x1.018, FAIL) | H-32 516.16 us (IQR 1.73, p10/p90 514.27/518.11, x1.012, FAIL) | H-48 540.42 us (IQR 1.70, p10/p90 538.78/542.85, x0.966, FAIL)
+[hotcold] gate T=256 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.968, H48 0.962, H64 0.944, H-32 0.997, H-48 0.966 -> master
+[hotcold] ===== HOT/COLD MARLIN (decode, 128 <= T <= 256) SUMMARY (2.8 s; prepare at 60.2 s) =====
+[hotcold] align kernel H=32: compiled + ran in 0.24 s
+[hotcold] align kernel H=48: compiled + ran in 0.23 s
+[hotcold] align kernel H=64: compiled + ran in 0.22 s
+[hotcold] align kernel H=-32: compiled + ran in 0.28 s
+[hotcold] align kernel H=-48: compiled + ran in 0.28 s
+[hotcold] kernel check H=32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00027; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000308; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=64: T=128 clean, T=256 clean; worst rel-L2 vs master 0.000328; T=128 fp32 0.00516 (master 0.00516), T=256 fp32 0.00519 (master 0.00519)
+[hotcold] kernel check H=-32: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00596; T=128 fp32 0.00468 (master 0.00516), T=256 fp32 0.00479 (master 0.00519)
+[hotcold] kernel check H=-48: T=128 clean, T=256 clean; worst rel-L2 vs master 0.00596; T=128 fp32 0.00468 (master 0.00516), T=256 fp32 0.00479 (master 0.00519)
+[hotcold] T=128 layer input 0 (local_start 128): local routes 179, distinct 16, hot experts 3 (117 rows, max 53), master's 16-row blocks 22
+[hotcold] T=128 layer input 1 (local_start 128): local routes 192, distinct 18, hot experts 3 (124 rows, max 65), master's 16-row blocks 25
+[hotcold] gate T=128 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.934, H48 0.932, H64 0.925, H-32 0.952, H-48 0.956 -> master
+[hotcold] T=256 layer input 0 (local_start 64): local routes 367, distinct 26, hot experts 5 (261 rows, max 79), master's 16-row blocks 39
+[hotcold] T=256 layer input 1 (local_start 128): local routes 371, distinct 21, hot experts 5 (273 rows, max 123), master's 16-row blocks 36
+[hotcold] gate T=256 (whole layer, 2 inputs x 2 rounds): worst ratio H32 0.968, H48 0.962, H64 0.944, H-32 0.997, H-48 0.966 -> master
+[hotcold] PATH CHOSEN T=128 (128..191): MASTER (fallback: no H wins every round (H32 x0.934, H48 x0.932, H64 x0.925, H-32 x0.952, H-48 x0.956); layer us H-48 380.4, H-32 385.6, master 369.2, H32 395.2, H48 389.0, H64 398.0)
+[hotcold] PATH CHOSEN T=256 (192..256): MASTER (fallback: no H wins every round (H32 x0.968, H48 x0.962, H64 x0.944, H-32 x0.997, H-48 x0.966); layer us H-48 548.1, H-32 535.1, master 537.2, H32 544.2, H48 557.3, H64 548.9)
+[campaign] ===== FINAL PATHS =====
+[engineA-dl] gate T=1 (whole layer): worst ratio v1 1.043, v2 1.034, v3 1.036, v4 1.023, v5 1.002 -> ENGINE A v1
+[engineA-dl] gate T=8 (whole layer): worst ratio v1 1.051, v2 1.049, v3 1.051, v4 1.066, v5 1.038 -> ENGINE A v4
+[engineA-dl] gate T=16 (whole layer): worst ratio v2 1.062, v3 1.061, v4 1.107, v5 1.072 -> ENGINE A v4
+[engineA-dl] gate T=32 (whole layer): worst ratio v2 0.976, v3 1.033, v4 1.060, v5 1.002 -> ENGINE A v4
+[engineA-dl] big gate T=128 (whole layer): worst ratio v3 1.028, v4 1.087, v5 0.887 -> ENGINE A v4
+[engineA-dl] big gate T=256 (whole layer): worst ratio v3 1.014, v4 1.081, v5 0.972 -> ENGINE A v4
+[engineA-dl] k2 grid gate T=1 (v1, whole layer): full/132-CTA worst ratio 0.991 -> full grid
+[engineA-dl] combine gate T=1 (whole layer): Triton/CUDA worst ratio 1.023 -> CUDA
+[engineA-dl] combine gate T=8 (whole layer): Triton/CUDA worst ratio 1.014 -> CUDA
+[engineA-dl] combine gate T=16 (whole layer): Triton/CUDA worst ratio 1.007 -> CUDA
+[engineA-dl] combine gate T=32 (whole layer): Triton/CUDA worst ratio 1.008 -> CUDA
+[engineA-dl] pdl gate T=1 (whole layer, R -> K1): plain/PDL worst ratio 0.998 -> PDL
+[engineA-dl] PATH CHOSEN T=1 = ENGINE A v1
+[engineA-dl] PATH CHOSEN T=2..32 = ENGINE A v4
+[engineA-dl] PATH CHOSEN T=128 = ENGINE A v4
+[engineA-dl] PATH CHOSEN T=256 = ENGINE A v4
+[dense-swapab] PATH CHOSEN T=1: qkv_gate SWAP-AB (swap-AB 10.96 vs cuBLAS 12.94 us), o SWAP-AB (swap-AB 4.56 vs cuBLAS 5.22 us); whole layer x1.017
+[dense-swapab] PATH CHOSEN T=2..8: qkv_gate SWAP-AB (swap-AB 11.28 vs cuBLAS 12.80 us), o SWAP-AB (swap-AB 4.75 vs cuBLAS 5.06 us); whole layer x1.009
+[dense-swapab] PATH CHOSEN T=9..16: qkv_gate SWAP-AB (swap-AB 11.55 vs cuBLAS 12.82 us), o SWAP-AB (swap-AB 4.72 vs cuBLAS 5.07 us), unpooler MASTER (gemm x0.998; swap-AB 16.64 vs cuBLAS 16.64 us); wh
+[dense-swapab] PATH CHOSEN T=17..32: qkv_gate SWAP-AB (swap-AB 13.02 vs cuBLAS 13.57 us), o SWAP-AB (swap-AB 4.93 vs cuBLAS 5.20 us), unpooler MASTER (gemm x1.012; swap-AB 16.46 vs cuBLAS 16.70 us); w
+[hotcold] PATH CHOSEN T=128 (128..191): MASTER (fallback: no H wins every round (H32 x0.934, H48 x0.932, H64 x0.925, H-32 x0.952, H-48 x0.956); layer us H-48 380.4, H-32 385.6, master 369.2, H32 395.2
+[hotcold] PATH CHOSEN T=256 (192..256): MASTER (fallback: no H wins every round (H32 x0.968, H48 x0.962, H64 x0.944, H-32 x0.997, H-48 x0.966); layer us H-48 548.1, H-32 535.1, master 537.2, H32 544.2
+[combo] gate stream basis: draw 4 beta 0.15, worst distinct error 6.7% (0.6 s); busiest range routes/distinct/max/hot per BxL: 1x1 2/2.4/1/0.0 (judge distinct 2.5), 1x8 13/7.4/3/0.0 (judge distinct 7.5), 16x1 25/7.0/9/0.0 (judge distinct 7.5), 32x1 50/8.9/17/0.5 (judge distinct 9.0), 16x8 173/18.5/48/3.0 (judge distinct 18.4), 32x8 352/21.8/99/5.4 (judge distinct 21.3)
+[engineA-dl] gate inputs, busiest range routes/distinct/max/hot: T=1 3/2.6/1/0.0 (n=27), T=2 4/3.7/2/0.0 (n=6), T=3 7/6.0/2/0.0 (n=1), T=5 9/4.0/3/0.0 (n=1), T=8 14/7.7/4/0.0 (n=18), T=9 16/7.0/5/0.0 (n=1), T=12 20/5.0/7/0.0 (n=1), T=16 27/7.6/9/0.0 (n=18), T=17 25/6.0/8/0.0 (n=1), T=24 36/6.0/13/0.0 (n=1), T=32 53/8.8/19/0.7 (n=18), T=128 183/18.0/56/3.0 (n=7), T=256 370/22.0/111/5.1 (n=12)

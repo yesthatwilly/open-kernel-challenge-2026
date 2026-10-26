@@ -5,15 +5,15 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:55Z
+- updated: 2026-10-26T16:56Z
 - step: v4 decode passed (1.4950, scored run in flight); v5 lost (off); X2 now = hybrids with hot experts on a
   wgmma engine (moe testbed: the wg path) and cold on v4
-- in flight: decode scored dc51d8e8f58e4cb7 (v4, 4f530b95); moe check 0f4605dca83744c7 (wg-hot hybrid, 4848aadc);
+- in flight: moe check 0f4605dca83744c7 (wg-hot hybrid, 4848aadc);
   decode check 212cdf5dcb844d54 (hybrid cold on v4, v5 off, 4848aadc)
 - next action: harvest; land decode if dc51 beats 1.4466; if the wg-hot hybrid wins in moe, port the wgmma path into
   decode's T=128/256 hybrid
 - quota left 10-26: decode 1 check / 0 scored, moe 1 / 5
-- boards: decode 1.4466 (rank 370), moe 1.6389 (rank 395 of 843), overall 376
+- boards: decode **1.4956** (rank 342 of 737), moe 1.6389 (rank 395 of 843), overall **347 of 1228**
 
 ## 2026-10-26T15:35Z: campaign opened
 
