@@ -46,10 +46,10 @@ kind: primary
 controls_for: null
 prior: "pooler-unpooler-bulk-tma-row-owner-s2-cxx20-rebuild: that row-owner lost +1 us at m=8 and +6 us at m=16 on pooler/unpooler at 1 CTA/SM; this widens master's qkv A2 instance, which runs 2 CTAs/SM and won 1.16x at m=1, against the split-K-4 swap-AB incumbent, behind a per-cell gate"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212547Z
 base_sha: e90069716dd467a3801b43a8166dedef6c2ed987
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -68,6 +68,13 @@ attempt_file: 2026-10-26T012539Z-check-qkv-rowowner-a2-widen-m8-m16.md
 prepared_at: 2026-10-26T012539Z
 job: 0124ea8fcaf14b3c
 dispatched_at: 2026-10-26T012616Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2602596210780117
+speedup_ci: [1.2413557267618416, 1.2791635153941818]
+harvested_at: 2026-10-26T023152Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # qkv-rowowner-a2-widen-m8-m16
@@ -163,3 +170,53 @@ Fixes:
 1. **An NT=16 compile failure took down the m=1 bulk cells (category 2).** All instances are in one load_inline module. A build error in the new instance therefore returned `_BULK_EXT = None`, which sent A/A2/A3 at m=1 to cuBLAS (A2 is master's 12.67 -> 10.54 us win) along with the m=8 cell. That turns a neutral run into a decode_1 regression. The fix wraps the NT=16 `using`, launch and setup lines in `#ifndef BULK_NO_NT16`. `_bulk_build` now retries once, under its own name `<BULK_EXT_NAME>_nont16`, with `-DBULK_NO_NT16`. That rebuild has exactly master's instance set, so only A2w16 falls back: `bulk_setup(3)` raises "unknown instance", the error is caught, and the cell prints PATH CHOSEN master. The NN>=2 branch is a discarded `if constexpr` inside a template, so it is never instantiated without NT=16.
 
 Residual risk: the NT=16 indexing emulates exactly, so what remains is a device fault, or a gate reject on timing (the ingress model predicts m=16 loses and m=8 is break-even). A double build failure unrelated to NT=16 would add about 40 s of nvcc at import.
+
+## Result
+
+- job `0124ea8fcaf14b3c` (check), status done, passed True, tests 9/9
+- speedup 1.2603x, 95% CI [1.2414, 1.2792], score 3833.178433399135 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/qkv-rowowner-a2-widen-m8-m16.result.json`, `muse_bf16_proj/hypotheses/done/neutral/qkv-rowowner-a2-widen-m8-m16.patch`; branch `hyp/muse_bf16_proj/qkv-rowowner-a2-widen-m8-m16`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 11.01 | 1.0109 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 5.8 | 1.0258 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.59 | 1.0035 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 5.07 | 1.0251 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 4.85 | 1.0588 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 12.88 | 0.9917 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 5.99 | 1.0086 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 18.73 | 1.0084 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.26 | 0.9939 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.74 | 0.9422 | lost |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.85 | 0.9948 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.26 | 1.0048 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 19.75 | 0.9939 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.53 | 0.9907 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 6.18 | 0.9762 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.39 | 1.028 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.35 | 0.9877 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 18.98 | 1.0157 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 4.89 | 1.0899 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 4.87 | 1.1158 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 15.75 | 0.9827 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.37 | 1.0164 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 22.57 | 0.982 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 18.72 | 0.995 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.47 | 1.0149 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 19.52 | 0.9915 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.58 | 1.0059 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 29.76 | 0.973 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.54 | 0.9955 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.1 | 1.0378 | gained |
+
+gained on router decode_1, verify_1, verify_32; unpooler verify_1; lost on router decode_16. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

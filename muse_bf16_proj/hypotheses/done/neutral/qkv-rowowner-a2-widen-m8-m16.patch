@@ -1,0 +1,434 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..463e7b30 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -14,6 +14,10 @@ per-state losslessly repacked weight, and qkv_gate m == 128 (B) a cuBLASLt split
+ prepare(); each cell has its own state flag, canary, graph-replay gate (<= 0.98x master) and
+ profiler kernel-name assertion, else master's path.
+ 
++qkv-rowowner-a2-widen-m8-m16: qkv_gate at cfg m == 8 (the same compiled A2 instance, NT=8) and m == 16
++(new bulk_kernel<16, 8192, 16, 3, 2>, 2 CTAs/SM) get their own cells (bulk_qkv8_ok / bulk_qkv16_ok), each
++routed only if two interleaved gate rounds both give master/cand >= 1.03 with cand IQR <= 1.5x master's.
++
+ The four bf16 layers go through the same cuBLAS dispatch SGLang uses on H200
+ (`_bf16_gemm_dispatch_impl`), untouched except the NN cells above. The fp32 router runs, at every m, as ONE Triton kernel
+ over a bf16 hi + lo split of its weight with fp32 accumulation (allowed by the rules at any
+@@ -119,6 +123,8 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 256),
+     # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
+     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    # qkv-rowowner-a2-widen-m8-m16: the A2 kernel widened to m == 8 / 16 (own flags, see BULK_WIDE_CELLS).
++    ("qkv_gate", 2304, 8192, 8), ("qkv_gate", 2304, 8192, 16),
+ )
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+@@ -2073,7 +2079,7 @@ def _router_cluster_prepare(state: dict) -> None:
+ # flag on vs off, 256 MB flush before each replay, 41 interleaved reps, empty-graph baseline
+ # subtracted) that routes only at candidate / master <= 0.98, then one torch.profiler call that
+ # asserts the launched kernel name. One PATH CHOSEN line per cell. Flags and buffers live in state.
+-BULK_EXT_NAME = "muse_bf16_bulk_rowown_m1_v1"
++BULK_EXT_NAME = "muse_bf16_bulk_rowown_qkvwide_v1"   # new name: the instance set changed (adds NT=16)
+ BULK_NVCC_FLAGS = ["-O3", "-lineinfo", "-std=c++20"]
+ BULK_M = 1
+ # layer -> (source, instance id, N, K, rows per CTA R, ring stages S, min CTAs/SM, state flag)
+@@ -2082,6 +2088,20 @@ BULK_CELLS = {
+     "qkv_gate": ("A2", 1, 2304, 8192, 16, 4, 2, "bulk_qkv_ok"),
+     "o":        ("A3", 2, 8192, 1024, 64, 6, 1, "bulk_o_ok"),
+ }
++# qkv-rowowner-a2-widen-m8-m16: qkv_gate at cfg m == 8 (the SAME compiled A2 instance, NT=8) and m == 16
++# (new instance bulk_kernel<16, 8192, 16, 3, 2>: SLOT = 16384 + 16 * 1040 = 33,024 B, S=3 -> 99,328 B, 2 CTAs/SM).
++# Cells are keyed by (layer, m); all qkv cells share ONE repack, state["bulk_wt_qkv_gate"] (R = 16), which is
++# popped only when no qkv cell is on. Each has its OWN flag, passed to state B via NEW_CELL_FLAGS.
++# (layer, m) -> (source, instance id, N, K, R, ring stages S, min CTAs/SM, state flag, NT)
++BULK_WIDE_CELLS = {
++    ("qkv_gate", 8):  ("A2w8", 1, 2304, 8192, 16, 4, 2, "bulk_qkv8_ok", 8),
++    ("qkv_gate", 16): ("A2w16", 3, 2304, 8192, 16, 3, 2, "bulk_qkv16_ok", 16),
++}
++BULK_WIDE_ROUNDS = 2           # two independent interleaved gate rounds, BOTH must clear the margin
++BULK_WIDE_MIN_RATIO = 1.03     # master / candidate >= this in every round
++BULK_WIDE_MAX_IQR_RATIO = 1.5  # candidate IQR <= this x master's IQR in every round
++BULK_WIDE_IQR_FLOOR_US = 0.05  # event-timer resolution floor for master's IQR in that comparison
++BULK_WIDE_DEADLINE_S = 170.0   # the wide phase starts only if _prepare_state is younger than this
+ BULK_REF_TBS = 3.95          # best effective rate the row-owner kernel reached in the judge (pooler m=1)
+ CELL_MAX_RATIO = 0.98        # route only if candidate / master <= this (graph replay, cold L2)
+ CELL_GATE_REPS = 41
+@@ -2096,7 +2116,7 @@ LT_WS_BYTES = 1 << 20        # per-state workspace handed to cublasLtMatmul
+ LT_MAX_ALGOS = 16
+ LT_PICK_REPS = 15
+ LT_ALIGN = 256
+-NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG)
++NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG, "bulk_qkv8_ok", "bulk_qkv16_ok")
+ 
+ _BULK_CPP = r"""
+ #include <torch/extension.h>
+@@ -2336,6 +2356,9 @@ struct BulkInst {
+ using BulkPooler = BulkInst<32, 8192, 8, 6, 1>;   // A:  pooler   m=1, grid 128
+ using BulkQkv = BulkInst<16, 8192, 8, 4, 2>;      // A2: qkv_gate m=1, grid 144, 2 CTAs/SM
+ using BulkO = BulkInst<64, 1024, 8, 6, 1>;        // A3: o        m=1, grid 128
++#ifndef BULK_NO_NT16   // defined only by the fallback rebuild (an NT=16 compile failure keeps A/A2/A3)
++using BulkQkv16 = BulkInst<16, 8192, 16, 3, 2>;   // A2w16: qkv_gate m=16, grid 144, 99,328 B smem, 2 CTAs/SM
++#endif
+ 
+ void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tensor err, int64_t inst, int64_t m) {
+   TORCH_CHECK(wt.is_cuda() && x.is_cuda() && out.is_cuda() && err.is_cuda(), "bulk_run: cuda tensors");
+@@ -2351,6 +2374,9 @@ void bulk_run(torch::Tensor wt, torch::Tensor x, torch::Tensor out, torch::Tenso
+   if (inst == 0) BulkPooler::launch(wt, x, out, err, mi);
+   else if (inst == 1) BulkQkv::launch(wt, x, out, err, mi);
+   else if (inst == 2) BulkO::launch(wt, x, out, err, mi);
++#ifndef BULK_NO_NT16
++  else if (inst == 3) BulkQkv16::launch(wt, x, out, err, mi);
++#endif
+   else TORCH_CHECK(false, "bulk_run: unknown instance");
+ }
+ 
+@@ -2358,6 +2384,9 @@ std::vector<int64_t> bulk_setup(int64_t inst) {
+   if (inst == 0) return BulkPooler::setup();
+   if (inst == 1) return BulkQkv::setup();
+   if (inst == 2) return BulkO::setup();
++#ifndef BULK_NO_NT16
++  if (inst == 3) return BulkQkv16::setup();
++#endif
+   TORCH_CHECK(false, "bulk_setup: unknown instance");
+   return {};
+ }
+@@ -2478,6 +2507,18 @@ void run(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor algo
+ 
+ 
+ def _bulk_build():
++    """The bulk module with every instance; if that build fails, ONE rebuild without the NT=16
++    instance (-DBULK_NO_NT16, its own name), so an NT=16 compile failure cannot take down the
++    m == 1 cells A/A2/A3 or the m == 8 cell (bulk_setup(3) then raises and only A2w16 stays master).
++    Returns None (master paths) only if both builds fail; never raises."""
++    ext = _bulk_build_one(BULK_EXT_NAME, list(BULK_NVCC_FLAGS))
++    if ext is None:
++        print("[bulk] retrying the build WITHOUT the NT=16 instance (A2w16 cell -> master)", flush=True)
++        ext = _bulk_build_one(BULK_EXT_NAME + "_nont16", list(BULK_NVCC_FLAGS) + ["-DBULK_NO_NT16"])
++    return ext
++
++
++def _bulk_build_one(name: str, cflags: list):
+     """Compile the bulk row-owner module once per process, at import (never during capture), for
+     9.0a only (TORCH_CUDA_ARCH_LIST set around the build and restored after). Prints the arch flags
+     and the build seconds. Returns None (master paths) on any failure; never raises."""
+@@ -2490,11 +2531,11 @@ def _bulk_build():
+             print(f"[bulk] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
+         except Exception as e:  # diagnostic only
+             print(f"[bulk] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
+-        print(f"[bulk] building {BULK_EXT_NAME}: extra_cuda_cflags {BULK_NVCC_FLAGS}", flush=True)
++        print(f"[bulk] building {name}: extra_cuda_cflags {cflags}", flush=True)
+         ext = cpp_extension.load_inline(
+-            name=BULK_EXT_NAME, cpp_sources=_BULK_CPP, cuda_sources=_BULK_CUDA,
++            name=name, cpp_sources=_BULK_CPP, cuda_sources=_BULK_CUDA,
+             functions=["bulk_run", "bulk_setup"],
+-            extra_cuda_cflags=list(BULK_NVCC_FLAGS), verbose=False)
++            extra_cuda_cflags=cflags, verbose=False)
+     except Exception as e:
+         tail = "\n".join(str(e).splitlines()[-60:])
+         print(f"[bulk] build FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); build log "
+@@ -2548,21 +2589,23 @@ def _bulk_repack(w: torch.Tensor, rows: int) -> torch.Tensor:
+ 
+ 
+ def _bulk_route_ok(layer: str, x: torch.Tensor, cfg, state: dict) -> bool:
+-    """Bulk row-owner cell: layer in BULK_CELLS with its prepare()-set flag, cfg m == 1 and the
+-    cell's n / k, x a contiguous 16-byte-aligned bf16 [1, k]. cfg, shapes and state flags only."""
+-    spec = BULK_CELLS.get(layer)
+-    if spec is None or not state[spec[7]]:
++    """Bulk row-owner cell: (layer, cfg m) a cell of BULK_CELLS (m == 1) or BULK_WIDE_CELLS (exact m
++    equality) with its prepare()-set flag, the cell's n / k, x a contiguous 16-byte-aligned bf16
++    [m, k]. cfg, shapes and state flags only."""
++    m = cfg["m"]
++    spec = BULK_CELLS.get(layer) if m == BULK_M else BULK_WIDE_CELLS.get((layer, m))
++    if spec is None or not state.get(spec[7]):
+         return False
+     n, k = spec[2], spec[3]
+-    return (cfg["m"] == BULK_M and cfg["n"] == n and cfg["k"] == k
+-            and x.dim() == 2 and x.shape[0] == BULK_M and x.shape[1] == k
++    return (cfg["n"] == n and cfg["k"] == k
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == k
+             and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0)
+ 
+ 
+ def _bulk_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
+     """ONE launch: out[m, n] = x @ W.T, whole K per CTA, bf16 stored once, no workspace. Reads the
+     state's repacked weight and error word; writes nothing to state."""
+-    spec = BULK_CELLS[layer]
++    spec = BULK_CELLS[layer] if x.shape[0] == BULK_M else BULK_WIDE_CELLS[(layer, x.shape[0])]
+     out = torch.empty((x.shape[0], spec[2]), dtype=torch.bfloat16, device=x.device)
+     _BULK_EXT.bulk_run(state["bulk_wt_" + layer], x, out, state["bulk_err"], spec[1], x.shape[0])
+     return out
+@@ -2793,9 +2836,213 @@ def _bulk_prepare(state: dict, flags=None) -> None:
+             state.pop("bulk_wt_" + layer, None)
+         state["bulk_err"].zero_()
+         print(f"[prepare-time] cell {src} {layer} m={BULK_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
+-        print(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
+-              f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
+-              + ("" if state[flag] else f"; {why}"), flush=True)
++        _path_chosen(state, f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
++                            f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
++                            + ("" if state[flag] else f"; {why}"))
++    torch.cuda.synchronize()
++
++
++def _path_chosen(state: dict, line: str) -> None:
++    """Print one PATH CHOSEN / GATE line and keep it in state["path_log"] (host strings only) so
++    prepare() can repeat every one of them as its LAST lines (the judge keeps only the log tail)."""
++    print(line, flush=True)
++    log = state.get("path_log")
++    if log is not None:
++        log.append(line)
++
++
++def _iqr_us(v) -> float:
++    """Interquartile range (75th minus 25th percentile, nearest rank) of a list of timings."""
++    s = sorted(v)
++    n = len(s)
++    return s[(3 * (n - 1)) // 4] - s[(n - 1) // 4]
++
++
++def _cell_gate_rounds(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: dict,
++                      rounds: int = 2):
++    """Hardened model selector: _cell_gate's measurement (kernel_fn captured with the cell's flag on
++    and off on shallow copies of state, one synthetic x, CELL_FLUSH_BYTES write before every replay,
++    CELL_GATE_REPS interleaved replays with the order swapped every rep, medians minus an empty-graph
++    baseline) repeated for `rounds` independent rounds on the same two graphs (each round re-times
++    its own baseline and starts on the opposite order). Returns a list, one dict per round:
++    cand / master net median us, cand_iqr / master_iqr us, ratio = master / cand. prepare()-only."""
++    dev = state["router"].device
++    st_c = dict(state)
++    st_c[flag] = True
++    st_i = dict(state)
++    st_i[flag] = False
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    g_base = _cell_capture(lambda: scratch.add_(1.0))
++    graphs = {"cand": _cell_capture(lambda: kernel_fn(data, st_c)),
++              "master": _cell_capture(lambda: kernel_fn(data, st_i))}
++    out = []
++    for rnd in range(rounds):
++        base = _ouns_median([replay_us(g_base) for _ in range(CELL_GATE_REPS)])
++        times = {"cand": [], "master": []}
++        for rep in range(CELL_GATE_REPS):
++            order = ("cand", "master") if (rep + rnd) % 2 == 0 else ("master", "cand")
++            for name in order:
++                times[name].append(replay_us(graphs[name]))
++        med = {name: _ouns_median(v) for name, v in times.items()}
++        adj = {name: max(v - base, 0.25) for name, v in med.items()}
++        res = {"cand": adj["cand"], "master": adj["master"], "cand_iqr": _iqr_us(times["cand"]),
++               "master_iqr": _iqr_us(times["master"]), "ratio": adj["master"] / adj["cand"]}
++        out.append(res)
++        print(f"[cell] gate {tag} {layer} m={m} round {rnd + 1}/{rounds} (graph replay, "
++              f"{CELL_FLUSH_BYTES >> 20} MB flush, {CELL_GATE_REPS} reps, interleaved): cand median "
++              f"{med['cand']:.2f} us (IQR {res['cand_iqr']:.2f}), master median {med['master']:.2f} us "
++              f"(IQR {res['master_iqr']:.2f}), empty-graph baseline {base:.2f} us -> net "
++              f"{adj['cand']:.2f} vs {adj['master']:.2f} us, master/cand {res['ratio']:.3f}", flush=True)
++    del graphs, g_base, flush
++    torch.cuda.synchronize()
++    return out
++
++
++def _bulk_layer_flags(layer: str):
++    """Every state flag of a bulk cell on `layer` (the m == 1 cell and the wide cells)."""
++    names = [BULK_CELLS[layer][7]] if layer in BULK_CELLS else []
++    names += [spec[7] for (lay, _m), spec in BULK_WIDE_CELLS.items() if lay == layer]
++    return names
++
++
++def _bulk_wide_prepare(state: dict, flags=None) -> None:
++    """qkv_gate m == 8 (A2w8, the same compiled NT=8 instance as m=1) and m == 16 (A2w16, NT=16, S=3),
++    each with its OWN flag. flags None (the judge's state): per cell the deadline check, instance
++    attributes + occupancy (needs 2 CTAs/SM), the shared repack, canary + correctness, the two-round
++    gate (master / cand >= BULK_WIDE_MIN_RATIO in BOTH rounds and cand IQR <= BULK_WIDE_MAX_IQR_RATIO x
++    master's), a profiler kernel-name assertion and one PATH CHOSEN line. A miss leaves that cell on
++    master's exact path and touches no other flag. flags a dict (the A/B check's second state): inherit
++    each flag; repack qkv_gate if some wide cell is on and no repack exists yet."""
++    for spec in BULK_WIDE_CELLS.values():
++        state[spec[7]] = False
++    if _BULK_EXT is None or "bulk_err" not in state:
++        if flags is None:
++            for (layer, m), spec in BULK_WIDE_CELLS.items():
++                _path_chosen(state, f"PATH CHOSEN {spec[0]} {layer} m={m}: master (cand n/a us vs master n/a "
++                                    f"us; no bulk module)")
++        return
++    dev = state["router"].device
++    if flags is not None:
++        for (layer, m), spec in BULK_WIDE_CELLS.items():
++            if flags.get(spec[7]):
++                try:   # a failure here turns off only this cell in this state
++                    if "bulk_wt_" + layer not in state:
++                        state["bulk_wt_" + layer] = _bulk_repack(state[layer], spec[4])
++                    state[spec[7]] = True
++                except Exception as e:
++                    print(f"[bulk] second state: {spec[0]} {layer} m={m} repack raised {type(e).__name__}: "
++                          f"{e}; cell off in this state", flush=True)
++        return
++    for (layer, m), spec in BULK_WIDE_CELLS.items():
++        src, inst, n, k, rows, stages, minb, flag, nt = spec
++        t0 = time.perf_counter()
++        why = ""
++        rounds = []
++        names = None
++        try:
++            if t0 - state["t_prepare0"] > BULK_WIDE_DEADLINE_S:
++                why = (f"skipped: deadline (_prepare_state is {t0 - state['t_prepare0']:.0f} s old, "
++                       f"limit {BULK_WIDE_DEADLINE_S:.0f} s)")
++                print(f"[bulk] {src} {layer} m={m}: {why}", flush=True)
++            else:
++                w = state[layer]
++                if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
++                        and w.is_contiguous()):
++                    why = f"weight {tuple(w.shape)} {w.dtype} unexpected"
++                else:
++                    info = [int(v) for v in _BULK_EXT.bulk_setup(inst)]
++                    occ = info[4]
++                    print(f"[bulk] {src} {layer} m={m} bulk_kernel<{rows}, {k}, {nt}, {stages}, {minb}>: "
++                          f"regs={info[0]} local(spill)={info[1]} B static smem={info[2]} B dyn smem={info[3]} B "
++                          f"(S={info[5]} from the template), occupancy {occ} CTA/SM (needs {minb}), grid "
++                          f"{n // rows}, max-shared carveout set", flush=True)
++                    if occ < minb:
++                        why = f"occupancy {occ} CTA/SM < {minb}"
++                    else:
++                        if "bulk_wt_" + layer not in state:
++                            state["bulk_wt_" + layer] = _bulk_repack(w, rows)
++                            print(f"[bulk] {src} {layer}: repack Wt{tuple(state['bulk_wt_' + layer].shape)} "
++                                  f"rows {rows}, bit-exact round trip verified", flush=True)
++                        st_on = dict(state)
++                        st_on[flag] = True
++                        why = _cell_check(f"{src} bulk_kernel<{rows},{k},{nt},{stages},{minb}>",
++                                          lambda xx: _bulk_forward(layer, xx, st_on), w, m, n, k,
++                                          err=state["bulk_err"])
++                        if not why:
++                            tg = time.perf_counter()
++                            rounds = _cell_gate_rounds(src, layer, m, n, k, flag, state, BULK_WIDE_ROUNDS)
++                            wbytes = n * k * 2
++                            xbytes = (n // rows) * m * k * 2   # every CTA re-reads all of x from L2
++                            for i, r in enumerate(rounds):
++                                print(f"[cell] ingress {src} {layer} m={m} round {i + 1}: W {wbytes / 1e6:.1f} MB "
++                                      f"+ x {xbytes / 1e6:.1f} MB = {(wbytes + xbytes) / 1e6:.1f} MB in "
++                                      f"{r['cand']:.2f} us (cold gate net) = {(wbytes + xbytes) / r['cand'] / 1e6:.2f} "
++                                      f"TB/s L2/DRAM->SM; weight-only {wbytes / r['cand'] / 1e6:.2f} TB/s "
++                                      f"(BULK_REF_TBS {BULK_REF_TBS}); master net {r['master']:.2f} us = "
++                                      f"{wbytes / r['master'] / 1e6:.2f} TB/s", flush=True)
++                            print(f"[prepare-time] gate {src} {layer} m={m}: {time.perf_counter() - tg:.2f}s",
++                                  flush=True)
++                            code = int(state["bulk_err"].item())
++                            if code:
++                                why = f"error word {code} after the gate"
++                            else:
++                                for i, r in enumerate(rounds):
++                                    if not r["ratio"] >= BULK_WIDE_MIN_RATIO:
++                                        why = (f"gate: round {i + 1} master/cand {r['ratio']:.3f} < "
++                                               f"{BULK_WIDE_MIN_RATIO}")
++                                        break
++                                    if not r["cand_iqr"] <= BULK_WIDE_MAX_IQR_RATIO * max(
++                                            r["master_iqr"], BULK_WIDE_IQR_FLOOR_US):
++                                        why = (f"gate: round {i + 1} cand IQR {r['cand_iqr']:.2f} > "
++                                               f"{BULK_WIDE_MAX_IQR_RATIO}x master IQR {r['master_iqr']:.2f}")
++                                        break
++                            if not why:
++                                data = {"x": torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16),
++                                        "config": {"m": m, "n": n, "k": k, "layer": layer}}
++                                try:
++                                    names = _cell_kernels(lambda: kernel_fn(data, st_on))
++                                    print(f"[bulk] {src} {layer} m={m}: profiled kernels {names}", flush=True)
++                                    if not names:
++                                        print(f"[bulk] {src} {layer} m={m}: profiler returned no CUDA kernel "
++                                              f"events; route kept (kernel_fn calls bulk_run directly)", flush=True)
++                                    elif not (len(names) == 1 and "bulk_kernel" in names[0]):
++                                        why = f"profiled kernels {names}: expected exactly one bulk_kernel"
++                                    elif f"{nt}, {stages}, {minb}>" not in names[0]:
++                                        print(f"[bulk] {src} {layer} m={m}: note, template args not found "
++                                              f"verbatim in the kernel name", flush=True)
++                                except Exception as e:  # own extension, direct launch: keep the route
++                                    print(f"[bulk] {src} {layer} m={m}: profiler unavailable "
++                                          f"({type(e).__name__}: {e}); route kept (kernel_fn calls bulk_run "
++                                          f"directly)", flush=True)
++                                if not why:
++                                    state[flag] = True
++        except Exception as e:  # never raises: any surprise keeps master's path for this cell
++            why = f"raised {type(e).__name__}: {str(e)[-300:]}"
++            state[flag] = False
++        state["bulk_err"].zero_()
++        print(f"[prepare-time] cell {src} {layer} m={m} total: {time.perf_counter() - t0:.2f}s", flush=True)
++        rd = "; ".join(f"r{i + 1} cand {r['cand']:.2f} (IQR {r['cand_iqr']:.2f}) master {r['master']:.2f} "
++                       f"(IQR {r['master_iqr']:.2f}) ratio {r['ratio']:.3f}" for i, r in enumerate(rounds))
++        _path_chosen(state, f"PATH CHOSEN {src} {layer} m={m}: {'candidate' if state[flag] else 'master'} "
++                            f"({rd or 'cand n/a us vs master n/a us'}; kernels {[nm[:70] for nm in names] if state[flag] and names else 'n/a'})"
++                            + ("" if state[flag] else f"; {why}"))
++    # The qkv repack is shared by every qkv cell: drop it only when none of them is on.
++    for layer in {lay for (lay, _m) in BULK_WIDE_CELLS}:
++        if not any(state.get(f) for f in _bulk_layer_flags(layer)):
++            state.pop("bulk_wt_" + layer, None)
+     torch.cuda.synchronize()
+ 
+ 
+@@ -2910,9 +3157,9 @@ def _lt_prepare(state: dict, flags=None) -> None:
+         state["lt_ws_qkv128"] = None
+     torch.cuda.synchronize()
+     print(f"[prepare-time] cell B qkv_gate m={LT_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
+-    print(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
+-          f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
+-          + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
++    _path_chosen(state, f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
++                        f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
++                        + ("" if state[LT_FLAG] else f"; {why}"))
+ 
+ 
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+@@ -2930,6 +3177,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+ 
+     t = time.perf_counter()
+     state = {name: w.contiguous() for name, w in weights.items()}
++    state["t_prepare0"] = t_all     # host float: start of this state's build (new-phase deadlines)
++    state["path_log"] = []          # host strings: PATH CHOSEN lines, repeated at the end of prepare()
+     router = state["router"]
+     hi = router.to(torch.bfloat16).contiguous()
+     lo = (router - hi.float()).to(torch.bfloat16).contiguous()
+@@ -3003,6 +3252,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # behind its own canary, gate and kernel-name assertion (after master's own work).
+         _bulk_prepare(state)
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
++        _bulk_wide_prepare(state)   # qkv_gate m == 8 / 16 (after A2 m=1; shares its repack)
++        t = tick("bulk wide cells qkv m=8/16 (setup + canary + 2-round gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
+     else:
+@@ -3012,6 +3263,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
++        _bulk_wide_prepare(state, flags=flags)
+         _lt_prepare(state, flags=flags)
+         t = tick("bulk / lt per-state buffers (flags inherited)", t)
+     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
+@@ -3030,6 +3282,8 @@ def _ab_flags(state: dict) -> dict:
+ def _ab_component(layer: str, m: int) -> str:
+     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
+     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
++    if (layer, m) in BULK_WIDE_CELLS:   # qkv m == 8 / 16: their OWN flags, never bulk_qkv_ok (m == 1)
++        return BULK_WIDE_CELLS[(layer, m)][7]
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
+     if layer == "qkv_gate" and m == LT_M:
+@@ -3159,6 +3413,10 @@ def prepare(weights: Weights) -> dict:
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
+           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++    # Compact repeat of every PATH CHOSEN / gate result as the LAST lines (the judge keeps the log tail).
++    for line in state.get("path_log", []):
++        print("[summary] " + line[:900], flush=True)
++    print("[summary] FINAL " + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS), flush=True)
+     return state
+ 
+ 
