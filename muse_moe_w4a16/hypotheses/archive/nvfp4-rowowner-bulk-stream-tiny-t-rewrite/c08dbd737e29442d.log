@@ -1,0 +1,112 @@
+rowowner] first launch: variant F T=1 zipf (prints name each launch)
+[rowowner]     [F T=1 zipf] before ro_w13 (device work map + w13 + silu)
+[rowowner]     [F T=1 zipf] after ro_w13 / before ro_w2
+[rowowner]     [F T=1 zipf] after ro_w2 / before post-expert norm
+[rowowner]     [F T=1 zipf] after post-expert norm
+[rowowner] first launch: variant M T=1 zipf (prints name each launch)
+[rowowner]     [M T=1 zipf] before ro_w13 (device work map + w13 + silu)
+[rowowner]     [M T=1 zipf] after ro_w13 / before ro_w2
+[rowowner]     [M T=1 zipf] after ro_w2 / before post-expert norm
+[rowowner]     [M T=1 zipf] after post-expert norm
+[rowowner] canary summary: variant F clean per T {1: True, 2: True, 3: True, 4: True}, variant M clean per T {1: True, 2: True, 3: True, 4: True}, PDL on
+[rowowner] kernel-only cold-L2 T=1, 8 active experts, 151.0 + 75.5 MB (eager single launches incl. launch overhead): F: w13 135.2 us (1.12 TB/s), w2 77.4 us (0.98 TB/s); M: w13 71.4 us (2.12 TB/s), w2 44.0 us (1.71 TB/s)
+[rowowner] kernel-only cold-L2 T=4, 20 active experts, 377.5 + 188.7 MB (eager single launches incl. launch overhead): F: w13 480.2 us (0.79 TB/s), w2 460.1 us (0.41 TB/s); M: w13 165.2 us (2.28 TB/s), w2 151.4 us (1.25 TB/s)
+[rowowner] gate T=4: worst-cell ratios F 0.240, M 0.688 (ON needs both rounds >= 1.03 on both routings, IQR <= 1.5 x master's) -> master
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.68 us, align2 3.87 us, ratio 0.950, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.39 us, align2 4.22 us, ratio 0.803, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.08 us, align2 4.26 us, ratio 1.429, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'F2-select-diag': 200.0, 'copy': 255.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.0 s, ran
+[combo] phase C1a: 0.2 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] phase copy: 0.4 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 26.98 us, w13 atomic 25.66 us, ratio 0.951 (ON at <= 0.98); fp32 worst 0.00779, vs master worst 0.00991
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.42 us, align2 chunk 64 bsm 16 4.51 us, ratio 0.363 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.58 us, _align_parallel 2.02 us, ratio 0.563 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.62 us, hoisted Triton post-norm 2.98 us, ratio 0.823 (ON at <= 0.98); error vs fp32 worst hoisted 0.00166 / SGLang 0.00245 (6 routings)
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 (master = 'master'/0)
+[combo] prepare seconds: master 50.4, total 53.6
+[rowowner] kernel w13/F: attrs ok True, 115 regs, 0 B local (spill), 0 B static smem, 3 CTAs/SM at T=4, setattr rc 0
+[rowowner] kernel w13/M: attrs ok True, 96 regs, 0 B local (spill), 0 B static smem, 3 CTAs/SM at T=4, setattr rc 0
+[rowowner] kernel w2/F: attrs ok True, 128 regs, 0 B local (spill), 0 B static smem, 1 CTAs/SM at T=4, setattr rc 0
+[rowowner] kernel w2/M: attrs ok True, 128 regs, 0 B local (spill), 0 B static smem, 1 CTAs/SM at T=4, setattr rc 0
+[rowowner] canary variant F T=1 zipf (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.0039 (master 0.00709), worst row 0.0039
+[rowowner] canary variant M T=1 zipf (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.0039 (master 0.00709), worst row 0.0039
+[rowowner] canary variant F T=1 local8 (active 8): ok: finite True, error word 0, rel-L2 vs fp32 0.00398 (master 0.00589), worst row 0.00398; active 8: h rel-L2 5.17e-06, y rel-L2 (given kernel h) 0.00166
+[rowowner] canary variant M T=1 local8 (active 8): ok: finite True, error word 0, rel-L2 vs fp32 0.00398 (master 0.00589), worst row 0.00398; active 8: h rel-L2 2.09e-05, y rel-L2 (given kernel h) 0.00166
+[rowowner] canary variant F T=1 skewed-4hot (active 4): ok: finite True, error word 0, rel-L2 vs fp32 0.00388 (master 0.00645), worst row 0.00388
+[rowowner] canary variant M T=1 skewed-4hot (active 4): ok: finite True, error word 0, rel-L2 vs fp32 0.00387 (master 0.00645), worst row 0.00387
+[rowowner] canary variant F T=1 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00393 (master 0.00847), worst row 0.00393
+[rowowner] canary variant M T=1 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00393 (master 0.00847), worst row 0.00393
+[rowowner] canary variant F T=1 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00394 (master 0.00732), worst row 0.00394
+[rowowner] canary variant M T=1 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00394 (master 0.00732), worst row 0.00394
+[rowowner] canary variant F T=1 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant M T=1 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant F T=2 zipf (active 7): ok: finite True, error word 0, rel-L2 vs fp32 0.00384 (master 0.00536), worst row 0.00388
+[rowowner] canary variant M T=2 zipf (active 7): ok: finite True, error word 0, rel-L2 vs fp32 0.00384 (master 0.00536), worst row 0.00388
+[rowowner] canary variant F T=2 local8 (active 13): ok: finite True, error word 0, rel-L2 vs fp32 0.00397 (master 0.00525), worst row 0.00398
+[rowowner] canary variant M T=2 local8 (active 13): ok: finite True, error word 0, rel-L2 vs fp32 0.00397 (master 0.00525), worst row 0.00398
+[rowowner] canary variant F T=2 skewed-4hot (active 6): ok: finite True, error word 0, rel-L2 vs fp32 0.00406 (master 0.00516), worst row 0.00406
+[rowowner] canary variant M T=2 skewed-4hot (active 6): ok: finite True, error word 0, rel-L2 vs fp32 0.00406 (master 0.00516), worst row 0.00406
+[rowowner] canary variant F T=2 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00376 (master 0.00667), worst row 0.00389
+[rowowner] canary variant M T=2 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00376 (master 0.00667), worst row 0.00389
+[rowowner] canary variant F T=2 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00395 (master 0.00607), worst row 0.00396
+[rowowner] canary variant M T=2 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00395 (master 0.00607), worst row 0.00396
+[rowowner] canary variant F T=2 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant M T=2 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant F T=2 max-active (active 16): ok: finite True, error word 0, rel-L2 vs fp32 0.00383 (master 0.00516), worst row 0.00386
+[rowowner] canary variant M T=2 max-active (active 16): ok: finite True, error word 0, rel-L2 vs fp32 0.00383 (master 0.00516), worst row 0.00385
+[rowowner] canary variant F T=3 zipf (active 10): ok: finite True, error word 0, rel-L2 vs fp32 0.00396 (master 0.00538), worst row 0.00399
+[rowowner] canary variant M T=3 zipf (active 10): ok: finite True, error word 0, rel-L2 vs fp32 0.00396 (master 0.00538), worst row 0.00398
+[rowowner] canary variant F T=3 local8 (active 15): ok: finite True, error word 0, rel-L2 vs fp32 0.00386 (master 0.00524), worst row 0.00391
+[rowowner] canary variant M T=3 local8 (active 15): ok: finite True, error word 0, rel-L2 vs fp32 0.00386 (master 0.00524), worst row 0.00391
+[rowowner] canary variant F T=3 skewed-4hot (active 7): ok: finite True, error word 0, rel-L2 vs fp32 0.00387 (master 0.00541), worst row 0.00389
+[rowowner] canary variant M T=3 skewed-4hot (active 7): ok: finite True, error word 0, rel-L2 vs fp32 0.00386 (master 0.00541), worst row 0.00389
+[rowowner] canary variant F T=3 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00396 (master 0.00645), worst row 0.00402
+[rowowner] canary variant M T=3 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00396 (master 0.00645), worst row 0.00402
+[rowowner] canary variant F T=3 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00382 (master 0.00598), worst row 0.00385
+[rowowner] canary variant M T=3 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00381 (master 0.00598), worst row 0.00384
+[rowowner] canary variant F T=3 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant M T=3 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant F T=3 max-active (active 24): ok: finite True, error word 0, rel-L2 vs fp32 0.00378 (master 0.00513), worst row 0.0038
+[rowowner] canary variant M T=3 max-active (active 24): ok: finite True, error word 0, rel-L2 vs fp32 0.00378 (master 0.00513), worst row 0.00381
+[rowowner] canary variant F T=4 zipf (active 12): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.00537), worst row 0.004
+[rowowner] canary variant M T=4 zipf (active 12): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.00537), worst row 0.00399
+[rowowner] canary variant F T=4 local8 (active 19): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.0052), worst row 0.004; active 19: h rel-L2 3.59e-05, y rel-L2 (given kernel h) 0.00166
+[rowowner] canary variant M T=4 local8 (active 19): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.0052), worst row 0.004; active 19: h rel-L2 6.92e-05, y rel-L2 (given kernel h) 0.00166
+[rowowner] canary variant F T=4 skewed-4hot (active 4): ok: finite True, error word 0, rel-L2 vs fp32 0.00386 (master 0.00561), worst row 0.00393
+[rowowner] canary variant M T=4 skewed-4hot (active 4): ok: finite True, error word 0, rel-L2 vs fp32 0.00386 (master 0.00561), worst row 0.00393
+[rowowner] canary variant F T=4 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00391 (master 0.00644), worst row 0.00401
+[rowowner] canary variant M T=4 one-local (active 1): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.00644), worst row 0.00401
+[rowowner] canary variant F T=4 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00384 (master 0.00603), worst row 0.00393
+[rowowner] canary variant M T=4 two-local (active 2): ok: finite True, error word 0, rel-L2 vs fp32 0.00384 (master 0.00603), worst row 0.00393
+[rowowner] canary variant F T=4 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant M T=4 zero-local (active 0): ok: finite True, error word 0, rel-L2 vs fp32 0 (master 0), worst row 0
+[rowowner] canary variant F T=4 max-active (active 32): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.00506), worst row 0.00399
+[rowowner] canary variant M T=4 max-active (active 32): ok: finite True, error word 0, rel-L2 vs fp32 0.00392 (master 0.00506), worst row 0.00399
+[rowowner] kernel-only cold-L2 T=1, 8 active experts, 151.0 + 75.5 MB (eager single launches incl. launch overhead): F: w13 135.2 us (1.12 TB/s), w2 77.4 us (0.98 TB/s); M: w13 71.4 us (2.12 TB/s), w2 44.0 us (1.71 TB/s)
+[rowowner] kernel-only cold-L2 T=4, 20 active experts, 377.5 + 188.7 MB (eager single launches incl. launch overhead): F: w13 480.2 us (0.79 TB/s), w2 460.1 us (0.41 TB/s); M: w13 165.2 us (2.28 TB/s), w2 151.4 us (1.25 TB/s)
+[rowowner] gate T=1 local8 round 1: master 110.05 us (IQR 0.90) | F 230.27 us (IQR 1.02, p10/p90 229.34/231.30, ratio 0.478) | M 124.54 us (IQR 0.77, p10/p90 123.71/125.02, ratio 0.884)
+[rowowner] gate T=1 local8 round 2: master 109.70 us (IQR 0.96) | F 229.92 us (IQR 0.93, p10/p90 229.28/231.01, ratio 0.477) | M 124.10 us (IQR 0.74, p10/p90 123.33/125.02, ratio 0.884)
+[rowowner] gate T=1 skewed-4hot round 1: master 67.30 us (IQR 1.15) | F 123.20 us (IQR 0.38, p10/p90 122.91/123.58, ratio 0.546) | M 69.66 us (IQR 0.54, p10/p90 69.38/70.78, ratio 0.966)
+[rowowner] gate T=1 skewed-4hot round 2: master 67.04 us (IQR 1.22) | F 123.26 us (IQR 0.45, p10/p90 122.88/123.94, ratio 0.544) | M 69.70 us (IQR 0.74, p10/p90 69.38/70.78, ratio 0.962)
+[rowowner] gate T=1: worst-cell ratios F 0.477, M 0.884 (ON needs both rounds >= 1.03 on both routings, IQR <= 1.5 x master's) -> master
+[rowowner] gate T=4 local8 round 1: master 222.24 us (IQR 1.15) | F 924.10 us (IQR 2.34, p10/p90 922.69/926.56, ratio 0.240, IQR too wide) | M 311.94 us (IQR 1.09, p10/p90 310.78/312.83, ratio 0.712)
+[rowowner] gate T=4 local8 round 2: master 222.43 us (IQR 1.06) | F 923.42 us (IQR 2.02, p10/p90 922.30/925.98, ratio 0.241, IQR too wide) | M 311.94 us (IQR 1.50, p10/p90 309.92/313.15, ratio 0.713)
+[rowowner] gate T=4 skewed-4hot round 1: master 78.46 us (IQR 1.06) | F 301.76 us (IQR 0.93, p10/p90 301.02/302.78, ratio 0.260) | M 113.92 us (IQR 0.86, p10/p90 113.28/115.04, ratio 0.689)
+[rowowner] gate T=4 skewed-4hot round 2: master 78.30 us (IQR 0.93) | F 301.73 us (IQR 1.12, p10/p90 300.64/302.75, ratio 0.260) | M 113.76 us (IQR 0.93, p10/p90 113.15/114.88, ratio 0.688)
+[rowowner] gate T=4: worst-cell ratios F 0.240, M 0.688 (ON needs both rounds >= 1.03 on both routings, IQR <= 1.5 x master's) -> master
+[rowowner] ===== ROW-OWNER SUMMARY (32.2 s; module muse_moe_w4a16_rowowner_v1; kernels rowowner_v1_w13 + rowowner_v1_w2, F = CUDA-core FMA, M = mma.sync; PDL on) =====
+[rowowner] kernel-only cold-L2 T=1, 8 active experts, 151.0 + 75.5 MB (eager single launches incl. launch overhead): F: w13 135.2 us (1.12 TB/s), w2 77.4 us (0.98 TB/s); M: w13 71.4 us (2.12 TB/s), w2 44.0 us (1.71 TB/s)
+[rowowner] kernel-only cold-L2 T=4, 20 active experts, 377.5 + 188.7 MB (eager single launches incl. launch overhead): F: w13 480.2 us (0.79 TB/s), w2 460.1 us (0.41 TB/s); M: w13 165.2 us (2.28 TB/s), w2 151.4 us (1.25 TB/s)
+[rowowner] PATH CHOSEN T=1 = MASTER
+[rowowner] PATH CHOSEN T=2 = MASTER
+[rowowner] PATH CHOSEN T=3 = MASTER
+[rowowner] PATH CHOSEN T=4 = MASTER

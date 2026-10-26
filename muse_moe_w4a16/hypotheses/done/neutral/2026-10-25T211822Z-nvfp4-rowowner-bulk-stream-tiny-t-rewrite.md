@@ -64,10 +64,10 @@ prior: "cuda-fused-split-i-moe-tiny-t: that queued design keeps the wgmma rega c
 rewrite_stage: 1
 replaces: Marlin w13 + silu_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2) at 1 <= num_tokens <= 4
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212523Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212549Z
 base_sha: 641f0e0099c84be50a9f8705e113a62388a5847a
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -86,6 +86,13 @@ attempt_file: 2026-10-26T012541Z-check-nvfp4-rowowner-bulk-stream-tiny-t-rewrite
 prepared_at: 2026-10-26T012541Z
 job: c08dbd737e29442d
 dispatched_at: 2026-10-26T012820Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3886654457580099
+speedup_ci: [1.3678354640716397, 1.4094954274443798]
+harvested_at: 2026-10-26T023156Z
+best_at_harvest: 1.4020871870995952
+promotion: null
 ---
 
 # nvfp4-rowowner-bulk-stream-tiny-t-rewrite
@@ -183,3 +190,30 @@ Verdict: dispatch-with-fixes. Emulation: /tmp/claude-1000/-home-user-git-musespa
 - Not changed: deadlines. Master's prepare is 60-105 s, this phase starts at ~105 s, compile ~40-60 s, canary budget to 210 s; a miss lands on master with a "skipped: deadline" line.
 
 Residual risk: nothing was compiled or run (no nvcc); w2 at T=4 runs 1 CTA/SM (36 KB in flight per SM), so T=4 may fail the 1.03 gate and keep master, which does not affect the scored T=1.
+
+## Result
+
+- job `c08dbd737e29442d` (check), status done, passed True, tests 5/5
+- speedup 1.3887x, 95% CI [1.3678, 1.4095], score 9684.478029666152 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.4020871870995952, "ci": [1.3810558792931014, 1.423118494906089], "job": "31c27e4b8fc84bd2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/nvfp4-rowowner-bulk-stream-tiny-t-rewrite.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/nvfp4-rowowner-bulk-stream-tiny-t-rewrite.patch`; branch `hyp/muse_moe_w4a16/nvfp4-rowowner-bulk-stream-tiny-t-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.35 | 45.98 | 1.0153 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 150.9 | 147.98 | 0.9966 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.12 | 205.44 | 1.0147 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 104.51 | 106.84 | 0.98 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 323.16 | 321.23 | 1.0129 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 358.12 | 390.1 | 0.9261 | lost |
+
+lost on verify_32 verify_32. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13 + silu_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2) at 1 <= num_tokens <= 4`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on nvfp4-rowowner-bulk-stream-tiny-t-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: nvfp4-rowowner-bulk-stream-tiny-t-rewrite`) that adds a further change in the same area is the only way to learn more.
+
