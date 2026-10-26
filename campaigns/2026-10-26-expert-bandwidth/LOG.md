@@ -11,14 +11,15 @@ append-only, newest last.
   attention_decode > prefill (last). On bf16 / attention, favour kernels that port into decode, and submit when a check
   beats that board. Every check must answer a new question; using every check is not required; no identical bytes
   re-rolled.
-- updated: 2026-10-26T20:57Z
+- updated: 2026-10-26T21:20Z
 - step: **bf16_proj**.
   - Done: bulk12 m=1 scored at 1.2664 (board 1.2566 -> 1.2664, rank 381 -> 355) and landed on master.
   - Building: bulk12 for m = 8 / 16 / 32 (branch campaign/expert-bandwidth after 3acb748e, uncommitted). b12x_kernel
     streams the NT token rows of x with each chunk.
     - Cells: pooler / qkv / o at m=8, then pooler / o / full unpooler at m=16 / 32.
     - Each layer's codec stats, instance gates and PATH CHOSEN lines are re-printed at the end of prepare.
-  - Next: audit, then one check. Submit if it beats 1.2664.
+  - Check 22ddaf4a (1.2683): no m >= 8 cell routed. Per-row x TMA copies cost ~30-50 ns each.
+  - Fixed in d466a692 (x via cp.async from all producer lanes), in audit. Next: one check; submit if it beats 1.2664.
 - in flight: nothing
 - at 00:00Z (10-27), decode / moe, from the drafts in the session scratchpad (submit_attempt.md, dqab_attempt.md,
   anat_attempt.md):
@@ -29,7 +30,7 @@ append-only, newest last.
      - H=-8;
      - v4c.
   3. decode check at eacf0722: H=-8, v4c, and the anatomies.
-- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 11 / 9, attention 14 / 10, prefill 16 / 10
+- quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4, bf16 10 / 9, attention 14 / 10, prefill 16 / 10
 - boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318), moe **1.6851** (rank 370 of 844),
   bf16 **1.2664** (rank 355 of 1090; rank 300 = 1.2865, 200 = 1.3503), overall 347 of 1228
 
@@ -343,3 +344,27 @@ append-only, newest last.
 - The 16 KB tail cut the per-instance gate lines. The next build re-prints them at the end of prepare.
 - Port value for decode: the codec and decode step drop into decode's P (pooler + router), qkv and o kernels. pooler
   alone is ~67 MB per layer row at every T. Campaign #2 material once bf16 shows the m=8..32 rates.
+
+## 2026-10-26T21:20Z: bf16 bulk12 at m=8/16/32: check 22ddaf4a 1.2683, no m >= 8 cell routed (per-row x TMA copies)
+
+- check 22ddaf4a563b40cb (code 97aaf5a6, audited; MAJOR epilogue bank conflicts fixed before the run): passed 9/9 at
+  1.2683.
+- The m=1 cells routed again (gate: pooler 19.1 vs 22.0, qkv 12.2 vs 13.7, o 5.8 vs 6.7 net us).
+- No m >= 8 cell routed:
+
+  | cell | b12x vs incumbent (net us) | ratio |
+  |---|---|---|
+  | pooler m=8 | 26.4 vs 23.7 | 1.11 |
+  | pooler m=16 | 40.4 vs 23.8 | 1.69 |
+  | pooler m=32 | 70.6 vs 24.6 | 2.87 |
+  | qkv m=8 | 16.7 vs 14.9 | 1.12 |
+  | o m=8 / 16 / 32 | | 1.13 / 1.66 / 2.83 |
+  | unpooler m=16 / 32 | | 1.63 / 2.89 |
+
+- Diagnosis:
+  - The extra time grows linearly with the number of per-row x bulk copies: m per chunk, 256 / 512 / 1024 per CTA.
+  - That is about 30-50 ns per 512 B TMA copy, serialized in the copy engine.
+  - CW 4 vs 8 makes no difference, so the kernel is not consumer-bound.
+  - Lesson: never stream many small rows through cp.async.bulk. One TMA copy per chunk, LSU cp.async for small pieces.
+- Fix built (d466a692, in audit): x pieces as 16 B cp.async from all 32 producer lanes, with
+  cp.async.mbarrier.arrive.noinc on the slot's full barrier (count 1 + 32). The weight chunk stays on the TMA.
