@@ -77,6 +77,8 @@ submission_sha256: 2c0b1fc88f025cd8acbfddec84c7c7136053c1c706b379fce74343beda1bf
 norm_sha256: eb313baf583db0b5d5ae0c495057a1c73e1b501f8d3b55a7fa796145f340ed98
 submission_blob: 28f02abd4f47ebe530bc077aa45168bb8027abc3
 lint_warnings: 120
+attempt_file: 2026-10-26T012541Z-check-restack-occ2-wg2-b256-two-stream-halves-on-master.md
+prepared_at: 2026-10-26T012541Z
 ---
 
 # restack-occ2-wg2-b256-two-stream-halves-on-master
