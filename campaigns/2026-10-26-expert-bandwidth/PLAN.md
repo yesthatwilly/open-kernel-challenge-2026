@@ -7,7 +7,7 @@ baseline: decode 1.4422 (0d84f58ca33b424b, rank 373 of 731), moe 1.5762 (f0fc890
 branch: campaign/expert-bandwidth (forked from campaign/decode-first-rewrite ae91f55d)
 worktree: .worktrees/expert-bandwidth
 start: 2026-10-26T15:30Z
-deadline: 2026-11-05T06:59Z (freeze 2026-11-04T18:00Z)
+deadline: 2026-11-05T06:59Z (no freeze, by the user; last runs dispatched by ~06:30Z so they finish in time)
 approved: 2026-10-26 by the user (plan approved; "fully autonomous today, no choices unless presented now")
 mode: autonomous self-paced /loop, single agent + one Opus audit per new CUDA module
 ---
@@ -22,7 +22,7 @@ Durable home: `campaigns/2026-10-26-expert-bandwidth/` on master.
 | Worktree | `.worktrees/expert-bandwidth` |
 | KPI | muse_decode_layer headline |
 | Testbed | muse_moe_w4a16 |
-| Close | 2026-11-05 06:59Z; freeze 11-04 18:00Z |
+| Close | 2026-11-05 06:59Z; no freeze (the user, 10-26); last runs dispatched by ~06:30Z |
 
 ## Context
 
@@ -178,7 +178,7 @@ Ranks drift down about 10 places a day as other teams submit, so these are upper
 - Retire the Marlin hybrid at T=256.
 - Expected: decode v16 expert block 280 → ~190 µs, v32 410 → ~265 µs; moe T=128 296 → ~210, T=256 398 → ~290.
 
-**D2 (only if the verdict shows ≥1.25 hot/cold overlap and leaves ≥5 days before freeze):**
+**D2 (only if the verdict shows ≥1.25 hot/cold overlap and leaves ≥5 days before the close):**
 - 1 CTA/SM, 4 warpgroups: producer; 2 cold mma.sync warpgroups; 1 hot wgmma RS warpgroup that reads each hot expert once, N ≤ 128.
 - setmaxnreg 40/112/112/232.
 - Expected: v16 → ~170 µs, v32 → ~190 µs.
@@ -224,7 +224,7 @@ Ranks drift down about 10 places a day as other teams submit, so these are upper
 | 11-01 | X3 combine → K2, R → K1 | 5 / 1 | — |
 | 11-02 | X3 boundaries; nearby-shape sweep | 5 / 1 | decode M3 |
 | 11-03 | X4 or buffer | 4 / 1 | as earned |
-| 11-04 | freeze 18:00Z: rules audit, final runs, land on master | 2 / 1 | all |
+| 11-04 → 11-05 06:59Z | keep building to the close; rules audit on each final file; last runs dispatched by ~06:30Z; land on master | as earned | all |
 
 Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is chosen over D2 whenever the schedule is tight.
 
@@ -274,7 +274,7 @@ Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is ch
 
 **Stop or pause conditions** (log the reason and stop the loop with `ScheduleWakeup stop`):
 - the user says stop;
-- the 11-04 18:00Z freeze passes and the final runs are landed (the kernel track closes 11-05 06:59Z);
+- the kernel track closes (11-05 06:59Z) and the final runs are landed;
 - a scored run found to break the rules: withdraw it (`okc withdraw <job>`) without asking, log it, and continue; nothing else outward-facing is ever done (only okc check/submit/status/leaderboard/withdraw);
 - 3 consecutive infrastructure failures (okc errors or judge outages): back off to 3600 s heartbeats and log it;
 - any action outside `~/git/musespark` or outside okc check/submit/status/leaderboard (never cluster hosts or shared storage).
@@ -330,7 +330,7 @@ Slip order: drop X4, then X3's boundary piece. X1 and X2 are protected; D1 is ch
 | risk | mitigation |
 |---|---|
 | mma.sync tensor rate on H200 caps D1 at N=32 | P1 rung decides pass width; D2/D3 fallbacks |
-| D2 too large for one agent before the freeze | D1 is the default; D2 only with ≥5 days left |
+| D2 too large for one agent before the close | D1 is the default; D2 only with ≥5 days left |
 | New repack not lossless | prepare-time roundtrip check + `dq_exact`; canary before any timing |
 | Gate fix changes today's selections for the worse | X0a re-runs every selector; the PATH lines show each flip; the board keeps the best run |
 | Compile/prepare budget | ≤1 new module per check; ladder deadline-gated |
@@ -344,7 +344,7 @@ Each campaign is opened by the loop itself in `campaigns/<date>-<slug>/`, with P
 |---|---|---|---|---|
 | 1 | `expert-bandwidth` (this plan) | X0–X2 | ×1.12–1.18 | now; closes when X2 lands or is killed (~10-31) |
 | 2 | `decode-chain` | T≤32 own-kernel chain: X3's folds; CUDA qkv/o/sliding kernels with PDL static-weight prefetch; P (pooler+router) rewrite | ×1.047–1.106 | after #1; target 11-03 |
-| 3 | `ports` | B=1 attention ports (d1s cluster, d1f c320); dense m=128/256 (W5); T≥128 glue | ×1.02–1.03 | only if ≥2 days remain before the freeze |
+| 3 | `ports` | B=1 attention ports (d1s cluster, d1f c320); dense m=128/256 (W5); T≥128 glue | ×1.02–1.03 | only if ≥2 days remain before the close |
 
 - X3 moves to campaign #2 if campaign #1 runs past 11-01.
 - Full-layer attention (≤×1.03, XL effort) stays parked unless a re-ranking puts it first.
@@ -377,5 +377,5 @@ Each campaign is opened by the loop itself in `campaigns/<date>-<slug>/`, with P
 - Nothing is deleted: the merged builder worktrees (.worktrees/engine-b, engine-b2, ea-v3, ea-v3big, dense-port,
   hotcold, moe-hybrid) stay.
 - Churn stays paused; prefill stays idle; bf16 / attention quota only as testbeds of an active workstream.
-- The loop stops after the final runs land at the 11-04 18:00Z freeze; the serving track is not touched.
+- No freeze (the user, 10-26: "i dont want that"): work continues to the close at 11-05 06:59Z, with the last runs dispatched by ~06:30Z; the loop stops after they land; the serving track is not touched.
 - If the session ends, the loop ends; "resume campaign" restarts it from LOG.md's "## Now" block.
