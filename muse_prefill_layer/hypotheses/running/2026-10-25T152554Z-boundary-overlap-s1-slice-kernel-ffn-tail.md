@@ -87,6 +87,8 @@ submission_sha256: 36bea92e834c646f4af8fedc308047c8e68297281cf61b8d82c38904b4df9
 norm_sha256: 93d2e9656ab3256c3ac85f2ffb2f115230d5eb030e59112669246a8c5af6e36b
 submission_blob: d24dd7d968891f49c1073544913df9dc158131b9
 lint_warnings: 104
+attempt_file: 2026-10-26T012540Z-check-boundary-overlap-s1-slice-kernel-ffn-tail.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # boundary-overlap-s1-slice-kernel-ffn-tail
