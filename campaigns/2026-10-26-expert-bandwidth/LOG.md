@@ -5,15 +5,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:56Z
-- step: v4 decode passed (1.4950, scored run in flight); v5 lost (off); X2 now = hybrids with hot experts on a
-  wgmma engine (moe testbed: the wg path) and cold on v4
-- in flight: moe check 0f4605dca83744c7 (wg-hot hybrid, 4848aadc);
-  decode check 212cdf5dcb844d54 (hybrid cold on v4, v5 off, 4848aadc)
-- next action: harvest; land decode if dc51 beats 1.4466; if the wg-hot hybrid wins in moe, port the wgmma path into
-  decode's T=128/256 hybrid
-- quota left 10-26: decode 1 check / 0 scored, moe 1 / 5
-- boards: decode **1.4956** (rank 342 of 737), moe 1.6389 (rank 395 of 843), overall **347 of 1228**
+- updated: 2026-10-26T17:05Z
+- step: X2 = wgmma-hot + v4-cold hybrids. moe landed (1.6851); decode port (wg_core.py) in its first check
+- in flight: decode check a1bc1756256b4c91 (wg-hot hybrid H=-16 at T=128/256, 3bcb685b)
+- next action: harvest; if H=-16 wins in decode, it waits for the 00:00Z reset (decode scored 0 left today); with the
+  last moe check, try a hot threshold of 24/32 or the T=128 hybrid; plan 10-27 (thresholds, then X3 glue folds)
+- quota left 10-26: decode 0 checks / 0 scored, moe 1 / 4
+- boards: decode **1.4956** (rank 342 of 737), moe **1.6851** (rank 370 of 844), overall 347 of 1228
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -157,3 +155,23 @@ append-only, newest last.
     gated against kernel_fn's own choice.
   - The decode hybrid's cold half moves to v4.
   - Checks: moe 0f4605dca83744c7, decode 212cdf5dcb844d54.
+
+## 2026-10-26T17:05Z: decode v4 scored 1.4956 (rank 342); moe wgmma-hot hybrid scored 1.6851 (rank 370); decode port out
+
+- Scored decode dc51d8e8f58e4cb7 (4f530b95): **1.4956** [1.4731, 1.5180]. Board 1.4466 -> 1.4956; decode rank 370 -> **342
+  of 737**; overall 376 -> **347 of 1228**. Landed on master.
+- moe 0f4605dca83744c7 (check, 4848aadc): passed, **1.6845**.
+  - The hybrid H=-16 (hot experts > 16 routes on moe's wgmma path, cold on v4) won T=256: worst x1.120 over master
+    (p10 1.198, p50 1.136, p90 1.120). Layer check vs fp32 ok, copy check PASS. T=256 row 391.1 -> 339.7 us.
+  - At T=128 it lost (x0.970): few hot experts at p50/p90, and the split costs.
+  - Scored e854db4683dc495f: **1.6851**. Board 1.6389 -> 1.6851, moe rank 395 -> **370 of 844**. Landed on master.
+- decode 212cdf5dcb844d54 (check, 4848aadc: hybrid cold half on v4, v5 off): passed, **1.5007**.
+  - v32 rows 528.7 -> 517.2 (s) and 796.4 -> 787.9 (f). Prepare 59 s.
+  - The T=8 class flipped to v4 (x1.093 vs v1 1.072) and the v1 sliding row read +5.3%. But the profile of that row
+    shows v4 faster (GPU busy 149 vs 187 us), so I take it as run-to-run variance. Watch it.
+- Decode port (3bcb685b):
+  - moe's wgmma path moved verbatim to `rewrite/lib/wg_core.py`; moe's generated code is byte-identical apart from
+    the include markers.
+  - decode includes it. Its hybrid gains H=-16: `_hcw_build` builds the module, checks attributes, attaches scratch
+    and retiles 32 experts; a miss turns only H=-16 off.
+  - Check a1bc1756256b4c91.
