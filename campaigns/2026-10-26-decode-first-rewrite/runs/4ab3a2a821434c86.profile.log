@@ -1,0 +1,77 @@
+): master 361.86 us (IQR 1.70) | v2 312.29 us (IQR 1.60, p10/p90 310.91/314.27, x1.159)
+[engineA-dl] gate T=32 layer input 0 round 2 (graph baseline 5.66 us subtracted): master 361.38 us (IQR 1.54) | v2 312.29 us (IQR 1.86, p10/p90 311.17/313.86, x1.157)
+[engineA-dl] gate T=32 layer input 1 round 1 (graph baseline 5.63 us subtracted): master 288.67 us (IQR 2.21) | v2 256.35 us (IQR 1.60, p10/p90 254.69/258.08, x1.126)
+[engineA-dl] gate T=32 layer input 1 round 2 (graph baseline 5.66 us subtracted): master 287.17 us (IQR 0.83) | v2 255.68 us (IQR 1.25, p10/p90 254.30/256.45, x1.123)
+[engineA-dl] layer v1 T=1 rep 0 (local routes 3): hidden 2.04e-03 (<= 0.02), stream 1.89e-03 (<= 0.01), update 3.35e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v1 T=1 rep 1 (local routes 3): hidden 1.87e-03 (<= 0.02), stream 1.71e-03 (<= 0.01), update 2.96e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v2 T=8 rep 0 (local routes 11): hidden 1.45e-03 (<= 0.02), stream 1.30e-03 (<= 0.01), update 2.33e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 9/9, finite True -> ok
+[engineA-dl] layer v2 T=8 rep 1 (local routes 12): hidden 1.64e-03 (<= 0.02), stream 1.47e-03 (<= 0.01), update 2.64e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 12/12, distinct 9/9, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 0 (local routes 20): hidden 2.06e-03 (<= 0.02), stream 1.45e-03 (<= 0.01), update 2.58e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 20/20, distinct 11/11, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 1 (local routes 24): hidden 2.15e-03 (<= 0.02), stream 1.53e-03 (<= 0.01), update 2.72e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 24/24, distinct 15/15, finite True -> ok
+[engineA-dl] layer v2 T=32 rep 0 (local routes 47): hidden 2.16e-03 (<= 0.02), stream 1.56e-03 (<= 0.01), update 2.78e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/32 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 47/47, distinct 19/19, finite True -> ok
+[engineA-dl] layer v2 T=32 rep 1 (local routes 50): hidden 2.19e-03 (<= 0.02), stream 1.56e-03 (<= 0.01), update 2.76e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/32 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 50/50, distinct 19/19, finite True -> ok
+[engineA-dl] k2 grid gate T=1 layer input 0 round 1 (graph baseline 5.66 us subtracted): full 116.74 us (IQR 1.22) | one_per_sm 125.44 us (IQR 1.06, p10/p90 124.22/126.21, x0.931, FAIL)
+[engineA-dl] k2 grid gate T=1 layer input 0 round 2 (graph baseline 5.66 us subtracted): full 116.90 us (IQR 1.22) | one_per_sm 125.38 us (IQR 1.18, p10/p90 124.42/126.37, x0.932, FAIL)
+[engineA-dl] k2 grid gate T=1 layer input 1 round 1 (graph baseline 5.63 us subtracted): full 104.38 us (IQR 0.80) | one_per_sm 106.66 us (IQR 1.06, p10/p90 105.57/107.49, x0.979, FAIL)
+[engineA-dl] k2 grid gate T=1 layer input 1 round 2 (graph baseline 5.63 us subtracted): full 104.22 us (IQR 1.18) | one_per_sm 106.30 us (IQR 1.44, p10/p90 105.25/107.46, x0.980, FAIL)
+[engineA-dl] combine gate T=1 layer input 0 round 1 (graph baseline 5.50 us subtracted): triton 104.16 us (IQR 1.12) | cuda 101.82 us (IQR 1.09, p10/p90 100.93/102.78, x1.023)
+[engineA-dl] combine gate T=1 layer input 0 round 2 (graph baseline 5.66 us subtracted): triton 104.16 us (IQR 1.06) | cuda 101.86 us (IQR 0.96, p10/p90 100.93/102.88, x1.023)
+[engineA-dl] combine gate T=1 layer input 1 round 1 (graph baseline 5.66 us subtracted): triton 117.44 us (IQR 1.31) | cuda 113.95 us (IQR 1.12, p10/p90 113.02/114.72, x1.031)
+[engineA-dl] combine gate T=1 layer input 1 round 2 (graph baseline 5.50 us subtracted): triton 117.89 us (IQR 0.99) | cuda 114.37 us (IQR 0.86, p10/p90 113.22/115.14, x1.031)
+[engineA-dl] combine gate T=8 layer input 0 round 1 (graph baseline 5.66 us subtracted): triton 205.15 us (IQR 0.99) | cuda 202.59 us (IQR 1.28, p10/p90 201.38/204.26, x1.013)
+[engineA-dl] combine gate T=8 layer input 0 round 2 (graph baseline 5.63 us subtracted): triton 204.74 us (IQR 1.02) | cuda 202.21 us (IQR 1.18, p10/p90 201.31/203.36, x1.013)
+[engineA-dl] combine gate T=8 layer input 1 round 1 (graph baseline 5.31 us subtracted): triton 194.66 us (IQR 1.25) | cuda 192.83 us (IQR 0.74, p10/p90 191.81/193.34, x1.009)
+[engineA-dl] combine gate T=8 layer input 1 round 2 (graph baseline 5.25 us subtracted): triton 194.24 us (IQR 1.15) | cuda 192.48 us (IQR 1.02, p10/p90 191.49/193.41, x1.009)
+[engineA-dl] combine gate T=16 layer input 0 round 1 (graph baseline 5.63 us subtracted): triton 214.05 us (IQR 1.22) | cuda 213.09 us (IQR 1.60, p10/p90 212.10/214.11, x1.005)
+[engineA-dl] combine gate T=16 layer input 0 round 2 (graph baseline 5.50 us subtracted): triton 214.18 us (IQR 0.96) | cuda 213.18 us (IQR 1.25, p10/p90 212.35/214.82, x1.005)
+[engineA-dl] combine gate T=16 layer input 1 round 1 (graph baseline 5.66 us subtracted): triton 222.82 us (IQR 1.54) | cuda 221.44 us (IQR 1.34, p10/p90 220.26/222.34, x1.006)
+[engineA-dl] combine gate T=16 layer input 1 round 2 (graph baseline 5.63 us subtracted): triton 222.69 us (IQR 1.31) | cuda 221.63 us (IQR 0.83, p10/p90 220.35/222.59, x1.005)
+[engineA-dl] combine gate T=32 layer input 0 round 1 (graph baseline 5.63 us subtracted): triton 281.86 us (IQR 1.28) | cuda 281.98 us (IQR 1.28, p10/p90 280.58/282.66, x1.000)
+[engineA-dl] combine gate T=32 layer input 0 round 2 (graph baseline 5.66 us subtracted): triton 281.50 us (IQR 1.22) | cuda 280.80 us (IQR 1.18, p10/p90 280.03/282.30, x1.003)
+[engineA-dl] combine gate T=32 layer input 1 round 1 (graph baseline 5.63 us subtracted): triton 262.82 us (IQR 1.50) | cuda 261.92 us (IQR 1.25, p10/p90 260.74/262.78, x1.003)
+[engineA-dl] combine gate T=32 layer input 1 round 2 (graph baseline 5.66 us subtracted): triton 262.66 us (IQR 1.70) | cuda 261.63 us (IQR 1.25, p10/p90 260.93/263.36, x1.004)
+[engineA-dl] layer v1 T=1 rep 0 (local routes 3): hidden 2.03e-03 (<= 0.02), stream 1.90e-03 (<= 0.01), update 3.38e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v1 T=1 rep 1 (local routes 3): hidden 1.87e-03 (<= 0.02), stream 1.69e-03 (<= 0.01), update 2.93e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/1 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 3/3, distinct 3/3, finite True -> ok
+[engineA-dl] layer v2 T=8 rep 0 (local routes 11): hidden 1.45e-03 (<= 0.02), stream 1.30e-03 (<= 0.01), update 2.33e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 11/11, distinct 9/9, finite True -> ok
+[engineA-dl] layer v2 T=8 rep 1 (local routes 12): hidden 1.64e-03 (<= 0.02), stream 1.47e-03 (<= 0.01), update 2.64e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/8 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 12/12, distinct 9/9, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 0 (local routes 20): hidden 2.06e-03 (<= 0.02), stream 1.45e-03 (<= 0.01), update 2.58e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 20/20, distinct 11/11, finite True -> ok
+[engineA-dl] layer v2 T=16 rep 1 (local routes 24): hidden 2.15e-03 (<= 0.02), stream 1.53e-03 (<= 0.01), update 2.72e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/16 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 24/24, distinct 15/15, finite True -> ok
+[engineA-dl] layer v2 T=32 rep 0 (local routes 47): hidden 2.16e-03 (<= 0.02), stream 1.56e-03 (<= 0.01), update 2.78e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/32 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 47/47, distinct 19/19, finite True -> ok
+[engineA-dl] layer v2 T=32 rep 1 (local routes 50): hidden 2.19e-03 (<= 0.02), stream 1.56e-03 (<= 0.01), update 2.76e-03 (<= 0.05), k_cache gap 0 rel 0.00e+00, v_cache exact True, other rows intact True, ids differ on 0/32 tokens, routing: picks within 0.05 True, clear-margin top-8 present True, routes 50/50, distinct 19/19, finite True -> ok
+[engineA-dl] pdl gate T=1 layer input 0 round 1 (graph baseline 5.66 us subtracted): plain 121.02 us (IQR 0.96) | pdl 121.63 us (IQR 1.15, p10/p90 120.45/122.88, x0.995)
+[engineA-dl] pdl gate T=1 layer input 0 round 2 (graph baseline 5.54 us subtracted): plain 121.47 us (IQR 1.22) | pdl 121.50 us (IQR 1.41, p10/p90 120.54/122.62, x1.000)
+[engineA-dl] pdl gate T=1 layer input 1 round 1 (graph baseline 5.50 us subtracted): plain 102.30 us (IQR 0.93) | pdl 102.37 us (IQR 0.99, p10/p90 101.82/103.30, x0.999)
+[engineA-dl] pdl gate T=1 layer input 1 round 2 (graph baseline 5.63 us subtracted): plain 101.95 us (IQR 0.74) | pdl 102.66 us (IQR 0.70, p10/p90 101.73/103.20, x0.993, FAIL)
+[engineA-dl] pdl gate T=8 layer input 0 round 1 (graph baseline 5.63 us subtracted): plain 202.11 us (IQR 1.06) | pdl 201.60 us (IQR 0.58, p10/p90 200.70/202.21, x1.003)
+[engineA-dl] pdl gate T=8 layer input 0 round 2 (graph baseline 5.66 us subtracted): plain 201.79 us (IQR 1.79) | pdl 201.70 us (IQR 0.96, p10/p90 201.09/202.94, x1.000)
+[engineA-dl] pdl gate T=8 layer input 1 round 1 (graph baseline 5.63 us subtracted): plain 180.96 us (IQR 1.09) | pdl 180.38 us (IQR 1.25, p10/p90 178.94/181.18, x1.003)
+[engineA-dl] pdl gate T=8 layer input 1 round 2 (graph baseline 5.54 us subtracted): plain 180.99 us (IQR 1.31) | pdl 180.38 us (IQR 0.80, p10/p90 179.30/181.25, x1.003)
+[engineA-dl] pdl gate T=16 layer input 0 round 1 (graph baseline 5.50 us subtracted): plain 237.60 us (IQR 1.54) | pdl 237.31 us (IQR 1.12, p10/p90 236.22/238.62, x1.001)
+[engineA-dl] pdl gate T=16 layer input 0 round 2 (graph baseline 5.66 us subtracted): plain 237.38 us (IQR 1.38) | pdl 237.22 us (IQR 1.66, p10/p90 236.03/238.62, x1.001)
+[engineA-dl] pdl gate T=16 layer input 1 round 1 (graph baseline 5.63 us subtracted): plain 197.82 us (IQR 1.28) | pdl 197.95 us (IQR 0.77, p10/p90 196.67/199.26, x0.999)
+[engineA-dl] pdl gate T=16 layer input 1 round 2 (graph baseline 5.66 us subtracted): plain 197.54 us (IQR 0.96) | pdl 198.08 us (IQR 0.80, p10/p90 196.64/199.23, x0.997)
+[engineA-dl] pdl gate T=32 layer input 0 round 1 (graph baseline 5.63 us subtracted): plain 254.94 us (IQR 1.25) | pdl 253.38 us (IQR 1.02, p10/p90 252.64/254.53, x1.006)
+[engineA-dl] pdl gate T=32 layer input 0 round 2 (graph baseline 5.50 us subtracted): plain 254.66 us (IQR 1.44) | pdl 253.70 us (IQR 1.22, p10/p90 252.80/254.69, x1.004)
+[engineA-dl] pdl gate T=32 layer input 1 round 1 (graph baseline 5.66 us subtracted): plain 270.82 us (IQR 1.06) | pdl 270.85 us (IQR 0.90, p10/p90 269.50/271.81, x1.000)
+[engineA-dl] pdl gate T=32 layer input 1 round 2 (graph baseline 5.60 us subtracted): plain 271.26 us (IQR 1.28) | pdl 270.37 us (IQR 1.38, p10/p90 269.25/271.81, x1.003)
+[engineA-dl] ===== ENGINE A (decode) SUMMARY (45.4 s; module okc_campaign_engine_a_v2_dl) =====
+[engineA-dl] exact integer dequant; repack 0.1 s; grid 264 (2 CTAs/SM x 160 threads); build 39.3 s
+[engineA-dl] canary v1: T 1..8 clean; worst rel-L2 vs fp32 0.00391
+[engineA-dl] canary v2: T 1..32 clean; worst rel-L2 vs fp32 0.00393
+[engineA-dl] gate T=1 (whole layer): worst ratio v1 1.045, v2 1.026 -> ENGINE A v1
+[engineA-dl] gate T=8 (whole layer): worst ratio v1 1.063, v2 1.072 -> ENGINE A v2
+[engineA-dl] gate T=16 (whole layer): worst ratio v2 1.084 -> ENGINE A v2
+[engineA-dl] gate T=32 (whole layer): worst ratio v2 1.123 -> ENGINE A v2
+[engineA-dl] k2 grid gate T=1 (v1, whole layer): full/132-CTA worst ratio 0.931 -> full grid
+[engineA-dl] combine check (CUDA vs Triton, T 1/8/16/32): worst rel-L2 3.38e-06 -> ok
+[engineA-dl] combine gate T=1 (whole layer): Triton/CUDA worst ratio 1.023 -> CUDA
+[engineA-dl] combine gate T=8 (whole layer): Triton/CUDA worst ratio 1.009 -> CUDA
+[engineA-dl] combine gate T=16 (whole layer): Triton/CUDA worst ratio 1.005 -> CUDA
+[engineA-dl] combine gate T=32 (whole layer): Triton/CUDA worst ratio 1.000 -> CUDA
+[engineA-dl] pdl gate T=1 (whole layer, R -> K1): plain/PDL worst ratio 0.993 -> plain
+[engineA-dl] pdl gate T=8 (whole layer, R -> K1): plain/PDL worst ratio 1.000 -> PDL
+[engineA-dl] pdl gate T=16 (whole layer, R -> K1): plain/PDL worst ratio 0.997 -> PDL
+[engineA-dl] pdl gate T=32 (whole layer, R -> K1): plain/PDL worst ratio 1.000 -> PDL
+[engineA-dl] copy check: 24 replays on two states, T [1, 2, 32]: PASS
+[engineA-dl] PATH CHOSEN T=1 = ENGINE A v1
+[engineA-dl] PATH CHOSEN T=2..32 = ENGINE A v2

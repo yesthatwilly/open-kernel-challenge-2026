@@ -148,3 +148,15 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
   (campaign/engine-b2), dense port builder (campaign/dense-port: bf16_proj's swap-AB GEMMs for decode's qkv / o /
   unpooler at T <= 32, about +3% expected).
 
+## 2026-10-26T07:12Z: rounds 5-6: the T=1 micro-levers are spent
+
+- Round 5 (moe c01d40b39bf44d29 1.5617, decode 43c23a06b4b842d8 1.3888): v1's K1 prefetching K2's w2 into L2 at
+  <= 2 active experts (`prefetch.global.L2`, the judge-proven plain form) did not move kernel-only K2 (13.1 us) and lost
+  its gates (moe random routing x0.944, decode x0.995) -> rejected: K2's T=1 time is not DRAM.
+- Round 6 (moe 8892ed26a732485c 1.5537, decode 4ab3a2a821434c86 1.3917): K2 on one CTA per SM at T=1 (whole w2 groups,
+  no fix-up) lost too (moe x0.90-0.95, decode x0.931): with 264 CTAs x 4 stages all of w2 is in flight at once, so
+  parallelism matters more than the 2-way fix-up. Gates kept the full grid.
+- Decode configuration of rounds 3-6 measured four times: 1.3895 / 1.3876 / 1.3888 / 1.3917; scored 1.3840.
+- Checks turn around in ~8 minutes. Remaining levers come from the builders: v3 (T=16/32 hot experts), Engine B
+  iteration (T=128/256), dense swap-AB port (decode qkv / o / unpooler at T <= 32).
+
