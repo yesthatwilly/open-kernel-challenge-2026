@@ -84,7 +84,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212552Z
 base_sha: b3b8b66c3106acbf5b6caf1c61d24bda67cd95d5
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -93,6 +93,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-wgmma-ws-s1-producer-spli
 mode: check
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-26T011237Z
+impl_commit: 198089eb208ddc0a0de64f2977173876834c57d0
+submission_sha256: 25c1ac890e3b7d4fd618b7584e444f5aa865e2b41e7f80369d36069199a1acaa
+norm_sha256: 9d9bde6a809544ca479046ad510696bb8fe5187c305360b44da7f47ec59ca75d
+submission_blob: 680eba9fc5edd19dfbbeae4c15929ab6eca23fce
+lint_warnings: 82
 ---
 
 # full-verify-wgmma-ws-s1-producer-split
@@ -147,3 +153,44 @@ No companions. This is kind: rewrite, judged on the replaced kernels' own us at 
 - With two S accumulator sets at TILE=128 (2 x 64 regs) plus O (32) plus softmax temps, does the consumer stay under 232 regs with no spill? Print it per variant, as specified.
 - Should the gate also offer the 2-CTA/SM per-warpgroup-ring variant (DIAGNOSIS 1b), so that a 1-CTA/SM TLP loss does not leave the stage with nothing routed?
 
+
+## Implementation notes
+
+Edited only `muse_attention_decode/submission.py` in the worktree (+1733/-1). New load_inline module `muse_full_verify_wgmma_ws_v1`, kernel symbols `wsv1_*`, python names `_ws_*`/`_wsv_*`/`_WS_*`, own ticket array and error word (nothing shared with the sibling split-ring-2cta build). The s5 math was ported verbatim (SW128 ring, fp8 QK wgmma with per-tile Q A-fragment reload from smem, Max_offset-8 FP8 P, per-WG V^T transpose, ticket combine + norm-gate, stream-K, bounded mbarrier waits). Only the pipeline changed.
+
+Variants (one module, runtime GO flag on all): 0 ws64 = 384 thr, 1 CTA/SM, WG0 producer (128 thr, 8 cp.async/thread/tile, FULL = 128 noinc arrivals, EMPTY = 256 consumer arrivals), WG1/2 consumers, 8 stages of 16 KB, two S sets (S(n+1) issued before softmax(n), PV(n-1) before it, waited with wait_group 1). 1 ws128 = TILE 128 (m64n128k32, 4 PV k-steps), STAGES=5 (160 KB ring, 205 KB smem, static_assert <= 227 KB), one S set. 2 c2 = 2 CTAs/SM, s5 layout, ring split per warpgroup, per-WG barriers (128 arrivals), no CTA rendezvous, 5 stages. 3 = ws64 PHASE DIAG (clock64 per consumer phase and producer phase, CTA 0), prepare only.
+
+Review fixes applied: (1) gather-only roofline DIAG (`go` flag, all variants, printed TB/s at B=16 x 80K); (2) 2-CTA/SM per-warpgroup-ring variant, routable; (3) TILE=128 STAGES=5 with an smem static_assert plus host refusal when dynamic smem > device opt-in, plus refusal on local bytes > 0 / non-sm_90 image / occupancy; (4) two-round gate: master's ACTUALLY ROUTED path (kernel_fn, no variant forced, empty route), 2 interleaved rounds x 40 replays, 256 MB flush, empty-graph baseline subtracted, both rounds >= 1.05x, candidate IQR <= 1.5x master's, vs-master rel L2 < 3e-2, finite, error word 0; both rounds' medians/IQRs, kernel names and PATH CHOSEN printed per cell; compact summary repeated as the last lines.
+
+Open questions answered: page-index prefetch = one 4-byte __ldg per tile, issued 4 tiles (a block) ahead in registers, never on the issue path (c2: one tile ahead). Barrier phases are tracked on the CTA-flat tile index n (FULL parity (n/STAGES)&1, EMPTY parity ((n/STAGES)-1)&1), not per segment. Register fit is printed per variant; a variant with local bytes > 0 is refused.
+
+Deviations (documented): (a) producer setmaxnreg 56 / consumers 224 instead of 40 / 232 (128*56 + 256*224 = 64512) to avoid producer spills at 40; (b) ws128 and c2 use ONE S set with FA3 order (PV(n-1) overlaps softmax(n)): two 64-register S sets do not fit 224 at TILE 128 and 2 CTAs/SM caps c2 at 128 regs; (c) TICKET only (no B8 fallback kernel); (d) variants are timed after a quick canary check and the full bisect + two-state replay runs for the winning variant per band only; (e) deadlines (import clock, per the coordinator note against the 480 s start rule): build < 400 s, quick checks < 440, gate < 455, full checks < 465, DIAGs < 470, each prints "skipped: deadline". Verified only by a g++ -fsyntax-only pass with CUDA stubs (no nvcc/GPU here).
+
+## Rules check
+
+- [x] CUDA-graph capturable: kernel_fn adds only a config-only predicate and torch.empty workspaces; no .item()/sync/prints in the call path (setup-only globals are final and None/frozen when timed).
+- [x] Nothing derived from `data` is cached: only a zeroed-once self-resetting int32 ticket array and an error word, both device-only.
+- [x] Weights: n/a (attention, no weights).
+- [x] KV cache stays FP8 E4M3; query rounded to FP8 E4M3 by the existing pre-attention kernel; fp32 softmax/merges, bf16 out.
+- [x] Every key attended (stream-K over all tiles; only the causal block mask), no skipping.
+- [x] No subprocesses, network, harness access; arch list env restored after build.
+- [x] All work inside the timed call; no output caching.
+- [x] New path has its own per-variant route (no _ab_flags pattern exists in this problem); a miss falls back to master's exact paired FA3 path and touches no other flag.
+
+okc_lint: `OK with warnings` (only host-sync warnings outside kernel_fn, as in master); py_compile OK; __pycache__ removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Audited by reading (no nvcc/GPU here); evidence: `/tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/ws/ws_audit_emu.py` (smem, registers, producer gather map, barrier-phase simulation, all pass) and the generated CUDA source `.../audits26/ws/wsv1.cu` (no unresolved template fields).
+
+Checked and fine: (1) arrival counts: ws FULL 128 noinc (one per producer thread per tile), EMPTY 256 (both consumer WGs, once per tile after S retire + transpose); c2 per-WG FULL/EMPTY 128; parities on the CTA-flat tile index; simulated for N 1..257, no deadlock. smem: ws64 157344 B, ws128 206448 B, c2 108224 B, all <= 232448; c2 two CTAs 218496 B incl. 1 KB reserve <= 233472, 2 CTAs/SM also enforced by the occupancy check. Producer gather map covers every 16 B chunk once with s5's SW128 swizzle at TL 64 and 128. (4) Gate predicate is config-only: window 0, q_len 8, 1<batch<=64, Hq 16/Hkv 2 (dp is 128/16), head_dim 64, page_size 1, so page 64 and dp heads stay on master. Only `_IMPORT_T0` collides with the s6 sibling (identical meaning; trivial merge); module, kernel and python names are disjoint.
+
+Fixes:
+1. `_ws_gate_band` read the candidate and master outputs for the vs-master rel L2 / finiteness BEFORE any graph had been replayed (a captured graph has not run; the buffers are uninitialised), so the gate could never pass and nothing would route. Each graph is now replayed once and synchronized before those reads (s5 read them after the timing replays).
+2. `_IMPORT_T0` was set after the torch/triton/sgl_kernel/sglang imports, so every start deadline ran late by the import time (tens of seconds) against the 480 s rule; moved to the first statement after `import time`.
+3. IQR veto had no absolute floor (`max(master IQR, 1e-9)`); now `max(master IQR, 0.5 us)`.
+4. setmaxnreg hang guard: 128*56 + 256*224 = 64512 only balances if the kernel launches with exactly 168 regs/thread (65536/384 rounded down to 8); with fewer, `setmaxnreg.inc` would block forever. Variants 0/1/3 are now refused (fallback, PATH CHOSEN line) when `numRegs < 168`.
+5. Ticket buffer key mismatch: setup keyed `torch.device("cuda")` ("cuda") but kernel_fn keyed `qkv.device` ("cuda:0"), so two buffers existed and the setup re-zero hit the wrong one. Key normalised to cuda:N; tickets also re-zeroed after every self-check so a failed variant cannot dirty the next one.
+6. A gate exception left `_WS_FORCE` set (kernel_fn would then force that variant for every verify shape at import end); `_ws_setup`'s finally now resets all setup-only globals.
+
+Residual risk: no nvcc/GPU run, so compile time of four heavy instantiations, ptxas register/spill counts (producer at 56, consumers at 224) and the 128-thread producer's gather bandwidth are untested; the build has a start deadline (400 s) but no duration cap, so a slow compile can push the import past 480 s, though the later phases then skip cleanly to master.
