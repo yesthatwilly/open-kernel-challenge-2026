@@ -5,13 +5,15 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:31Z
-- step: v4 harvested (moe landed; decode faulted in the copy check); v5 audit running; decode diagnostics built
-
-- in flight: v5 audit (read-only agent)
-- next action: v5 audit fixes; decode check v4+v5 with plain K1 + sweep + copy-check prints; moe check v5
-- quota left 10-26: decode 4 checks / 1 scored, moe 3 / 5
-- boards: decode 1.4466 (rank 370), moe **1.6389** (rank 395 of 843), overall 376
+- updated: 2026-10-26T16:55Z
+- step: v4 decode passed (1.4950, scored run in flight); v5 lost (off); X2 now = hybrids with hot experts on a
+  wgmma engine (moe testbed: the wg path) and cold on v4
+- in flight: decode scored dc51d8e8f58e4cb7 (v4, 4f530b95); moe check 0f4605dca83744c7 (wg-hot hybrid, 4848aadc);
+  decode check 212cdf5dcb844d54 (hybrid cold on v4, v5 off, 4848aadc)
+- next action: harvest; land decode if dc51 beats 1.4466; if the wg-hot hybrid wins in moe, port the wgmma path into
+  decode's T=128/256 hybrid
+- quota left 10-26: decode 1 check / 0 scored, moe 1 / 5
+- boards: decode 1.4466 (rank 370), moe 1.6389 (rank 395 of 843), overall 376
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -129,3 +131,29 @@ append-only, newest last.
   - The decode-only factor at T=2 is K1 launched with PDL after kernel R. The PDL gate kept PDL at x0.998-1.000 (no gain).
   - Next decode check: v4 / v5 K1 plain; an eager kernel_fn sweep at T 1,2,3,5,8,9,12,16,17,24,32,128,256 before the
     copy check; step prints in the copy check, so a repeat names its T and phase.
+
+## 2026-10-26T16:55Z: v4 decode passes (1.4950) and is scored; v5 loses everywhere (off); X2 turns to wgmma-hot hybrids
+
+- decode 5573e05423304324 (check, 4f530b95: v4 / v5 K1 without PDL, eager sweep, copy-check prints): passed 13/13,
+  **1.4950** [1.4725, 1.5174].
+  - Engine A: T=1..8 v1 (v4 within 1%: 1.047 vs 1.050); T=9..32 v4 (x1.116 / 1.088; v3 1.087 / 1.065); T=128 v4
+    (x1.094; v3 1.035); T=256 v4 (x1.089 over master).
+  - The hybrid (Marlin hot block 48 + v3 cold) beat v4 at T=256: 483 vs 516 us. Its gate now times against Engine A's
+    choice (kernel_fn takes the hybrid hook first).
+  - Rows vs board run a03e596d: d16 +2.9 / +4.4%, d32 +4.5 / +1.9%, v16 +6.1 / +4.9%, v32 +5.2 / +2.1%, d1 / v1 ~+1%.
+  - No fault; the copy check passed. But T=1..8 went to v1, so v4 at T=2 with PDL was not exercised; K1 of v4 stays
+    plain.
+  - Scored dc51d8e8f58e4cb7 (same bytes) in flight.
+- moe e403a42a80e6478f (check, 4f530b95): passed, 1.6441; **v5 lost every gate**.
+  - Kernel-only w13 at T=8 / 16 / 32: v5 2.90 / 2.82 / 2.39 TB/s vs v4 3.21 / 3.12 / 2.92.
+  - Big gates: T=128 v5 x0.899 vs v4 1.155; T=256 v5 x0.863 vs v4 1.019, so T=256 fell back to master this run.
+  - Cause (inferred): the 4-tile mma.sync path runs about 0.25 HMMA/clk/SM, below the measured 0.31 floor (tensor
+    issue), and half-size stages double the per-stage overhead with less in flight.
+  - **D1 as designed is dead. v5 is off (EA_BUILD_V5 = False).**
+- X2 next (4848aadc): hot experts need wide-N tensor work (wgmma).
+  - moe's judge-proven wgmma path forms per-expert chunks of up to 128 routes (N up to 128), so it reads a hot expert
+    once per chunk.
+  - The new moe hybrid H=-16 sends hot experts to the wgmma path and cold experts to v4. It runs at T=128 / 256,
+    gated against kernel_fn's own choice.
+  - The decode hybrid's cold half moves to v4.
+  - Checks: moe 0f4605dca83744c7, decode 212cdf5dcb844d54.
