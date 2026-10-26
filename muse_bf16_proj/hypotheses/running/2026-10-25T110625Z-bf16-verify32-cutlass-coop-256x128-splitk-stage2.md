@@ -93,6 +93,8 @@ submission_sha256: 96f9312ccf31ac76419c263bd8a546c3fe0c1a67688eae377eea0938ae8fc
 norm_sha256: 702c7b386fab0da985c904c0ba1866079b13f1f3782f61571cbba62f49a491f9
 submission_blob: 6e8cbd9208410b2fc62ee8b2e90ee064981e7a31
 lint_warnings: 38
+attempt_file: 2026-10-26T012540Z-check-bf16-verify32-cutlass-coop-256x128-splitk-stage2.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # bf16-verify32-cutlass-coop-256x128-splitk-stage2
