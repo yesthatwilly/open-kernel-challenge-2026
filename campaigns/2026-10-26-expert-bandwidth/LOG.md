@@ -5,13 +5,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:14Z
-- step: X0b in flight; S1 (Engine A v4: v3 on 8 consumer warps, 2-record stages, D=2) built and syntax-clean,
-  Opus audit running
-- in flight: v4 audit (read-only agent)
-- next action: apply v4 audit fixes; v4 attempt files + decode/moe checks; then integrate v5 (scratchpad v5_py.py) + audit
-- quota left 10-26: decode 5 checks / 1 scored, moe 4 / 6
-- boards: decode **1.4466** (rank 370 of 733), moe 1.5762 (428 of 840), overall 375 of 1223
+- updated: 2026-10-26T16:22Z
+- step: S1 (v4) checks in flight; X2/D1 (v5) built (de1be708), syntax-clean on all three build variants, Opus audit
+  running
+- in flight: decode check ff2bd9182fa04636 and moe check 54f63952015c4d3b (v4, 666eb1d7); v5 audit
+- next action: harvest v4 (score on improvement); apply v5 audit fixes; v5 attempt files + decode/moe checks
+- quota left 10-26: decode 4 checks / 1 scored, moe 3 / 6
+- boards: decode **1.4466** (rank 370 of 734), moe 1.5762, overall 376 of 1225
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -92,3 +92,21 @@ append-only, newest last.
   - The board keeps the best-scoring run, so a noise-high older run can hold the board row with worse code.
   - Before the close, make sure the final code holds the board row: scored runs of the final bytes, and if an older
     run still leads, consider `okc withdraw` of the older run (standing rules allow withdraw).
+
+## 2026-10-26T16:22Z: v4 dispatched; v5 (D1) built and in audit
+
+- v4 audit (read-only Opus): no BLOCKER.
+  - MAJOR fixed: moe's kernel-only rates timed v3's kernels for every engine past v2.
+  - MINORs fixed: async-proxy fence after build_map's ring-scratch writes; fallback-build deadline; labels.
+  - Engine A gate margins ("worst ratio" lines) now go into the final printed block (16 KB tail).
+  - v4 checks: decode ff2bd9182fa04636, moe 54f63952015c4d3b (666eb1d7).
+- **v5 = D1** (de1be708; rewrite/lib/cuda/ea5_kernels.cuh, ea5_core.py): v4 with passes of up to 32 routes (1/2/4 n8
+  tiles per A fragment) on 256-k chunks.
+  - Records are repacked on the device from v3's (a permutation) into super-group-contiguous order, so a stage is one
+    18432 B copy plus up to 32 token rows of 512 B. D=3, smem 110972 B, 2 CTAs/SM.
+  - Hot experts stream ceil(n/32) times instead of ceil(n/16); x traffic per weight byte is half of v4's.
+  - Candidate at T<=32 classes and T=128/256 in both problems.
+  - decode kernel_fn now takes the hot/cold hook first, so its gate times H against Engine A's choice; that is why v5
+    may also compete at T=256.
+  - Engine gates prefer the earlier engine within 1% (`_rt_select(prefer_within)`) against near-tie flips.
+  - The build chain is v4+v5, then v4, then base; all three variants pass cuda_syntax.py.
