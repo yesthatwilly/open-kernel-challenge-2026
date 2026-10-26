@@ -106,6 +106,8 @@ submission_sha256: dc4c3d77ebfd7c291b42a1a7a1848c10854d3abd73107bc19f0333e9f3f34
 norm_sha256: 3bb492c7ec6babacb0da7b28dea14e1499935dabfe142bfc88385a58e9261dd6
 submission_blob: c7e48df9b5d8e30a800cfc54936f233eae895e7c
 lint_warnings: 122
+attempt_file: 2026-10-26T012541Z-check-cuda-fused-split-i-moe-midt-cluster-reduce.md
+prepared_at: 2026-10-26T012541Z
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
