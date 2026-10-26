@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212550Z
 base_sha: 98cd3251d87b4318340450cec6f52e37f574895c
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -81,6 +81,8 @@ submission_blob: 0689e0198fcf8c7a711b4f69ce2c1972c9970cb9
 lint_warnings: 78
 attempt_file: 2026-10-26T012540Z-check-experts-rega-mc2-slab-multicast-all-t.md
 prepared_at: 2026-10-26T012540Z
+job: 0ca60bb781db48e4
+dispatched_at: 2026-10-26T012819Z
 ---
 
 # experts-rega-mc2-slab-multicast-all-t
