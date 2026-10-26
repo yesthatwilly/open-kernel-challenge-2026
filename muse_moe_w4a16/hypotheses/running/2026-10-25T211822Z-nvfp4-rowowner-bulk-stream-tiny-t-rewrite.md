@@ -67,7 +67,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212523Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212549Z
 base_sha: 641f0e0099c84be50a9f8705e113a62388a5847a
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -84,6 +84,8 @@ submission_blob: 9ef29f6f02cb52b468933ae16626fb37854c927e
 lint_warnings: 112
 attempt_file: 2026-10-26T012541Z-check-nvfp4-rowowner-bulk-stream-tiny-t-rewrite.md
 prepared_at: 2026-10-26T012541Z
+job: c08dbd737e29442d
+dispatched_at: 2026-10-26T012820Z
 ---
 
 # nvfp4-rowowner-bulk-stream-tiny-t-rewrite
