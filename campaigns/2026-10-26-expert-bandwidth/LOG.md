@@ -5,12 +5,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:05Z
-- step: X0a dispatched (moe harvested, decode in flight); X0b built (R no-align + combine prefetch), Opus audit running
-- in flight: decode check 7fff4a8b616946c6 (X0a, c8ac9beb); X0b audit
-- next action: harvest decode X0a; apply audit fixes; X0b attempt files + decode/moe checks; then X0c ladder-2
-- quota left 10-26: decode 6 checks / 3 scored, moe 5 / 6
-- boards: decode 1.4422 (rank 373 of 731), moe 1.5762 (428 of 840), overall 380 of 1222
+- updated: 2026-10-26T15:52Z
+- step: X0b built (R no-align + combine prefetch, both pass cuda_syntax.py), Opus audit running; then S1 (v3 with 8
+  consumer warps, "v4") as the next build
+- in flight: X0b audit (read-only agent)
+- next action: apply audit fixes; X0b attempt files + decode/moe checks; start S1
+- quota left 10-26: decode 6 checks / 2 scored, moe 5 / 6
+- boards: decode **1.4466** (rank 370 of 733), moe 1.5762 (428 of 840), overall 375 of 1223
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -40,3 +41,21 @@ append-only, newest last.
   - T=256 master: v3 x1.007 at p50 and x0.928 at p90 (424 routes, max 123).
   - the hybrid wins only at p10 (H-32 x1.064) and loses at p50/p90 (x0.954-0.958).
   - **T=256 needs a new engine (X2).** Not submitted: same timed kernels as the board run.
+
+## 2026-10-26T15:51Z: X0a decode harvested, scored and landed (decode 1.4466, rank 370; overall 375)
+
+- Correction: the 16:05Z stamp on the entry above was wrong. That entry was written at about 15:40Z.
+- decode 7fff4a8b616946c6 (check, c8ac9beb): passed 13/13, **1.4524** [1.4307, 1.4742].
+  - Basis draw 2 beta 0.3, worst distinct error 9.7%, 0.7 s. Gate inputs on the busiest range
+    (routes/distinct/max/hot): T=16 32/8.1/10/0; T=32 64/9.5/20/1.5; T=128 213/18.3/55/4.1; T=256 420/20.3/105/7.5
+    (judge distinct 7.5 / 9.0 / 18.4 / 21.3).
+  - One flip: Engine A's T=9..16 class v2 -> v3. T=128 stays v3; T=256 stays the hybrid H=-48 (542 vs 606 us
+    master). The hot/cold gate at T=128 keeps master (H64 x1.010).
+  - Rows vs board run 0d84f58c: d16 s 185.1 -> 177.3, f 287.4 -> 277.1 (x1.04, the flip). Others within -2.6..+4.6%
+    drift (d32 s 226.4 -> 216.5 with no selection change).
+- Scored a03e596d3aaa4f69 (same bytes, extracted as submission.x0a-c8ac9beb.py): **1.4466** [1.4249, 1.4683], passed.
+  - Board 1.4422 -> **1.4466**; decode rank 373 -> **370 of 733**; overall 380 -> **375 of 1223**.
+  - Landed on master (muse_decode_layer/submission.py sha256 850e9557...).
+- Next: X0b (R no-align + combine prefetch) awaits its audit. A g++ -fsyntax-only CUDA checker (rewrite/bin/
+  cuda_syntax.py with cuda_stub/) now parses every judge-compiled source and caught a planted arity error. Run it
+  before every dispatch.
