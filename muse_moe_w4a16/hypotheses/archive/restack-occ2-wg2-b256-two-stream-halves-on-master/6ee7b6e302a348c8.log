@@ -1,0 +1,133 @@
+lf launching half 1 w2 alone (atomic) T=8 judge-like
+[two-stream] cross-half done half 1 T=8 judge-like
+[two-stream] cross-half launching half 0 w2 alone (atomic) T=16 all-local-saturated
+[two-stream] cross-half done half 0 T=16 all-local-saturated
+[two-stream] cross-half launching half 1 w2 alone (atomic) T=16 all-local-saturated
+[two-stream] cross-half done half 1 T=16 all-local-saturated
+[two-stream] cross-half launching half 0 w2 alone (atomic) T=16 judge-like
+[two-stream] cross-half done half 0 T=16 judge-like
+[two-stream] cross-half launching half 1 w2 alone (atomic) T=16 judge-like
+[two-stream] cross-half done half 1 T=16 judge-like
+[two-stream] cross-half launching half 0 w2 alone (atomic) T=32 all-local-saturated
+[two-stream] cross-half done half 0 T=32 all-local-saturated
+[two-stream] cross-half launching half 1 w2 alone (atomic) T=32 all-local-saturated
+[two-stream] cross-half done half 1 T=32 all-local-saturated
+[two-stream] cross-half launching half 0 w2 alone (atomic) T=32 judge-like
+[two-stream] cross-half done half 0 T=32 judge-like
+[two-stream] cross-half launching half 1 w2 alone (atomic) T=32 judge-like
+[two-stream] cross-half done half 1 T=32 judge-like
+[two-stream] cross-half w2 wipe test: ok (12 half launches, other half's and remote rows bitwise unchanged); halves w2 mode = atomic (master's w2_mode atomic)
+[two-stream] launching H T=8 random
+[two-stream] done H T=8 random
+[two-stream] launching H T=8 skewed
+[two-stream] done H T=8 skewed
+[two-stream] launching H T=8 all-remote
+[two-stream] done H T=8 all-remote
+[two-stream] launching H T=8 all-one-expert
+[two-stream] done H T=8 all-one-expert
+[two-stream] launching H T=8 all-local
+[two-stream] done H T=8 all-local
+[two-stream] launching H T=8 all-local-saturated
+[two-stream] done H T=8 all-local-saturated
+[two-stream] launching H T=8 judge-like
+[two-stream] done H T=8 judge-like
+[two-stream] H T=8 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00618 ok
+[two-stream] launching H T=16 random
+[two-stream] done H T=16 random
+[two-stream] launching H T=16 skewed
+[two-stream] done H T=16 skewed
+[two-stream] launching H T=16 all-remote
+[two-stream] done H T=16 all-remote
+[two-stream] launching H T=16 all-one-expert
+[two-stream] done H T=16 all-one-expert
+[two-stream] launching H T=16 all-local
+[two-stream] done H T=16 all-local
+[two-stream] launching H T=16 all-local-saturated
+[two-stream] done H T=16 all-local-saturated
+[two-stream] launching H T=16 judge-like
+[two-stream] done H T=16 judge-like
+[two-stream] H T=16 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00523 ok
+[two-stream] launching H T=32 random
+[two-stream] done H T=32 random
+[two-stream] launching H T=32 skewed
+[two-stream] done H T=32 skewed
+[two-stream] launching H T=32 all-remote
+[two-stream] done H T=32 all-remote
+[two-stream] launching H T=32 all-one-expert
+[two-stream] done H T=32 all-one-expert
+[two-stream] launching H T=32 all-local
+[two-stream] done H T=32 all-local
+[two-stream] launching H T=32 all-local-saturated
+[two-stream] done H T=32 all-local-saturated
+[two-stream] launching H T=32 judge-like
+[two-stream] done H T=32 judge-like
+[two-stream] H T=32 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00525 ok
+[two-stream] band [8, 12] rep T=8 skewed round 1: master 52.0 us (IQR 0.86) / H 58.4 us (IQR 0.86) = 0.891x, IQR ratio 1.00: MISS
+[two-stream] band [8, 12] rep T=8 skewed round 2: master 52.2 us (IQR 0.58) / H 58.5 us (IQR 0.83) = 0.893x, IQR ratio 1.44: MISS
+[two-stream] band [8, 12] rep T=8 judge-like round 1: master 124.7 us (IQR 0.83) / H 121.8 us (IQR 0.74) = 1.024x, IQR ratio 0.88: MISS
+[two-stream] band [8, 12] rep T=8 judge-like round 2: master 125.0 us (IQR 0.77) / H 121.7 us (IQR 0.93) = 1.027x, IQR ratio 1.21: MISS
+[two-stream] band [13, 24] rep T=16 skewed round 1: master 81.7 us (IQR 0.58) / H 83.0 us (IQR 0.67) = 0.984x, IQR ratio 1.17: MISS
+[two-stream] band [13, 24] rep T=16 skewed round 2: master 81.7 us (IQR 0.51) / H 82.8 us (IQR 0.80) = 0.986x, IQR ratio 1.56: MISS
+[two-stream] band [13, 24] rep T=16 judge-like round 1: master 195.7 us (IQR 0.80) / H 190.1 us (IQR 0.90) = 1.029x, IQR ratio 1.12: MISS
+[two-stream] band [13, 24] rep T=16 judge-like round 2: master 195.7 us (IQR 0.86) / H 190.0 us (IQR 0.83) = 1.030x, IQR ratio 0.96: MISS
+[two-stream] band [25, 32] rep T=32 skewed round 1: master 87.6 us (IQR 0.67) / H 92.9 us (IQR 0.96) = 0.944x, IQR ratio 1.43: MISS
+[two-stream] band [25, 32] rep T=32 skewed round 2: master 87.6 us (IQR 0.45) / H 92.9 us (IQR 0.93) = 0.943x, IQR ratio 1.86: MISS
+[two-stream] band [25, 32] rep T=32 judge-like round 1: master 204.4 us (IQR 0.96) / H 201.5 us (IQR 0.54) = 1.014x, IQR ratio 0.57: MISS
+[two-stream] band [25, 32] rep T=32 judge-like round 2: master 205.1 us (IQR 1.02) / H 202.0 us (IQR 0.61) = 1.015x, IQR ratio 0.59: MISS
+[two-stream] halves align self-check vs moe_align_block_size (other half -1): 72 cases, 0 mismatches
+[two-stream] cross-half w2 wipe test: ok (12 half launches, other half's and remote rows bitwise unchanged); halves w2 mode = atomic (master's w2_mode atomic)
+[two-stream] H T=8 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00618 ok
+[two-stream] H T=16 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00523 ok
+[two-stream] H T=32 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00525 ok
+[two-stream] PATH CHOSEN band [8, 12] rep T=8 = master [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]: lowest master/H 0.891 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 52.0/58.4us (IQR 0.9/0.9); skewed r2 52.2/58.5us (IQR 0.6/0.8); judge-like r1 124.7/121.8us (IQR 0.8/0.7); judge-like r2 125.0/121.7us (IQR 0.8/0.9); master = [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]
+[two-stream] PATH CHOSEN band [13, 24] rep T=16 = master [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]: lowest master/H 0.984 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 81.7/83.0us (IQR 0.6/0.7); skewed r2 81.7/82.8us (IQR 0.5/0.8); judge-like r1 195.7/190.1us (IQR 0.8/0.9); judge-like r2 195.7/190.0us (IQR 0.9/0.8); master = [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]
+[two-stream] PATH CHOSEN band [25, 32] rep T=32 = master [Marlin w13+silu+w2 + _align_parallel_kernel + _post_norm_combine_hoisted_kernel]: lowest master/H 0.943 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 87.6/92.9us (IQR 0.7/1.0); skewed r2 87.6/92.9us (IQR 0.4/0.9); judge-like r1 204.4/201.5us (IQR 1.0/0.5); judge-like r2 205.1/202.0us (IQR 1.0/0.6); master = [Marlin w13+silu+w2 + _align_parallel_kernel + _post_norm_combine_hoisted_kernel]
+[combo] phase H: ran, 1.5 s (prepare at 86.6 s)
+[combo] copy check C2+H (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 16 replays, T [256, 257]; PASS
+[combo] phase copy2: ran, 0.3 s (prepare at 87.0 s)
+[cuda-wgmma-verify] select  B128 T=128 judge-like zipf a=0.3 (241 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 371.3 us, wgmma full path 464.7 us, Marlin/wgmma 0.799x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify] select  B128 T=128 random (133 local routes, Marlin bsm 16): median of 41 cold graph replays minus empty-graph 5.5 us: Marlin full path 367.1 us, wgmma full path 463.7 us, Marlin/wgmma 0.792x (end-to-end rel-L2 6.09e-03)
+[cuda-wgmma-verify] select  B128 (128 <= T <= 255): wgmma DISABLED (Marlin): ratios 0.799x, 0.792x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); calibrated Marlin pair 375 us (judged s4 Marlin pair 306.2 us); 0.1s
+[cuda-wgmma-verify] select  B256 T=256 judge-like zipf a=0.3 (457 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 500.9 us, wgmma full path 414.8 us, Marlin/wgmma 1.207x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify] select  B256 T=256 random (245 local routes, Marlin bsm 32): median of 41 cold graph replays minus empty-graph 5.3 us: Marlin full path 486.8 us, wgmma full path 392.6 us, Marlin/wgmma 1.240x (end-to-end rel-L2 6.07e-03)
+[cuda-wgmma-verify] select  B256 (256 <= T <= 512): wgmma DISABLED (Marlin): ratios 1.207x, 1.240x (judge-like, random) vs margin 1.02x on the judge-like routing (random printed, not gating); unhealthy: random: err word 0, marker 0x57473232, rel-L2 vs Marlin 6.07e-03; calibrated Marlin pair 501 us (judged s4 Marlin pair 483.2 us); 0.2s
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 MARLIN; live flags wg_on_128 False, wg_on_256 True
+[combo] phase F2-select-diag: ran, 0.3 s (prepare at 87.3 s)
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.71 us, align2 3.94 us, ratio 0.943, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.42 us, align2 4.29 us, ratio 0.799, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 6.11 us, align2 4.35 us, ratio 1.404, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'copy': 255.0, 'C2-build': 170.0, 'C2': 215.0, 'H': 250.0, 'copy2': 275.0, 'F2-select-diag': 200.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.0 s, ran
+[combo] phase C1a: 0.2 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase copy: 0.4 s, ran
+[combo] phase C2-build: 31.0 s, ran
+[combo] phase C2: 1.4 s, ran
+[combo] phase H: 1.5 s, ran
+[combo] phase copy2: 0.3 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.26 us, w13 atomic 25.66 us, ratio 0.941 (ON at <= 0.98); fp32 worst 0.00847, vs master worst 0.0104
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.67 us, align2 chunk 64 bsm 16 4.74 us, ratio 0.374 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.58 us, _align_parallel 2.02 us, ratio 0.562 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.68 us, hoisted Triton post-norm 2.98 us, ratio 0.809 (ON at <= 0.98); error vs fp32 worst hoisted 0.00167 / SGLang 0.00246 (6 routings)
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[wg2-occ2] C2 build ok: V64 attrs pass; grid 264 = 2 x 132 SMs
+[wg2-occ2] PDL state: wg_ext_pdl=True (True = master built the PDL module), wg_pdl=True (the w2 launch carries the programmatic-serialization attribute); the wg2 canary / self-check / copy check / selector all run with exactly this setting
+[wg2-occ2] V64 bucket canary N16/N32/N64: PASS; self-check PASS (worst rel-L2 vs Marlin h 6.55e-03 y2 3.48e-03 out 6.08e-03); copy check PASS (60 refilled graph replays over states ABC (A, B, C, A, B per M (128, 256, 257) x 4 routings), launch marker seen 60/60, worst wgmma-vs-fp32 4.41e-03, worst Marlin-vs-fp32 5.52e-03, bound 1.5x Marlin); error word 0: PASS
+[wg2-occ2] PATH CHOSEN B256 = wg2_kernel<G,64,3,2> V64 (2 CTAs/SM): lowest master/V64 1.047 over 2 routings x 2 rounds (ON needs every round >= 1.03 and V64 IQR <= 1.5x master's: True); medians master/V64 judge-rebuild r1 371.9/354.9us (IQR 2.0/1.1); judge-rebuild r2 371.6/354.8us (IQR 1.1/1.4); zipf r1 457.4/400.2us (IQR 1.2/1.1); zipf r2 457.4/400.1us (IQR 1.1/1.0); healthy True; touched judge rebuild 23; kernels wg2_kernel<G,64,3,2> V64 (2 CTAs/SM)
+[two-stream] halves align self-check vs moe_align_block_size (other half -1): 72 cases, 0 mismatches
+[two-stream] cross-half w2 wipe test: ok (12 half launches, other half's and remote rows bitwise unchanged); halves w2 mode = atomic (master's w2_mode atomic)
+[two-stream] H T=8 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00618 ok
+[two-stream] H T=16 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00523 ok
+[two-stream] H T=32 (poisoned cache1 junk / cache3 NaN, w2 atomic): worst rel-L2 vs master 0.00525 ok
+[two-stream] PATH CHOSEN band [8, 12] rep T=8 = master [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]: lowest master/H 0.891 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 52.0/58.4us (IQR 0.9/0.9); skewed r2 52.2/58.5us (IQR 0.6/0.8); judge-like r1 124.7/121.8us (IQR 0.8/0.7); judge-like r2 125.0/121.7us (IQR 0.8/0.9); master = [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]
+[two-stream] PATH CHOSEN band [13, 24] rep T=16 = master [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]: lowest master/H 0.984 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 81.7/83.0us (IQR 0.6/0.7); skewed r2 81.7/82.8us (IQR 0.5/0.8); judge-like r1 195.7/190.1us (IQR 0.8/0.9); judge-like r2 195.7/190.0us (IQR 0.9/0.8); master = [Marlin w13+silu+w2 + _align_small_kernel + _post_norm_combine_kernel]
+[two-stream] PATH CHOSEN band [25, 32] rep T=32 = master [Marlin w13+silu+w2 + _align_parallel_kernel + _post_norm_combine_hoisted_kernel]: lowest master/H 0.943 over skewed + judge rebuild x 2 rounds (ON needs every round >= 1.03 and H IQR <= 1.5x master's: False); medians master/H skewed r1 87.6/92.9us (IQR 0.7/1.0); skewed r2 87.6/92.9us (IQR 0.4/0.9); judge-like r1 204.4/201.5us (IQR 1.0/0.5); judge-like r2 205.1/202.0us (IQR 1.0/0.6); master = [Marlin w13+silu+w2 + _align_parallel_kernel + _post_norm_combine_hoisted_kernel]
+[combo] copy check C2+H (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 16 replays, T [256, 257]; PASS
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 MARLIN; live flags wg_on_128 False, wg_on_256 True
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 wg2_variant_256=1 wg_on_256=True sm_mode={8: 0, 16: 0, 32: 0} (master = 'master'/0)
+[combo] prepare seconds: master 49.9, total 87.3

@@ -59,10 +59,10 @@ kind: primary
 controls_for: null
 prior: "restack-bucket-gate-on-master-align-atomic: that held restack carried an older bucket-gate branch; this one ports the board-best code itself (wg2 C2 module + selector, job 31c27e4b) plus the two-stream H cell from 9a455a2a, leaving out F1/F2 which master already has. Expected ~1.41-1.43 vs board 1.4021, so it clears the 1.24% margin only if C2 reproduces AND at least one H band goes live."
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212523Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212549Z
 base_sha: 2b505e1ba8846dfb42e476ada051a571345fbfbf
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -81,6 +81,13 @@ attempt_file: 2026-10-26T012541Z-check-restack-occ2-wg2-b256-two-stream-halves-o
 prepared_at: 2026-10-26T012541Z
 job: 6ee7b6e302a348c8
 dispatched_at: 2026-10-26T012819Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3996458875332363
+speedup_ci: [1.3786511992202377, 1.4206405758462346]
+harvested_at: 2026-10-26T023155Z
+best_at_harvest: 1.4020871870995952
+promotion: null
 ---
 
 # restack-occ2-wg2-b256-two-stream-halves-on-master
@@ -177,3 +184,29 @@ Verdict: dispatch (no fixes needed; submission.py untouched by the audit). Check
 - Graph safety: kernel_fn H path allocates by shape, forks with side.wait_stream(current), joins with current.wait_stream(side), no sync, no record_stream; side stream and workspace B are made in prepare after C2's deepcopy check. copy2 (_combo_copy_check only=("C2","H")) uses the tensor-cloning walk (stream shared, workspace cloned) and resets only C2 (wg_on_256 restored) / H bands; a skipped or raised copy2 also resets only C2/H.
 - Deadlines: master's logged prepare is ~60 s, wg2 build 38 s, C2 phase 2.4 s, H branch phase 1.7 s, so the chain lands near 105-150 s against start deadlines 170/215/250/275; ample slack.
 Residual risk: the new two-round 1.03x + IQR gate may leave H (esp. T=8) and possibly C2 OFF, giving a master-equal run; unmeasurable here without a GPU.
+
+## Result
+
+- job `6ee7b6e302a348c8` (check), status done, passed True, tests 5/5
+- speedup 1.3996x, 95% CI [1.3787, 1.4206], score 9608.501778761987 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.4020871870995952, "ci": [1.3810558792931014, 1.423118494906089], "job": "31c27e4b8fc84bd2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/restack-occ2-wg2-b256-two-stream-halves-on-master.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/restack-occ2-wg2-b256-two-stream-halves-on-master.patch`; branch `hyp/muse_moe_w4a16/restack-occ2-wg2-b256-two-stream-halves-on-master`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.35 | 43.88 | 1.0212 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 150.9 | 147.25 | 0.9962 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.12 | 199.05 | 1.0134 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 104.51 | 113.31 | 0.977 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 323.16 | 318.93 | 0.9896 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 358.12 | 369.82 | 0.9927 | flat |
+
+no shape moved outside noise. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: restack-occ2-wg2-b256-two-stream-halves-on-master`) that adds a further change in the same area is the only way to learn more.
+
