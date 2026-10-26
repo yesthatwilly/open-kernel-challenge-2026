@@ -71,11 +71,11 @@ worktree: .worktrees/muse_moe_w4a16/restack-occ2-wg2-b256-two-stream-halves-on-m
 mode: check
 restack_of: null
 stale_base: null
-implemented_at: 2026-10-26T005035Z
-impl_commit: 90304349770b8547ec65d0f067fc6e704c8b83e7
-submission_sha256: e5b8b469796a8e2f3480b09c69dd0d9cec59bb79f676fda489d679dd97f42564
-norm_sha256: f89d834983ca2d08a5a3a8355cad17dffb35259ae17758eff2bb96ba0fe5e325
-submission_blob: 07f09044b12b044c9bc0b96f28545db275731f1a
+implemented_at: 2026-10-26T010521Z
+impl_commit: c680bbec3ebcf57b11d29786989250025009368a
+submission_sha256: 2c0b1fc88f025cd8acbfddec84c7c7136053c1c706b379fce74343beda1bfe6f
+norm_sha256: eb313baf583db0b5d5ae0c495057a1c73e1b501f8d3b55a7fa796145f340ed98
+submission_blob: 28f02abd4f47ebe530bc077aa45168bb8027abc3
 lint_warnings: 120
 ---
 
