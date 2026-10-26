@@ -1,0 +1,24 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Proceed only as a narrowed restack onto master 2bcfe7d4 (bulk12, 1.2664): of the three cells only pooler K-halves survives (m=128 a robust row win, m=256 a gate coin flip), plus at most the noise-level o m=128 Lt plan; the claimed +1.3-2.5% is really about +0.3-1.0%, below the 1.24% one-run margin.",
+ "justification": "Pooler K-halves kind (a) (bf16 partials) routed m=128 in both runs (21.36 / 21.81 us vs master 22.86-23.10); kind (b) (fp32 partials) never passed a gate (0.934-0.991). qkv row-owner m8/m16 lost its own gates (A2w8 0.949/0.959, A2w16 0.773/0.779) and bulk12's b12x qkv m=8 also lost; the per-cell Lt qkv256 lost on the judge for the third time; o128 is noise-level (7.68 -> 7.24 inside master's band). The khalf patch needs 2 keep-both hunks on bulk12.",
+ "confounders": [
+  "bulk12 section (10) landed after this hypothesis; build on master 2bcfe7d4, not the pre-bulk12 depends_on branch",
+  "BEST.json still records 741072dc / 1.2566: register a base result for blob 2bcfe7d4 (scored 3834ceec, 1.2664) before harvest",
+  "pooler-nn-layout-widen-m256 owns the m=256 incumbent",
+  "restack-three-cell-wins owns nn_ok shared at m=128"
+ ],
+ "interference": "No companion: the touched cells share no (layer, m) with landed cells; PATH CHOSEN and FINAL FLAGS state what routed.",
+ "rules_flags": [
+  "Kind (a) rounds each K-half's fp32 accumulator to bf16 before the final add (rel L2 2.45e-3 vs 1.66e-3); SGLang's cuBLAS keeps split-K partials in fp32: a lower-precision intermediate than the baseline, a gray area under the post-challenge review; the hypothesis mislabels it as 'fp32 partials'. Forcing kind (b) removes the question but forfeits the row.",
+  "Thin canary margin for kind (a) (2.45e-3 vs CELL_REL_L2 3e-3)."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Port o128 or not (+0.07% headline)?",
+  "Register a base result for blob 2bcfe7d4 before harvest",
+  "Decide m=256 deterministically?",
+  "Is the user comfortable putting bf16 K-half partials (kind a) on the board?"
+ ]
+}
