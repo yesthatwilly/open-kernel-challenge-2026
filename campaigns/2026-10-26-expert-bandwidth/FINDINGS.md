@@ -83,3 +83,12 @@ Tags: **[M]** judge-measured, **[P]** prepare-time measured, **[I]** inference o
 - **[M] Per expert:** w13 18,874,368 B (16 MiB codes + 2 MiB scales; 1024 stages of 18,432 B); w2 9,437,184 B (512 stages); 28.31 MB total.
 - **[M] Judge clock:** clocks.max.sm 1980 MHz. At 4 TB/s that is 15.3 B/clk/SM, i.e. 27.2 NVFP4 el/clk/SM including scales.
 - **[I] Judge-implied distinct local experts:** decode d1 2.5, v1 7.5, d16 7.5, d32 9.0, v16 18.4, v32 21.3; moe 2.6 / 8.4 / 11.9 / 16.0 / 22.8 / 24.4.
+
+## End game: the board row must hold the final code (2026-10-26)
+
+- Final standings come from post-close reruns of each team's board submission (technical rules: top submissions are
+  rerun several times, on held-out data too, and ranked by the medians).
+- The board keeps the best-scoring run. The same decode bytes scored 1.4569 (check) and 1.4401 (scored) on 10-26, so a
+  noise-high older run can hold the board row with worse code.
+- Before the close: submit the final bytes. If an older run still leads, consider `okc withdraw` of the older run so
+  the final code is the one rerun.

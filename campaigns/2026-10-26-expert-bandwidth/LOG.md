@@ -5,12 +5,12 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T16:05Z
+- updated: 2026-10-26T16:14Z
 - step: X0b in flight; S1 (Engine A v4: v3 on 8 consumer warps, 2-record stages, D=2) built and syntax-clean,
   Opus audit running
-- in flight: decode check 523252767fc84a26 and moe check 6eb226e9db4f4876 (X0b, d25a987d); v4 audit
-- next action: harvest X0b (score on improvement); apply v4 audit fixes; v4 attempt files + decode/moe checks
-- quota left 10-26: decode 5 checks / 2 scored, moe 4 / 6
+- in flight: v4 audit (read-only agent)
+- next action: apply v4 audit fixes; v4 attempt files + decode/moe checks; then integrate v5 (scratchpad v5_py.py) + audit
+- quota left 10-26: decode 5 checks / 1 scored, moe 4 / 6
 - boards: decode **1.4466** (rank 370 of 733), moe 1.5762 (428 of 840), overall 375 of 1223
 
 ## 2026-10-26T15:35Z: campaign opened
@@ -75,3 +75,20 @@ append-only, newest last.
   - Candidates: every T<=32 class (EA_ENGINES); decode big-T at T=128 only (T=256 keeps v3 then the hybrid gate);
     moe big-T at 128 and 256.
   - cuda_syntax.py passes for both builds (with and without v4).
+
+## 2026-10-26T16:13Z: X0b harvested; scored run below the board (noise); end-game note
+
+- decode 523252767fc84a26 (check, d25a987d): passed, **1.4569** [1.4351, 1.4788].
+  - Rows X0b changes vs a03e596d: d1 s 105.1 -> 103.0, f 112.5 -> 110.5; d32 s 215.3 -> 210.9.
+  - Near-tie gates flipped: Engine A T=2..8 v2 -> v3, T=9..16 back to v2; dense swap-AB unpooler at 9..16 on, o at
+    17..32 off. v1 rows +4% (152.8 -> 159.4 s).
+- Scored a009b6c8a9df4e3f (same bytes): **1.4401** [1.4185, 1.4617], below the board's 1.4466. The board keeps
+  a03e596d (X0a) and master keeps that file. The scored spread for the same code is about +-1.2%.
+- moe 6eb226e9db4f4876 (check): passed, **1.5879** [1.5641, 1.6117]. Combine: 187 regs, 0 B spill. Combine rows
+  3.5 -> 3.1 us (T=8) and about 4.3 -> 2.7 us (T=32). Row drift is up to +-6% against the X0a check (T=256 master
+  402.8 vs 387.4 with no code change). Not submitted: moe does not move our overall rank.
+- **End-game note (FINDINGS):** final standings come from post-close reruns of each team's board submission (technical
+  rules: "we'll read the top submissions ... rerun them several times ... medians of these reruns").
+  - The board keeps the best-scoring run, so a noise-high older run can hold the board row with worse code.
+  - Before the close, make sure the final code holds the board row: scored runs of the final bytes, and if an older
+    run still leads, consider `okc withdraw` of the older run (standing rules allow withdraw).
