@@ -5,7 +5,7 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-26T18:49Z (the 19:30Z / 19:50Z stamps of the last two Now rewrites were estimates, not date -u: wrong)
+- updated: 2026-10-26T19:05Z
 - step: waiting for the 00:00Z reset. Ready: a decode scored run, a moe dequant A/B check and a decode anatomy check.
   Engine D is killed.
 - in flight: nothing
@@ -13,12 +13,14 @@ append-only, newest last.
   anat_attempt.md):
   1. `okc submit` of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347). Verify that the content hash is
      613b6c2d..., then land it on master.
-  2. moe check at 731d149e:
+  2. moe check at eacf0722:
      - the ladder dq A/B (dq2 production vs dq3 rot-shf vs dq4 rot-mul in v4's geometry; dq_exact with crosstalk
        filler). If dq3 or dq4 wins by 5% or more at C-R4, switch the production layout. For dq4 the multipliers come
        from __constant__ memory, so there is no signature change.
      - the hybrid's new candidate H=-8: wgmma-hot above 8 routes, so Engine A keeps only one-tile cold passes.
-  3. decode check at 731d149e: H=-8 too, plus the anatomies (expert block alone at T=1/8/16/32; the T=128/256 hybrid
+     - v4c: v4 with a cost-weighted stream-K split, raced against v4 in every engine gate; the hybrid's cold
+       half follows Engine A's split per class.
+  3. decode check at eacf0722: H=-8 and v4c too, plus the anatomies (expert block alone at T=1/8/16/32; the T=128/256 hybrid
      whole / hot / cold). They choose the next lever: T=1 fixed costs (glue), cold-engine rate, or hot (wgmma).
 - quota left 10-26: decode 0 checks / 0 scored, moe 0 / 4
 - boards: decode **1.4956** (rank 347 of 740; 1.5347 would be about 318, 1.552 is rank 300, 1.707 rank 200),
