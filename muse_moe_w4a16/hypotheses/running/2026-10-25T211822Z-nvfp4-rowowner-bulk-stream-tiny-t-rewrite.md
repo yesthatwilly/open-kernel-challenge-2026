@@ -82,6 +82,8 @@ submission_sha256: 006510c848cd58ef8832029b1c7b00134f4e0a90c7f19a1668af58f08f681
 norm_sha256: 716518602fecdcb24fb5cebb09d1626c452a4ead420bedc11cc986e938285f3c
 submission_blob: 9ef29f6f02cb52b468933ae16626fb37854c927e
 lint_warnings: 112
+attempt_file: 2026-10-26T012541Z-check-nvfp4-rowowner-bulk-stream-tiny-t-rewrite.md
+prepared_at: 2026-10-26T012541Z
 ---
 
 # nvfp4-rowowner-bulk-stream-tiny-t-rewrite
