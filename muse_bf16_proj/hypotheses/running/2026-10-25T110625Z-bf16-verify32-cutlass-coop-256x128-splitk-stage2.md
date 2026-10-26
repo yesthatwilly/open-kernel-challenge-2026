@@ -78,7 +78,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212548Z
 base_sha: e4182610b1552724381a1f2451f6bcd56b7dc1ed
 base_blob: bcf8bff0b622eecf0d9dc9abecf9e4c7067df872
@@ -87,6 +87,12 @@ worktree: .worktrees/muse_bf16_proj/bf16-verify32-cutlass-coop-256x128-splitk-st
 mode: check
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-26T011122Z
+impl_commit: 47ba5bff021ae82d631a382c31109f1453b02f83
+submission_sha256: 96f9312ccf31ac76419c263bd8a546c3fe0c1a67688eae377eea0938ae8fcc7b
+norm_sha256: 702c7b386fab0da985c904c0ba1866079b13f1f3782f61571cbba62f49a491f9
+submission_blob: 6e8cbd9208410b2fc62ee8b2e90ee064981e7a31
+lint_warnings: 38
 ---
 
 # bf16-verify32-cutlass-coop-256x128-splitk-stage2
@@ -144,3 +150,65 @@ No companion is warranted. This is a rewrite judged on the replaced kernels' own
 - Should the pooler M2 bar be restated as <= 28.8 kernel / 28.0 row (master NN layout), and the qkv bar as master's 20.0 kernel / 19.5 row rather than stage 1's 25.3? 'qkv not worse than stage 1' is too weak a bar for promotion.
 - Ordering vs DIAGNOSIS actions 1-2: if the pooler K-halves restack (26.75 row) or the per-cell cuBLAS selector lands first, the pooler/qkv incumbents drop. Promotion should then be per cell against that newer master, and should follow the new LESSONS rule (two interleaved rounds >= 1.03 with an IQR bound) for any prepare-time selector that gates the CUTLASS path.
 
+
+## Implementation notes
+
+Built 2026-10-26 (overnight) in the worktree, `muse_bf16_proj/submission.py` only. Nothing could be compiled or run on this node (no GPU, torch or CUTLASS headers); `py_compile` and `okc_lint` pass.
+
+**Base.** The worktree was claimed on the parent's commit (stale_base). As the review says, `git checkout master -- muse_bf16_proj/submission.py` brought in master 36c26199 (blob ad8d7254, byte-identical to master before my edits), then the stage-1 scaffold was ported onto it. Diff vs master: +761 / -4 lines; the 4 removed lines are the edited `NEW_CELL_FLAGS`, `_ab_component` and `comp = ...` lines and the one `kernel_fn` hunk is a pure insertion.
+
+**What changed (all new code is section "(10)" before `_prepare_state`).**
+- CUTLASS extension `sp2_gemm / sp2_query / sp2_set_attr` (namespace `sp2`, ext name `muse_bf16_sp2_cutlass_coop256x128_splitk_v1_c<ver>_cn<N>`; kernel symbols are distinct from every other module): TileShape 256x128x64, `KernelTmaWarpSpecializedCooperative` + `TmaWarpSpecializedCooperative` epilogue (bf16 out, fp32 accumulate, no C), ClusterShape 1x2x1 (the two N-neighbour CTAs multicast the x tile), `StageCountAutoCarveout`, `StreamKScheduler` run in `DecompositionMode::SplitK` with a static `splits` (pooler 4, unpooler 2, qkv_gate 7, o 2), `ReductionMode::Deterministic`. splits=1 selects DataParallel (used only by the print-only diagnostic). Stage 1's one-workspace + `initialize_workspace` (the Memset node) + host-side `to_underlying_arguments` + `Gemm::run` split is kept; `cudaFuncSetAttribute` happens once in prepare via `sp2_set_attr`, which also returns regs/thread, spill bytes and static smem (printed).
+- Header discovery (`_find_cutlass_includes`) and the build (`_build_sp2`) copied from stage 1 (CUTLASS 4.5.0 from flashinfer built in 49 s there). Build uses `TORCH_CUDA_ARCH_LIST=9.0a` around `load_inline` (restored in `finally`), `-gencode=arch=compute_90a,code=sm_90a`, `-std=c++20`, `-lineinfo`, prints the nvcc arch flags and build seconds, and the source has `#error` when `__CUDA_ARCH__` is defined without `__CUDA_ARCH_FEAT_SM90_ALL` (a plain compute_90 pass fails the build loudly, master kept).
+- Routing: `_sp2_route_ok` / `_sp2_forward`, inserted in `kernel_fn` after every m <= 128 path and before the `layer != "router"` block (so it precedes the pooler NN 129..256 path). Gate: per-layer state flag `sp2_<layer>_ok`, 129 <= cfg m <= 256, cfg n/k == the full weight, x contiguous bf16 [m, k] 16 B aligned. m <= 128 and m > 256 (the m=512 / m=1000 tests) never reach it; router never reaches it. m=130 unpooler (test) takes it; `_ouns`, bulk, swapab and `_pooler/_qkv/_unpool/_o` skinny gates are all m <= 32 so there is no double routing.
+- Per-state flags: `SP2_FLAGS` appended to `NEW_CELL_FLAGS`, so `_ab_flags` hands them to state B, the A/B self-check's fail path turns them off, and FINAL FLAGS prints them. State B (`_sp2_prepare(state, flags=...)`) inherits the flags and allocates its OWN workspace and SM count; no module-global device state (only the host int `_SP2_CLUSTER_N` records which cluster build loaded). `AB_CASES` gained unpooler / qkv_gate / o at m=256 (pooler m=256 already existed); `_ab_component(layer, m, state)` names the sp2 flag for those cells only when it is on, otherwise the old component (pooler: `nn_p256_ok`).
+- `_sp2_prepare` (state A), per layer: (1) host queries for every m 129..256 (can_implement, grid, scheduler-applied bits, workspace), printing can_implement / grid / CTAs / tiles x splits / smem / workspace / sk_tiles / sk_units / splits_ / CUTLASS version at m = 129, 200, 256 and ASSERTING 1 <= CTAs <= min(sms, 132) (a miss prints `DISABLED`); (2) one workspace per state sized to the max; (3) canary + correctness via master's `_cell_check` at m 130/200/256 (flushed LAUNCH before and synced DONE after every launch, rel L2 <= 3e-3 vs fp64, finite, run 2 bit-identical, power-of-two probe row); (4) print-only `_sp2_diag` at m=256, cold-L2 graph replay: new kernel at its splits, the same kernel at splits=1 (answers the review's o / unpooler question), master's dispatch (flag off), and an upper bound for the memset node (a memset of the whole workspace; the real node zeroes only the barrier region); (5) `_sp2_gate`: two interleaved rounds (A,B,A,B; 41 reps each, 256 MB flush, empty-graph baseline subtracted) of kernel_fn with the flag ON versus OFF (master's ACTUALLY routed path: for pooler the NN-layout path while `nn_p256_ok`, else cuBLAS), both rounds must show master/cand >= 1.03 AND candidate IQR <= 1.5x master's; (6) `torch.profiler` kernel-name assertion that one routed call launches a `device_kernel`; (7) one `[sp2] PATH CHOSEN` line per layer. Every miss, raise, or unsupported shape lands on master's exact path and never disables another layer's flag or any landed flag.
+- Deadlines: no build if the import has already run 170 s (`[sp2] build skipped: deadline`), no cluster-1x1x1 retry after 200 s, no sp2 prepare phase after 240 s, no further layer after 270 s (`skipped: deadline`), all measured from `_T0` (import start). Expected sp2 cost: ~50 s build, a few seconds per layer in prepare.
+- Last lines of prepare: after `FINAL FLAGS`, the four `[sp2] PATH CHOSEN ... (gate rounds ...)` lines and `[sp2] LAST-LINES flags now: ...` are re-printed.
+
+**Review fixes applied.**
+1. Built on master 36c26199, not 353e3b19 (see Base).
+2. Pooler incumbent re-baselined: the gate compares against master's real routed path (NN-layout `nn_p256_ok` nvjet 128x64 NNT, 28.8 kernel / 28.0 row), never the stale TNT 29.7 / 31.3; the milestone bar in the Expected section is superseded by the review's 28.8 / 28.0. Likewise qkv's bar is master's own cuBLAS (20.0 / 19.5), not stage 1's 25.3: the gate itself enforces it.
+3. Gate starts at m >= 129 (NN_GATED_MAX_M = 128 is untouched); m=130 does not double-route.
+4. Prints can_implement, grid and the applied decomposition, asserts the grid in prepare (open question 1).
+5. splits=1 variant per layer in prepare's cold-L2 print (open question 2); the memset node cost is recorded separately as an upper bound (open question 3).
+6. Selector follows the new LESSONS rule (two interleaved rounds >= 1.03, IQR <= 1.5x master's, master = the actually routed path, flag-off), per cell, with PATH CHOSEN per cell and a compact repeat as the last lines.
+7. Greppable `[sp2] build OK / DISABLED / PATH CHOSEN` before any number is read.
+
+**Open questions answered in code.** (Q1) Whether CUTLASS accepts cluster 1x2x1 with SplitK 7 and gives exactly 126 CTAs is only answered at run time; the build tries cluster 1x2x1 first and, if the compile fails (e.g. a static_assert), once more at 1x1x1. (Q3) Not attempted: removing the memset node by self-resetting barriers would mean forking the CUTLASS scheduler; recorded only. (Q4) Bars restated above. (Q5) The selector is per cell, against whatever master the file is built on.
+
+**Deviations from the spec / brief.**
+- Bounded mbarrier waits: the mainloop, epilogue and split-K barrier waits are CUTLASS-internal and unbounded, and I did not fork them. Mitigation: build `-lineinfo`, flushed print before and synced print after every self-check launch (names the kernel on a fault), the first launch is the canary in prepare.
+- No self-check at m=129 or m=255 beyond the three m of stage 1 (130 / 200 / 256); the host query covers every m 129..256.
+- The cluster 1x1x1 retry build is an addition (not in the spec) to survive a CUTLASS-side static_assert on the split-K + cluster combination.
+- Stage 1's second-CUTLASS-version retry was dropped (the newest tree, 4.5.0 from flashinfer, is the one stage 1 proved).
+
+**Biggest risks.** (a) First compile of the 256x128 cooperative StreamK scheduler with cluster 1x2x1 and `splits` on CUTLASS 4.5 (the one thing stage 1 did not prove); a failed build costs 50-100 s of prepare and lands on master. (b) A hang in a CUTLASS-internal barrier would only end at the run timeout. (c) o (8 k-steps per split) and qkv may lose the 1.03x gate and stay on master, which is the designed outcome.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/bf16-verify32-cutlass-coop-256x128-splitk-stage2 diff master -- muse_bf16_proj/submission.py` (+761 / -4).
+
+- [x] CUDA-graph capturable: `kernel_fn` only gains `_sp2_route_ok` (cfg / shape / state flags) and `_sp2_forward` (`torch.empty` + one `sp2_gemm`: a memset node, host-side TMA descriptors from pointers, one cluster launch on the current stream); no `.item()` / `.cpu()` / `synchronize()` / prints; no branching on values. Every sync and print is in prepare-only functions (`_sp2_*`, which the gate captures in graphs itself).
+- [x] Nothing derived from `data` is cached across calls: the workspace is zeroed by `initialize_workspace` each call and holds only partial sums; `state["sp2_ws"]`, `sp2_sms`, flags and summary strings come from weights / the device only. The extension has no globals.
+- [x] Weights: untouched; the CUTLASS kernel reads `state[layer]` (the original contiguous bf16 weight) in place, no repack, no precision change.
+- [x] Activations BF16 where SGLang keeps BF16: x bf16, out bf16, fp32 accumulate, same as nvjet.
+- [x] n/a: attention rules do not apply to this GEMM problem.
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocesses or network: grep for subprocess / multiprocessing / fork / Popen / os.system is empty; the build is `torch.utils.cpp_extension.load_inline` like the existing `bulk` / `ouns` modules; header discovery only globs local package directories.
+- [x] All work happens inside the timed call (one CUTLASS GEMM per call, outputs recomputed from the call's x); no output caching or replay.
+- [x] Per-state flags and fallback: each layer has its own `sp2_<layer>_ok`, passed to state B through `NEW_CELL_FLAGS` / `_ab_flags`; any build error, self-check miss, deadline or unsupported shape lands on master's exact path; no landed flag is touched.
+- [x] Prepare budget: deadlines at 170 / 200 / 240 / 270 s from import, explicit `skipped: deadline` prints, build time printed, regs / spills printed.
+- [x] Does not edit any file but `muse_bf16_proj/submission.py` in the worktree (plus this md); no commit, no staging, no okc.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): `OK with warnings` (0 errors; 36 warnings, all `host-sync` in prepare-only code or `dtype` for the uint8 L2-flush buffers, the same pattern as master's gates; none in `kernel_fn`'s call graph). `python3 -I -m py_compile`: OK; `__pycache__` deleted.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes. Audited by reading (no GPU, torch or CUTLASS headers on this node; none found by `find /`).
+
+- Scheduler members (concern 1): judge log f5b1361a (stage 1, CUTLASS 4.5.0 from flashinfer) proves `decomposition_mode` settable (mode_set=True), `sk_tiles_`, `sk_units_`, `get_grid_shape(params)` and `params.scheduler` compile. Untested there: `splits` / `splits_` / `reduction_mode`. These are detected by void_t SFINAE, so an absent member never breaks the build: a missing `splits` leaves applied bits != 3 and `_sp2_query_layer` prints `DISABLED` and keeps master per layer. A member that exists with an unexpected enum (`DM::SplitK`, `RM::Deterministic`) is a hard nvcc error, caught by `except Exception` around load_inline, then `_SP2_EXT=None` and master everywhere with `[sp2] build FAILED` / `PATH CHOSEN ... master`.
+- Retry (concern 2): the 1x1x1 retry is a separate module name (`..._cn1` vs `..._cn2`, so a separate torch_extensions dir and version entry), torch releases its build lock in a finally, and `TORCH_CUDA_ARCH_LIST` is restored in a finally. No half-built state is reused. Deadlines are from `_T0`, which starts AFTER `import torch/triton/sglang`; master's ouns + router-cluster builds (~37 s each) run first, so the sp2 build starts near 80-100 s; two failed builds fit under the 200 s retry cutoff and prepare starts before 240 s.
+- Grid and splits (concern 3): emulation `/tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/emu_sp2_tiles_bf16_verify32.py` (output `.out` beside it): for every m 129..256 there is exactly one 256-row M-tile; units = pooler 128, unpooler 128, qkv 126 (7 splits of 19,19,..,14 k-tiles), o 128, all <= 132, all even, N-tile counts even (cluster 1x2 divides), 63-64 clusters <= 66 co-resident; 4 stages x 48 KB = 192 KB leaves 35 KB for epilogue. Note the `<= min(sms,132)` assert is nearly tautological (persistent grid = min(units, SMs)); the real protection is the can_implement / applied-bits / self-check / gate chain.
+- Shadowing (concern 4): the sp2 route sits after every m <= 32 path, the m == 1 bulk, m == 128 Lt and ouns routes, and before the NN-layout block. In 129..256 the only landed cell it can shadow is the pooler NN layout (`nn_p256_ok`); the per-layer gate compares against exactly that routed path (flag off) at m=256 and needs >= 1.03 in both rounds. Gate runs at m=256 only, so m=129..255 (test m=130 unpooler n=8192 only) rides the m=256 decision; unscored, correctness checked at 130/200/256. unpooler slice (n=1024) and m=128/512/1000 never reach it.
+- Fixes: (1) IQR veto floor was `max(im, 0.05)` us, so a timer-resolution IQR on the incumbent could veto a real win; raised to `max(im, 0.5)`. (2) `_sp2_diag` (print-only) was inside the layer's try, so any exception in it (e.g. the splits=1 DataParallel query/launch) would disable the layer; wrapped in its own try. okc_lint OK with warnings, py_compile OK, __pycache__ removed.
+- Residual risk: first compile and launch of the 256x128 cooperative StreamK SplitK instantiation with `splits` on CUTLASS 4.5.0 and a CUTLASS-internal unbounded barrier hang or fault in the canary would poison the context rather than fall back.
