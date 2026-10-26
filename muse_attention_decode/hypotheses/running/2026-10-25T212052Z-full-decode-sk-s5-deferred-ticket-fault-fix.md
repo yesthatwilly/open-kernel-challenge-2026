@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212956Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212957Z
 base_sha: d6a7be8f77635e613d619df51fa1de4dea8f9afd
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -85,6 +85,8 @@ submission_blob: 88bb41b311e7024af915b0e57604182680a03e7a
 lint_warnings: 74
 attempt_file: 2026-10-26T012539Z-check-full-decode-sk-s5-deferred-ticket-fault-fix.md
 prepared_at: 2026-10-26T012539Z
+job: f1d6d493c24244f4
+dispatched_at: 2026-10-26T012615Z
 ---
 
 # full-decode-sk-s5-deferred-ticket-fault-fix
