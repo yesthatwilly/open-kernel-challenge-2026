@@ -88,7 +88,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212524Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-25T212551Z
 base_sha: d375dd60d9615046903966bfa1143a876e566b8a
 base_blob: c2e3e595def2e6b5949e0fd350ce98ed59729147
@@ -97,6 +97,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft
 mode: check
 restack_of: null
 stale_base: true
+implemented_at: 2026-10-26T011825Z
+impl_commit: 97bc07f18b4cbc9aa9b228fdea23c980cefe6fc2
+submission_sha256: 3916dfe084128c3d8d79d4115f45dd195a4d3c7161a4dca38e75297943092836
+norm_sha256: 0c499f6341769f494a929dd9b5fdb8c2a8b71d1fea622a4e6f5687d48fc94a1b
+submission_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
+lint_warnings: 106
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
@@ -149,3 +155,48 @@ No companion. This is kind: rewrite, and its result is read from per-kernel time
 - Is about 6 TB/s really the L2->SM ceiling? Print the wide kernel's issued TB/s next to master's. If wide stays at about 6 TB/s while its time drops, ingest was the cap. If its TB/s drops and time is flat, the limiter is latency/issue and stage 5 should pivot (e.g. to the PDL chain or the 2-CTA/multicast idea).
 - The gate routings at 3012/16384 are soft/random. Chunking is unchanged, so skew sensitivity should be small, but print one skewed-routing ratio as a guard, as combo B's lesson suggests.
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-rega-s4-bm256-wide-tile-high-ft`, `muse_prefill_layer/submission.py` only. The claim was on a stale parent commit, so master's file was brought in first (`git checkout master -- muse_prefill_layer/submission.py`, staged) and every change is an unstaged pure insertion on top of it (954 lines added, 0 removed; `_REGA_HEAD`, `_REGA_BODY`, `_REGA_CPP`, `_REGA_LO_*`, the v1 fallback and both sha256 constants are byte-identical).
+
+What changed:
+- New separate module `muse_prefill_rega_wide` (`_REGA_WIDE_CPP`, `_REGA_WIDE_SRC`, `_rega_wide_src()` = master's head + wgmma wrappers + the namespace part of master's body + the new source, the same assembly rega_lo uses). It is built by `_rega_wide_phase`, called in prepare() AFTER `_rega_setup` (v2 build + low/high/ft gates), `_fa3c_setup`, `_norm_gather_setup` and `_rega_lo_phase`. Master's `muse_prefill_rega_v2` is neither rebuilt nor renamed, so the wide kernel is never a prerequisite of master's path (the review's main required fix). The phase checks that master's v2 source still hashes to `REGA_V2_SHA256` and the v1 fallback still derives.
+- New kernel `rega_wide_kernel<G, BIG>` (distinct symbol), host entries `rega_init_wide` / `rega_gemm_wide` (distinct names; per-call tensor-map encoding into a stack `Maps`, no C++/module globals). Tile = 256 weight rows = master tiles 2J, 2J+1 of the unchanged bank x the same <= 128-token chunk (master's align, chunk and block tables, `decode_item` with n_tiles halved). Stage 51200 B (2 x 9216 weight + 32768 slab), 3 stages, epilogue staging 128 x 272 B, dynamic smem 189440 B (static_asserts), setmaxnreg 40/232. Consumer warp: two register-A sets (aA, aB), two accumulator sets; schedule exactly as the md: wait full; dq(aA); 8 wgmma -> accA; commit; [kb>0: wait<1>, release stage n-1]; dq(aB); 8 wgmma -> accB; commit; wait<1>; after the last stage wait<0> + release. `fence_acc` only touches the accumulator set that is not in flight. Per-output k16 order equals master's, so outputs must be bit-identical. w13 stages both 64-column halves into one 128-column row (single pass); w2 does two 128-column passes through the same buffer with `named_bar(1, 256)` between.
+- Dispatch: `_experts_rega` reads `state['rega_wide'][class]`, a per-state int mask (bit 1 = w13, bit 2 = w2) set by prepare, only for T > REGA_LOW_MAX (low stays master's); kernel_fn adds no print/sync/try/allocation on values.
+- Prepare phase (own start deadline 175 s, own step deadline 250 s, both print `skipped: deadline`): source audit; build with master's flags and `TORCH_CUDA_ARCH_LIST=9.0a` (verbose=True so ptxas 'wgmma serialization' warnings reach the log); attributes of all four instantiations before any launch (regs, local bytes = spill => OFF, smem, CTAs/SM, register pool); per class, w2-only candidate mask if the w13 instantiation spills (hypothesis fallback). Exactness (high: 3012 / 4096 random, skewed, one; ft: 4500 local, 8192 random + local, 16384 random, skewed, one, local): master vs wide on the same align/gather, hs and y bitwise equal, error word 0, launch markers, first differing bucket/column printed, each launch announced + synced. Gate (two interleaved rounds x 21 alternations, cold L2, empty graph subtracted): master's ACTUALLY ROUTED block (`_experts_rega`, wide off, fused norm-gather when `norm_gather_ok[class]`) vs the wide block, ON only if ratio <= 0.97 in BOTH rounds and wide IQR <= 1.5x master's in both; per round medians/IQRs, per-kernel us, TFLOP/s, issued TB/s (L2->SM bytes), items and items per CTA (min-max) for both variants, plus a print-only skewed-routing ratio at the same T. Then master's `_rega_replay_check` copy plan with wide on (per class, only for classes that passed). Last lines of prepare: compact `[rega-wide] GATE` / SUMMARY / `PATH CHOSEN high|ft: wide|master` lines, with prepare totals before and after the phase printed.
+
+Review fixes applied: (1) separate module after master's rega/ft setup, master's module untouched (required fix); (2) fence_acc discipline + w13 NB=128 spill/serialization handling (mask fallback, regs/local bytes printed); (3) items per CTA printed; (4) issued TB/s printed next to master's; (5) one skewed-routing ratio printed; (6) rebased on current master (norm-gather block timed as routed; prepare totals printed; REGA_ALTERNATIONS replaced by the brief's two rounds). Where the stale hypothesis text conflicts (bumped `muse_prefill_rega_v3`, 1932a9c4, 124 s prepare) the review wins.
+
+Deviations: (a) the optional print-only wait<0> no-overlap diagnostic instantiation was NOT built (it adds nvcc time inside a 300 s prepare; the per-kernel TB/s and TFLOP/s lines answer the ingest-vs-overlap question indirectly). (b) The spec said 'REGA_ALTERNATIONS interleaved'; the brief's two-round rule replaced it (21 per round). (c) ptxas warnings cannot be re-printed from Python without redirecting fds (rules risk), so they appear in the build output of the log only (verbose=True); regs/spills are read back from cudaFuncGetAttributes. (d) Nothing could be compiled or run on this node (no nvcc/torch/GPU): brace/paren balance of the CUDA source and py_compile were checked only.
+
+Biggest risk: w13 NB=128 register pressure (128 fp32 accumulators + 64 A registers + silu epilogue under 232); a spill turns w13 off for the class (w2-only), a serialized build is correct but loses the overlap and will fail the 0.97 gate.
+
+## Rules check
+
+- [x] CUDA-graph capturable: `_experts_rega` adds only a dict lookup of a prepare-set int by the token count and one launch; no `.item()`/`.cpu()`/`synchronize()`/prints/allocation on values in kernel_fn (all syncs/prints are in prepare-only `_rega_wide_*`).
+- [x] Nothing derived from `data` is cached: state gets only `rega_wide` (ints) and `rega_wide_ext` (module); tensor maps are encoded per call; no module/static/C++ global holds pointers (source audit `_rega_wide_audit` + `_rega_audit_cpp`).
+- [x] Weights: unchanged bank from `_rega_bank`; NVFP4 codes and E4M3 scales dequantized in registers inside the kernel; nothing repacked or stored at another precision.
+- [x] Activations BF16 (slab and outputs bf16), fp32 accumulation; KV cache and queries untouched.
+- [x] Attention untouched; every route is computed by the wide kernel (same chunk/tile coverage as master, exact-compare gate).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses (in-process `load_inline` only, as master's builds) or network.
+- [x] All work inside the timed call; no output caching or replay (the copy/replay check refills inputs per state).
+- [x] Builds only inside prepare; build error, attribute miss, spill, exact-compare miss, deadline or gate miss leaves master's `rega_gemm` path (flag 0); wide has its own per-state flag and never disables an unrelated landed flag.
+- [x] Bounded waits: `mbar_wait` (2^26-cycle bound, error word 1) on every mbarrier; no spin elsewhere; launch markers err[1]/err[2]; non-sm_90a image sets error word 2.
+- [x] Prepare budget: wide start deadline 175 s, step deadline 250 s; prints `skipped: deadline`.
+
+okc_lint: `OK with warnings` (0 errors; 101 host-sync warnings, all in prepare-only code outside kernel_fn's call graph, and 5 pre-existing dtype warnings). `python3 -I -m py_compile`: ok; `__pycache__` removed.
+
+## Pre-flight audit
+
+Verdict: dispatch-with-fixes (read-only audit plus numpy emulation; nothing could be compiled or run on this node).
+
+- Smem: dynamic 1024 + 3 x 51200 + 128 x 272 = 189440 B (matches REGA_WIDE_SMEM and the static_asserts). Static, small class: 48 (bars) + 9216 (s_be) + 4096 (s_cblk, s_cnb) + 384 + 48 + 4 = 13796 B; first-turn class 9192 B. Total about 203.2 KB plus 1 KB driver reserve, against 232448 B (227 KB). Headroom is about 28 KB.
+- Barriers: full = 1 arrival plus tx WST2 + 2 x rows x 128 (two 9216 B bulk copies plus two slab boxes), which matches the issued bytes. empty = 8 (one arrive per consumer warp). Release of stage n-1 follows wait<1> after A(n) is committed, and the last stage is released after wait<0>. The wait<1> group order was checked by hand, and the 3-stage ring cannot deadlock. fence_acc touches only the idle accumulator set (accA at A-block, accB at B-block), and both sets only after wait<0>.
+- w13 / w2 registers: the live set during dq(aB) is accA 64 + accB 64 + aA 32 (in flight) + aB 32 + temps, which is very tight against 232. The main loop is identical for G = true and false, so a spill is likely to hit both kernels, not w13 alone. Any spill leaves local bytes > 0 and turns the variant OFF, so master keeps running. The w2-only mask path is correct: bit 1 / bit 2 are tested separately in _experts_rega, the exact check and the gate launch only the masked kernels, and the w13 call stays on master's rega_gemm.
+- Emulation: /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/wide_tile_emu.py (output /tmp/claude-1000/-home-user-git-musespark/73199a37-afd5-408c-8bef-97b87f4411ce/scratchpad/audits26/wide_tile_emu.out). At T = 3012 and 16384 (random, skewed, one, local) plus 4096 / 4500 / 8192, it checks decode_item with n_tiles/2, tile pairing 2J/2J+1, the w13 staging column map, w2 column blocks, nvalid tails and sentinel rows, the block / chunk table capacities, and per-CTA item balance. Every (slot, master tile) is written exactly once, by the same expert as master's kernel. All checks pass.
+- Deadlines: t_prepare0 is the first statement of prepare(), which is the clock the 300 s prepare limit uses. This module builds nothing at import time, so the sibling import-clock problem does not apply. Master prepare is about 125-140 s before the wide phase (recent logs: 138.9 s, 139.9 s). Start deadline 175 s and step deadline 250 s leave about 35 s of slack at the start. I estimate the phase at 90-110 s, ending near 230-250 s, with a worst-case overrun of one step past 250 s, so still under 300 s.
+- Fix: the IQR veto had no absolute floor (wide IQR <= 1.5 x master's IQR). Added REGA_WIDE_IQR_FLOOR_US = 1.0, so the test is wide IQR <= 1.5 x max(master IQR, 1.0 us).
+- okc_lint: OK with warnings (0 errors); py_compile ok; __pycache__ removed.
+
+Residual risk: NB = 128 register pressure (spill or ptxas wgmma serialization turns the path off or fails the 0.97 gate), and the prepare total landing near 250 s.
