@@ -88,10 +88,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm tail at 9 <= num_tokens <= 32
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212550Z
 base_sha: ce2461b1ea24995a3c81d11487611f052d8ecc35
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -110,6 +110,13 @@ attempt_file: 2026-10-26T012541Z-check-cuda-fused-split-i-moe-midt-cluster-reduc
 prepared_at: 2026-10-26T012541Z
 job: 6fe2a63f490f49a3
 dispatched_at: 2026-10-26T012820Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.3884616036515394
+speedup_ci: [1.3676346795967662, 1.4092885277063123]
+harvested_at: 2026-10-26T023154Z
+best_at_harvest: 1.4020871870995952
+promotion: null
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
@@ -235,3 +242,30 @@ Fixes:
 2. Skip paths (build failure, unsupported bank, canary/correctness miss, deadline, copy-check turn-off) printed FINAL = MASTER but no PATH CHOSEN line: finish() now emits a PATH CHOSEN = MASTER line per class when none was printed or the earlier one said FSI.
 
 Residual risk: kernels were never compiled or run (no nvcc/GPU here); if the cluster build fails the class stays on master, and KC=256 wave quantization plus ~2 TB/s dequant may leave the 1.03x gate on master.
+
+## Result
+
+- job `6fe2a63f490f49a3` (check), status done, passed True, tests 5/5
+- speedup 1.3885x, 95% CI [1.3676, 1.4093], score 9685.899822243233 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.4020871870995952, "ci": [1.3810558792931014, 1.423118494906089], "job": "31c27e4b8fc84bd2"}; base result: muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-split-i-moe-midt-cluster-reduce.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cuda-fused-split-i-moe-midt-cluster-reduce.patch`; branch `hyp/muse_moe_w4a16/cuda-fused-split-i-moe-midt-cluster-reduce`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 46.35 | 44.02 | 1.0183 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 150.9 | 148.66 | 0.9948 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 199.12 | 197.3 | 1.0144 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 104.51 | 107.21 | 0.9822 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 323.16 | 320.61 | 1.0052 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 358.12 | 391.23 | 0.9296 | lost |
+
+lost on verify_32 verify_32. Expected hit: 3/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm tail at 9 <= num_tokens <= 32`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_moe_w4a16 "<what to fix or tune>" --kind rewrite --depends-on cuda-fused-split-i-moe-midt-cluster-reduce --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: cuda-fused-split-i-moe-midt-cluster-reduce`) that adds a further change in the same area is the only way to learn more.
+

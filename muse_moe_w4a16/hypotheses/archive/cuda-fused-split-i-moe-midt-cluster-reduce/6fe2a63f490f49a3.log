@@ -1,0 +1,88 @@
+B; fsi kernel alone 346.14 us = 1.88 TB/s
+[fsi-midt] DIAG T=16 KC128/CL4: active experts 23 x 32 chunks = 736 units on 120 CTAs (6.13 waves), 30 max co-resident clusters of 4, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 608.74 us = 1.07 TB/s
+[fsi-midt] DIAG T=16 KC256/CL4: active experts 23 x 16 chunks = 368 units on 120 CTAs (3.07 waves), 30 max co-resident clusters of 4, smem 1024+186368 B, regs 155, spill 0 B; fsi kernel alone 593.60 us = 1.10 TB/s
+[fsi-midt] DIAG T=16: combine alone 9.82 us (printed separately from the fsi kernel: the combine replaces master's post-norm kernel)
+[fsi-midt] GATE class=9..16 T=16 routing=zipf round 1/2: master 287.04 us [IQR 0.83]; KC128/CL1 413.47 us [IQR 5.22] x0.694 IQR-WIDE; KC256/CL1 354.94 us [IQR 0.67] x0.809; KC128/CL4 620.77 us [IQR 2.14] x0.462 IQR-WIDE; KC256/CL4 604.22 us [IQR 2.78] x0.475 IQR-WIDE
+[fsi-midt] GATE class=9..16 T=16 routing=zipf round 2/2: master 287.55 us [IQR 1.41]; KC128/CL1 413.95 us [IQR 5.89] x0.695 IQR-WIDE; KC256/CL1 355.65 us [IQR 1.09] x0.809; KC128/CL4 622.88 us [IQR 2.72] x0.462 IQR-WIDE; KC256/CL4 605.06 us [IQR 1.70] x0.475
+[fsi-midt] GATE class=9..16 T=16 routing=random-local round 1/2: master 273.92 us [IQR 1.79]; KC128/CL1 473.28 us [IQR 3.74] x0.579 IQR-WIDE; KC256/CL1 465.66 us [IQR 1.98] x0.588; KC128/CL4 618.37 us [IQR 2.66] x0.443; KC256/CL4 602.50 us [IQR 2.82] x0.455 IQR-WIDE
+[fsi-midt] GATE class=9..16 T=16 routing=random-local round 2/2: master 274.59 us [IQR 1.66]; KC128/CL1 475.33 us [IQR 4.00] x0.578 IQR-WIDE; KC256/CL1 466.59 us [IQR 2.46] x0.589; KC128/CL4 619.68 us [IQR 2.94] x0.443 IQR-WIDE; KC256/CL4 603.17 us [IQR 3.20] x0.455 IQR-WIDE
+[fsi-midt] PATH CHOSEN class=9..16 (T=16) = MASTER: no variant cleared 1.03x with IQR <= 1.5x in both rounds on both routings: KC128/CL1: min ratio 0.578 (need >= 1.03); IQR ok False; KC256/CL1: min ratio 0.588 (need >= 1.03); IQR ok True; KC128/CL4: min ratio 0.443 (need >= 1.03); IQR ok False; KC256/CL4: min ratio 0.455 (need >= 1.03); IQR ok False; master = align + moe_wna16_marlin_gemm x2 + silu_and_mul + post-norm; fsi = _align_small(bsm 32) + fsi_midt_gather_kernel + fsi_midt_kernel<NT,CL> + _fsi_combine_kernel
+[fsi-midt]     [DIAG KC128/CL1] launching fsi kernel alone
+[fsi-midt]     [DIAG KC128/CL1] ok
+[fsi-midt]     [DIAG KC256/CL1] launching fsi kernel alone
+[fsi-midt]     [DIAG KC256/CL1] ok
+[fsi-midt]     [DIAG KC128/CL4] launching fsi kernel alone
+[fsi-midt]     [DIAG KC128/CL4] ok
+[fsi-midt]     [DIAG KC256/CL4] launching fsi kernel alone
+[fsi-midt]     [DIAG KC256/CL4] ok
+[fsi-midt] DIAG T=32: align(bsm 32) alone 8.26 us, gather alone 8.61 us (active experts 29, 821 MB of NVFP4 weights)
+[fsi-midt] DIAG T=32 KC128/CL1: active experts 29 x 32 chunks = 928 units on 132 CTAs (7.03 waves), 132 max co-resident CTAs, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 537.73 us = 1.53 TB/s
+[fsi-midt] DIAG T=32 KC256/CL1: active experts 29 x 16 chunks = 464 units on 132 CTAs (3.52 waves), 132 max co-resident CTAs, smem 1024+186368 B, regs 156, spill 0 B; fsi kernel alone 458.18 us = 1.79 TB/s
+[fsi-midt] DIAG T=32 KC128/CL4: active experts 29 x 32 chunks = 928 units on 120 CTAs (7.73 waves), 30 max co-resident clusters of 4, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 701.54 us = 1.17 TB/s
+[fsi-midt] DIAG T=32 KC256/CL4: active experts 29 x 16 chunks = 464 units on 120 CTAs (3.87 waves), 30 max co-resident clusters of 4, smem 1024+186368 B, regs 155, spill 0 B; fsi kernel alone 600.83 us = 1.37 TB/s
+[fsi-midt] DIAG T=32: combine alone 10.27 us (printed separately from the fsi kernel: the combine replaces master's post-norm kernel)
+[fsi-midt] GATE class=17..32 T=32 routing=zipf round 1/2: master 371.26 us [IQR 1.41]; KC128/CL1 547.52 us [IQR 5.95] x0.678 IQR-WIDE; KC256/CL1 469.63 us [IQR 1.47] x0.791; KC128/CL4 796.06 us [IQR 3.46] x0.466 IQR-WIDE; KC256/CL4 749.86 us [IQR 3.33] x0.495 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=zipf round 2/2: master 371.78 us [IQR 1.15]; KC128/CL1 545.70 us [IQR 6.69] x0.681 IQR-WIDE; KC256/CL1 469.95 us [IQR 1.38] x0.791; KC128/CL4 797.44 us [IQR 2.78] x0.466 IQR-WIDE; KC256/CL4 751.62 us [IQR 2.82] x0.495 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=random-local round 1/2: master 359.62 us [IQR 1.44]; KC128/CL1 544.93 us [IQR 5.76] x0.660 IQR-WIDE; KC256/CL1 468.26 us [IQR 1.63] x0.768; KC128/CL4 793.95 us [IQR 2.27] x0.453 IQR-WIDE; KC256/CL4 751.39 us [IQR 3.36] x0.479 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=random-local round 2/2: master 360.38 us [IQR 1.25]; KC128/CL1 543.23 us [IQR 5.28] x0.663 IQR-WIDE; KC256/CL1 468.48 us [IQR 1.18] x0.769; KC128/CL4 794.40 us [IQR 3.10] x0.454 IQR-WIDE; KC256/CL4 752.29 us [IQR 3.42] x0.479 IQR-WIDE
+[fsi-midt] PATH CHOSEN class=17..32 (T=32) = MASTER: no variant cleared 1.03x with IQR <= 1.5x in both rounds on both routings: KC128/CL1: min ratio 0.660 (need >= 1.03); IQR ok False; KC256/CL1: min ratio 0.768 (need >= 1.03); IQR ok True; KC128/CL4: min ratio 0.453 (need >= 1.03); IQR ok False; KC256/CL4: min ratio 0.479 (need >= 1.03); IQR ok False; master = align + moe_wna16_marlin_gemm x2 + silu_and_mul + post-norm; fsi = _align_small(bsm 32) + fsi_midt_gather_kernel + fsi_midt_kernel<NT,CL> + _fsi_combine_kernel
+[align2] PATH CHOSEN class=d32 T=32 bsm=16 = master, incumbent 3.55 us, align2 3.55 us, ratio 1.000, equivalence 90 cases ok
+[align2] PATH CHOSEN class=v128 T=128 bsm=16 = master, incumbent 3.33 us, align2 4.13 us, ratio 0.806, equivalence 162 cases ok
+[align2] PATH CHOSEN class=v256 T=256 bsm=32 = align2 chunk 64, incumbent 5.98 us, align2 4.13 us, ratio 1.450, equivalence 72 cases ok
+[align2] final flags align2_ok={'d32': 0, 'v128': 0, 'v256': 64} (class: chunk, 0 = master)
+[combo] ===== COMBO SUMMARY (after master's prepare; per-phase start deadlines {'F1': 120.0, 'F2': 150.0, 'C1a': 160.0, 'C1b': 170.0, 'F2-select-diag': 200.0, 'copy': 255.0}, no timing past 270 s) =====
+[combo] phase F1: 0.1 s, ran
+[combo] phase F2: 2.0 s, ran
+[combo] phase C1a: 0.2 s, ran
+[combo] phase C1b: 0.2 s, ran
+[combo] phase F2-select-diag: 0.3 s, ran
+[combo] phase copy: 0.4 s, ran
+[combo] wg_on_128 False, wg_on_256 True (master's _wg_setup selector; F2 applies only to an ON bucket)
+[combo] PATH CHOSEN F1 class=decode_1 (T=1) = w13 atomic: worse routing zipf: master 27.17 us, w13 atomic 25.63 us, ratio 0.943 (ON at <= 0.98); fp32 worst 0.00822, vs master worst 0.0101
+[combo] PATH CHOSEN F2 class=B128 = master (wgmma bucket off: kernel_fn runs Marlin there)
+[combo] PATH CHOSEN F2 class=B256 = align2 chunk 64 bsm 16: worse routing zipf: master 12.58 us, align2 chunk 64 bsm 16 4.61 us, ratio 0.366 (ON at <= 0.98)
+[combo] PATH CHOSEN C1a class=d32 (T 17..32) = _align_parallel: worse routing zipf: master 3.39 us, _align_parallel 1.86 us, ratio 0.547 (ON at <= 0.98); master pick _align_small; equivalence 90 cases torch.equal
+[combo] PATH CHOSEN C1b class=decode_32 (T=32) = hoisted Triton post-norm: worse routing random: master 3.62 us, hoisted Triton post-norm 3.36 us, ratio 0.929 (ON at <= 0.98); error vs fp32 worst hoisted 0.00166 / SGLang 0.00246 (6 routings)
+[combo] F2 diag (not applied): _wg_select with the F2 front end would set B128 MARLIN, B256 WGMMA; live flags wg_on_128 False, wg_on_256 True
+[combo] copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled): 32 replays, T [1, 24, 32, 256]; PASS
+[combo] final flags: w13_mode='atomic' wg_align2={128: 0, 256: 64} d32_align=1 d32_post_norm=1 (master = 'master'/0)
+[combo] prepare seconds: master 49.8, total 53.0
+[fsi-midt] ===== FSI SUMMARY (cuda-fused-split-i-moe-midt-cluster-reduce; setup 34.2 s, prepare at 87.1 s) =====
+BUILT muse_moe_w4a16_fsi_midt_v1_red1 in 31.5 s (global add: atomicAdd(float4*)); arch -gencode compute_90a/sm_90a, -O3 -lineinfo
+kernel KC128/CL4: regs 121, local (spill) 0 B, static smem 1024 B, dynamic smem 209920 B, CTAs/SM 1, max co-resident clusters of 4 30, grid 120 CTAs, attr rc 0 / clusters rc 0, binaryVersion 90, usable True
+kernel KC256/CL4: regs 155, local (spill) 0 B, static smem 1024 B, dynamic smem 186368 B, CTAs/SM 1, max co-resident clusters of 4 30, grid 120 CTAs, attr rc 0 / clusters rc 0, binaryVersion 90, usable True
+kernel KC128/CL1: regs 121, local (spill) 0 B, static smem 1024 B, dynamic smem 209920 B, CTAs/SM 1, max co-resident CTAs 132, grid 132 CTAs, attr rc 0 / clusters rc 0, binaryVersion 90, usable True
+kernel KC256/CL1: regs 156, local (spill) 0 B, static smem 1024 B, dynamic smem 186368 B, CTAs/SM 1, max co-resident CTAs 132, grid 132 CTAs, attr rc 0 / clusters rc 0, binaryVersion 90, usable True
+canary KC128/CL1: T=16 zipf rel-L2 vs fp32 0.00457, device error word 0 (ok), launch marker seen, y32 residue 0: PASS
+canary KC256/CL1: T=16 zipf rel-L2 vs fp32 0.00457, device error word 0 (ok), launch marker seen, y32 residue 0: PASS
+canary KC128/CL4: T=16 zipf rel-L2 vs fp32 0.00459, device error word 0 (ok), launch marker seen, y32 residue 0: PASS
+canary KC256/CL4: T=16 zipf rel-L2 vs fp32 0.00459, device error word 0 (ok), launch marker seen, y32 residue 0: PASS
+correctness KC128/CL1: worst agg 0.00467, worst row 0.00487 over 20 cases: PASS
+correctness KC256/CL1: worst agg 0.00467, worst row 0.00487 over 20 cases: PASS
+correctness KC128/CL4: worst agg 0.00467, worst row 0.00487 over 20 cases: PASS
+correctness KC256/CL4: worst agg 0.00467, worst row 0.00487 over 20 cases: PASS
+[fsi-midt] DIAG T=16: align(bsm 32) alone 6.75 us, gather alone 8.13 us (active experts 23, 651 MB of NVFP4 weights)
+[fsi-midt] DIAG T=16 KC128/CL1: active experts 23 x 32 chunks = 736 units on 132 CTAs (5.58 waves), 132 max co-resident CTAs, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 411.49 us = 1.58 TB/s
+[fsi-midt] DIAG T=16 KC256/CL1: active experts 23 x 16 chunks = 368 units on 132 CTAs (2.79 waves), 132 max co-resident CTAs, smem 1024+186368 B, regs 156, spill 0 B; fsi kernel alone 346.14 us = 1.88 TB/s
+[fsi-midt] DIAG T=16 KC128/CL4: active experts 23 x 32 chunks = 736 units on 120 CTAs (6.13 waves), 30 max co-resident clusters of 4, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 608.74 us = 1.07 TB/s
+[fsi-midt] DIAG T=16 KC256/CL4: active experts 23 x 16 chunks = 368 units on 120 CTAs (3.07 waves), 30 max co-resident clusters of 4, smem 1024+186368 B, regs 155, spill 0 B; fsi kernel alone 593.60 us = 1.10 TB/s
+[fsi-midt] DIAG T=16: combine alone 9.82 us (printed separately from the fsi kernel: the combine replaces master's post-norm kernel)
+[fsi-midt] GATE class=9..16 T=16 routing=zipf round 1/2: master 287.04 us [IQR 0.83]; KC128/CL1 413.47 us [IQR 5.22] x0.694 IQR-WIDE; KC256/CL1 354.94 us [IQR 0.67] x0.809; KC128/CL4 620.77 us [IQR 2.14] x0.462 IQR-WIDE; KC256/CL4 604.22 us [IQR 2.78] x0.475 IQR-WIDE
+[fsi-midt] GATE class=9..16 T=16 routing=zipf round 2/2: master 287.55 us [IQR 1.41]; KC128/CL1 413.95 us [IQR 5.89] x0.695 IQR-WIDE; KC256/CL1 355.65 us [IQR 1.09] x0.809; KC128/CL4 622.88 us [IQR 2.72] x0.462 IQR-WIDE; KC256/CL4 605.06 us [IQR 1.70] x0.475
+[fsi-midt] GATE class=9..16 T=16 routing=random-local round 1/2: master 273.92 us [IQR 1.79]; KC128/CL1 473.28 us [IQR 3.74] x0.579 IQR-WIDE; KC256/CL1 465.66 us [IQR 1.98] x0.588; KC128/CL4 618.37 us [IQR 2.66] x0.443; KC256/CL4 602.50 us [IQR 2.82] x0.455 IQR-WIDE
+[fsi-midt] GATE class=9..16 T=16 routing=random-local round 2/2: master 274.59 us [IQR 1.66]; KC128/CL1 475.33 us [IQR 4.00] x0.578 IQR-WIDE; KC256/CL1 466.59 us [IQR 2.46] x0.589; KC128/CL4 619.68 us [IQR 2.94] x0.443 IQR-WIDE; KC256/CL4 603.17 us [IQR 3.20] x0.455 IQR-WIDE
+[fsi-midt] PATH CHOSEN class=9..16 (T=16) = MASTER: no variant cleared 1.03x with IQR <= 1.5x in both rounds on both routings: KC128/CL1: min ratio 0.578 (need >= 1.03); IQR ok False; KC256/CL1: min ratio 0.588 (need >= 1.03); IQR ok True; KC128/CL4: min ratio 0.443 (need >= 1.03); IQR ok False; KC256/CL4: min ratio 0.455 (need >= 1.03); IQR ok False; master = align + moe_wna16_marlin_gemm x2 + silu_and_mul + post-norm; fsi = _align_small(bsm 32) + fsi_midt_gather_kernel + fsi_midt_kernel<NT,CL> + _fsi_combine_kernel
+[fsi-midt] DIAG T=32: align(bsm 32) alone 8.26 us, gather alone 8.61 us (active experts 29, 821 MB of NVFP4 weights)
+[fsi-midt] DIAG T=32 KC128/CL1: active experts 29 x 32 chunks = 928 units on 132 CTAs (7.03 waves), 132 max co-resident CTAs, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 537.73 us = 1.53 TB/s
+[fsi-midt] DIAG T=32 KC256/CL1: active experts 29 x 16 chunks = 464 units on 132 CTAs (3.52 waves), 132 max co-resident CTAs, smem 1024+186368 B, regs 156, spill 0 B; fsi kernel alone 458.18 us = 1.79 TB/s
+[fsi-midt] DIAG T=32 KC128/CL4: active experts 29 x 32 chunks = 928 units on 120 CTAs (7.73 waves), 30 max co-resident clusters of 4, smem 1024+209920 B, regs 121, spill 0 B; fsi kernel alone 701.54 us = 1.17 TB/s
+[fsi-midt] DIAG T=32 KC256/CL4: active experts 29 x 16 chunks = 464 units on 120 CTAs (3.87 waves), 30 max co-resident clusters of 4, smem 1024+186368 B, regs 155, spill 0 B; fsi kernel alone 600.83 us = 1.37 TB/s
+[fsi-midt] DIAG T=32: combine alone 10.27 us (printed separately from the fsi kernel: the combine replaces master's post-norm kernel)
+[fsi-midt] GATE class=17..32 T=32 routing=zipf round 1/2: master 371.26 us [IQR 1.41]; KC128/CL1 547.52 us [IQR 5.95] x0.678 IQR-WIDE; KC256/CL1 469.63 us [IQR 1.47] x0.791; KC128/CL4 796.06 us [IQR 3.46] x0.466 IQR-WIDE; KC256/CL4 749.86 us [IQR 3.33] x0.495 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=zipf round 2/2: master 371.78 us [IQR 1.15]; KC128/CL1 545.70 us [IQR 6.69] x0.681 IQR-WIDE; KC256/CL1 469.95 us [IQR 1.38] x0.791; KC128/CL4 797.44 us [IQR 2.78] x0.466 IQR-WIDE; KC256/CL4 751.62 us [IQR 2.82] x0.495 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=random-local round 1/2: master 359.62 us [IQR 1.44]; KC128/CL1 544.93 us [IQR 5.76] x0.660 IQR-WIDE; KC256/CL1 468.26 us [IQR 1.63] x0.768; KC128/CL4 793.95 us [IQR 2.27] x0.453 IQR-WIDE; KC256/CL4 751.39 us [IQR 3.36] x0.479 IQR-WIDE
+[fsi-midt] GATE class=17..32 T=32 routing=random-local round 2/2: master 360.38 us [IQR 1.25]; KC128/CL1 543.23 us [IQR 5.28] x0.663 IQR-WIDE; KC256/CL1 468.48 us [IQR 1.18] x0.769; KC128/CL4 794.40 us [IQR 3.10] x0.454 IQR-WIDE; KC256/CL4 752.29 us [IQR 3.42] x0.479 IQR-WIDE
+[fsi-midt] PATH CHOSEN class=17..32 (T=32) = MASTER: no variant cleared 1.03x with IQR <= 1.5x in both rounds on both routings: KC128/CL1: min ratio 0.660 (need >= 1.03); IQR ok False; KC256/CL1: min ratio 0.768 (need >= 1.03); IQR ok True; KC128/CL4: min ratio 0.453 (need >= 1.03); IQR ok False; KC256/CL4: min ratio 0.479 (need >= 1.03); IQR ok False; master = align + moe_wna16_marlin_gemm x2 + silu_and_mul + post-norm; fsi = _align_small(bsm 32) + fsi_midt_gather_kernel + fsi_midt_kernel<NT,CL> + _fsi_combine_kernel
+[fsi-midt] FINAL class=9..16 (T 9..16) = MASTER
+[fsi-midt] FINAL class=17..32 (T 17..32) = MASTER
+[fsi-midt] final flags: fsi_sel={0: None, 1: None} (T <= 8 and T >= 33 always master)

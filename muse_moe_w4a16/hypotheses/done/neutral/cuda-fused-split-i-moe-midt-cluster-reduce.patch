@@ -1,0 +1,1493 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 35b8a851..c7e48df9 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -81,6 +81,13 @@ per ON wgmma bucket (state['wg_align2'], checked per expert vs SGLang and bitwis
+ _align_parallel at 17 <= T <= 32 (state['d32_align']); C1b the hoisted Triton post-norm at T == 32
+ (state['d32_post_norm']). A two-state graph copy check runs last. Every OFF flag runs master byte for byte.
+ 
++Fused split-I (hypothesis cuda-fused-split-i-moe-midt-cluster-reduce, rewrite stage 1): for 9 <= num_tokens <= 32,
++when its prepare gates pass (per T class, flags state['fsi_sel']), master's two Marlin GEMMs, silu_and_mul and the
++post-norm are replaced by master's _align_small at block 32, a gather, ONE persistent wgmma kernel in its own
++load_inline module (per active expert and chunk of intermediate columns: w13 + silu * up kept in shared memory, then
++W2 over the chunk, the partial y reduced across a 4-CTA thread-block cluster through distributed shared memory and
++added into an fp32 scratch) and a Triton fp32 combine. T <= 8 and T >= 33 run master byte for byte.
++
+ Differs from SGLang: the expert all-reduce is not run."""
+ 
+ from typing import TypedDict
+@@ -3443,6 +3450,8 @@ def prepare(weights: Weights) -> dict:
+         "wg_align2": {128: 0, 256: 0},
+         "d32_align": 0,
+         "d32_post_norm": 0,
++        # Fused split-I path (hypothesis cuda-fused-split-i-moe-midt-cluster-reduce): {T class: (NT, CL)}; empty = master.
++        "fsi_sel": {},
+     }
+     align2_lines = []
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+@@ -3458,11 +3467,17 @@ def prepare(weights: Weights) -> dict:
+     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
+         combo_lines = _combo_setup(weights, state, device, t_prepare)
+     combo_lines.append(f"{COMBO_TAG} prepare seconds: master {t_master:.1f}, total {time.perf_counter() - t_prepare:.1f}")
++    # Fused split-I gates (own module, own flags state['fsi_sel']), after every master / combo phase; own deadlines.
++    fsi_lines = []
++    if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
++        fsi_lines = _fsi_setup(weights, state, device, t_prepare)
+     # The [align2] lines, then the combo PATH CHOSEN / phase lines last, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+     for line in combo_lines:
+         print(line, flush=True)
++    for line in fsi_lines:  # last: the judge keeps only the log tail
++        print(line, flush=True)
+     return state
+ 
+ 
+@@ -4245,6 +4260,1435 @@ def _combo_setup(weights, state, device, t_prepare):
+     return lines
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Fused split-I MoE for 9 <= T <= 32 (hypothesis cuda-fused-split-i-moe-midt-cluster-reduce, rewrite stage 1).
++#
++# One own load_inline module (muse_moe_w4a16_fsi_midt_v1*): fsi_midt_kernel<NT, CL>, a persistent warp-specialized
++# Hopper kernel (producer warpgroup + two consumer warpgroups, swap-AB wgmma m64n32k16 with the dequantized NVFP4
++# weight rows as register A, as the wgmma module above) that, per (active expert, chunk of KC = 64 NT intermediate
++# columns), computes h = silu(gate) * up over the full K = 4096 for all <= 32 routes of the expert, keeps h in shared
++# memory as bf16, streams W2[:, chunk] and adds its fp32 partial y. The CL = 4 CTAs of a thread-block cluster take 4
++# adjacent chunks of the SAME expert and reduce their partial tiles through distributed shared memory before one
++# global fp32 add per row; CL = 1 is the same kernel with a plain per-CTA reduction (diagnostic and fallback). It
++# reads the wgmma module's lossless retiling of the same NVFP4 bytes (state['wg_banks']); tokens are gathered into
++# 32-row blocks by master's _align_small at block_size_m 32 (one block per active expert) and an own gather kernel.
++# A Triton combine (fp32 y32 rows, master's post-norm formula, zero-after-read) turns y32 into the bf16 output.
++#
++# Everything is prepare-gated per T class ({9..16}, {17..32}) with its own state flag state['fsi_sel'][cls] (None =
++# master's exact path): build, canary, correctness against an fp32-dequant reference, two interleaved cold-L2 graph
++# rounds against master's ACTUALLY ROUTED path on a judge-like and a random-local routing, a three-state graph copy
++# check. T <= 8 and T >= 33 never reach it.
++# ---------------------------------------------------------------------------------------------
++
++FSI_TAG = "[fsi-midt]"
++FSI_MIN_TOKENS = 9
++FSI_MAX_TOKENS = 32
++FSI_CLASSES = ((0, 9, 16, 16, "9..16"), (1, 17, 32, 32, "17..32"))  # (class, lo, hi, judged T, label)
++FSI_VARIANTS = ((2, 4), (4, 4), (2, 1), (4, 1))  # (NT, CL): KC = 64 NT columns per unit, cluster size CL
++FSI_XS_ROWS = 1280               # token-slab scratch rows (>= 32 * 8 + 32 * 31 = 1248 sorted slots at T = 32)
++FSI_MAGIC = 0x46534931           # block 0 of fsi_midt_kernel writes it into fsi_err[1] (the launch marker)
++FSI_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)",
++                3: "cluster barrier wait timed out", 4: "cluster size mismatch at launch"}
++FSI_EXT_NAME = "muse_moe_w4a16_fsi_midt_v1"
++FSI_REPS = 41                    # interleaved cold-L2 graph replays per routing and round
++FSI_ROUNDS = 2
++FSI_MIN_SPEEDUP = 1.03           # master median / candidate median, in BOTH rounds on BOTH routings
++FSI_IQR_FACTOR = 1.5             # candidate IQR <= this x max(master's IQR, FSI_IQR_FLOOR_US), in every round and routing
++FSI_IQR_FLOOR_US = 0.5           # absolute floor on the incumbent's spread: a timer-resolution IQR must not veto a win
++FSI_ERR_FACTOR = 2.0             # aggregate bound: max(FSI_ERR_FACTOR x master's own error, FSI_ERR_FLOOR)
++FSI_ERR_FLOOR = 1e-2
++FSI_ROW_FACTOR = 5.0             # per-row bound: FSI_ROW_FACTOR x the aggregate bound
++FSI_EXPERT_BYTES = 8192 * 2304 + 4096 * 2304  # NVFP4 codes + E4M3 scales of one expert (w13 + w2)
++# Prepare-time start deadlines (seconds from prepare()'s start); a phase that cannot start before its deadline
++# prints 'skipped: deadline' and the class stays on master.
++FSI_DEADLINES_S = {"start": 150.0, "retry": 185.0, "correct": 205.0, "timing": 232.0, "copy": 248.0}
++FSI_ROUTINGS = ("zipf", "random-local")                 # the timing / gating routings
++FSI_CASES = ("zipf", "random-local", "skewed-4hot", "one-expert", "all-remote")  # correctness routings
++FSI_CASE_TOKENS = (9, 16, 17, 32)
++
++_FSI_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> fsi_init();
++void fsi_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_experts, torch::Tensor xs);
++void fsi_run(int64_t nt, int64_t cl, torch::Tensor xs, torch::Tensor wq13, torch::Tensor gs13, torch::Tensor wq2,
++             torch::Tensor gs2, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, torch::Tensor y32, torch::Tensor err, int64_t grid);
++"""
++
++_FSI_SRC_HEAD = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda.h>
++#include <cuda_runtime.h>
++#include <cuda_fp16.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <cstring>
++#include <vector>
++
++#ifndef FSI_RED_MODE
++#define FSI_RED_MODE 0   // 1: atomicAdd(float4*, float4) (sm_90 global vector add), 0: four scalar adds
++#endif
++
++namespace {
++
++constexpr int THREADS = 384;             // WG0 producer, WG1 + WG2 consumers
++constexpr int HID = 4096;                // H
++constexpr int INTER = 4096;              // I
++constexpr int REC = 4608;                // record: 4096 B codes + 512 B scales (one 128-row tile, one 64-k block)
++constexpr int REC_CODES = 4096;
++constexpr int PAIR = 2 * REC;            // two 64-k records = one 128-k pipeline step of one tile (9216 B)
++constexpr int SLAB = 64 * 32 * 2;        // one SWIZZLE_128B box of the token slab: 32 rows x 64 bf16 = 4096 B
++constexpr int PP = 132;                  // fp32 partial-y row pitch (128 H rows + 4 pad: conflict-free scatter)
++constexpr int NTILE13 = INTER / 64;      // w13 tiles per expert (64 gate + 64 up rows each)
++constexpr int NTILE2 = HID / 128;        // w2 tiles per expert (128 H rows each)
++constexpr int KREC = HID / 64;           // 64-k records along K (w13: K = H; w2: K = I; both 4096)
++constexpr int KSTEPS13 = HID / 128;      // w13 pipeline steps per tile
++constexpr int FSI_MAGIC = 0x46534931;    // block 0 writes it into err[1] (launch marker)
++
++// Per (NT, CL) geometry. NT = adjacent w13 tiles per unit (KC = 64 NT intermediate columns), CL = cluster size.
++template <int NT, int CL>
++struct Cf {
++  static constexpr int STAGES = (NT == 4) ? 3 : 5;
++  static constexpr int WSTAGE = NT * PAIR;                 // w13: NT pairs; w2: two H tiles x NT records
++  static constexpr int STAGE_BYTES = WSTAGE + 2 * SLAB;    // + the two token-slab boxes (w13 only)
++  static constexpr int PT = (NT == 2) ? 2 : 1;             // H tiles whose partials share one cluster sync
++  static constexpr int HBYTES = NT * SLAB;                 // h: 32 tokens x KC bf16, SWIZZLE_128B K-major groups
++  static constexpr int PBYTES = 2 * PT * 32 * PP * 4;      // double-buffered fp32 partials
++  static constexpr int BYTES = 1024 + STAGES * STAGE_BYTES + HBYTES + PBYTES;
++  static constexpr int NJ = NTILE13 / NT;                  // chunks per expert
++  static constexpr int NQ = NJ / CL;                       // cluster groups per expert
++  static constexpr int RPR = 128 / CL;                     // H rows of a tile each rank reduces
++  static_assert(STAGE_BYTES % 1024 == 0 && HBYTES % 1024 == 0 && WSTAGE % 1024 == 0, "stage alignment");
++  static_assert(NJ % CL == 0 && 128 % CL == 0 && (RPR % 4) == 0, "cluster geometry");
++  static_assert(BYTES + 8192 <= 227 * 1024, "shared memory budget");
++};
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
++}
++__device__ __forceinline__ void fence_barrier_init() {
++  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n" :: "r"(a), "r"(tx) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];\n" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ bool mbar_try(uint32_t a, uint32_t parity) {
++  uint32_t ok;
++  asm volatile("{\n\t.reg .pred P;\n\t"
++               "mbarrier.try_wait.parity.shared::cta.b64 P, [%1], %2;\n\t"
++               "selp.u32 %0, 1, 0, P;\n\t}\n"
++               : "=r"(ok) : "r"(a), "r"(parity) : "memory");
++  return ok != 0;
++}
++// Bounded wait: after 2^26 cycles without the phase, record `code` in the error word and stop waiting
++// (dead), so a broken pipeline ends in a failed self-check instead of a hang. Applies to the ring
++// barriers (code 1) and the cluster barriers (code 3) alike.
++__device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err, bool& dead, int code) {
++  if (dead || mbar_try(a, parity)) return;
++  const long long t0 = clock64();
++  while (!mbar_try(a, parity)) {
++    if (clock64() - t0 > (1ll << 26)) {
++      dead = true;
++      atomicExch(err, code);
++      return;
++    }
++  }
++}
++// Plain 1-D bulk copy: no createpolicy / .L2::cache_hint operand.
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
++}
++__device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3}], [%4];\n"
++               :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(bar) : "memory");
++}
++// wgmma exists only for sm_90a: every such body is compiled only under __CUDA_ARCH_FEAT_SM90_ALL (else the
++// kernel just sets error word 2).
++__device__ __forceinline__ void wgmma_fence() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory");
++#endif
++}
++__device__ __forceinline__ void wgmma_commit() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
++#endif
++}
++template <int N>
++__device__ __forceinline__ void wgmma_wait() {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory");
++#endif
++}
++template <int NA>
++__device__ __forceinline__ void fence_acc(float (&d)[NA]) {
++#pragma unroll
++  for (int i = 0; i < NA; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
++}
++__device__ __forceinline__ void named_bar(int id, int count) {
++  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
++}
++// Generic-proxy shared-memory writes (the h buffer) must be made visible to the async proxy (wgmma's B operand).
++__device__ __forceinline__ void fence_proxy_async() {
++  asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
++}
++// Thread-block cluster helpers.
++__device__ __forceinline__ uint32_t cluster_ctarank() {
++  uint32_t r;
++  asm volatile("mov.u32 %0, %%cluster_ctarank;\n" : "=r"(r));
++  return r;
++}
++__device__ __forceinline__ uint32_t cluster_nctarank() {
++  uint32_t r;
++  asm volatile("mov.u32 %0, %%cluster_nctarank;\n" : "=r"(r));
++  return r;
++}
++__device__ __forceinline__ void cluster_barrier_all() {  // every thread of every CTA of the cluster (kernel start only)
++  asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
++  asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
++}
++__device__ __forceinline__ void fence_cluster() {
++  asm volatile("fence.acq_rel.cluster;\n" ::: "memory");
++}
++__device__ __forceinline__ uint32_t mapa_u32(uint32_t a, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(a), "r"(rank));
++  return r;
++}
++__device__ __forceinline__ void mbar_arrive_cluster(uint32_t a) {  // a: a shared::cluster address (from mapa)
++  asm volatile("mbarrier.arrive.shared::cluster.b64 _, [%0];\n" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ float4 ld_cluster_f4(uint32_t a) {
++  float4 v;
++  asm volatile("ld.shared::cluster.v4.f32 {%0, %1, %2, %3}, [%4];\n"
++               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "r"(a) : "memory");
++  return v;
++}
++// Global fp32 add, result unused (a RED): one 16-byte vector add (FSI_RED_MODE 1) or four scalar adds.
++__device__ __forceinline__ void red_add4(float* p, float a, float b, float c, float d) {
++#if FSI_RED_MODE == 1
++  atomicAdd(reinterpret_cast<float4*>(p), make_float4(a, b, c, d));
++#else
++  atomicAdd(p, a);
++  atomicAdd(p + 1, b);
++  atomicAdd(p + 2, c);
++  atomicAdd(p + 3, d);
++#endif
++}
++// K-major SWIZZLE_128B shared-memory matrix descriptor (see the wgmma module: start >> 4, LBO 1, SBO 1024 B,
++// layout type 1). Every box base is 1024-aligned; the k16 advance of +32 B stays inside the first 128 B.
++__device__ __forceinline__ uint64_t make_desc(uint32_t saddr) {
++  return static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4) | (static_cast<uint64_t>(1) << 16) |
++         (static_cast<uint64_t>(1024 >> 4) << 32) | (static_cast<uint64_t>(1) << 62);
++}
++
++// Dequant, verbatim from the wgmma module (exact E2M1 x E4M3 -> bf16 register A fragments).
++__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
++  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
++      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
++      : "=r"(lo), "=r"(hi) : "r"(w));
++}
++__device__ __forceinline__ uint32_t bf16x2_bcast(float v) {
++  __nv_bfloat162 b = __float2bfloat162_rn(v);
++  return *reinterpret_cast<uint32_t*>(&b);
++}
++__device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
++  uint32_t d;
++  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
++  return d;
++}
++__device__ __forceinline__ void dequant8(uint32_t q, uint32_t sg, uint32_t sg8, uint32_t (&a)[4]) {
++#pragma unroll
++  for (int i = 0; i < 4; ++i) {
++    const uint32_t v = (q & 0x80008000u) | ((q & 0x70007000u) >> 6);
++    a[i] = mul_bf16x2(v, (i & 1) ? sg8 : sg);
++    q <<= 4;
++  }
++}
++// SGLang parity: Marlin writes gate and up as bf16, then silu_and_mul computes in fp32.
++__device__ __forceinline__ float silu_mul(float hg, float hu) {
++  hg = __bfloat162float(__float2bfloat16_rn(hg));
++  hu = __bfloat162float(__float2bfloat16_rn(hu));
++  return hg / (1.f + expf(-hg)) * hu;
++}
++
++// Dequantize one pipeline step (two 64-k records) of this warp's 16 weight rows into the 32 bf16x2 register-A
++// fragments (8 k16 steps x 4 registers). `st` points at the pair of records.
++__device__ __forceinline__ void dq_stage(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4]) {
++  const float P119 = __int_as_float(0x7B000000);  // 2^119
++  const int g = lane >> 2;
++#pragma unroll
++  for (int r = 0; r < 2; ++r) {
++    const uint4 q = *reinterpret_cast<const uint4*>(st + r * REC + cw * 512 + lane * 16);
++    const uint2 sc = *reinterpret_cast<const uint2*>(st + r * REC + REC_CODES + cw * 64 + g * 8);
++    uint32_t hs[4];
++    e4m3x4_to_f16x2x2(sc.x, hs[0], hs[1]);
++    e4m3x4_to_f16x2x2(sc.y, hs[2], hs[3]);
++    const uint32_t qw[4] = {q.x, q.y, q.z, q.w};
++#pragma unroll
++    for (int k = 0; k < 4; ++k) {
++      const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&hs[k]));
++      dequant8(qw[k], bf16x2_bcast(fs.x * P119), bf16x2_bcast(fs.y * P119), a[r * 4 + k]);
++    }
++  }
++}
++
++// One synchronisation of the consumer warpgroups after the partial-y tiles are written to shared memory.
++// CL == 1: a named barrier over the 256 consumer threads. CL > 1: a cluster barrier built from two alternating
++// mbarriers per CTA (count CL * 8: one arrive per consumer warp of every CTA), so the producer warpgroup never
++// takes part. Sync number ks uses barrier ks & 1, phase parity (ks >> 1) & 1. Release / acquire at cluster scope
++// come from fence.acq_rel.cluster around the (CUTLASS-form) mbarrier arrive / try_wait. The wait is bounded.
++template <int CL>
++__device__ __forceinline__ void tile_sync(uint32_t cb0, uint32_t cb1, int ks, int lane, int* err, bool& dead) {
++  if (CL == 1) {
++    named_bar(1, 256);
++    return;
++  }
++  fence_cluster();
++  __syncwarp();
++  const uint32_t bar = (ks & 1) ? cb1 : cb0;
++  if (lane == 0) {
++#pragma unroll
++    for (int q = 0; q < CL; ++q) mbar_arrive_cluster(mapa_u32(bar, static_cast<uint32_t>(q)));
++  }
++  mbar_wait(bar, (ks >> 1) & 1, err, dead, 3);
++  fence_cluster();
++}
++
++template <int NB>
++struct Wg;
++"""
++
++_FSI_SRC_BODY = r"""
++// Fused split-I MoE for 9 <= T <= 32. Unit (expert e, chunk jc): jc = qd * CL + rank covers intermediate columns
++// [64 NT jc, 64 NT (jc + 1)). Phase 1: h[:, chunk] = silu(gate) * up over the full K = H for the 32 token rows of
++// e's block (swap-AB wgmma m64n32k16: dequantized weight rows as register A, the TMA'd token slab as B), kept in
++// shared memory as bf16 in SWIZZLE_128B K-major groups. Phase 2: for each H tile, y_partial[:, 128 rows] over the
++// chunk's K = 64 NT columns (the same wgmma with h as the shared-memory B operand), written to a double-buffered
++// fp32 tile; the CL CTAs of a cluster (CL consecutive chunks of the SAME expert) then each sum 128 / CL rows of the
++// tile across all CL partials through distributed shared memory, in rank order, and add them to y32[route] (real
++// routes only) with a global fp32 add. Every weight byte is read exactly once per call.
++template <int NT, int CL>
++__global__ void __launch_bounds__(THREADS, 1)
++fsi_midt_kernel(const __grid_constant__ CUtensorMap xmap,
++                const uint8_t* __restrict__ wq13,        // [E][NTILE13][KREC][REC]
++                const float* __restrict__ gs13,          // fp32 [E], global scale * 2^7
++                const uint8_t* __restrict__ wq2,         // [E][NTILE2][KREC][REC]
++                const float* __restrict__ gs2,           // fp32 [E], global scale * 2^7
++                const int* __restrict__ sorted_ids,      // block-32 align of the local ids
++                const int* __restrict__ block_experts,
++                const int* __restrict__ n_padded,
++                int blocks_len, int num_routes, int n_experts,
++                float* __restrict__ y32, int* __restrict__ err) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++  using C = Cf<NT, CL>;
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  uint32_t rank = 0;
++  if (CL > 1) {
++    // A launch without the cluster attribute (or with another size) is refused uniformly by every CTA, before any
++    // cluster operation.
++    if (cluster_nctarank() != static_cast<uint32_t>(CL)) {
++      if (tid == 0) atomicExch(err, 4);
++      return;
++    }
++    rank = cluster_ctarank();
++  }
++  if (blockIdx.x == 0 && tid == 0) err[1] = FSI_MAGIC;
++  extern __shared__ __align__(1024) uint8_t smem_raw[];
++  __shared__ __align__(8) uint64_t bars[2 * C::STAGES + 2];
++  const uint32_t raw = smem_u32(smem_raw);
++  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
++  uint8_t* hbuf = smem + C::STAGES * C::STAGE_BYTES;
++  float* pbuf = reinterpret_cast<float*>(hbuf + C::HBYTES);
++  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[C::STAGES]);
++  const uint32_t cb0 = smem_u32(&bars[2 * C::STAGES]), cb1 = cb0 + 8;
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < C::STAGES; ++s) {
++      mbar_init(full0 + 8 * s, 1);
++      mbar_init(empty0 + 8 * s, 8);  // one arrive per consumer warp
++    }
++    mbar_init(cb0, CL * 8);
++    mbar_init(cb1, CL * 8);
++    fence_barrier_init();
++  }
++  __syncthreads();
++  if (CL > 1) cluster_barrier_all();  // every CTA's barriers are initialised before any remote arrive
++
++  int nb = __ldg(n_padded) / 32;
++  nb = nb < blocks_len ? nb : blocks_len;
++  const int ngroups = nb * C::NQ;
++  const int cid = static_cast<int>(blockIdx.x) / CL, ncl = static_cast<int>(gridDim.x) / CL;
++  bool dead = false;
++
++  if (warp < 4) {
++    // Producer warpgroup: one thread streams every unit of this CTA, in the order the consumers consume them.
++    if (tid == 0) {
++      const uint64_t map = reinterpret_cast<uint64_t>(&xmap);
++      int n = 0;
++      for (int g = cid; g < ngroups; g += ncl) {
++        const int b = g / C::NQ, qd = g - b * C::NQ;
++        const int e = __ldg(block_experts + b);
++        if (e < 0 || e >= n_experts) continue;
++        const int jc = qd * CL + static_cast<int>(rank);
++        const int slot0 = b * 32;
++        for (int kb = 0; kb < KSTEPS13; ++kb, ++n) {  // w13: NT tiles x one 128-k pair, plus the token slab
++          const int s = n % C::STAGES;
++          mbar_wait(empty0 + 8 * s, ((n / C::STAGES) & 1) ^ 1, err, dead, 1);
++          const uint32_t st = smem_u32(smem + s * C::STAGE_BYTES);
++          const uint32_t fb = full0 + 8 * s;
++          mbar_expect_tx(fb, C::WSTAGE + 2 * SLAB);
++#pragma unroll
++          for (int t = 0; t < NT; ++t) {
++            const uint8_t* src = wq13 + ((static_cast<size_t>(e) * NTILE13 + jc * NT + t) * KREC + 2 * kb) * REC;
++            bulk_g2s(st + t * PAIR, src, PAIR, fb);
++          }
++          tma_2d(st + C::WSTAGE, map, kb * 128, slot0, fb);
++          tma_2d(st + C::WSTAGE + SLAB, map, kb * 128 + 64, slot0, fb);
++        }
++        for (int s2 = 0; s2 < NTILE2 / 2; ++s2, ++n) {  // w2: two H tiles x this chunk's NT records
++          const int s = n % C::STAGES;
++          mbar_wait(empty0 + 8 * s, ((n / C::STAGES) & 1) ^ 1, err, dead, 1);
++          const uint32_t st = smem_u32(smem + s * C::STAGE_BYTES);
++          const uint32_t fb = full0 + 8 * s;
++          mbar_expect_tx(fb, C::WSTAGE);
++#pragma unroll
++          for (int hh = 0; hh < 2; ++hh) {
++            const uint8_t* src = wq2 + ((static_cast<size_t>(e) * NTILE2 + 2 * s2 + hh) * KREC + jc * NT) * REC;
++            bulk_g2s(st + hh * NT * REC, src, NT * REC, fb);
++          }
++        }
++      }
++    }
++  } else {
++    const int ctid = tid - 128, cw = ctid >> 5;  // cw 0..7: this warp's 16 weight rows of a 128-row tile
++    const int g8 = lane >> 2, t4 = lane & 3;
++    const uint32_t hsm = smem_u32(hbuf);
++    int n = 0, ks = 0;
++    for (int g = cid; g < ngroups; g += ncl) {
++      const int b = g / C::NQ, qd = g - b * C::NQ;
++      const int e = __ldg(block_experts + b);
++      if (e < 0 || e >= n_experts) continue;
++      const int slot0 = b * 32;
++      // ---------------- phase 1: w13 + silu * up -> h (shared memory, bf16) ----------------
++      float acc[NT][16];
++#pragma unroll
++      for (int t = 0; t < NT; ++t) {
++#pragma unroll
++        for (int i = 0; i < 16; ++i) acc[t][i] = 0.f;
++      }
++      for (int kb = 0; kb < KSTEPS13; ++kb, ++n) {
++        const int s = n % C::STAGES;
++        mbar_wait(full0 + 8 * s, (n / C::STAGES) & 1, err, dead, 1);
++        const uint8_t* st = smem + s * C::STAGE_BYTES;
++        const uint32_t slab = smem_u32(st + C::WSTAGE);
++#pragma unroll
++        for (int t = 0; t < NT; ++t) {
++          uint32_t a0[8][4];
++          dq_stage(st + t * PAIR, cw, lane, a0);
++          fence_acc<16>(acc[t]);
++          wgmma_fence();
++#pragma unroll
++          for (int r = 0; r < 2; ++r) {
++#pragma unroll
++            for (int k = 0; k < 4; ++k) Wg<32>::mma(acc[t], a0[r * 4 + k], make_desc(slab + r * SLAB + k * 32));
++          }
++          wgmma_commit();
++          wgmma_wait<0>();  // group retired: a0[] may be rewritten and the slab / stage released at once
++          fence_acc<16>(acc[t]);
++        }
++        if (lane == 0) mbar_arrive(empty0 + 8 * s);
++      }
++      named_bar(1, 256);  // the previous unit's wgmmas (h reads) and partial-tile reads are finished everywhere
++      {
++        const float gsc = __ldg(gs13 + e);
++        // acc[t][4i + 0/1]: gate (fragment row g8) tokens 8i + 2 t4, +1; acc[t][4i + 2/3]: up (row g8 + 8).
++        // h[token][64 t + 8 cw + g8], stored at the SWIZZLE_128B K-major address: 64-column group t (4096 B),
++        // token row n (128 B), 16-byte chunk (cw ^ (n & 7)), element g8.
++#pragma unroll
++        for (int t = 0; t < NT; ++t) {
++#pragma unroll
++          for (int i = 0; i < 4; ++i) {
++            const int n0 = 8 * i + 2 * t4, n1 = n0 + 1;
++            const float v0 = silu_mul(acc[t][4 * i] * gsc, acc[t][4 * i + 2] * gsc);
++            const float v1 = silu_mul(acc[t][4 * i + 1] * gsc, acc[t][4 * i + 3] * gsc);
++            *reinterpret_cast<__nv_bfloat16*>(hbuf + t * SLAB + n0 * 128 + ((cw ^ (n0 & 7)) << 4) + g8 * 2) =
++                __float2bfloat16_rn(v0);
++            *reinterpret_cast<__nv_bfloat16*>(hbuf + t * SLAB + n1 * 128 + ((cw ^ (n1 & 7)) << 4) + g8 * 2) =
++                __float2bfloat16_rn(v1);
++          }
++        }
++      }
++      fence_proxy_async();  // generic-proxy h writes -> visible to the wgmma (async proxy) B reads
++      named_bar(1, 256);
++      // ---------------- phase 2: w2 over this chunk's K, cluster reduction into y32 ----------------
++      const float gsc2 = __ldg(gs2 + e);
++      for (int s2 = 0; s2 < NTILE2 / 2; ++s2, ++n) {
++        const int s = n % C::STAGES;
++        mbar_wait(full0 + 8 * s, (n / C::STAGES) & 1, err, dead, 1);
++        const uint8_t* st = smem + s * C::STAGE_BYTES;
++#pragma unroll
++        for (int hp = 0; hp < 2 / C::PT; ++hp) {
++#pragma unroll
++          for (int u = 0; u < C::PT; ++u) {
++            const int hh = hp * C::PT + u;
++            float a2[16];
++#pragma unroll
++            for (int i = 0; i < 16; ++i) a2[i] = 0.f;
++#pragma unroll
++            for (int pr = 0; pr < NT / 2; ++pr) {
++              uint32_t a0[8][4];
++              dq_stage(st + hh * NT * REC + pr * PAIR, cw, lane, a0);
++              fence_acc<16>(a2);
++              wgmma_fence();
++#pragma unroll
++              for (int r = 0; r < 2; ++r) {
++#pragma unroll
++                for (int k = 0; k < 4; ++k)
++                  Wg<32>::mma(a2, a0[r * 4 + k], make_desc(hsm + (pr * 2 + r) * SLAB + k * 32));
++              }
++              wgmma_commit();
++              wgmma_wait<0>();
++              fence_acc<16>(a2);
++            }
++            // Partial tile P[token][H row]: rows 16 cw + g8 (acc 4i, 4i+1) and 16 cw + g8 + 8 (acc 4i+2, 4i+3).
++            float* P = pbuf + ((ks & 1) * C::PT + u) * (32 * PP);
++            const int row0 = 16 * cw + g8;
++#pragma unroll
++            for (int i = 0; i < 4; ++i) {
++              const int n0 = 8 * i + 2 * t4;
++              P[n0 * PP + row0] = a2[4 * i];
++              P[(n0 + 1) * PP + row0] = a2[4 * i + 1];
++              P[n0 * PP + row0 + 8] = a2[4 * i + 2];
++              P[(n0 + 1) * PP + row0 + 8] = a2[4 * i + 3];
++            }
++          }
++          if (hp == 2 / C::PT - 1) {
++            if (lane == 0) mbar_arrive(empty0 + 8 * s);  // the weights of this stage are all in registers
++          }
++          const int kk = ks;
++          tile_sync<CL>(cb0, cb1, kk, lane, err, dead);
++          ++ks;
++#pragma unroll
++          for (int u = 0; u < C::PT; ++u) {
++            const int ht = 2 * s2 + hp * C::PT + u;
++            const float* Pl = pbuf + ((kk & 1) * C::PT + u) * (32 * PP);
++            for (int it = ctid; it < 32 * (C::RPR / 4); it += 256) {
++              const int nn = it / (C::RPR / 4), f = it - nn * (C::RPR / 4);
++              const int row = static_cast<int>(rank) * C::RPR + f * 4;
++              const float* pl = Pl + nn * PP + row;
++              float4 sum;
++              if (CL == 1) {
++                sum = *reinterpret_cast<const float4*>(pl);
++              } else {
++                const uint32_t la = smem_u32(pl);
++                sum = ld_cluster_f4(mapa_u32(la, 0u));
++#pragma unroll
++                for (int q = 1; q < CL; ++q) {
++                  const float4 v = ld_cluster_f4(mapa_u32(la, static_cast<uint32_t>(q)));
++                  sum.x += v.x;
++                  sum.y += v.y;
++                  sum.z += v.z;
++                  sum.w += v.w;
++                }
++              }
++              const int sid = __ldg(sorted_ids + slot0 + nn);
++              if (sid >= 0 && sid < num_routes)
++                red_add4(y32 + static_cast<size_t>(sid) * HID + ht * 128 + row, sum.x * gsc2, sum.y * gsc2,
++                         sum.z * gsc2, sum.w * gsc2);
++            }
++          }
++        }
++        // (n advances in the for-increment)
++      }
++    }
++    // No CTA may exit while a peer can still read its partial tiles through distributed shared memory.
++    tile_sync<CL>(cb0, cb1, ks, lane, err, dead);
++  }
++#else
++  // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
++  if (threadIdx.x == 0) atomicExch(err, 2);
++#endif
++}
++
++// xs[slot] = x[sorted_ids[slot] / 8] for the slots of local 32-row blocks (sentinel slots: zeros); slots past
++// n_padded and slots of remote (-1) blocks are skipped.
++__global__ void __launch_bounds__(256)
++fsi_midt_gather_kernel(const __nv_bfloat16* __restrict__ x, const int* __restrict__ sorted_ids,
++                       const int* __restrict__ block_experts, const int* __restrict__ n_padded, int num_routes,
++                       int n_experts, __nv_bfloat16* __restrict__ xs) {
++  const int slot = blockIdx.x;
++  if (slot >= __ldg(n_padded)) return;
++  const int be = __ldg(block_experts + slot / 32);
++  if (be < 0 || be >= n_experts) return;
++  const int sid = __ldg(sorted_ids + slot);
++  uint4* dst = reinterpret_cast<uint4*>(xs + static_cast<size_t>(slot) * HID);
++  const int nv = HID / 8;
++  if (sid >= 0 && sid < num_routes) {
++    const uint4* src = reinterpret_cast<const uint4*>(x + static_cast<size_t>(sid >> 3) * HID);
++    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = __ldg(src + v);
++  } else {
++    const uint4 z = make_uint4(0u, 0u, 0u, 0u);
++    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = z;
++  }
++}
++
++typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                                  const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
++                                  CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
++
++// The ONLY file-scope variable: a host driver function pointer (resolved in fsi_init, outside any capture). No
++// device pointer, tensor map or buffer outlives a call: every fsi_run encodes its own tensor map into a
++// stack-local CUtensorMap from the tensor passed in THAT call.
++static EncodeTiledFn g_encode_pfn = nullptr;
++
++EncodeTiledFn get_encode() {
++  void* fn = nullptr;
++  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
++#if CUDART_VERSION >= 12050
++  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
++#else
++  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
++#endif
++  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
++    (void)cudaGetLastError();
++    return nullptr;
++  }
++  return reinterpret_cast<EncodeTiledFn>(fn);
++}
++
++template <int NT, int CL>
++void info_one(std::vector<int64_t>& r, int sms) {
++  using C = Cf<NT, CL>;
++  const void* fn = reinterpret_cast<const void*>(fsi_midt_kernel<NT, CL>);
++  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, C::BYTES);
++  cudaFuncAttributes a{};
++  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
++  int occ = 0;
++  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, C::BYTES);
++  int ncl = 0;
++  cudaError_t e4 = cudaSuccess;
++  if (CL > 1) {
++    cudaLaunchConfig_t cfg{};
++    cfg.gridDim = dim3(static_cast<unsigned>((sms / CL) * CL));
++    cfg.blockDim = dim3(THREADS);
++    cfg.dynamicSmemBytes = C::BYTES;
++    cudaLaunchAttribute attr[1];
++    attr[0].id = cudaLaunchAttributeClusterDimension;
++    attr[0].val.clusterDim.x = CL;
++    attr[0].val.clusterDim.y = 1;
++    attr[0].val.clusterDim.z = 1;
++    cfg.attrs = attr;
++    cfg.numAttrs = 1;
++    e4 = cudaOccupancyMaxActiveClusters(&ncl, fn, &cfg);
++  } else {
++    ncl = occ * sms;
++  }
++  const bool ok = e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess && e4 == cudaSuccess;
++  if (!ok) (void)cudaGetLastError();
++  r.push_back(NT);
++  r.push_back(CL);
++  r.push_back(ok ? 1 : 0);
++  r.push_back(a.numRegs);
++  r.push_back(static_cast<int64_t>(a.localSizeBytes));
++  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
++  r.push_back(C::BYTES);
++  r.push_back(occ);
++  r.push_back(ncl);
++  r.push_back(static_cast<int64_t>(e1));
++  r.push_back(static_cast<int64_t>(e4));
++  r.push_back(a.binaryVersion);
++}
++
++template <int NT, int CL>
++void run_one(const CUtensorMap& xmap, torch::Tensor wq13, torch::Tensor gs13, torch::Tensor wq2, torch::Tensor gs2,
++             torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded, int num_routes,
++             torch::Tensor y32, torch::Tensor err, int grid) {
++  using C = Cf<NT, CL>;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  cudaLaunchConfig_t cfg{};
++  cfg.gridDim = dim3(static_cast<unsigned>(grid));
++  cfg.blockDim = dim3(THREADS);
++  cfg.dynamicSmemBytes = C::BYTES;
++  cfg.stream = stream;
++  cudaLaunchAttribute attr[1];
++  attr[0].id = cudaLaunchAttributeClusterDimension;
++  attr[0].val.clusterDim.x = CL;
++  attr[0].val.clusterDim.y = 1;
++  attr[0].val.clusterDim.z = 1;
++  cfg.attrs = attr;
++  cfg.numAttrs = CL > 1 ? 1 : 0;
++  const cudaError_t le = cudaLaunchKernelEx(
++      &cfg, fsi_midt_kernel<NT, CL>, xmap, wq13.data_ptr<uint8_t>(), gs13.data_ptr<float>(),
++      wq2.data_ptr<uint8_t>(), gs2.data_ptr<float>(), sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(),
++      n_padded.data_ptr<int>(), static_cast<int>(block_experts.numel()), num_routes, static_cast<int>(gs13.numel()),
++      y32.data_ptr<float>(), err.data_ptr<int>());
++  TORCH_CHECK(le == cudaSuccess, "fsi_run: launch: ", cudaGetErrorString(le));
++}
++
++}  // namespace
++
++// Per variant (NT 2 / CL 4, NT 4 / CL 4, NT 2 / CL 1, NT 4 / CL 1), 12 values each: NT, CL, attribute and
++// occupancy calls ok, numRegs, localSizeBytes, static smem, dynamic smem, CTAs per SM, max co-resident clusters
++// (CL 1: CTAs), SetAttribute rc, ActiveClusters rc, binaryVersion.
++std::vector<int64_t> fsi_init() {
++  std::vector<int64_t> r;
++  if (g_encode_pfn == nullptr) g_encode_pfn = get_encode();
++  const int sms = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
++  info_one<2, 4>(r, sms);
++  info_one<4, 4>(r, sms);
++  info_one<2, 1>(r, sms);
++  info_one<4, 1>(r, sms);
++  return r;
++}
++
++void fsi_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++                int64_t num_routes, int64_t n_experts, torch::Tensor xs) {
++  TORCH_CHECK(x.is_contiguous() && xs.is_contiguous() && sorted_ids.is_contiguous() && block_experts.is_contiguous() &&
++              x.scalar_type() == at::kBFloat16 && xs.scalar_type() == at::kBFloat16 &&
++              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
++              n_padded.scalar_type() == at::kInt, "fsi_gather: layout");
++  TORCH_CHECK(x.size(1) == HID && xs.size(1) == HID && sorted_ids.numel() <= xs.size(0) &&
++              block_experts.numel() * 32 >= sorted_ids.numel(), "fsi_gather: sizes");
++  const int slots = static_cast<int>(sorted_ids.numel());
++  if (slots == 0) return;
++  auto stream = at::cuda::getCurrentCUDAStream();
++  fsi_midt_gather_kernel<<<slots, 256, 0, stream>>>(
++      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), sorted_ids.data_ptr<int>(), block_experts.data_ptr<int>(),
++      n_padded.data_ptr<int>(), static_cast<int>(num_routes), static_cast<int>(n_experts),
++      reinterpret_cast<__nv_bfloat16*>(xs.data_ptr()));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++void fsi_run(int64_t nt, int64_t cl, torch::Tensor xs, torch::Tensor wq13, torch::Tensor gs13, torch::Tensor wq2,
++             torch::Tensor gs2, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, torch::Tensor y32, torch::Tensor err, int64_t grid) {
++  TORCH_CHECK(xs.is_cuda() && xs.is_contiguous() && xs.dim() == 2 && xs.scalar_type() == at::kBFloat16 &&
++              xs.size(0) > 0 && xs.size(1) == HID, "fsi_run: token-slab scratch layout");
++  TORCH_CHECK(wq13.is_contiguous() && wq2.is_contiguous() && gs13.is_contiguous() && gs2.is_contiguous() &&
++              sorted_ids.is_contiguous() && block_experts.is_contiguous() && y32.is_contiguous() &&
++              wq13.scalar_type() == at::kByte && wq2.scalar_type() == at::kByte &&
++              gs13.scalar_type() == at::kFloat && gs2.scalar_type() == at::kFloat &&
++              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
++              n_padded.scalar_type() == at::kInt && y32.scalar_type() == at::kFloat &&
++              err.scalar_type() == at::kInt && err.numel() >= 2, "fsi_run: layout");
++  const int64_t n_experts = gs13.numel();
++  TORCH_CHECK(gs2.numel() == n_experts && wq13.numel() == n_experts * NTILE13 * KREC * REC &&
++              wq2.numel() == n_experts * NTILE2 * KREC * REC, "fsi_run: weight bank size");
++  TORCH_CHECK(y32.dim() == 2 && y32.size(1) == HID && y32.size(0) >= num_routes, "fsi_run: y32 shape");
++  TORCH_CHECK(sorted_ids.numel() <= xs.size(0) && grid > 0, "fsi_run: sizes");
++  TORCH_CHECK((nt == 2 || nt == 4) && (cl == 1 || cl == 4) && grid % cl == 0, "fsi_run: variant");
++  EncodeTiledFn enc = g_encode_pfn;
++  if (enc == nullptr) {  // normally resolved by fsi_init in prepare
++    enc = get_encode();
++    g_encode_pfn = enc;
++  }
++  TORCH_CHECK(enc != nullptr, "fsi_run: cuTensorMapEncodeTiled entry point missing");
++  CUtensorMap xmap;
++  std::memset(&xmap, 0, sizeof(CUtensorMap));
++  {
++    const cuuint64_t dims[2] = {static_cast<cuuint64_t>(xs.size(1)), static_cast<cuuint64_t>(xs.size(0))};
++    const cuuint64_t strides[1] = {static_cast<cuuint64_t>(xs.size(1)) * 2};
++    const cuuint32_t box[2] = {64, 32};
++    const cuuint32_t es[2] = {1, 1};
++    const CUresult rc = enc(&xmap, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, xs.data_ptr(), dims, strides, box, es,
++                            CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                            CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++    TORCH_CHECK(rc == CUDA_SUCCESS, "fsi_run: tensor map rc ", static_cast<int>(rc));
++  }
++  const int nr = static_cast<int>(num_routes), g = static_cast<int>(grid);
++  if (nt == 2 && cl == 4) run_one<2, 4>(xmap, wq13, gs13, wq2, gs2, sorted_ids, block_experts, n_padded, nr, y32, err, g);
++  else if (nt == 4 && cl == 4) run_one<4, 4>(xmap, wq13, gs13, wq2, gs2, sorted_ids, block_experts, n_padded, nr, y32, err, g);
++  else if (nt == 2) run_one<2, 1>(xmap, wq13, gs13, wq2, gs2, sorted_ids, block_experts, n_padded, nr, y32, err, g);
++  else run_one<4, 1>(xmap, wq13, gs13, wq2, gs2, sorted_ids, block_experts, n_padded, nr, y32, err, g);
++}
++"""
++
++
++def _fsi_src():
++    return _FSI_SRC_HEAD + _wg_wgmma_src() + _FSI_SRC_BODY
++
++
++@triton.jit
++def _fsi_combine_kernel(y_ptr, ids_ptr, tw_ptr, w_ptr, out_ptr, H, eps,
++                        TOP_K_C: tl.constexpr, BLOCK_H: tl.constexpr):
++    """out[t] = sum over local slots s of g[t, s] * rmsnorm(y[t, s] * (1 + w)) from the fsi kernel's FP32 y rows, master's
++    formula (all slot rows loaded as one [TOP_K_C, BLOCK_H] tile, as the hoisted post-norm kernel). Remote slots
++    (local id -1) are masked off the load: their y rows were never written and stay zero. The rows read are zeroed
++    after the read (the fsi kernel adds into zeros on the next call); a token with no local slot stores zeros."""
++    t = tl.program_id(0)
++    offs = tl.arange(0, BLOCK_H)
++    mask = offs < H
++    slots = tl.arange(0, TOP_K_C)
++    ids = tl.load(ids_ptr + t * TOP_K_C + slots)
++    gs = tl.load(tw_ptr + t * TOP_K_C + slots)
++    local = ids >= 0
++    nw = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32) + 1.0
++    rows = (t * TOP_K_C + slots).to(tl.int64) * H
++    ptrs = y_ptr + rows[:, None] + offs[None, :]
++    m2 = local[:, None] & mask[None, :]
++    v = tl.load(ptrs, mask=m2, other=0.0) * nw[None, :]
++    r = tl.rsqrt(tl.sum(v * v, axis=1) / H + eps)
++    coef = tl.where(local, gs, 0.0) * r
++    acc = tl.sum(v * coef[:, None], axis=0)
++    tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16), mask=mask)
++    tl.store(ptrs, tl.zeros([TOP_K_C, BLOCK_H], dtype=tl.float32), mask=m2)
++
++
++def _fsi_combine(y32, local_ids, topk_weights, post_norm_w, num_tokens, hidden):
++    """out [T, H] bf16 from y32 rows [T * 8, H] fp32 (zeroed again for the rows it read)."""
++    out = torch.empty((num_tokens, hidden), device=y32.device, dtype=torch.bfloat16)
++    _fsi_combine_kernel[(num_tokens,)](
++        y32, local_ids, topk_weights, post_norm_w, out, hidden, POST_NORM_EPS,
++        TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(hidden), num_warps=16)
++    return out
++
++
++def _fsi_class(num_tokens):
++    """The fsi T class (0: 9..16, 1: 17..32) of a token count, or None (T <= 8 and T >= 33 are master's). Shape only."""
++    if num_tokens < FSI_MIN_TOKENS or num_tokens > FSI_MAX_TOKENS:
++        return None
++    return 0 if num_tokens <= 16 else 1
++
++
++def _fsi_label(variant):
++    return f"KC{64 * variant[0]}/CL{variant[1]}"
++
++
++def _moe_fsi(x, topk_ids, topk_weights, bank, state, variant):
++    """The fused split-I path: master's _align_small at block 32, the gather, one fsi_midt_kernel launch, the fp32
++    combine. Everything it reads comes from `state` and this call's arguments (every scratch is per state; the
++    tensor map is encoded in C++ from THIS call's token slab)."""
++    num_tokens, hidden = x.shape
++    ext = state["fsi_ext"]
++    routes = num_tokens * TOP_K
++    tw = topk_weights.to(torch.float32).contiguous()
++    local_ids, (sorted_ids, block_experts, n_padded) = _align_small(topk_ids, bank["start"], bank["count"], 32)
++    ext.fsi_gather(x, sorted_ids, block_experts, n_padded, routes, bank["count"], state["fsi_xs"])
++    wb = state["wg_banks"][(bank["start"], bank["count"])]
++    ext.fsi_run(variant[0], variant[1], state["fsi_xs"], wb["q13"], wb["gs13"], wb["q2"], wb["gs2"], sorted_ids,
++                block_experts, n_padded, routes, state["fsi_y32"], state["fsi_err"], state["fsi_grid"][variant])
++    return _fsi_combine(state["fsi_y32"], local_ids, tw, state["post_norm_w"], num_tokens, hidden)
++
++
++def _fsi_build(red_mode):
++    """Compile the fsi module (prepare only, never during capture): (ext or None, error text). sm_90a only
++    (TORCH_CUDA_ARCH_LIST=9.0a around load_inline, -gencode compute_90a/sm_90a, -O3 -lineinfo); red_mode 1 uses
++    atomicAdd(float4*) for the global add, 0 four scalar adds."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    flags = list(WG_CUDA_CFLAGS) + [f"-DFSI_RED_MODE={red_mode}"]
++    name = f"{FSI_EXT_NAME}_red{red_mode}"
++    ext, err_text = None, ""
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:  # this torch does not know the 'a' suffix: the guards + error word 2 decide
++            print(f"{FSI_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list (error word 2 decides)", flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            try:
++                arch_flags = cpp_extension._get_cuda_arch_flags()
++            except Exception as e2:
++                arch_flags = [f"<unknown: {e2!r}>"]
++        print(f"{FSI_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
++              f"{arch_flags}; extra_cuda_cflags {flags}", flush=True)
++        ext = load_inline(name=name, cpp_sources=_FSI_CPP, cuda_sources=_fsi_src(),
++                          functions=["fsi_init", "fsi_gather", "fsi_run"], extra_cuda_cflags=flags, verbose=False)
++    except Exception as e:  # keep master's path if the build fails
++        err_text = str(e)
++        ext = None
++        print(f"{FSI_TAG} load_inline {name} failed after {time.perf_counter() - t0:.1f}s: {err_text[-300:]!r}",
++              flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    if ext is not None:
++        print(f"{FSI_TAG} load_inline {name} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext, err_text
++
++
++def _fsi_routings(tokens, gen, local_set, device):
++    """Named routings [tokens, 8] int32 (global ids): 'zipf' (judge-like, this GPU's experts the busiest),
++    'random-local' (3 distinct random local + 5 distinct random remote experts per token), 'skewed-4hot' (4 hot
++    local experts take every token), 'one-expert' (one local expert with every token's route), 'all-remote'."""
++    remote = [e for e in range(N_EXPERTS) if e not in set(local_set)]
++    rl = []
++    for _ in range(tokens):
++        loc = [local_set[i] for i in torch.randperm(len(local_set), generator=gen)[:3].tolist()]
++        rem = [remote[i] for i in torch.randperm(len(remote), generator=gen)[:5].tolist()]
++        rl.append(loc + rem)
++    ar = [[remote[i] for i in torch.randperm(len(remote), generator=gen)[:TOP_K].tolist()] for _ in range(tokens)]
++    out = {
++        "zipf": _wg_zipf_ids(tokens, 0.9, gen, local_set),
++        "random-local": torch.tensor(rl, dtype=torch.int32),
++        "skewed-4hot": torch.tensor(_wg_routing("skewed-4hot", tokens, gen, local_set, remote), dtype=torch.int32),
++        "one-expert": torch.tensor(_wg_routing("all-one-expert", tokens, gen, local_set, remote), dtype=torch.int32),
++        "all-remote": torch.tensor(ar, dtype=torch.int32),
++    }
++    return {k: v.to(device).contiguous() for k, v in out.items()}
++
++
++def _fsi_data(tokens, ids, gen, device, cfg_base):
++    x = torch.randn((tokens, cfg_base["d_hidden"]), generator=gen).to(torch.bfloat16).to(device)
++    tw = torch.rand((tokens, TOP_K), generator=gen)
++    tw = (tw / tw.sum(-1, keepdim=True)).to(device)
++    return {"hidden_states": x, "topk_ids": ids, "topk_weights": tw, "config": dict(cfg_base, bs=tokens)}
++
++
++def _fsi_call(state, data, variant):
++    """kernel_fn on `data` with the fsi path forced to `variant` for this call's T class (None: master's path)."""
++    saved = state.get("fsi_sel", {})
++    cls = _fsi_class(data["hidden_states"].shape[0])
++    state["fsi_sel"] = {} if variant is None else {cls: variant}
++    try:
++        return kernel_fn(data, state)
++    finally:
++        state["fsi_sel"] = saved
++
++
++def _fsi_errs(out, ref):
++    """(aggregate rel-L2, worst per-row rel error with a near-zero row measured against a tenth of the average
++    row); inf for non-finite output. A zero reference needs a zero output."""
++    o, r = out.float(), ref.float()
++    if not bool(torch.isfinite(o).all()):
++        return float("inf"), float("inf")
++    d = (o - r).norm(dim=-1)
++    rn = r.norm(dim=-1)
++    floor = 0.1 * rn.mean()
++    tot = float(r.norm())
++    agg = float((o - r).norm()) / tot if tot > 0 else (0.0 if float((o - r).abs().max()) == 0.0 else float("inf"))
++    row = float((d / torch.maximum(rn, floor).clamp_min(1e-30)).max())
++    return agg, row
++
++
++def _fsi_graph_for(state, data, sel):
++    """Capture kernel_fn(data, state) with state['fsi_sel'] = sel (the captured launches keep it); returns the graph."""
++    saved = state.get("fsi_sel", {})
++    state["fsi_sel"] = sel
++    try:
++        graph, _ = _wg_graph_of(lambda: kernel_fn(data, state))
++    finally:
++        state["fsi_sel"] = saved
++    return graph
++
++
++def _fsi_quartiles(samples):
++    s = sorted(samples)
++    n = len(s)
++    return s[n // 2], s[n // 4], s[(3 * n) // 4]
++
++
++def _fsi_round(graphs, flush, empty, reps, rot):
++    """One interleaved cold-L2 round: every graph replayed `reps` times (order rotated by `rot`, flipped on odd reps),
++    the >= 256 MB flush written before EVERY replay, events around each replay, the empty-graph baseline's median
++    subtracted. Returns {name: (median us, q1, q3)}."""
++    names = list(graphs) + ["empty"]
++    allg = dict(graphs)
++    allg["empty"] = empty
++    samples = {n: [] for n in names}
++    for n in names:
++        allg[n].replay()
++    torch.cuda.synchronize()
++    for rep in range(reps):
++        k = (rep + rot) % len(names)
++        order = names[k:] + names[:k]
++        if rep % 2:
++            order = order[::-1]
++        for n in order:
++            flush.zero_()
++            s_, e_ = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
++            s_.record()
++            allg[n].replay()
++            e_.record()
++            e_.synchronize()
++            samples[n].append(s_.elapsed_time(e_) * 1000.0)
++    base = _fsi_quartiles(samples["empty"])[0]
++    out = {}
++    for n in graphs:
++        med, q1, q3 = _fsi_quartiles(samples[n])
++        out[n] = (max(med - base, 0.0), q1 - base, q3 - base)
++    return out
++
++
++class _FsiSkip(Exception):
++    """A fsi phase could not start before its deadline."""
++
++
++def _fsi_parse_info(info, sms):
++    """The 12-value rows of ext.fsi_init() as dicts, plus each variant's grid (whole clusters, <= SM count)."""
++    rows = []
++    for i in range(0, len(info), 12):
++        nt, cl, ok, regs, local_bytes, static_smem, dyn_smem, occ, ncl, e1, e4, bin_v = info[i:i + 12]
++        grid = (min(ncl, sms // cl) * cl) if cl > 1 else min(ncl, sms)
++        rows.append({"v": (int(nt), int(cl)), "ok": bool(ok), "regs": regs, "local": local_bytes,
++                     "static": static_smem, "dyn": dyn_smem, "occ": occ, "ncl": ncl, "e1": e1, "e4": e4,
++                     "bin": bin_v, "grid": int(grid)})
++    return rows
++
++
++def _fsi_ref_case(state, bank, wref, data):
++    """(fp32-dequant reference output, master's output, master's (agg, row) errors) for one input."""
++    ref = _wg_ref_fp32(bank, state, wref, data["hidden_states"], data["topk_ids"], data["topk_weights"])
++    m_out = _fsi_call(state, data, None)
++    torch.cuda.synchronize()
++    return ref, m_out, _fsi_errs(m_out, ref)
++
++
++def _fsi_bounds(m_errs):
++    agg = max(FSI_ERR_FACTOR * m_errs[0], FSI_ERR_FLOOR)
++    return agg, FSI_ROW_FACTOR * agg
++
++
++def _fsi_units_text(v, row, a_experts):
++    nj = 64 // v[0]
++    units = a_experts * nj
++    return (f"{_fsi_label(v)}: active experts {a_experts} x {nj} chunks = {units} units on {row['grid']} CTAs "
++            f"({units / max(row['grid'], 1):.2f} waves), {row['ncl']} max co-resident {'clusters of ' + str(v[1]) if v[1] > 1 else 'CTAs'}, "
++            f"smem {row['static']}+{row['dyn']} B, regs {row['regs']}, spill {row['local']} B")
++
++
++def _fsi_diag(state, bank, device, flush, tokens, ids, cfg_base, rows, variants, gen):
++    """Kernel-only diagnostics at one T on one routing: gather, fsi kernel per variant (event time, TB/s of the
++    active experts' NVFP4 bytes, units / waves / co-resident clusters) and the combine, each cold-L2 and timed alone.
++    Returns printed lines. y32 is zeroed again after the kernel-only launches (they accumulate)."""
++    out = []
++    ext = state["fsi_ext"]
++    data = _fsi_data(tokens, ids, gen, device, cfg_base)
++    x, tw = data["hidden_states"], data["topk_weights"]
++    start, count = bank["start"], bank["count"]
++    local_ids, (sorted_ids, block_experts, n_padded) = _align_small(ids, start, count, 32)
++    routes = tokens * TOP_K
++    ext.fsi_gather(x, sorted_ids, block_experts, n_padded, routes, count, state["fsi_xs"])
++    torch.cuda.synchronize()
++    active = int(n_padded.item()) // 32
++    wb = state["wg_banks"][(start, count)]
++    t_align = _wg_med_cold(lambda: _align_small(ids, start, count, 32), flush)
++    t_gather = _wg_med_cold(lambda: ext.fsi_gather(x, sorted_ids, block_experts, n_padded, routes, count,
++                                                    state["fsi_xs"]), flush)
++    out.append(f"{FSI_TAG} DIAG T={tokens}: align(bsm 32) alone {t_align:.2f} us, gather alone {t_gather:.2f} us "
++               f"(active experts {active}, {active * FSI_EXPERT_BYTES / 1e6:.0f} MB of NVFP4 weights)")
++    for v in variants:
++        row = rows[v]
++        torch.cuda.synchronize()
++        print(f"{FSI_TAG}     [DIAG {_fsi_label(v)}] launching fsi kernel alone", flush=True)
++        t_k = _wg_med_cold(lambda v=v, row=row: ext.fsi_run(v[0], v[1], state["fsi_xs"], wb["q13"], wb["gs13"],
++                                                             wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded,
++                                                             routes, state["fsi_y32"], state["fsi_err"], row["grid"]),
++                           flush)
++        torch.cuda.synchronize()
++        print(f"{FSI_TAG}     [DIAG {_fsi_label(v)}] ok", flush=True)
++        state["fsi_y32"].zero_()
++        tbs = active * FSI_EXPERT_BYTES / max(t_k, 1e-3) / 1e6
++        out.append(f"{FSI_TAG} DIAG T={tokens} {_fsi_units_text(v, row, active)}; fsi kernel alone {t_k:.2f} us = "
++                   f"{tbs:.2f} TB/s")
++    t_comb = _wg_med_cold(lambda: _fsi_combine(state["fsi_y32"], local_ids, tw.to(torch.float32).contiguous(),
++                                                state["post_norm_w"], tokens, cfg_base["d_hidden"]), flush)
++    out.append(f"{FSI_TAG} DIAG T={tokens}: combine alone {t_comb:.2f} us (printed separately from the fsi kernel: the "
++               f"combine replaces master's post-norm kernel)")
++    state["fsi_y32"].zero_()
++    torch.cuda.synchronize()
++    return out
++
++
++def _fsi_gate_class(state, bank, device, flush, empty, cls_info, variants, cfg_base, t_prepare, lines):
++    """Two interleaved cold-L2 graph rounds of master's routed path against every viable variant, on the judge-like
++    (zipf) and the random-local routing at the class's judged T. A variant passes only if, in every round on both
++    routings, master median / its median >= FSI_MIN_SPEEDUP and its IQR <= FSI_IQR_FACTOR x master's. Returns
++    (winner variant or None, PATH CHOSEN line)."""
++    cls, lo, hi, tokens, label = cls_info
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    gen = torch.Generator().manual_seed(20261110 + tokens)
++    routs = _fsi_routings(tokens, gen, local_set, device)
++    fails = {}                                  # variant -> why
++    cell = {v: [] for v in variants}            # variant -> [(ratio, iqr ratio ok)] over routings x rounds
++    medians = {}                                # (routing, round) -> {name: (med, q1, q3)}
++    for r in FSI_ROUTINGS:
++        if time.perf_counter() - t_prepare > FSI_DEADLINES_S["timing"]:
++            raise _FsiSkip(f"timing not started: past {FSI_DEADLINES_S['timing']:.0f} s")
++        data = _fsi_data(tokens, routs[r], gen, device, cfg_base)
++        graphs = {"master": _fsi_graph_for(state, data, {})}
++        for v in variants:
++            if v in fails:
++                continue
++            try:
++                graphs[v] = _fsi_graph_for(state, data, {cls: v})
++            except Exception as e:
++                fails[v] = f"graph capture raised {type(e).__name__}: {str(e)[:120]}"
++        for rd in range(FSI_ROUNDS):
++            st = _fsi_round(graphs, flush, empty, FSI_REPS, 2 * rd + 1)
++            medians[(r, rd)] = st
++            m_med, m_q1, m_q3 = st["master"]
++            parts = [f"master {m_med:.2f} us [IQR {m_q3 - m_q1:.2f}]"]
++            for v in variants:
++                if v not in st:
++                    continue
++                med, q1, q3 = st[v]
++                ratio = m_med / max(med, 1e-3)
++                iqr_ok = (q3 - q1) <= FSI_IQR_FACTOR * max(m_q3 - m_q1, FSI_IQR_FLOOR_US)
++                cell[v].append((ratio, iqr_ok))
++                parts.append(f"{_fsi_label(v)} {med:.2f} us [IQR {q3 - q1:.2f}] x{ratio:.3f}{'' if iqr_ok else ' IQR-WIDE'}")
++            gate_line = (f"{FSI_TAG} GATE class={label} T={tokens} routing={r} round {rd + 1}/{FSI_ROUNDS}: "
++                         + "; ".join(parts))
++            print(gate_line, flush=True)
++            lines.append(gate_line)
++        del graphs
++        torch.cuda.synchronize()
++    scores = {}
++    for v in variants:
++        if v in fails:
++            continue
++        cs = cell[v]
++        ok = len(cs) == len(FSI_ROUTINGS) * FSI_ROUNDS and all(c[0] >= FSI_MIN_SPEEDUP and c[1] for c in cs)
++        scores[v] = (min(c[0] for c in cs), ok)
++        if not ok:
++            fails[v] = (f"min ratio {min(c[0] for c in cs):.3f} (need >= {FSI_MIN_SPEEDUP}); IQR ok "
++                        f"{all(c[1] for c in cs)}")
++    passing = [v for v in scores if scores[v][1]]
++    kernels = ("master = align + moe_wna16_marlin_gemm x2 + silu_and_mul + post-norm; fsi = _align_small(bsm 32) + "
++               "fsi_midt_gather_kernel + fsi_midt_kernel<NT,CL> + _fsi_combine_kernel")
++    if passing:
++        win = max(passing, key=lambda v: scores[v][0])
++        for key, st in medians.items():
++            assert st[win][0] < st["master"][0], f"fsi {label}: chosen {win} is not faster than master in {key}"
++        line = (f"{FSI_TAG} PATH CHOSEN class={label} (T={tokens}) = FSI {_fsi_label(win)}: worst cell master/fsi "
++                f"{scores[win][0]:.3f} (>= {FSI_MIN_SPEEDUP} in {FSI_ROUNDS} rounds x {len(FSI_ROUTINGS)} routings); "
++                f"others: " + ", ".join(f"{_fsi_label(v)} {'x%.3f' % scores[v][0] if v in scores else 'failed'}"
++                                        for v in variants if v != win) + f"; {kernels}")
++        return win, line
++    line = (f"{FSI_TAG} PATH CHOSEN class={label} (T={tokens}) = MASTER: no variant cleared {FSI_MIN_SPEEDUP}x with "
++            f"IQR <= {FSI_IQR_FACTOR}x in both rounds on both routings: "
++            + "; ".join(f"{_fsi_label(v)}: {fails.get(v, 'n/a')}" for v in variants) + f"; {kernels}")
++    return None, line
++
++
++def _fsi_copy_check(state, bank, device, wref, cfg_base):
++    """The judge prepares two states and rotates them: for every ON class (T = its lowest and its judged T) capture
++    kernel_fn as a graph on this state and on a tensor-cloning copy, alternate replays with refilled inputs on the
++    zipf and random-local routings, compare each against the fp32-dequant reference (the correctness bound) and
++    require y32 to be zero again afterwards in BOTH states. A miss turns that class back to master. Returns a line."""
++    sel = {c: v for c, v in state["fsi_sel"].items() if v is not None}
++    if not sel:
++        return f"{FSI_TAG} copy check: no class ON, nothing to check"
++    start, count = bank["start"], bank["count"]
++    local_set = list(range(start, start + count))
++    other = _wg_copy_tree(state)
++    gen = torch.Generator().manual_seed(20261120)
++    fails, n_rep = [], 0
++    for cls, v in sel.items():
++        _, lo, hi, judged, label = FSI_CLASSES[cls]
++        for tokens in (lo, judged):
++            per = []
++            for st in (state, other):
++                data = {"hidden_states": torch.zeros((tokens, cfg_base["d_hidden"]), dtype=torch.bfloat16, device=device),
++                        "topk_ids": torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
++                        "topk_weights": torch.full((tokens, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device),
++                        "config": dict(cfg_base, bs=tokens)}
++                graph, out = _wg_graph_of(lambda data=data, st=st: kernel_fn(data, st))
++                per.append((st, data, graph, out))
++            for k in range(4):
++                ids = _fsi_routings(tokens, gen, local_set, device)["zipf" if k % 2 == 0 else "random-local"]
++                x = torch.randn((tokens, cfg_base["d_hidden"]), generator=gen).to(torch.bfloat16).to(device)
++                tw = torch.rand((tokens, TOP_K), generator=gen)
++                tw = (tw / tw.sum(-1, keepdim=True)).to(device)
++                for _, data, _, _ in per:
++                    data["hidden_states"].copy_(x)
++                    data["topk_ids"].copy_(ids)
++                    data["topk_weights"].copy_(tw)
++                order = per if k % 2 == 0 else per[::-1]
++                for _, _, graph, _ in order:
++                    graph.replay()
++                torch.cuda.synchronize()
++                eager = {"hidden_states": x, "topk_ids": ids, "topk_weights": tw, "config": dict(cfg_base, bs=tokens)}
++                ref, _, m_errs = _fsi_ref_case(state, bank, wref, eager)
++                bound, row_bound = _fsi_bounds(m_errs)
++                for i, (st, _, _, out) in enumerate(per):
++                    n_rep += 1
++                    agg, row = _fsi_errs(out, ref)
++                    resid = float(st["fsi_y32"].abs().max())
++                    if not (agg <= bound and row <= row_bound and resid == 0.0):
++                        fails.append((cls, f"T={tokens} state {'AB'[i]} refill {k}: rel-L2 {agg:.3g} (bound {bound:.3g}), "
++                                           f"row {row:.3g} (bound {row_bound:.3g}), y32 residue {resid:.3g}"))
++            del per
++            torch.cuda.synchronize()
++    off = sorted({c for c, _ in fails})
++    for c in off:
++        state["fsi_sel"][c] = None
++    del other
++    gc.collect()
++    torch.cuda.empty_cache()
++    return (f"{FSI_TAG} copy check (graphs through kernel_fn on the state and a tensor-cloning copy, alternating, refilled, "
++            f"y32 back to zero in both): {n_rep} replays, classes {sorted(sel)}; "
++            + ("PASS" if not fails else f"FAIL -> master for classes {off}: {fails[0][1]}"))
++
++
++def _fsi_setup(weights, state, device, t_prepare):
++    """Untimed, after master's prepare and the combo phases (both unchanged). Builds the fsi module, canaries every
++    variant, checks correctness, gates each T class against master's routed path, then runs the copy check. Sets
++    state['fsi_sel'] = {class: (NT, CL) or None} (plain prepare-set values; kernel_fn reads the shape and them
++    only). Never raises: any build error, miss, deadline or exception leaves master's path. Returns the lines
++    prepare() prints LAST (the judge keeps only the log tail)."""
++    state["fsi_sel"] = {}
++    t_begin = time.perf_counter()
++    summ = []        # compact lines, repeated last
++    why_off = []
++
++    def el():
++        return time.perf_counter() - t_prepare
++
++    def finish():
++        sel = state["fsi_sel"]
++        out = [f"{FSI_TAG} ===== FSI SUMMARY (cuda-fused-split-i-moe-midt-cluster-reduce; setup {time.perf_counter() - t_begin:.1f} s, "
++               f"prepare at {el():.1f} s) ====="]
++        out.extend(summ)
++        for cls, lo, hi, judged, label in FSI_CLASSES:
++            v = sel.get(cls)
++            # Every class gets a loud PATH CHOSEN line as its last word: a build error, unsupported bank, canary or
++            # correctness miss, a deadline, or a copy-check turn-off never reaches the per-class gate's own line.
++            mine = [l for l in summ if f"PATH CHOSEN class={label}" in l]
++            if v is None and (not mine or "= FSI" in mine[-1]):
++                out.append(f"{FSI_TAG} PATH CHOSEN class={label} (T={judged}) = MASTER (final: "
++                           + (why_off[0][:200] if why_off else "gate or copy check turned it off") + ")")
++            out.append(f"{FSI_TAG} FINAL class={label} (T {lo}..{hi}) = " + (f"FSI {_fsi_label(v)}" if v else "MASTER"))
++        out.append(f"{FSI_TAG} final flags: fsi_sel={dict(sel)} (T <= 8 and T >= 33 always master)")
++        for w in why_off[:4]:
++            out.append(f"{FSI_TAG} OFF: {w}"[:400])
++        return out
++
++    ok_setup = False
++    try:
++        bank = state["banks"][(0, 32)]
++        start, count = bank["start"], bank["count"]
++        hidden, inter = weights["w2"].shape[1], bank["size_n"]
++        cap = torch.cuda.get_device_capability(device)
++        if tuple(cap) != (9, 0):
++            raise _FsiSkip(f"device capability {cap} is not (9, 0)")
++        if bank["expert_map"] is None or hidden != 4096 or inter != 4096 or count != 32:
++            raise _FsiSkip(f"unsupported bank (expert_map {bank['expert_map'] is not None}, H {hidden}, I {inter}, count {count})")
++        if el() > FSI_DEADLINES_S["start"]:
++            raise _FsiSkip(f"skipped: deadline (start at {el():.1f} s > {FSI_DEADLINES_S['start']:.0f} s)")
++        sms = torch.cuda.get_device_properties(device).multi_processor_count
++        local_set = list(range(start, start + count))
++        cfg_base = {"bs": 0, "d_hidden": hidden, "d_expert": inter, "n_experts": N_EXPERTS, "local_start": start,
++                    "local_count": count, "top_k": TOP_K, "sharding": "ep8"}
++        print(f"{FSI_TAG} start: prepare at {el():.1f} s, SMs {sms}, variants {[_fsi_label(v) for v in FSI_VARIANTS]}",
++              flush=True)
++        # Triton compiles before any capture: _align_small at block 32 for every T of both classes, the combine.
++        print(f"{FSI_TAG} warming _align_small(bsm 32) T {FSI_MIN_TOKENS}..{FSI_MAX_TOKENS} and _fsi_combine_kernel", flush=True)
++        for tokens in range(FSI_MIN_TOKENS, FSI_MAX_TOKENS + 1):
++            _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device), start, count, 32)
++        _fsi_combine(torch.zeros((FSI_MAX_TOKENS * TOP_K, hidden), dtype=torch.float32, device=device),
++                     torch.zeros((FSI_MAX_TOKENS, TOP_K), dtype=torch.int32, device=device),
++                     torch.zeros((FSI_MAX_TOKENS, TOP_K), dtype=torch.float32, device=device), state["post_norm_w"],
++                     FSI_MAX_TOKENS, hidden)
++        torch.cuda.synchronize()
++        # ---- build (atomicAdd(float4*) first; four scalar adds if that module does not compile) ----
++        t_b = time.perf_counter()
++        ext, red_mode = None, -1
++        ext, _ = _fsi_build(1)
++        red_mode = 1
++        if ext is None and el() < FSI_DEADLINES_S["retry"]:
++            print(f"{FSI_TAG} red mode 1 (atomicAdd float4) did not build: retrying with scalar adds", flush=True)
++            ext, _ = _fsi_build(0)
++            red_mode = 0
++        build_s = time.perf_counter() - t_b
++        if ext is None:
++            raise _FsiSkip(f"load_inline failed (or retry past its deadline) after {build_s:.1f} s")
++        summ.append(f"BUILT {FSI_EXT_NAME}_red{red_mode} in {build_s:.1f} s (global add: "
++                    f"{'atomicAdd(float4*)' if red_mode == 1 else 'scalar atomicAdd x4'}); arch -gencode compute_90a/sm_90a, -O3 -lineinfo")
++        audit = _wg_audit_cpp(_FSI_CPP + "\n" + _fsi_src())
++        print(f"{FSI_TAG} global/static audit of the fsi source: findings {audit if audit else 'none'} "
++              f"(one host driver function pointer allowed; scratch per state; the tensor map is encoded per call)", flush=True)
++        if audit:
++            raise _FsiSkip(f"audit findings {audit}")
++        rows = {}
++        for r in _fsi_parse_info(ext.fsi_init(), sms):
++            rows[r["v"]] = r
++            usable = (r["ok"] and r["occ"] >= 1 and r["ncl"] >= 1 and r["bin"] == 90 and r["grid"] >= r["v"][1]
++                      and r["static"] + r["dyn"] <= WG_SMEM_LIMIT)
++            r["usable"] = usable
++            line = (f"{_fsi_label(r['v'])}: regs {r['regs']}, local (spill) {r['local']} B"
++                    f"{' (SPILL: a bug, fix before spending a check)' if r['local'] > 0 else ''}, static smem {r['static']} B, "
++                    f"dynamic smem {r['dyn']} B, CTAs/SM {r['occ']}, max co-resident "
++                    f"{'clusters of ' + str(r['v'][1]) if r['v'][1] > 1 else 'CTAs'} {r['ncl']}, grid {r['grid']} CTAs, "
++                    f"attr rc {r['e1']} / clusters rc {r['e4']}, binaryVersion {r['bin']}, usable {usable}")
++            print(f"{FSI_TAG} kernel {line}", flush=True)
++            summ.append("kernel " + line)
++        variants = [v for v in FSI_VARIANTS if v in rows and rows[v]["usable"]]
++        if not variants:
++            raise _FsiSkip("no usable variant (attribute / occupancy / cluster co-residency checks)")
++        # ---- scratch, bank ----
++        state["fsi_ext"] = ext
++        state["fsi_xs"] = torch.zeros((FSI_XS_ROWS, hidden), dtype=torch.bfloat16, device=device)
++        state["fsi_y32"] = torch.zeros((FSI_MAX_TOKENS * TOP_K, hidden), dtype=torch.float32, device=device)
++        state["fsi_err"] = torch.zeros((2,), dtype=torch.int32, device=device)
++        state["fsi_grid"] = {v: rows[v]["grid"] for v in FSI_VARIANTS if v in rows}
++        if "wg_banks" not in state or (start, count) not in state["wg_banks"]:
++            t_r = time.perf_counter()
++            state["wg_banks"] = dict(state.get("wg_banks", {}))
++            state["wg_banks"][(start, count)] = _wg_bank(weights, start, count)
++            torch.cuda.synchronize()
++            print(f"{FSI_TAG} retiled the bank (the wgmma module had not): {time.perf_counter() - t_r:.1f} s", flush=True)
++        wref = _wg_ref_weights(weights, bank)
++        torch.cuda.synchronize()
++        flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the L2
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        empty = _align2_graph(lambda: tiny.zero_(), device)
++        gen = torch.Generator().manual_seed(20261101)
++        # ---- canary: one small synthetic launch per variant, CL = 1 first (a fault is attributed) ----
++        alive = []
++        for v in sorted(variants, key=lambda q: (q[1] != 1, q)):
++            lab = _fsi_label(v)
++            try:
++                ids = _fsi_routings(16, gen, local_set, device)["zipf"]
++                data = _fsi_data(16, ids, gen, device, cfg_base)
++                state["fsi_err"].zero_()
++                print(f"{FSI_TAG}     [canary {lab}] launching T=16 zipf (eager, then synchronize)", flush=True)
++                out = _fsi_call(state, data, v)
++                torch.cuda.synchronize()
++                print(f"{FSI_TAG}     [canary {lab}] returned, synchronized ok", flush=True)
++                ref = _wg_ref_fp32(bank, state, wref, data["hidden_states"], ids, data["topk_weights"])
++                agg, row = _fsi_errs(out, ref)
++                err_word, marker = int(state["fsi_err"][0].item()), int(state["fsi_err"][1].item())
++                resid = float(state["fsi_y32"].abs().max())
++                good = agg <= 0.05 and err_word == 0 and marker == FSI_MAGIC and resid == 0.0
++                msg = (f"canary {lab}: T=16 zipf rel-L2 vs fp32 {agg:.3g}, device error word {err_word} "
++                       f"({FSI_ERR_TEXT.get(err_word, '?')}), launch marker {'seen' if marker == FSI_MAGIC else 'MISSING'}, "
++                       f"y32 residue {resid:.3g}: {'PASS' if good else 'FAIL'}")
++                print(f"{FSI_TAG} {msg}", flush=True)
++                summ.append(msg)
++                if good:
++                    alive.append(v)
++            except Exception as e:
++                msg = f"canary {lab} raised {type(e).__name__}: {str(e)[:200]}"
++                print(f"{FSI_TAG} {msg}", flush=True)
++                summ.append(msg)
++                torch.cuda.synchronize()
++        if not alive:
++            raise _FsiSkip("no variant passed the canary")
++        # ---- correctness matrix: T in {9, 16, 17, 32} x 5 routings, against the fp32-dequant reference ----
++        if el() > FSI_DEADLINES_S["correct"]:
++            raise _FsiSkip(f"skipped: deadline (correctness at {el():.1f} s > {FSI_DEADLINES_S['correct']:.0f} s)")
++        cases = []
++        for tokens in FSI_CASE_TOKENS:
++            routs = _fsi_routings(tokens, gen, local_set, device)
++            for name in FSI_CASES:
++                data = _fsi_data(tokens, routs[name], gen, device, cfg_base)
++                ref, m_out, m_errs = _fsi_ref_case(state, bank, wref, data)
++                cases.append((tokens, name, data, ref, m_errs))
++        print(f"{FSI_TAG} correctness: {len(cases)} cases (T {FSI_CASE_TOKENS} x {FSI_CASES}); master's own error vs fp32 "
++              f"worst: agg {max(c[4][0] for c in cases):.3g}, row {max(c[4][1] for c in cases):.3g}; bound = max({FSI_ERR_FACTOR:g} x "
++              f"master agg, {FSI_ERR_FLOOR:g}), rows {FSI_ROW_FACTOR:g}x that", flush=True)
++        good_variants = []
++        for v in alive:
++            lab = _fsi_label(v)
++            state["fsi_err"].zero_()
++            bad, worst = None, (0.0, 0.0)
++            for tokens, name, data, ref, m_errs in cases:
++                bound, row_bound = _fsi_bounds(m_errs)
++                out = _fsi_call(state, data, v)
++                torch.cuda.synchronize()
++                agg, row = _fsi_errs(out, ref)
++                resid = float(state["fsi_y32"].abs().max())
++                worst = (max(worst[0], agg), max(worst[1], row))
++                if not (agg <= bound and row <= row_bound and resid == 0.0):
++                    bad = bad or (f"T={tokens} {name}: rel-L2 {agg:.3g} (bound {bound:.3g}), row {row:.3g} "
++                                  f"(bound {row_bound:.3g}), y32 residue {resid:.3g}")
++                    state["fsi_y32"].zero_()
++            err_word, marker = int(state["fsi_err"][0].item()), int(state["fsi_err"][1].item())
++            if err_word or marker != FSI_MAGIC:
++                bad = bad or f"device error word {err_word} ({FSI_ERR_TEXT.get(err_word, '?')}), marker {marker:#x}"
++            msg = (f"correctness {lab}: worst agg {worst[0]:.3g}, worst row {worst[1]:.3g} over {len(cases)} cases: "
++                   f"{'PASS' if bad is None else 'FAIL ' + bad}")
++            print(f"{FSI_TAG} {msg}", flush=True)
++            summ.append(msg)
++            if bad is None:
++                good_variants.append(v)
++        if not good_variants:
++            raise _FsiSkip("no variant passed the correctness matrix")
++        # ---- kernel-only diagnostics, then the per-class A/B gate ----
++        chosen_lines = []
++        for cls_info in FSI_CLASSES:
++            cls, lo, hi, tokens, label = cls_info
++            if time.perf_counter() - t_prepare > FSI_DEADLINES_S["timing"]:
++                line = f"{FSI_TAG} PATH CHOSEN class={label} (T={tokens}) = MASTER (skipped: deadline, timing not started past {FSI_DEADLINES_S['timing']:.0f} s)"
++                print(line, flush=True)
++                chosen_lines.append(line)
++                state["fsi_sel"][cls] = None
++                continue
++            try:
++                routs = _fsi_routings(tokens, gen, local_set, device)
++                for dl in _fsi_diag(state, bank, device, flush, tokens, routs["zipf"], cfg_base, rows, good_variants, gen):
++                    print(dl, flush=True)
++                    chosen_lines.append(dl)
++                win, line = _fsi_gate_class(state, bank, device, flush, empty, cls_info, good_variants, cfg_base,
++                                            t_prepare, chosen_lines)
++            except _FsiSkip as e:
++                win, line = None, f"{FSI_TAG} PATH CHOSEN class={label} (T={tokens}) = MASTER (skipped: deadline; {e})"
++            except Exception as e:
++                win, line = None, f"{FSI_TAG} PATH CHOSEN class={label} (T={tokens}) = MASTER (gate raised {type(e).__name__}: {str(e)[:160]})"
++                torch.cuda.synchronize()
++            state["fsi_sel"][cls] = win
++            print(line, flush=True)
++            chosen_lines.append(line)
++        summ.extend(l for l in chosen_lines if "PATH CHOSEN" in l or "DIAG" in l or "GATE" in l)
++        # ---- copy check (the judge's two-state rotation), only for ON classes ----
++        if any(v is not None for v in state["fsi_sel"].values()):
++            if el() > FSI_DEADLINES_S["copy"]:
++                state["fsi_sel"] = {c: None for c in state["fsi_sel"]}
++                line = f"{FSI_TAG} copy check skipped: deadline ({el():.1f} s > {FSI_DEADLINES_S['copy']:.0f} s): every class -> master"
++            else:
++                try:
++                    line = _fsi_copy_check(state, bank, device, wref, cfg_base)
++                except Exception as e:
++                    state["fsi_sel"] = {c: None for c in state["fsi_sel"]}
++                    line = f"{FSI_TAG} copy check raised {type(e).__name__}: {str(e)[:200]}: every class -> master"
++                    torch.cuda.synchronize()
++            print(line, flush=True)
++            summ.append(line)
++        ok_setup = True
++        del wref, cases
++    except _FsiSkip as e:
++        why_off.append(str(e))
++        print(f"{FSI_TAG} fsi path off: {e}", flush=True)
++    except Exception as e:
++        why_off.append(f"setup raised {type(e).__name__}: {str(e)[:240]}")
++        print(f"{FSI_TAG} fsi setup raised {type(e).__name__}: {str(e)[:300]}", flush=True)
++    if not ok_setup:
++        state["fsi_sel"] = {}
++    try:
++        torch.cuda.synchronize()
++        if "fsi_y32" in state:
++            state["fsi_y32"].zero_()
++            state["fsi_xs"].zero_()
++            state["fsi_err"].zero_()
++        gc.collect()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    except Exception as e:
++        print(f"{FSI_TAG} cleanup raised {e!r}", flush=True)
++    return finish()
++
++
+ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     """This GPU's share of the MoE output, bfloat16 [M, H]."""
+     cfg = data["config"]
+@@ -4254,6 +5698,11 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     num_tokens = x.shape[0]
+     # Branch on the shape and the prepare-time flag only (s5: no pointer gate). Every launch encodes its
+     # tensor maps from this state's own scratch tensors, so any copy of the state works.
++    if bank["expert_map"] is not None and FSI_MIN_TOKENS <= num_tokens <= FSI_MAX_TOKENS:
++        # Fused split-I path (prepare-gated per T class; None = master). T <= 8 and T >= 33 never reach it.
++        fsi_variant = state.get("fsi_sel", {}).get(0 if num_tokens <= 16 else 1)
++        if fsi_variant is not None:
++            return _moe_fsi(x, data["topk_ids"], data["topk_weights"], bank, state, fsi_variant)
+     if bank["expert_map"] is not None and WG_MIN_TOKENS <= num_tokens <= WG_MAX_TOKENS:
+         if state.get("wg_on_128", False) if num_tokens < WG_B256_MIN_TOKENS else state.get("wg_on_256", False):
+             return _moe_wgmma(x, data["topk_ids"], data["topk_weights"], bank, state)[0]
