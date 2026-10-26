@@ -63,10 +63,10 @@ kind: primary
 controls_for: null
 prior: "merge-perkvhead-c320-sv32-tiled: that merge ported c320 V1 (three nodes, 19.71 us, lost full decode_1 to the best's 17.39) and this one ports combo-b1-chain-c320-fused-pre-pdl's V3/V4 chain (fused pre-attention prologue + PDL) instead, keeping per-kvhead and SV32 unchanged"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212904Z
 base_sha: b27495d07f7afbf34627adb964d4beee91b40864
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -85,6 +85,13 @@ attempt_file: 2026-10-26T012517Z-check-merge-perkvhead-v3chain-sv32-tiled.md
 prepared_at: 2026-10-26T012517Z
 job: b4b20425eaff4942
 dispatched_at: 2026-10-26T012526Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5360270228299941
+speedup_ci: [1.5129866174875441, 1.5652083530869918]
+harvested_at: 2026-10-26T015636Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # merge-perkvhead-v3chain-sv32-tiled
@@ -190,3 +197,35 @@ Audited 2026-10-25 (opus), read-only plus diffs; no GPU on this node.
 - okc_lint: OK with warnings. The host-sync warnings are all outside kernel_fn, plus one ported dtype warning in a GATE B synthetic helper. py_compile: OK. __pycache__ removed.
 
 Residual risk: the import clock. The chain's phases can take up to 240 s on top of the setup that runs before it, so a slow build could push GATE B past its 440 s start gate. That would lose the SV32 row without failing the run. V3/V4 local bytes are printed but not gated.
+
+## Result
+
+- job `b4b20425eaff4942` (check), status done, passed True, tests 16/16
+- speedup 1.5360x, 95% CI [1.5130, 1.5652], score 2451.9750915976238 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/merge-perkvhead-v3chain-sv32-tiled.result.json`, `muse_attention_decode/hypotheses/done/neutral/merge-perkvhead-v3chain-sv32-tiled.patch`; branch `hyp/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 10.81 | 1.1052 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 17.77 | 0.967 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.26 | 1.0031 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 111.38 | 0.9963 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.81 | 0.9756 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 227.8 | 1.0 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 13.68 | 0.9805 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 29.81 | 1.0006 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.84 | 0.9924 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.95 | 0.9918 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 29.07 | 0.9943 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 303.23 | 0.9945 | flat |
+
+gained on sliding decode_1. Expected hit: 3/5. Noise ±1.7%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

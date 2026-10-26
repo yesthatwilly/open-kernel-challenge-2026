@@ -1,0 +1,140 @@
++00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 0: state A rel L2 1.67e-03, finite True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 1: launching state B graph
+[c320] V3 replay 4097 keys kv 0.25 step 1: state B replay returned
+[c320] V3 replay 4097 keys kv 0.25 step 1: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 1: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 1: state B rel L2 1.72e-03, finite True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 2: launching state B graph (refilled)
+[c320] V3 replay 4097 keys kv 0.25 step 2: state B replay returned
+[c320] V3 replay 4097 keys kv 0.25 step 2: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 2: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 2: state B rel L2 1.69e-03, finite True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 3: launching state A graph (refilled)
+[c320] V3 replay 4097 keys kv 0.25 step 3: state A replay returned
+[c320] V3 replay 4097 keys kv 0.25 step 3: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 3: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 3: state A rel L2 1.64e-03, finite True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 4: launching state A graph (refilled)
+[c320] V3 replay 4097 keys kv 0.25 step 4: state A replay returned
+[c320] V3 replay 4097 keys kv 0.25 step 4: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 4: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 4: state A rel L2 1.66e-03, finite True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 5: launching state B graph (refilled)
+[c320] V3 replay 4097 keys kv 0.25 step 5: state B replay returned
+[c320] V3 replay 4097 keys kv 0.25 step 5: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 5: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V3 replay 4097 keys kv 0.25 step 5: state B rel L2 1.63e-03, finite True -> ok
+[c320] V3 (A+C) two-state capture/replay: ok
+[c320] V4 replay 80000 keys kv 1.0 state A: eager warm-up of kernel_fn on a side stream
+[c320] V4 replay 80000 keys kv 1.0 state B: eager warm-up of kernel_fn on a side stream
+[c320] V4 replay 80000 keys kv 1.0: warm-ups returned
+[c320] V4 replay 80000 keys kv 1.0 state A: capturing kernel_fn
+[c320] V4 replay 80000 keys kv 1.0 state B: capturing kernel_fn
+[c320] V4 replay 80000 keys kv 1.0 step 0: launching state A graph
+[c320] V4 replay 80000 keys kv 1.0 step 0: state A replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 0: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 0: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 0: state A rel L2 1.77e-03, finite True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 1: launching state B graph
+[c320] V4 replay 80000 keys kv 1.0 step 1: state B replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 1: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 1: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 1: state B rel L2 1.69e-03, finite True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 2: launching state B graph (refilled)
+[c320] V4 replay 80000 keys kv 1.0 step 2: state B replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 2: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 2: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 2: state B rel L2 1.65e-03, finite True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 3: launching state A graph (refilled)
+[c320] V4 replay 80000 keys kv 1.0 step 3: state A replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 3: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 3: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 3: state A rel L2 1.73e-03, finite True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 4: launching state A graph (refilled)
+[c320] V4 replay 80000 keys kv 1.0 step 4: state A replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 4: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 4: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 4: state A rel L2 1.60e-03, finite True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 5: launching state B graph (refilled)
+[c320] V4 replay 80000 keys kv 1.0 step 5: state B replay returned
+[c320] V4 replay 80000 keys kv 1.0 step 5: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 5: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 80000 keys kv 1.0 step 5: state B rel L2 1.64e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 state A: eager warm-up of kernel_fn on a side stream
+[c320] V4 replay 4097 keys kv 0.25 state B: eager warm-up of kernel_fn on a side stream
+[c320] V4 replay 4097 keys kv 0.25: warm-ups returned
+[c320] V4 replay 4097 keys kv 0.25 state A: capturing kernel_fn
+[c320] V4 replay 4097 keys kv 0.25 state B: capturing kernel_fn
+[c320] V4 replay 4097 keys kv 0.25 step 0: launching state A graph
+[c320] V4 replay 4097 keys kv 0.25 step 0: state A replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 0: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 0: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 0: state A rel L2 1.76e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 1: launching state B graph
+[c320] V4 replay 4097 keys kv 0.25 step 1: state B replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 1: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 1: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 1: state B rel L2 1.66e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 2: launching state B graph (refilled)
+[c320] V4 replay 4097 keys kv 0.25 step 2: state B replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 2: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 2: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 2: state B rel L2 1.71e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 3: launching state A graph (refilled)
+[c320] V4 replay 4097 keys kv 0.25 step 3: state A replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 3: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 3: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 3: state A rel L2 1.57e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 4: launching state A graph (refilled)
+[c320] V4 replay 4097 keys kv 0.25 step 4: state A replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 4: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 4: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 4: state A rel L2 1.62e-03, finite True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 5: launching state B graph (refilled)
+[c320] V4 replay 4097 keys kv 0.25 step 5: state B replay returned
+[c320] V4 replay 4097 keys kv 0.25 step 5: k_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 5: v_cache new row: 0/128 bytes differ from master, rel L2 0.00e+00, finite True, other rows unchanged True -> ok
+[c320] V4 replay 4097 keys kv 0.25 step 5: state B rel L2 1.66e-03, finite True -> ok
+[c320] V4 (A+C+D) two-state capture/replay: ok
+[c320] PDL decided once here: available (PDL variants that passed eager + capture/replay: [2, 4]; tried [2, 4])
+[c320-gate] pass 1: timing ['V0', 'V1', 'V2', 'V3', 'V4'] interleaved (kernel_fn graphs, cold L2, empty graph subtracted, median of 41)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[c320-gate] empty-graph baseline 3.07 us (subtracted from every number)
+[c320-gate] pass 1 V0 (master pre-attn + two-level):   23.84 us [p25 23.62, p75 24.29]  ratio to V0 1.000
+[c320-gate] pass 1 V1 (A):   21.66 us [p25 21.57, p75 21.86]  ratio to V0 0.909
+[c320-gate] pass 1 V2 (A+D):   21.44 us [p25 21.34, p75 21.66]  ratio to V0 0.899
+[c320-gate] pass 1 V3 (A+C):   19.39 us [p25 19.17, p75 19.62]  ratio to V0 0.813
+[c320-gate] pass 1 V4 (A+C+D):   19.36 us [p25 19.14, p75 19.58]  ratio to V0 0.812
+[c320-gate] interaction (V1-V4) - [(V1-V2) + (V1-V3)] = -0.19 us (>0 super-additive): V1-V4 +2.30, V1-V2 (D) +0.22, V1-V3 (C) +2.27 us; half-IQR per variant V1 0.14, V2 0.16, V3 0.22, V4 0.22 us (sum 0.75 us)
+[c320-gate] pass 2: pass-1 best V4 head to head with ['V0', 'V1'], median of 31
+[c320-gate] empty-graph baseline 3.07 us (subtracted from every number)
+[c320-gate] pass 2 V0 (master pre-attn + two-level):   23.90 us [p25 23.62, p75 24.45]  ratio to V0 1.000
+[c320-gate] pass 2 V1 (A):   21.38 us [p25 21.18, p75 21.57]  ratio to V0 0.894
+[c320-gate] pass 2 V4 (A+C+D):   19.55 us [p25 19.23, p75 19.87]  ratio to V0 0.818
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 V1 21.38 us vs two-level 23.90 us, ratio 0.894; the chain line below names the routed variant)
+PATH CHOSEN: full decode_1 [chain]: V4 (A+C+D) (V4 19.55 us vs V0 23.90 us head to head, ratio 0.818 (<= 0.98); pass 1: V0 23.84, V1 21.66, V2 21.44, V3 19.39, V4 19.36 us); import clock 212 s
+[combo] import clock 212.1s at the start of piece B (budget 480s)
+[combo] import clock 212.1s: phase GATE B (SV32) (deadline 40s) starts (212.1 + 40 <= 480s)
+[tiled] SV32 B=32 ragged: launching _pre_attention_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged: _pre_attention_kernel returned
+[tiled] SV32 B=32 ragged: launching _pre_attention_tiled_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged: _pre_attention_tiled_kernel returned
+[tiled] SV32 B=32 ragged: q: 0/262144 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: new k rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: new v rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged: exactness ok
+[tiled] SV32 B=32 ragged kv 0.25: launching _pre_attention_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged kv 0.25: _pre_attention_kernel returned
+[tiled] SV32 B=32 ragged kv 0.25: launching _pre_attention_tiled_kernel (PAIRED False, ROPE True)
+[tiled] SV32 B=32 ragged kv 0.25: _pre_attention_tiled_kernel returned
+[tiled] SV32 B=32 ragged kv 0.25: q: 0/262144 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: new k rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: new v rows: 0/32768 bytes differ (0 by > 1 ulp, 0 NaN), dequantized rel L2 0.00e+00
+[tiled] SV32 B=32 ragged kv 0.25: exactness ok
+[tiled-gate] SV32 B=32 x 80000: capturing the pre-attention launches and kernel_fn route off / on
+[tiled-gate] SV32: empty 3.1 us; pre tiled 4.3 vs master 5.7 us net; step on 29.9 vs off 30.4 us net -> step ratio 0.982
+[combo] GATE B took 0.2s
+PATH CHOSEN: sliding verify_32 pre-attention SV32 [B tiled]: master (pre 4.3 vs 5.7 us, step 29.9 vs 30.4 us, ratio 0.982)
+[combo] import clock 212.3s at the end of the merge phases
