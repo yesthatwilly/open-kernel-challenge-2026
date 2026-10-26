@@ -73,7 +73,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212905Z
 base_sha: 29d5f864b053aab03e8c54ff87dd01db6442070e
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -90,6 +90,8 @@ submission_blob: c06e0fbeba63badb368924c2a565fe5ba167d510
 lint_warnings: 73
 attempt_file: 2026-10-26T012537Z-check-sliding-verify-wgmma-window-s1.md
 prepared_at: 2026-10-26T012537Z
+job: cd01da3909cc4f4c
+dispatched_at: 2026-10-26T012615Z
 ---
 
 # sliding-verify-wgmma-window-s1
