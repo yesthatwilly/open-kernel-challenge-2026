@@ -103,6 +103,8 @@ submission_sha256: 3916dfe084128c3d8d79d4115f45dd195a4d3c7161a4dca38e75297943092
 norm_sha256: 0c499f6341769f494a929dd9b5fdb8c2a8b71d1fea622a4e6f5687d48fc94a1b
 submission_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
 lint_warnings: 106
+attempt_file: 2026-10-26T012540Z-check-experts-rega-s4-bm256-wide-tile-high-ft.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
