@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-26T044456Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4bb0` (submit)
+Regenerated 2026-10-26T220308Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4bb0` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -86,9 +86,10 @@ Regenerated 2026-10-26T044456Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4
 | 2026-10-25T211825Z | experts-rega-low-2cta-fullslab-mc2 | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-25T211825Z | experts-rega-mc2-bm256-stack-high-ft | primary | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-25T211833Z | experts-rega-pdl-chain-gather-w13-w2 | primary | launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2) | done/neutral | neutral | 1.4622 | [1.440,1.484] | 8e4685f303c143a8 | check |  | proceed | 1/3 |
-| 2026-10-25T211857Z | experts-rega-mc4-cluster-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T023858Z | experts-rega-s4-bm256-wide-tile-high-ft-cf | confirm→experts-rega-s4-bm256-wide-tile-high-ft | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T211857Z | experts-rega-mc4-cluster-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-26T023858Z | experts-rega-s4-bm256-wide-tile-high-ft-cf | confirm→experts-rega-s4-bm256-wide-tile-high-ft | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | done/neutral | neutral | 1.4711 | [1.449,1.493] | 13cfaf1e25c341af | check |  | proceed |  |
 
 ## Held
 
 - fa3-num-splits-cap-gated-turn: adversarial review: Hold this as a scored submit; the cause is the budget, not the idea. The mechanism is plausible and rules-clean, but the best case is about +0.2% on a headline 
+- experts-rega-mc4-cluster-high-ft: adversarial review: Hold: this hypothesis's own build condition has failed. Stage 1's 2-CTA slab multicast cut issued L2 bytes by 24-39% yet rega ran 1.31-1.38x slower at high/ft a

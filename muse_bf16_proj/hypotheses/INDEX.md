@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-26T044456Z. Best: 1.2566x [1.2378,1.2755] job `741072dca5fc4c9d` (check)
+Regenerated 2026-10-26T220308Z. Best: 1.2664x [1.2474,1.2854] job `3834ceeca7c0410d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -75,8 +75,12 @@ Regenerated 2026-10-26T044456Z. Best: 1.2566x [1.2378,1.2755] job `741072dca5fc4
 | 2026-10-25T161307Z | combo-rowowner-reduce-free-m1-qkv-o-plus-naive | primary | combination (naive stack + bulk row-owner widened to qkv_gate/o m=1) | done/neutral | neutral | 1.2566 | [1.238,1.275] | 741072dca5fc4c9d | submit | done | proceed | 3/4 |
 | 2026-10-25T161307Z | combo-cublaslt-single-node-m128-m256-plus-naive | primary | combination (naive stack + cuBLASLt single-node probe on pooler/unpooler/o m=128/256) | done/expired | expired |  |  |  |  |  | proceed |  |
 | 2026-10-25T211856Z | pooler-k-halves-fp32-partials-restack-m128-m256 | primary | pooler GEMM (m=128/256, K-split as a 2-batch cuBLAS GEMM) | done/neutral | neutral | 1.2683 | [1.249,1.287] | de95f81782374124 | check |  | proceed | 2/3 |
-| 2026-10-25T211857Z | combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16 | primary | combination (pooler K-halves m=128/256 + qkv row-owner m=8/16 + per-cell Lt plans m=128/256) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T211857Z | combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16 | primary | combination (pooler K-halves m=128/256 + qkv row-owner m=8/16 + per-cell Lt plans m=128/256) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T211857Z | bf16-verify-deepgemm-sm90-explicit-instantiation-stage2 | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | done/neutral | neutral | 1.2606 | [1.242,1.280] | 566a79e403754c76 | check |  | proceed | 2/5 |
 | 2026-10-25T211857Z | bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole | primary | bf16 GEMM dispatch (m=128/256, per-cell cuBLASLt plan selector) | done/neutral | neutral | 1.2525 | [1.234,1.271] | 37ed8722bc9b402d | check |  | proceed | 2/4 |
 | 2026-10-25T211857Z | qkv-rowowner-a2-widen-m8-m16 | primary | qkv GEMM (m=8/16, bulk row-owner kernel) | done/neutral | neutral | 1.2603 | [1.241,1.279] | 0124ea8fcaf14b3c | check |  | proceed | 1/3 |
 | 2026-10-26T015638Z | pooler-k-halves-fp32-partials-restack-m128-m256-cf | confirm→pooler-k-halves-fp32-partials-restack-m128-m256 | pooler GEMM (m=128/256, K-split as a 2-batch cuBLAS GEMM) | done/neutral | neutral | 1.2590 | [1.240,1.278] | caaa76cc288d47c7 | check |  | proceed |  |
+
+## Held
+
+- combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16: sprint 2026-10-26 21:58Z: after the adversary's narrowing only pooler K-halves kind (a) can route, and kind (a) rounds each K-half's fp32 partial to bf16 before the final add (lower precision than SGLang's fp32 split-K; fails our fp32-accumulation rules gate); kind (b) fp32 partials never passed a gate. Not run.
