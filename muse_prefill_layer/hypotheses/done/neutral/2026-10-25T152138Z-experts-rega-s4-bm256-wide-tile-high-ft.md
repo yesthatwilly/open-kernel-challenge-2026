@@ -114,6 +114,7 @@ speedup_ci: [1.453630720834128, 1.4979037377123245]
 harvested_at: 2026-10-26T023858Z
 best_at_harvest: 1.4677493909229
 promotion: null
+confirm_queued: experts-rega-s4-bm256-wide-tile-high-ft-cf
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft
