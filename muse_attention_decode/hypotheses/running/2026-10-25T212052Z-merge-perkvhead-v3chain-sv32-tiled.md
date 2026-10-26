@@ -66,7 +66,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212904Z
 base_sha: b27495d07f7afbf34627adb964d4beee91b40864
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -83,6 +83,8 @@ submission_blob: 219c08d9b932ec2cd4ba9f53ab3386d7b72348b7
 lint_warnings: 79
 attempt_file: 2026-10-26T012517Z-check-merge-perkvhead-v3chain-sv32-tiled.md
 prepared_at: 2026-10-26T012517Z
+job: b4b20425eaff4942
+dispatched_at: 2026-10-26T012526Z
 ---
 
 # merge-perkvhead-v3chain-sv32-tiled
