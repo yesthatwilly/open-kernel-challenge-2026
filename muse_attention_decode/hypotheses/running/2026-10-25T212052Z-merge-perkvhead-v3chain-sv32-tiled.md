@@ -72,7 +72,7 @@ base_sha: b27495d07f7afbf34627adb964d4beee91b40864
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
 branch: hyp/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled
 worktree: .worktrees/muse_attention_decode/merge-perkvhead-v3chain-sv32-tiled
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-25T213549Z
@@ -81,6 +81,8 @@ submission_sha256: 0c361e8ac5f80705c503d9813b85cff96fb415246d13f940bc8148817bae9
 norm_sha256: a8ca565fd226f89ad0371386c77c57a5c0ad4efb2e3e729262f38bc79141e003
 submission_blob: 219c08d9b932ec2cd4ba9f53ab3386d7b72348b7
 lint_warnings: 79
+attempt_file: 2026-10-26T012517Z-check-merge-perkvhead-v3chain-sv32-tiled.md
+prepared_at: 2026-10-26T012517Z
 ---
 
 # merge-perkvhead-v3chain-sv32-tiled
