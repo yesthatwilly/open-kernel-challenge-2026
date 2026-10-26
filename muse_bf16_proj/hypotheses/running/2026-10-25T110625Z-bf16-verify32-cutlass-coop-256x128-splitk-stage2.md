@@ -78,7 +78,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212548Z
 base_sha: e4182610b1552724381a1f2451f6bcd56b7dc1ed
 base_blob: bcf8bff0b622eecf0d9dc9abecf9e4c7067df872
@@ -95,6 +95,8 @@ submission_blob: 6e8cbd9208410b2fc62ee8b2e90ee064981e7a31
 lint_warnings: 38
 attempt_file: 2026-10-26T012540Z-check-bf16-verify32-cutlass-coop-256x128-splitk-stage2.md
 prepared_at: 2026-10-26T012540Z
+job: 92c42836caf54987
+dispatched_at: 2026-10-26T012616Z
 ---
 
 # bf16-verify32-cutlass-coop-256x128-splitk-stage2
