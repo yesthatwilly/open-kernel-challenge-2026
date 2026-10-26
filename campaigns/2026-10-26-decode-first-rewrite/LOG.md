@@ -77,3 +77,17 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - Decision: Engine A keeps D4 / 2 CTAs/SM / exact dequant / N = 8. T above 8 goes in passes of at most 8 routes per
   expert (repeat reads served from L2), never more than one n-tile. Gathering B per expert (n_e rows instead of all
   T) is worth about 7% at T = 8.
+
+## 2026-10-26T05:52Z: Engine A v1 live in moe and decode (checks 7e40dd8509da4586, 485b670ef12f4909)
+
+- User (05:47Z): continue autonomously until 2026-10-26 09:49Z (2:49 MST) using any and all checks, scored submits and
+  Claude tokens; agent concurrency stays at <= 3.
+- Engine A v1 Opus audit: dispatch-with-fixes. Applied to v1 and v2: K2's no-work exit now waits on K1 (else the
+  combine could read K1's local_ids early on zero-local canary cases); host grid bound 512 (stream-K needs W >= G);
+  cudaGetLastError() after a failed launch; the diagnostic rates call in its own try. Its name scan, run on the decode
+  file, found `gc` unbound in the decode adapter's copy check (would have turned Engine A off); fixed.
+- Branch df55c554: moe CAMPAIGN_LADDER off, CAMPAIGN_ENGINE_A on; decode CAMPAIGN_ENGINE_A_DL on. Checks dispatched in
+  parallel with rewrite/bin/dispatch.py (fills the attempt file's job id).
+- In parallel: an Opus audit of Engine A v2 (T <= 32); an Opus builder for Engine B (W3, T = 128..512) on branch
+  campaign/engine-b in .worktrees/engine-b (no okc runs; I dispatch).
+
