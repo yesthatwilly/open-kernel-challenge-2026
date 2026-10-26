@@ -65,10 +65,10 @@ prior: "full-decode-sk-s4-deferred-ticket-arrive: same DEFER mechanism, which fa
 rewrite_stage: 5
 replaces: "full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212956Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212957Z
 base_sha: d6a7be8f77635e613d619df51fa1de4dea8f9afd
 base_blob: 6d6afa4722731ceb9cb8216d0334a03f1a96ad2b
@@ -87,6 +87,13 @@ attempt_file: 2026-10-26T012539Z-check-full-decode-sk-s5-deferred-ticket-fault-f
 prepared_at: 2026-10-26T012539Z
 job: f1d6d493c24244f4
 dispatched_at: 2026-10-26T012615Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5161775194482092
+speedup_ci: [1.4934348566564861, 1.5389201822399323]
+harvested_at: 2026-10-26T015636Z
+best_at_harvest: 1.5295495462227864
+promotion: null
 ---
 
 # full-decode-sk-s5-deferred-ticket-fault-fix
@@ -185,3 +192,36 @@ Verdict: dispatch-with-fixes. Evidence: diff of master vs worktree saved at /tmp
 - Fix 1: phase start/band deadlines 235/275 s -> 420/470 s (import clock starts after `import torch`; master compiles alone are ~200 s per DIAGNOSIS.md and the phase takes under a minute, TASK.md allows 900 s, so 235 s risked skipping the phase on every run).
 - Fix 2: the IQR veto (`<= 1.5x master IQR`) gets a 0.5 us floor on master's spread (`1.5 * max(master_iqr, 0.5)`).
 Residual risk: a DEFER or B=64 v0 illegal address would poison the context for the remaining prepare and tests (B=64 x 80K is neither scored nor tested), and a compile error in the shared _SK_CUDA module would lose master's sk path.
+
+## Result
+
+- job `f1d6d493c24244f4` (check), status done, passed True, tests 16/16
+- speedup 1.5162x, 95% CI [1.4934, 1.5389], score 2484.075876135329 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.5295495462227864, "ci": [1.5066063030294445, 1.552492789416128], "job": "8713665f3064462c"}; base result: muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-decode-sk-s5-deferred-ticket-fault-fix.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-decode-sk-s5-deferred-ticket-fault-fix.patch`; branch `hyp/muse_attention_decode/full-decode-sk-s5-deferred-ticket-fault-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 12.1 | 11.12 | 1.0822 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 17.39 | 22.67 | 0.7756 | lost |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.46 | 15.35 | 0.9959 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 110.77 | 110.34 | 1.001 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 17.46 | 17.66 | 0.9887 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 226.89 | 226.45 | 0.997 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.23 | 12.9 | 1.0231 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.27 | 30.23 | 1.0008 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 22.62 | 22.93 | 0.9932 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.46 | 163.45 | 0.9882 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 29.01 | 28.71 | 0.997 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 301.99 | 301.9 | 0.995 | flat |
+
+gained on sliding decode_1; lost on full decode_1. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 5 of `full decode 1<B<=64: master splitkv_attn_sk_kernel<4, ticket> single-level in-stream ticket epilogue`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_attention_decode "<what to fix or tune>" --kind rewrite --depends-on full-decode-sk-s5-deferred-ticket-fault-fix --stage 6`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-decode-sk-s5-deferred-ticket-fault-fix`) that adds a further change in the same area is the only way to learn more.
+
