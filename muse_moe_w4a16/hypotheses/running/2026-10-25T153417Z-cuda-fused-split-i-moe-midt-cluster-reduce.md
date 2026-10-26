@@ -91,7 +91,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212522Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T212550Z
 base_sha: ce2461b1ea24995a3c81d11487611f052d8ecc35
 base_blob: 35b8a851e4ef5fa8fd66b12d09caac88b7ea7615
@@ -108,6 +108,8 @@ submission_blob: c7e48df9b5d8e30a800cfc54936f233eae895e7c
 lint_warnings: 122
 attempt_file: 2026-10-26T012541Z-check-cuda-fused-split-i-moe-midt-cluster-reduce.md
 prepared_at: 2026-10-26T012541Z
+job: 6fe2a63f490f49a3
+dispatched_at: 2026-10-26T012820Z
 ---
 
 # cuda-fused-split-i-moe-midt-cluster-reduce
