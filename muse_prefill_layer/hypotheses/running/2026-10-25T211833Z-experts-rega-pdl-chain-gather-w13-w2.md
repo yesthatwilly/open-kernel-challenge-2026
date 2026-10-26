@@ -61,6 +61,8 @@ submission_sha256: bdd042627638da883bc5506b818839cc05b278586a6d354861818193b48c7
 norm_sha256: d71d3354792137b1b4de1fcf682140da76da6fcb33ef84286a766afbfed133b0
 submission_blob: 1834ae36e06f81546b302addcb09c9a912b7e381
 lint_warnings: 98
+attempt_file: 2026-10-26T012540Z-check-experts-rega-pdl-chain-gather-w13-w2.md
+prepared_at: 2026-10-26T012540Z
 ---
 
 # experts-rega-pdl-chain-gather-w13-w2
