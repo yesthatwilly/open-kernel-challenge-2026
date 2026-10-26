@@ -80,6 +80,7 @@ speedup_ci: [1.2492427991331474, 1.2872908031676593]
 harvested_at: 2026-10-26T015638Z
 best_at_harvest: 1.2566457115954903
 promotion: null
+confirm_queued: pooler-k-halves-fp32-partials-restack-m128-m256-cf
 ---
 
 # pooler-k-halves-fp32-partials-restack-m128-m256
