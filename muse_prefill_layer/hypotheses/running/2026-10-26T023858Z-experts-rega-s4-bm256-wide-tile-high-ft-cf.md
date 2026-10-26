@@ -15,7 +15,7 @@ confirm_of: experts-rega-s4-bm256-wide-tile-high-ft
 confirm_of_job: a6f6063051f14750
 review: proceed
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-26T214345Z
 base_sha: 97bc07f18b4cbc9aa9b228fdea23c980cefe6fc2
 base_blob: 82449fd7e7fae52ba13d26109cc48a9fd256b40c
@@ -32,6 +32,8 @@ submission_blob: 5d7e2cb0f68f381154fb868581be341a63e9aca3
 lint_warnings: 106
 attempt_file: 2026-10-26T214409Z-check-experts-rega-s4-bm256-wide-tile-high-ft-cf.md
 prepared_at: 2026-10-26T214409Z
+job: 13cfaf1e25c341af
+dispatched_at: 2026-10-26T214415Z
 ---
 
 # experts-rega-s4-bm256-wide-tile-high-ft-cf
