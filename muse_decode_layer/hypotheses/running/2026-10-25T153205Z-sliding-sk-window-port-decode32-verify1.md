@@ -79,7 +79,7 @@ status: running
 review_at: 2026-10-25T203233Z
 review_companions: null
 hold_reason: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-25T213134Z
 base_sha: 4b5ab758064dec781322c9326848d77ac8ab9b96
 base_blob: 3fc72e97304e132db432fcc87872be997f842929
@@ -96,6 +96,8 @@ submission_blob: 2e0687a9bdbdcede1b35478fb931d2a37e0dbbc4
 lint_warnings: 78
 attempt_file: 2026-10-26T012541Z-check-sliding-sk-window-port-decode32-verify1.md
 prepared_at: 2026-10-26T012541Z
+job: 3117f2e423d44cb7
+dispatched_at: 2026-10-26T012819Z
 ---
 
 # sliding-sk-window-port-decode32-verify1
