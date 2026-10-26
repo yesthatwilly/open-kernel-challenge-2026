@@ -67,10 +67,10 @@ controls_for: null
 rewrite_stage: 1
 replaces: "cuBLAS at m=65..128 (verify_16): qkv_gate nvjet 96x64 splitK 12.7 + cublasLt splitKreduce 3.1 us, o nvjet 128x64 TNT 5.5 us, pooler NN nvjet 128x64 splitK 20.2 + splitKreduce 3.0 us, unpooler NN nvjet 128x64 NNT 20.4 us"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212614Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212614Z
 base_sha: f8d14416f350af92938d3e41f3256af4aa532299
 base_blob: ad8d7254a64a52db2a8f56ec0ad262748153a2e8
@@ -89,6 +89,13 @@ attempt_file: 2026-10-26T012539Z-check-bf16-verify16-cutlass-m128-onetile-splitk
 prepared_at: 2026-10-26T012539Z
 job: d4edd38aeed44334
 dispatched_at: 2026-10-26T012632Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.242332816062763
+speedup_ci: [1.2236978238218215, 1.2609678083037041]
+harvested_at: 2026-10-26T023150Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # bf16-verify16-cutlass-m128-onetile-splitk-rewrite
@@ -247,3 +254,54 @@ Verdict: dispatch (no fixes). Read-only audit; no CUDA run possible here.
 - Deadlines: _MODULE_T0 is set after import torch/triton/sglang, and the cut build runs last at module level so earlier builds count against its 180 s cap; master prepare is about 4 s (logs), build about 49 s, caps 180/150/200 s against a 600 s budget. IQR veto has a 0.5 us floor.
 - Lint OK, py_compile OK, __pycache__ removed.
 Residual risk: a device fault or deadlock in the deterministic split-K fixup with cluster 1x2x1 would crash prepare rather than fall back.
+
+## Result
+
+- job `d4edd38aeed44334` (check), status done, passed True, tests 9/9
+- speedup 1.2423x, 95% CI [1.2237, 1.2610], score 3888.4910207152952 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/combo-rowowner-reduce-free-m1-qkv-o-plus-naive.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify16-cutlass-m128-onetile-splitk-rewrite.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify16-cutlass-m128-onetile-splitk-rewrite.patch`; branch `hyp/muse_bf16_proj/bf16-verify16-cutlass-m128-onetile-splitk-rewrite`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.54 | 11.15 | 0.962 | lost |
+| layer=o load=decode_1 m=1 | 62 | 6.32 | 6.03 | 0.9771 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.72 | 17.79 | 0.9955 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.01 | 5.2 | 1.0085 | flat |
+| layer=router load=decode_1 m=1 | 62 | 5.17 | 4.98 | 1.0219 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.64 | 13.07 | 0.9586 | lost |
+| layer=o load=decode_16 m=16 | 62 | 6.21 | 6.05 | 0.986 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.46 | 19.28 | 1.0031 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.82 | 18.62 | 0.9969 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.51 | 5.51 | 0.9792 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.71 | 13.75 | 0.9866 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.47 | 6.42 | 1.0097 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.86 | 20.03 | 0.9992 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.49 | 18.83 | 1.0005 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.95 | 5.96 | 0.9871 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.35 | 12.76 | 0.9706 | flat |
+| layer=o load=verify_1 m=8 | 62 | 5.9 | 6.39 | 0.9542 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 19.31 | 19.19 | 1.0121 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.54 | 5.44 | 1.0192 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.49 | 5.17 | 1.0548 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 15.55 | 15.82 | 0.981 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.68 | 7.59 | 0.9653 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 22.85 | 22.87 | 0.9948 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.88 | 19.34 | 0.9835 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.61 | 7.64 | 0.9927 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.46 | 20.35 | 0.9698 | lost |
+| layer=o load=verify_32 m=256 | 62 | 9.44 | 9.68 | 0.9722 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 27.98 | 30.22 | 0.968 | lost |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.18 | 24.46 | 0.9948 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.72 | 9.63 | 1.0067 | flat |
+
+gained on router verify_1; lost on qkv_gate decode_1, decode_16, verify_32; o verify_1, verify_16; pooler verify_32. Expected hit: 0/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 1 of `cuBLAS at m=65..128 (verify_16): qkv_gate nvjet 96x64 splitK 12.7 + cublasLt splitKreduce 3.1 us, o nvjet 128x64 TNT 5.5 us, pooler NN nvjet 128x64 splitK 20.2 + splitKreduce 3.0 us, unpooler NN nvjet 128x64 NNT 20.4 us`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify16-cutlass-m128-onetile-splitk-rewrite --stage 2`; a slow or failed first cut is the expected start, not a do-not-retry.
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: bf16-verify16-cutlass-m128-onetile-splitk-rewrite`) that adds a further change in the same area is the only way to learn more.
+

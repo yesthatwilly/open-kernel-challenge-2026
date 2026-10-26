@@ -1,0 +1,813 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index ad8d7254..18bc92b5 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -57,9 +57,21 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M
+ m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
+ (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
+ keeps cuBLAS; every m >= 17 shape keeps its path.
++
++CUTLASS one-M-tile split-K at 65 <= m <= 128 (hypothesis
++bf16-verify16-cutlass-m128-onetile-splitk-rewrite, stage 1): qkv_gate / o / pooler / unpooler (full
++width) run ONE CUTLASS sm90 GemmUniversal (TMA + warp-specialized cooperative wgmma, tile 128x128x64
++with M = tokens so m <= 128 is a single M-tile, cluster 1x2x1 multicasting x, StreamKScheduler in
++SplitK mode with a deterministic fixup), compiled at import with load_inline (sm_90a only) from
++CUTLASS headers found in the image. Each layer has its own state flag, set only by a prepare()
++self-check, a two-round graph-replay gate against master's actually routed path and a profiler
++kernel-name assertion; a miss keeps master's exact path (nn_ok / cuBLASLt / cuBLAS).
+ """
+ 
++import glob
++import importlib.util
+ import os
++import re
+ import time
+ from typing import TypedDict
+ 
+@@ -69,6 +81,7 @@ import triton
+ import triton.language as tl
+ from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
+ 
++_MODULE_T0 = time.perf_counter()   # build-deadline reference (a timestamp, not device state)
+ 
+ class Weights(TypedDict):
+     qkv_gate: torch.Tensor  # bfloat16 [2304, 8192]
+@@ -119,6 +132,8 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 256),
+     # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
+     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    # bf16-verify16-cutlass-m128-onetile-splitk-rewrite: o m=128 (the other three m=128 cells are above).
++    ("o", 8192, 1024, 128),
+ )
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+@@ -2096,7 +2111,31 @@ LT_WS_BYTES = 1 << 20        # per-state workspace handed to cublasLtMatmul
+ LT_MAX_ALGOS = 16
+ LT_PICK_REPS = 15
+ LT_ALIGN = 256
+-NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG)
++# bf16-verify16-cutlass-m128-onetile-splitk-rewrite: CUTLASS one-M-tile split-K at 65 <= m <= 128.
++# layer -> (state flag, N, K, split candidates in preference order). Splits are static constants:
++# one wave of <= 132 CTAs (pooler 32 N-tiles x 4, unpooler 64 x 2, qkv 18 x 7, o 64 x 2); a
++# fallback is used only if can_implement fails for the first.
++CUT_MIN_M = 65
++CUT_MAX_M = 128
++CUT_GATE_M = 128               # the scored cell; the selector runs here
++CUT_CHECK_MS = (65, 100, 128)  # self-check rows
++CUT_LAYERS = {
++    "qkv_gate": ("cut_qkv_ok", 2304, 8192, (7, 8, 4)),
++    "o":        ("cut_o_ok", 8192, 1024, (2, 4)),
++    "pooler":   ("cut_pooler_ok", 4096, 8192, (4, 2)),
++    "unpooler": ("cut_unpooler_ok", 8192, 4096, (2, 4)),
++}
++CUT_FLAGS = tuple(spec[0] for spec in CUT_LAYERS.values())
++CUT_ROUNDS = 2                 # two interleaved rounds, both must clear CUT_MIN_WIN
++CUT_MIN_WIN = 1.03             # master / candidate, net of the empty-graph baseline
++CUT_MAX_IQR_RATIO = 1.5        # candidate IQR <= this x master's ...
++CUT_IQR_FLOOR_US = 0.5         # ... or this many us (event timer resolution), whichever is larger
++CUT_BUILD_DEADLINE_S = 180.0   # skip the build if import already took this long
++CUT_START_DEADLINE_S = 150.0   # skip the whole prepare phase if state A's build is this late
++CUT_LAYER_DEADLINE_S = 200.0   # skip a layer's check + gate if this late
++CUT_PKGS = ("flashinfer", "deep_gemm", "sgl_kernel", "tilelang", "cutlass_library")
++CUT_BUILDER_REL = os.path.join("cutlass", "gemm", "collective", "collective_builder.hpp")
++NEW_CELL_FLAGS = ("bulk_pooler_ok", "bulk_qkv_ok", "bulk_o_ok", LT_FLAG) + CUT_FLAGS
+ 
+ _BULK_CPP = r"""
+ #include <torch/extension.h>
+@@ -2915,6 +2954,658 @@ def _lt_prepare(state: dict, flags=None) -> None:
+           + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
+ 
+ 
++# --- (10) qkv_gate / o / pooler / unpooler, 65 <= m <= 128: CUTLASS sm90 one-M-tile split-K ------
++# (hypothesis bf16-verify16-cutlass-m128-onetile-splitk-rewrite, rewrite stage 1)
++# ONE CUTLASS 3.x/4.x GemmUniversal (TMA + warp-specialized cooperative wgmma, TMA epilogue,
++# StreamKScheduler in DecompositionMode::SplitK with a deterministic fixup), tile 128x128x64 with
++# M = tokens (m <= 128 is ONE M-tile, so every W byte is fetched once), cluster 1x2x1 (the two
++# N-neighbour CTAs multicast the x tile). TN GEMM: x [m, k] row-major is A, W [n, k] row-major is B
++# (K x N column-major, no repack), D = out [m, n] bf16, fp32 accumulate. Splits are per layer
++# constants (never timed), the problem shape and splits are runtime arguments.
++_CUT_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void cut128_gemm(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws,
++                 int64_t splits, int64_t sm_count);
++std::vector<int64_t> cut128_query(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t m,
++                                  int64_t splits, int64_t sm_count);
++std::vector<int64_t> cut128_set_attr();
++"""
++
++_CUT_CUDA = r"""
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cstdint>
++#include <type_traits>
++#include <utility>
++#include <vector>
++
++#include "cutlass/cutlass.h"
++#include "cutlass/version.h"
++#include "cutlass/numeric_types.h"
++#include "cute/tensor.hpp"
++#include "cutlass/kernel_hardware_info.h"
++#include "cutlass/epilogue/thread/linear_combination.h"
++#include "cutlass/epilogue/collective/default_epilogue.hpp"
++#include "cutlass/gemm/dispatch_policy.hpp"
++#include "cutlass/gemm/collective/collective_builder.hpp"
++#include "cutlass/epilogue/collective/collective_builder.hpp"
++#include "cutlass/gemm/device/gemm_universal_adapter.h"
++#include "cutlass/gemm/kernel/gemm_universal.hpp"
++#include "cutlass/gemm/kernel/tile_scheduler.hpp"
++
++// sm_90a-only build: a plain sm_90 / compute_90 pass cannot assemble wgmma / setmaxnreg. The build
++// fails loudly here (and the module is then None: master's path everywhere) instead of silently.
++#if defined(__CUDA_ARCH__) && !defined(__CUDA_ARCH_FEAT_SM90_ALL)
++#error "cut128: sm_90a-only build required (__CUDA_ARCH_FEAT_SM90_ALL is not defined)"
++#endif
++
++namespace c128 {
++
++using ElementA = cutlass::bfloat16_t;
++using ElementB = cutlass::bfloat16_t;
++using ElementD = cutlass::bfloat16_t;
++using ElementAcc = float;
++using ElementCompute = float;
++using LayoutA = cutlass::layout::RowMajor;     // x [M, K], K contiguous
++using LayoutB = cutlass::layout::ColumnMajor;  // W [N, K] row-major == K x N column-major (TN)
++using LayoutD = cutlass::layout::RowMajor;     // out [M, N], N contiguous
++constexpr int kAlign = 8;                      // 16 B of bf16 (TMA)
++
++using TileShape = cute::Shape<cute::_128, cute::_128, cute::_64>;
++using ClusterShape = cute::Shape<cute::_1, cute::_2, cute::_1>;  // 2 N-neighbours multicast the x tile
++
++using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
++    cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
++    TileShape, ClusterShape,
++    cutlass::epilogue::collective::EpilogueTileAuto,
++    ElementAcc, ElementCompute,
++    void, LayoutD, kAlign,          // no C operand (beta 0)
++    ElementD, LayoutD, kAlign,
++    cutlass::epilogue::TmaWarpSpecializedCooperative>::CollectiveOp;
++
++using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
++    cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
++    ElementA, LayoutA, kAlign,
++    ElementB, LayoutB, kAlign,
++    ElementAcc,
++    TileShape, ClusterShape,
++    cutlass::gemm::collective::StageCountAutoCarveout<
++        static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>,
++    cutlass::gemm::KernelTmaWarpSpecializedCooperative>::CollectiveOp;
++
++using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
++    cute::Shape<int, int, int, int>,
++    CollectiveMainloop,
++    CollectiveEpilogue,
++    cutlass::gemm::StreamKScheduler>;
++
++using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
++using Arguments = typename Gemm::Arguments;
++using ProblemShape = typename GemmKernel::ProblemShape;
++using StrideA = typename GemmKernel::StrideA;
++using StrideB = typename GemmKernel::StrideB;
++using StrideC = typename GemmKernel::StrideC;
++using StrideD = typename GemmKernel::StrideD;
++
++template <class Stride>
++Stride ld_stride(int64_t ld, int64_t batch) {
++  auto s = cute::make_stride(ld, cute::Int<1>{}, batch);
++  static_assert(std::is_same<decltype(s), Stride>::value, "cut128: unexpected CUTLASS stride type");
++  return s;
++}
++
++// Scheduler argument / member names moved across CUTLASS 3.x / 4.x: set or read each only if it exists.
++template <class T, class = void> struct has_decomposition_mode : std::false_type {};
++template <class T>
++struct has_decomposition_mode<T, std::void_t<decltype(std::declval<T&>().decomposition_mode)>>
++    : std::true_type {};
++template <class T, class = void> struct has_reduction_mode : std::false_type {};
++template <class T>
++struct has_reduction_mode<T, std::void_t<decltype(std::declval<T&>().reduction_mode)>>
++    : std::true_type {};
++template <class T, class = void> struct has_splits : std::false_type {};
++template <class T>
++struct has_splits<T, std::void_t<decltype(std::declval<T&>().splits)>> : std::true_type {};
++template <class T, class = void> struct has_sk_tiles : std::false_type {};
++template <class T>
++struct has_sk_tiles<T, std::void_t<decltype(std::declval<T const&>().sk_tiles_)>> : std::true_type {};
++template <class T, class = void> struct has_sk_units : std::false_type {};
++template <class T>
++struct has_sk_units<T, std::void_t<decltype(std::declval<T const&>().sk_units_)>> : std::true_type {};
++
++// SplitK with `splits` static splits and a deterministic fixup. Returns 1 only if BOTH the
++// decomposition mode and the split count could be set (else the query reports 0 and the layer is off).
++template <class SA>
++int64_t set_scheduler(SA& sa, int64_t splits) {
++  int64_t applied = 0;
++  if constexpr (has_decomposition_mode<SA>::value && has_splits<SA>::value) {
++    using DM = std::remove_cv_t<std::remove_reference_t<decltype(sa.decomposition_mode)>>;
++    sa.decomposition_mode = DM::SplitK;
++    sa.splits = static_cast<int>(splits);
++    applied = 1;
++  }
++  if constexpr (has_reduction_mode<SA>::value) {
++    using RM = std::remove_cv_t<std::remove_reference_t<decltype(sa.reduction_mode)>>;
++    sa.reduction_mode = RM::Deterministic;  // fixed summation order
++  }
++  return applied;
++}
++
++template <class P> int64_t get_sk_tiles(P const& p) {
++  if constexpr (has_sk_tiles<P>::value) { return static_cast<int64_t>(p.sk_tiles_); } else { return -1; }
++}
++template <class P> int64_t get_sk_units(P const& p) {
++  if constexpr (has_sk_units<P>::value) { return static_cast<int64_t>(p.sk_units_); } else { return -1; }
++}
++
++Arguments make_args(void const* x, void const* w, void* out, int m, int n, int k, int64_t splits,
++                    int sm_count, int device_id, int64_t* mode_applied) {
++  cutlass::KernelHardwareInfo hw_info;
++  hw_info.device_id = device_id;
++  hw_info.sm_count = sm_count;
++  Arguments args{
++      cutlass::gemm::GemmUniversalMode::kGemm,
++      ProblemShape{m, n, k, 1},
++      {static_cast<ElementA const*>(x), ld_stride<StrideA>(k, static_cast<int64_t>(m) * k),
++       static_cast<ElementB const*>(w), ld_stride<StrideB>(k, static_cast<int64_t>(n) * k)},
++      {{}, nullptr, ld_stride<StrideC>(n, static_cast<int64_t>(m) * n),
++       static_cast<ElementD*>(out), ld_stride<StrideD>(n, static_cast<int64_t>(m) * n)},
++      hw_info};
++  args.epilogue.thread.alpha = 1.0f;
++  args.epilogue.thread.beta = 0.0f;
++  int64_t applied = set_scheduler(args.scheduler, splits);
++  if (mode_applied != nullptr) { *mode_applied = applied; }
++  return args;
++}
++
++void check_operands(torch::Tensor const& x, torch::Tensor const& w, torch::Tensor const& out, int m) {
++  TORCH_CHECK(x.is_cuda() && w.is_cuda() && out.is_cuda(), "cut128: CUDA tensors required");
++  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16, "cut128: bf16 x / w / out required");
++  TORCH_CHECK(x.dim() == 2 && w.dim() == 2 && out.dim() == 2, "cut128: 2-D tensors required");
++  TORCH_CHECK(x.is_contiguous() && w.is_contiguous() && out.is_contiguous(), "cut128: contiguous required");
++  TORCH_CHECK(x.size(1) == w.size(1) && out.size(1) == w.size(0), "cut128: shape mismatch");
++  TORCH_CHECK(m >= 1 && m <= 128 && m <= x.size(0) && m <= out.size(0), "cut128: m out of range");
++  TORCH_CHECK(w.size(1) % kAlign == 0 && w.size(0) % kAlign == 0, "cut128: n / k not 16 B aligned");
++}
++
++}  // namespace c128
++
++// out[m, n] = x[m, k] @ w[n, k]^T on the current stream. Branches on shapes only.
++void cut128_gemm(torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws,
++                 int64_t splits, int64_t sm_count) {
++  const int m = static_cast<int>(x.size(0));
++  const int n = static_cast<int>(w.size(0));
++  const int k = static_cast<int>(w.size(1));
++  c128::check_operands(x, w, out, m);
++  TORCH_CHECK(out.size(0) == m, "cut128: out rows != m");
++  TORCH_CHECK(ws.is_cuda() && ws.is_contiguous(), "cut128: workspace must be a contiguous CUDA tensor");
++  auto args = c128::make_args(x.data_ptr(), w.data_ptr(), out.data_ptr(), m, n, k, splits,
++                              static_cast<int>(sm_count), x.get_device(), nullptr);
++  cutlass::Status st = c128::Gemm::can_implement(args);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "cut128: can_implement failed: ", cutlassGetStatusString(st));
++  const size_t need = c128::Gemm::get_workspace_size(args);
++  TORCH_CHECK(need <= static_cast<size_t>(ws.nbytes()), "cut128: workspace too small (need ", need,
++              " B, have ", ws.nbytes(), " B)");
++  cudaStream_t stream = at::cuda::getCurrentCUDAStream(x.get_device()).stream();
++  // GemmUniversalAdapter::initialize() split in two so the timed path does not repeat the
++  // cudaFuncSetAttribute call (done once in prepare() by cut128_set_attr):
++  // (1) zero the split-K barrier region on the stream (one memset node under graph capture),
++  st = c128::GemmKernel::initialize_workspace(args, ws.data_ptr(), stream);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "cut128: initialize_workspace failed: ",
++              cutlassGetStatusString(st));
++  // (2) host-side params (TMA descriptors from these pointers, scheduler from the shape),
++  auto params = c128::GemmKernel::to_underlying_arguments(args, ws.data_ptr());
++  // (3) one cluster launch of the persistent kernel on the current stream.
++  st = c128::Gemm::run(params, stream);
++  TORCH_CHECK(st == cutlass::Status::kSuccess, "cut128: run failed: ", cutlassGetStatusString(st));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// Host-only query for problem rows m (x / out may be taller; only their pointers are used):
++// {can_implement, workspace bytes, grid x, y, z, smem bytes, threads, split mode applied (1/0),
++//  sk_tiles (-1 n/a), sk_units (-1 n/a), CUTLASS version as MAJOR*10000 + MINOR*100 + PATCH}.
++std::vector<int64_t> cut128_query(torch::Tensor x, torch::Tensor w, torch::Tensor out, int64_t m,
++                                  int64_t splits, int64_t sm_count) {
++  const int mi = static_cast<int>(m);
++  const int n = static_cast<int>(w.size(0));
++  const int k = static_cast<int>(w.size(1));
++  c128::check_operands(x, w, out, mi);
++  int64_t applied = 0;
++  auto args = c128::make_args(x.data_ptr(), w.data_ptr(), out.data_ptr(), mi, n, k, splits,
++                              static_cast<int>(sm_count), x.get_device(), &applied);
++  const int64_t can = c128::Gemm::can_implement(args) == cutlass::Status::kSuccess ? 1 : 0;
++  const int64_t ws = static_cast<int64_t>(c128::Gemm::get_workspace_size(args));
++  auto params = c128::GemmKernel::to_underlying_arguments(args, nullptr);
++  dim3 grid = c128::GemmKernel::get_grid_shape(params);
++  return {can, ws, static_cast<int64_t>(grid.x), static_cast<int64_t>(grid.y), static_cast<int64_t>(grid.z),
++          static_cast<int64_t>(c128::GemmKernel::SharedStorageSize),
++          static_cast<int64_t>(c128::GemmKernel::MaxThreadsPerBlock), applied,
++          c128::get_sk_tiles(params.scheduler), c128::get_sk_units(params.scheduler),
++          static_cast<int64_t>(CUTLASS_MAJOR * 10000 + CUTLASS_MINOR * 100 + CUTLASS_PATCH)};
++}
++
++// Raise the kernel's dynamic shared-memory limit once (prepare()); returns
++// {smem bytes requested, registers, local (spill) bytes, static smem bytes, max threads/block}.
++std::vector<int64_t> cut128_set_attr() {
++  const int smem = static_cast<int>(c128::GemmKernel::SharedStorageSize);
++  C10_CUDA_CHECK(cudaFuncSetAttribute(cutlass::device_kernel<c128::GemmKernel>,
++                                      cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
++  cudaFuncAttributes fa;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, cutlass::device_kernel<c128::GemmKernel>));
++  return {static_cast<int64_t>(smem), static_cast<int64_t>(fa.numRegs),
++          static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
++          static_cast<int64_t>(fa.maxThreadsPerBlock)};
++}
++"""
++
++
++def _cutlass_version(include_dir: str):
++    """(MAJOR, MINOR, PATCH) from <include_dir>/cutlass/version.h, or None."""
++    try:
++        with open(os.path.join(include_dir, "cutlass", "version.h")) as f:
++            txt = f.read()
++        ver = []
++        for key in ("MAJOR", "MINOR", "PATCH"):
++            mm = re.search(r"#define\s+CUTLASS_" + key + r"\s+(\d+)", txt)
++            ver.append(int(mm.group(1)) if mm else -1)
++        return tuple(ver)
++    except Exception:
++        return None
++
++
++def _find_cutlass_includes():
++    """Glob the importlib-resolved package dirs of flashinfer / deep_gemm / sgl_kernel / tilelang /
++    cutlass_library plus /usr/local/cutlass and /usr/include for
++    cutlass/gemm/collective/collective_builder.hpp with a sibling cute/ (and the sm90 stream-K
++    scheduler). Prints every hit; returns [(version, include_dir, source)] newest first."""
++    roots = []
++    for pkg in CUT_PKGS:
++        try:
++            spec = importlib.util.find_spec(pkg)
++        except Exception as e:
++            print(f"[cut128] headers: find_spec({pkg}) raised {type(e).__name__}: {e}", flush=True)
++            continue
++        if spec is None:
++            print(f"[cut128] headers: package {pkg} not installed", flush=True)
++            continue
++        locs = list(spec.submodule_search_locations or [])
++        if not locs and spec.origin:
++            locs = [os.path.dirname(spec.origin)]
++        roots += [(pkg, p) for p in locs]
++    roots += [("system", "/usr/local/cutlass"), ("system", "/usr/include")]
++    hits, seen = [], set()
++    for src, root in roots:
++        if not os.path.isdir(root):
++            continue
++        try:
++            found = glob.glob(os.path.join(root, "**", CUT_BUILDER_REL), recursive=True)
++        except Exception as e:
++            print(f"[cut128] headers: glob under {root} raised {type(e).__name__}: {e}", flush=True)
++            continue
++        for path in found:
++            inc = os.path.realpath(path[: -len(CUT_BUILDER_REL)].rstrip(os.sep))
++            if inc in seen:
++                continue
++            seen.add(inc)
++            has_cute = os.path.isdir(os.path.join(inc, "cute"))
++            has_sk = os.path.isfile(os.path.join(inc, "cutlass", "gemm", "kernel",
++                                                 "sm90_tile_scheduler_stream_k.hpp"))
++            ver = _cutlass_version(inc)
++            print(f"[cut128] headers: hit src={src} include={inc} version={ver} cute/={has_cute} "
++                  f"sm90_stream_k={has_sk}", flush=True)
++            if has_cute and has_sk and ver is not None and ver[0] >= 3:
++                hits.append((ver, inc, src))
++    hits.sort(key=lambda h: h[0], reverse=True)
++    return hits
++
++
++def _cut_build():
++    """Compile the CUTLASS split-K module once per process, at import (never during capture), for
++    sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a around the build, restored after). Tries the newest usable
++    CUTLASS tree (a second one only if time allows). Prints arch flags and build seconds. Returns
++    the module or None (master paths everywhere); never raises."""
++    t_all = time.perf_counter()
++    if t_all - _MODULE_T0 > CUT_BUILD_DEADLINE_S:
++        print(f"[cut128] build skipped: deadline ({t_all - _MODULE_T0:.0f}s since import > "
++              f"{CUT_BUILD_DEADLINE_S:.0f}s); master paths kept", flush=True)
++        return None
++    try:
++        hits = _find_cutlass_includes()
++    except Exception as e:
++        print(f"[cut128] header search raised {type(e).__name__}: {e}; master kept", flush=True)
++        return None
++    if not hits:
++        print("[cut128] no CUTLASS headers, master kept", flush=True)
++        return None
++    try:
++        from torch.utils import cpp_extension
++    except Exception as e:
++        print(f"[cut128] cpp_extension unavailable ({e!r}); master kept", flush=True)
++        return None
++    tried = []
++    for ver, inc, src in hits:
++        if len(tried) >= 2 or ver in tried:
++            continue
++        if tried and time.perf_counter() - t_all > 100.0:
++            print("[cut128] build: skipped: deadline for another CUTLASS tree", flush=True)
++            break
++        tried.append(ver)
++        t0 = time.perf_counter()
++        print(f"[cut128] build: CUTLASS {ver} from {src}: {inc}", flush=True)
++        prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            try:
++                print(f"[cut128] arch flags passed to nvcc: {cpp_extension._get_cuda_arch_flags()}", flush=True)
++            except Exception as e:  # diagnostic only
++                print(f"[cut128] arch flags unavailable ({type(e).__name__}: {e})", flush=True)
++            ext = cpp_extension.load_inline(
++                name=f"muse_bf16_cut128_v1_c{ver[0]}_{ver[1]}_{ver[2]}",
++                cpp_sources=_CUT_CPP,
++                cuda_sources=_CUT_CUDA,
++                functions=["cut128_gemm", "cut128_query", "cut128_set_attr"],
++                extra_include_paths=[inc],
++                extra_cflags=["-O3"],
++                extra_cuda_cflags=[
++                    "-O3", "-DNDEBUG", "-lineinfo", "-std=c++20",
++                    "--expt-relaxed-constexpr", "--expt-extended-lambda",
++                    "-gencode=arch=compute_90a,code=sm_90a",
++                    "-U__CUDA_NO_HALF_OPERATORS__", "-U__CUDA_NO_HALF_CONVERSIONS__",
++                    "-U__CUDA_NO_HALF2_OPERATORS__", "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
++                    "-U__CUDA_NO_BFLOAT16_OPERATORS__",
++                    "-DCUTLASS_DEBUG_TRACE_LEVEL=0",
++                ],
++                verbose=False,
++            )
++        except Exception as e:
++            tail = "\n".join(str(e).splitlines()[-40:])
++            print(f"[cut128] build FAILED after {time.perf_counter() - t0:.1f}s with CUTLASS {ver} "
++                  f"({type(e).__name__}); log tail:\n{tail[-3000:]}", flush=True)
++            continue
++        finally:
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++        print(f"[build-time] cut128 load_inline compiled in {time.perf_counter() - t0:.1f}s "
++              f"(CUTLASS {ver}, {inc})", flush=True)
++        return ext
++    print("[cut128] build: every attempt failed or was skipped, master kept", flush=True)
++    return None
++
++
++_CUT_EXT = _cut_build() if torch.cuda.is_available() else None
++
++
++def _cut_route_ok(layer: str, x: torch.Tensor, cfg, state: dict) -> bool:
++    """CUTLASS split-K cell: layer in CUT_LAYERS with its prepare()-set flag, CUT_MIN_M <= cfg m <=
++    CUT_MAX_M, cfg n / k the layer's full weight, x a contiguous 16-byte-aligned bf16 [m, k].
++    cfg, shapes and state flags only (never input values)."""
++    spec = CUT_LAYERS.get(layer)
++    if spec is None or not state.get(spec[0]):
++        return False
++    w = state[layer]
++    m = cfg["m"]
++    return (CUT_MIN_M <= m <= CUT_MAX_M and cfg["n"] == w.shape[0] and cfg["k"] == w.shape[1]
++            and x.dim() == 2 and x.shape[0] == m and x.shape[1] == w.shape[1]
++            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0)
++
++
++def _cut_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
++    """x bf16 [m, k] @ W[n, k].T -> bf16 [m, n]: one CUTLASS launch (plus the split-K barrier memset)
++    into the state's own prepare()-allocated workspace; nothing is written to state."""
++    w = state[layer]
++    out = torch.empty((x.shape[0], w.shape[0]), dtype=torch.bfloat16, device=x.device)
++    _CUT_EXT.cut128_gemm(x, w, out, state["cut_ws"], state["cut_splits"][layer], state["cut_sms"])
++    return out
++
++
++def _iqr(v) -> float:
++    s = sorted(v)
++    n = len(s)
++    return s[(3 * n) // 4] - s[n // 4]
++
++
++def _cut_gate(layer: str, m: int, n: int, k: int, flag: str, state: dict):
++    """Two-round model selector (LESSONS: one round at 1.02x is not enough). kernel_fn captured with
++    the cell's flag on (candidate) and off (master's ACTUALLY ROUTED path: nn_ok / Lt / cuBLAS, the
++    same kernel_fn) on shallow copies of state and the same synthetic x; per round CELL_GATE_REPS
++    interleaved replays (order swapped every rep), a CELL_FLUSH_BYTES write before each, medians
++    minus an empty-graph baseline. Prints both rounds. Returns (passed, why, rounds) where a round is
++    (cand_us, master_us, cand_iqr, master_iqr). prepare()-only."""
++    dev = state["router"].device
++    st_c = dict(state)
++    st_c[flag] = True
++    st_i = dict(state)
++    st_i[flag] = False
++    x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush.zero_()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    g_base = _cell_capture(lambda: scratch.add_(1.0))
++    graphs = {"cand": _cell_capture(lambda: kernel_fn(data, st_c)),
++              "master": _cell_capture(lambda: kernel_fn(data, st_i))}
++    rounds = []
++    ok, why = True, ""
++    for rnd in range(CUT_ROUNDS):
++        base = _ouns_median([replay_us(g_base) for _ in range(CELL_GATE_REPS)])
++        times = {"cand": [], "master": []}
++        for rep in range(CELL_GATE_REPS):
++            order = ("cand", "master") if (rep + rnd) % 2 == 0 else ("master", "cand")
++            for name in order:
++                times[name].append(replay_us(graphs[name]))
++        med = {name: _ouns_median(v) for name, v in times.items()}
++        iqr = {name: _iqr(v) for name, v in times.items()}
++        adj = {name: max(v - base, 0.25) for name, v in med.items()}
++        ratio = adj["cand"] / adj["master"]
++        iqr_cap = max(CUT_MAX_IQR_RATIO * iqr["master"], CUT_IQR_FLOOR_US)
++        print(f"[cut128] gate round {rnd + 1}/{CUT_ROUNDS} {layer} m={m} (graph replay, "
++              f"{CELL_FLUSH_BYTES >> 20} MB flush, {CELL_GATE_REPS} reps interleaved): cand median "
++              f"{med['cand']:.2f} us IQR {iqr['cand']:.2f}, master median {med['master']:.2f} us IQR "
++              f"{iqr['master']:.2f}, empty-graph baseline {base:.2f} us -> net {adj['cand']:.2f} vs "
++              f"{adj['master']:.2f} us, master/cand {1.0 / ratio:.3f}x (need >= {CUT_MIN_WIN}x), cand IQR "
++              f"cap {iqr_cap:.2f} us", flush=True)
++        rounds.append((adj["cand"], adj["master"], iqr["cand"], iqr["master"]))
++        if ok and not 1.0 / ratio >= CUT_MIN_WIN:
++            ok, why = False, f"gate round {rnd + 1}: master/cand {1.0 / ratio:.3f}x < {CUT_MIN_WIN}x"
++        if ok and iqr["cand"] > iqr_cap:
++            ok, why = False, (f"gate round {rnd + 1}: cand IQR {iqr['cand']:.2f} us > cap {iqr_cap:.2f} us "
++                              f"({CUT_MAX_IQR_RATIO}x master's {iqr['master']:.2f}, floor {CUT_IQR_FLOOR_US})")
++    del graphs, g_base, flush
++    torch.cuda.synchronize()
++    return ok, why, rounds
++
++
++def _cut_prepare(state: dict, flags=None, t_all=None) -> list:
++    """qkv_gate / o / pooler / unpooler at 65 <= m <= 128. Sets state[flag] per layer (False unless
++    every step passes) plus state['cut_ws'] (this state's OWN split-K workspace), state['cut_splits']
++    and state['cut_sms']. flags None (the judge's state): set the kernel's smem attribute and print
++    regs/spills, per layer choose splits (can_implement + grid <= SMs, with fallbacks), allocate ONE
++    workspace, self-check at m 65 / 100 / 128 (each launch announced and synced), run the two-round
++    gate at m == 128 against master's routed path, assert by torch.profiler the launched kernel
++    names, print one PATH CHOSEN line per layer. flags a dict (the A/B check's second state):
++    inherit the flags and splits, allocate its own workspace. Returns the compact summary lines
++    (prepare() repeats them last). Never raises."""
++    summary = []
++    for spec in CUT_LAYERS.values():
++        state[spec[0]] = False
++    state["cut_ws"] = None
++    state["cut_splits"] = {}
++    state["cut_sms"] = 0
++    dev = state["router"].device
++    if flags is not None:
++        if any(flags.get(spec[0]) for spec in CUT_LAYERS.values()) and flags.get("_cut_ws_bytes"):
++            try:
++                state["cut_ws"] = torch.zeros(((int(flags["_cut_ws_bytes"]) + 7) // 8,), dtype=torch.int64,
++                                              device=dev)
++                state["cut_splits"] = dict(flags["_cut_splits"])
++                state["cut_sms"] = int(flags["_cut_sms"])
++                for spec in CUT_LAYERS.values():
++                    state[spec[0]] = bool(flags.get(spec[0]))
++            except Exception as e:
++                print(f"[cut128] second state: workspace raised {type(e).__name__}: {e}; cells off in "
++                      f"this state", flush=True)
++                for spec in CUT_LAYERS.values():
++                    state[spec[0]] = False
++        return summary
++
++    def done(layer: str, chosen: bool, detail: str) -> None:
++        line = (f"PATH CHOSEN CUT {layer} m={CUT_GATE_M}: {'candidate' if chosen else 'master'}; {detail}")
++        print(line, flush=True)
++        summary.append(line)
++
++    if _CUT_EXT is None:
++        for layer in CUT_LAYERS:
++            done(layer, False, "no cut128 module (build failed or skipped)")
++        return summary
++    t_start = t_all if t_all is not None else time.perf_counter()
++    if time.perf_counter() - t_start > CUT_START_DEADLINE_S:
++        print(f"[cut128] prepare skipped: deadline ({time.perf_counter() - t_start:.0f}s > "
++              f"{CUT_START_DEADLINE_S:.0f}s at phase start)", flush=True)
++        for layer in CUT_LAYERS:
++            done(layer, False, "skipped: deadline")
++        return summary
++    ext = _CUT_EXT
++    t0 = time.perf_counter()
++    sms = int(torch.cuda.get_device_properties(dev).multi_processor_count)
++    try:
++        smem, regs, spill, ssmem, thr = (int(v) for v in ext.cut128_set_attr())
++        print(f"[cut128] kernel cutlass::device_kernel<c128::GemmKernel>: regs={regs} local(spill)={spill} B "
++              f"static smem={ssmem} B dyn smem requested={smem} B max threads/block={thr} sm_count={sms}",
++              flush=True)
++        if spill:
++            print(f"[cut128] WARNING: {spill} B local-memory spill per thread", flush=True)
++    except Exception as e:
++        print(f"[cut128] ALL DISABLED: cudaFuncSetAttribute / attributes failed: {e!r}", flush=True)
++        for layer in CUT_LAYERS:
++            done(layer, False, f"set_attr failed {type(e).__name__}")
++        return summary
++
++    # Pass 1: per layer pick the splits (first candidate that can_implement, sets the split mode and
++    # fits one wave), then the workspace bytes over every m in range. Host-only queries.
++    usable, need = {}, {}
++    why_off = {}
++    for layer, (flag, n, k, cands) in CUT_LAYERS.items():
++        w = state[layer]
++        if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16 and w.is_contiguous()):
++            why_off[layer] = f"weight {tuple(w.shape)} {w.dtype} unexpected"
++            continue
++        try:
++            xq = torch.zeros((CUT_MAX_M, k), dtype=torch.bfloat16, device=dev)
++            oq = torch.empty((CUT_MAX_M, n), dtype=torch.bfloat16, device=dev)
++            chosen = None
++            for sp in cands:
++                q = [int(v) for v in ext.cut128_query(xq, w, oq, CUT_GATE_M, sp, sms)]
++                grid = q[2] * q[3] * q[4]
++                print(f"[cut128] {layer} m={CUT_GATE_M} n={n} k={k} splits={sp}: can_implement={q[0]} "
++                      f"split_mode_applied={q[7]} grid=({q[2]},{q[3]},{q[4]})={grid} CTAs (<= {sms} needed) "
++                      f"threads={q[6]} smem={q[5]} B workspace={q[1]} B sk_tiles={q[8]} sk_units={q[9]} "
++                      f"CUTLASS={q[10]} decomposition applied: SplitK x{sp} deterministic, cluster 1x2x1",
++                      flush=True)
++                if q[0] == 1 and q[7] == 1 and 0 < grid <= sms:
++                    chosen = sp
++                    break
++            if chosen is None:
++                why_off[layer] = f"no split candidate {cands} passed can_implement / split mode / grid <= {sms}"
++                continue
++            sizes = []
++            for m in range(CUT_MIN_M, CUT_MAX_M + 1):
++                q = ext.cut128_query(xq, w, oq, m, chosen, sms)
++                if int(q[0]) != 1 or int(q[2]) * int(q[3]) * int(q[4]) > sms:
++                    raise RuntimeError(f"can_implement / grid failed at m={m} with splits {chosen}")
++                sizes.append(int(q[1]))
++            need[layer] = max(sizes)
++            usable[layer] = chosen
++            print(f"[cut128] {layer}: splits {chosen}, workspace bytes over m {CUT_MIN_M}..{CUT_MAX_M}: "
++                  f"min {min(sizes)} max {max(sizes)}", flush=True)
++        except Exception as e:
++            why_off[layer] = f"query raised {type(e).__name__}: {str(e)[-200:]}"
++    for layer, why in why_off.items():
++        print(f"[cut128] {layer} DISABLED: {why}", flush=True)
++        done(layer, False, f"DISABLED {why}")
++    if not usable:
++        return summary
++    ws_bytes = max(max(need.values()), 8)
++    state["cut_ws"] = torch.zeros(((ws_bytes + 7) // 8,), dtype=torch.int64, device=dev)
++    state["cut_splits"] = dict(usable)
++    state["cut_sms"] = sms
++    print(f"[cut128] workspace allocated once per state: {ws_bytes} B (per layer {need})", flush=True)
++
++    # Pass 2: self-check, two-round gate at m == 128, kernel-name assertion, per layer.
++    for layer, sp in usable.items():
++        flag, n, k, _ = CUT_LAYERS[layer]
++        w = state[layer]
++        tl0 = time.perf_counter()
++        ok = False
++        why = ""
++        rounds = []
++        names_c = names_m = None
++        try:
++            if time.perf_counter() - t_start > CUT_LAYER_DEADLINE_S:
++                why = "skipped: deadline"
++                print(f"[cut128] {layer}: skipped: deadline ({time.perf_counter() - t_start:.0f}s > "
++                      f"{CUT_LAYER_DEADLINE_S:.0f}s)", flush=True)
++            else:
++                st_on = dict(state)
++                st_on[flag] = True
++                for m in CUT_CHECK_MS:
++                    why = _cell_check(f"CUT {layer} splits={sp}", lambda xx: _cut_forward(layer, xx, st_on),
++                                      w, m, n, k)
++                    if why:
++                        break
++                if not why:
++                    ok, why, rounds = _cut_gate(layer, CUT_GATE_M, n, k, flag, state)
++                data = {"x": torch.randn((CUT_GATE_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16),
++                        "config": {"m": CUT_GATE_M, "n": n, "k": k, "layer": layer}}
++                if rounds:   # kernel names of BOTH sides, printed even when master is kept
++                    st_off = dict(state)
++                    st_off[flag] = False
++                    try:
++                        names_m = _cell_kernels(lambda: kernel_fn(data, st_off))
++                        print(f"[cut128] {layer} m={CUT_GATE_M}: master path profiled kernels {names_m}", flush=True)
++                    except Exception as e:
++                        print(f"[cut128] {layer}: master profile unavailable ({type(e).__name__}: {e})", flush=True)
++                    try:
++                        names_c = _cell_kernels(lambda: kernel_fn(data, st_on))
++                        print(f"[cut128] {layer} m={CUT_GATE_M}: candidate profiled kernels {names_c}", flush=True)
++                    except Exception as e:
++                        print(f"[cut128] {layer}: candidate profile unavailable ({type(e).__name__}: {e}); "
++                              f"route decided by the gate (kernel_fn calls cut128_gemm directly)", flush=True)
++                if ok and names_c is not None:
++                    gemm = [s for s in names_c if "device_kernel" in s and "GemmUniversal" in s]
++                    other = [s for s in names_c if s not in gemm and "memset" not in s.lower()]
++                    if len(gemm) != 1 or other:
++                        ok, why = False, (f"profiled kernels {names_c}: expected exactly one cutlass "
++                                          f"device_kernel<GemmUniversal> (+ memset), got {len(gemm)} and "
++                                          f"{len(other)} others")
++                if ok:
++                    state[flag] = True
++        except Exception as e:   # never raises: any surprise keeps master's path for this layer
++            ok, why = False, f"raised {type(e).__name__}: {str(e)[-300:]}"
++            state[flag] = False
++        r = " ".join(f"r{i + 1}:cand {c:.2f}/master {mm:.2f}us" for i, (c, mm, _, _) in enumerate(rounds))
++        kn = ""
++        if names_c is not None:
++            kn = " kernels=" + ",".join(s.split("<")[0][-24:] for s in names_c)
++        done(layer, state[flag], f"splits {sp} {r or 'no gate'}" + ("" if state[flag] else f"; {why}") + kn)
++        print(f"[prepare-time] cell CUT {layer} total: {time.perf_counter() - tl0:.2f}s", flush=True)
++    torch.cuda.synchronize()
++    print(f"[prepare-time] cut128 phase total: {time.perf_counter() - t0:.2f}s", flush=True)
++    return summary
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -3005,6 +3696,10 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
++        # (10) CUTLASS one-M-tile split-K at 65 <= m <= 128, per-layer flags (after master's own work,
++        # so the gate races master's routed nn_ok / Lt / cuBLAS paths).
++        state["cut_summary"] = _cut_prepare(state, t_all=t_all)
++        t = tick("cut128 cells (query + self-check + two-round gate + profile)", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+@@ -3013,7 +3708,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _lt_prepare(state, flags=flags)
+-        t = tick("bulk / lt per-state buffers (flags inherited)", t)
++        _cut_prepare(state, flags=flags)
++        t = tick("bulk / lt / cut per-state buffers (flags inherited)", t)
+     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
+           f"{time.perf_counter() - t_all:.2f}s", flush=True)
+     return state
+@@ -3027,11 +3723,13 @@ def _ab_flags(state: dict) -> dict:
+     return flags
+ 
+ 
+-def _ab_component(layer: str, m: int) -> str:
++def _ab_component(layer: str, m: int, state: dict) -> str:
+     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
+     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell."""
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
++    if layer in CUT_LAYERS and CUT_MIN_M <= m <= CUT_MAX_M and state.get(CUT_LAYERS[layer][0]):
++        return CUT_LAYERS[layer][0]   # the CUTLASS cell serves it (preempts nn_ok / Lt) while its flag is on
+     if layer == "qkv_gate" and m == LT_M:
+         return LT_FLAG
+     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
+@@ -3058,6 +3756,10 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     try:
+         fl = _ab_flags(state_a)
+         fl["_lt_algo"] = state_a["lt_algo_qkv128"]   # the B cell's prepare()-chosen algo row (CPU)
++        # The CUTLASS cells: constants only (splits, SM count, workspace bytes); state B allocates its own.
++        fl["_cut_splits"] = dict(state_a["cut_splits"])
++        fl["_cut_sms"] = state_a["cut_sms"]
++        fl["_cut_ws_bytes"] = 0 if state_a["cut_ws"] is None else int(state_a["cut_ws"].numel() * 8)
+         state_b = _prepare_state(weights, flags=fl)
+     except Exception as e:
+         print(f"[ab] second-state build failed ({type(e).__name__}: {e}); NN, router cluster, "
+@@ -3075,7 +3777,7 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
+     bad = {}
+     wf = {}
+     for layer, n, k, m in AB_CASES:
+-        comp = _ab_component(layer, m)
++        comp = _ab_component(layer, m, state_a)
+         graphs, xs, outs = {}, {}, {}
+         try:
+             cfg = {"m": m, "n": n, "k": k, "layer": layer}
+@@ -3159,6 +3861,12 @@ def prepare(weights: Weights) -> dict:
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
+           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
++    # LAST lines of prepare (the judge keeps only the log tail): every CUT PATH CHOSEN / gate result,
++    # then the final per-layer flags after the A/B self-check (a MISS there switches a cell off).
++    for line in state.get("cut_summary", ()):
++        print(line, flush=True)
++    print("[cut128] FINAL " + " ".join(f"{name}={state[name]}" for name in CUT_FLAGS)
++          + f" splits={state['cut_splits']} cut128_ext={'built' if _CUT_EXT is not None else 'none'}", flush=True)
+     return state
+ 
+ 
+@@ -3189,6 +3897,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+             and _swapab_route_ok(layer, x, state[layer], cfg)):
+         ws, cnt = _swapab_buffers(state, layer)
+         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
++    if layer != "router" and _cut_route_ok(layer, x, cfg, state):   # 65 <= m <= 128, per-layer flag
++        return _cut_forward(layer, x, state)
+     if layer != "router":
+         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
+                 and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
