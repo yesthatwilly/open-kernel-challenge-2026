@@ -23,3 +23,14 @@ rows that moved, decision. A new session resumes from the last entry.
   routing-aware layer checks (SKW, and T=8 when an S3 T=8 cell is live); read-flush timers; SKW start 200 s.
   Question: which stranded cells (S1 A/B, S3 x7, SKW b32/v1) pass and win, and the headline effect.
 - **moe ladder (W2 step 1)**: built (ea_common.cuh, ea_ladder.cuh, ea_ladder.py), audit running before its check.
+
+## 2026-10-26T05:15Z: decode W1 check 9dacd0f59a174eaf: 1.3371 [1.3170, 1.3571], 13/13. M0 reached; scored submit sent
+
+- vs board 1.3164: +1.57% (margin 1.24%). vs master a903b9d0 1.3142: +1.74%.
+- Every stranded cell passed the judge-faithful gate and won its selector: S1 A 28.6 vs 39.5 us, S1 B 38.2 vs 45.6,
+  S3 c1-b16/c1-b32/c2-t8/c2-t128/c2-t256/c3-t128/c3-t256/c4-t8 all NEW (3-18 us each), SKW b32 38.4 vs 45.7, SKW v1
+  33.5 vs 38.1. S2a/S2b unchanged (NEW).
+- Rows (base a903b9d0 -> run): v16 full 593.4 -> 547.0, v1 sliding 181.1 -> 177.0, d32 sliding 239.5 -> 236.2,
+  v32 full 866.6 -> 851.4; d16 full 290.5 -> 302.3 (drift: same cells as master there).
+- Loads: d1 1.441 (1.449), d16 1.359 (1.325), d32 1.250 (1.206), v1 1.502 (1.447), v16 1.282 (1.266), v32 1.213 (1.214).
+- Decision: scored submit of the same bytes, job 69db8aeb251944c5 (PLAN §6, M0).
