@@ -10,6 +10,8 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 
 ## Standing answers
 
+- Churn paused (2026-10-26 ~04:40Z; the user approved campaign 2026-10-26-decode-first-rewrite with "execute the plan", having chosen "Pause churn"): no /loop churnsubs, no minting, all quota to the campaign; unspent checks accepted. Campaign state lives in campaigns/2026-10-26-decode-first-rewrite/LOG.md. Scored-submit discretion below still applies to campaign runs.
+
 - Focus (2026-10-25 ~15:30Z, the user: "the most amount of focus, at this moment, to be on prefill"): prefill first in minting, review, build and spend; other problems only harvest and use leftover capacity.
 
 - Scored runs: Claude may send any scored submit at its discretion (2026-10-25 ~15:00Z, the user: "submit any scored runs at your discretoin"). Landings that only serve a submit go with it.
