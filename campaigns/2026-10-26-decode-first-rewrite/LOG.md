@@ -174,3 +174,19 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - In flight: hot/cold Marlin builder (decode T=128/256: cold experts at bsm 16, hot at 32/48/64) and a v3-to-T<=256
   builder (both problems' T=128/256 classes).
 
+## 2026-10-26T08:05Z: T=128/256 attacked from two sides; boards moe 1.5762 (411), decode 1.4223 (374), overall 381
+
+- v3 extended to T <= 256 (builder, campaign/ea-v3big aab7213e: templated work map for 2048 routes / 160 passes, still 2
+  CTAs/SM) and wired as exact-T classes 128 / 256 (canary on every routing kind, kernel_fn / whole-layer gate, layer
+  check; moe's Engine A branch moved ahead of the wg path). moe check 8589aad509334dff 1.5760: v3 wins T=128 (verify
+  16 322.5 -> 302.8 us), loses T=256 (x0.614: hot experts with ~50 routes need 4 passes) -> wg path stays.
+- Hot/cold Marlin (builder, campaign/hotcold e89bbb53) in decode's T > 32 path: one two-class align launch on the side
+  stream, cold experts block 16, hot block H by a whole-layer gate. decode check eef97de188fe487a 1.4258: v3 at T=128,
+  hot/cold H=32 at T=256 (layer 615.1 -> 578.7 us); verify 16 / 32 loads 1.237 / 1.239 -> 1.283 / 1.299.
+- Scored: moe f0fc89031659499c **1.5762** (rank 411/816), decode b96335161c494174 **1.4223** (rank 374/719), overall
+  381/1190. Landed on master (2fc609f3).
+- The 16 KB log tail lost Engine A's summary once the dense and hot/cold setups printed after it: decode prepare now
+  re-prints every campaign PATH CHOSEN line at the very end.
+- Next (in flight, 6303919229b94430): hybrid at T=128..256 = hot experts on Marlin at |H|, cold experts on v3 in one
+  expert block (candidates H = -32 / -48 in the hot/cold gate).
+
