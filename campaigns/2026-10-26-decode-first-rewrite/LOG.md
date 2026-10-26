@@ -190,3 +190,32 @@ Passed 5/5 (master path scored 1.3865, irrelevant). 201 MB bank, read flush, gra
 - Next (in flight, 6303919229b94430): hybrid at T=128..256 = hot experts on Marlin at |H|, cold experts on v3 in one
   expert block (candidates H = -32 / -48 in the hot/cold gate).
 
+## 2026-10-26T08:12Z: hybrid expert block at T=256; state and next steps for the next session
+
+- Hybrid (decode check 6303919229b94430, 1.4259): at T=256 hot experts (> 16 local routes) on Marlin at block 32 and
+  cold experts on Engine A v3, both into one cache3, one post-norm. Kernel checks clean (vs fp32 0.0047, master
+  0.0051); gate T=256 H-32 x1.081 over hot/cold H32 x1.062 (layer 595.6 -> 548.1 us); verify 32 sliding x1.069. Scored
+  run 0d84f58ca33b424b sent. Code: rewrite/lib/hotcold_decode.py (negative H = hybrid), cold ids from the align kernel.
+
+### Where things stand (branch campaign/decode-first-rewrite, worktree .worktrees/decode-first-rewrite)
+- decode per T: T=1 v1, T=2..16 v2, T=17..32 v3 (Engine A, CUDA combine), swap-AB qkv_gate / o at T <= 32 (dense
+  port), T=128 v3, T=256 hybrid (Marlin hot + v3 cold). Loads (6303919229b94430): d1 1.631, d16 1.462, d32 1.277,
+  v1 1.637, v16 1.284, v32 1.311.
+- moe per T: T=1 v1, T=2..16 v2, T=17..32 v3, T=128 v3, T=256 master's wg path. Engine B parked (correct, slower).
+- Every module prints PATH CHOSEN lines; decode prepare re-prints them all at the end (the judge keeps 16 KB).
+
+### Measured limits and what failed (do not redo blindly)
+- T=1: aligned split kept (w13 19.8 -> 14.3 us); L2 prefetch of K2's w2 and K2 on one CTA per SM both lost; R -> K1
+  PDL neutral. K2 at T=1 is bound by parallelism and fixed latency (~13 us for 18.9 MB).
+- Engine B (wgmma RS, then mma.sync with N up to 32): 1.5-1.95 TB/s; the consumer doing dequant plus up to 4 n-tiles
+  of MMA per k16 step is the cost (ring alone 4.0 TB/s, no-dequant 3.5, no-MMA 2.9, together 1.76).
+- v3 at T=256 alone loses (x0.61 moe): hot experts with ~50 routes need 4 passes; the hybrid fixes that in decode.
+
+### Next steps (ROI order)
+1. Port the hybrid to moe T=256 (wg path 393-400 us there) and try it at T=128 in moe.
+2. T <= 32 consumer efficiency: v2 / v3 stream 2.6-3.0 TB/s against a 4.0-4.5 TB/s ring; a cheaper dequant schedule or
+   splitting dequant and MMA across warps (the Engine B diagnostics apply).
+3. Decode d32 full rows: split-KV attention is ~50% of the row (closed in the plan as "1.75x its floor"; revisit only
+   with a concrete idea).
+4. W4 own T <= 32 chain (P pooler/router 21-28 us is near its floor; launch gaps and boundary folding remain).
+
