@@ -65,10 +65,10 @@ prior: "bf16-verify-deepgemm-sm90-kernel-asserted-rewrite: stage 1 never compile
 rewrite_stage: 2
 replaces: cuBLAS nvjet (+splitKreduce) for qkv_gate, pooler, unpooler at m=128/256
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212521Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-25T212548Z
 base_sha: e4008591fb186026deeb850980bc31aed9fbe89a
 base_blob: 489174846c51a034e3c119f0f67cec9c213404f5
@@ -87,6 +87,13 @@ attempt_file: 2026-10-26T012540Z-check-bf16-verify-deepgemm-sm90-explicit-instan
 prepared_at: 2026-10-26T012540Z
 job: 566a79e403754c76
 dispatched_at: 2026-10-26T012819Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.260631880829429
+speedup_ci: [1.2417224026169875, 1.2795413590418703]
+harvested_at: 2026-10-26T023151Z
+best_at_harvest: 1.2566457115954903
+promotion: null
 ---
 
 # bf16-verify-deepgemm-sm90-explicit-instantiation-stage2
@@ -199,3 +206,54 @@ Verdict: dispatch-with-fixes. Evidence scripts: scratchpad/audits26/dg_parser_te
 - okc_lint: OK with warnings (prepare-time syncs only); py_compile passes; __pycache__ removed.
 
 Residual risk: nvcc has no timeout, so a very slow 6-instantiation C++20 build or a hang in the header's unbounded mbarrier waits can still cost the run; qkv_gate cells are expected to lose the gate.
+
+## Result
+
+- job `566a79e403754c76` (check), status done, passed True, tests 9/9
+- speedup 1.2606x, 95% CI [1.2417, 1.2795], score 3832.0465105337407 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.2566457115954903, "ci": [1.237796025921558, 1.2754953972694225], "job": "741072dca5fc4c9d"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2.patch`; branch `hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 12.42 | 10.94 | 1.1228 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.27 | 6.19 | 1.0126 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 18.71 | 17.47 | 1.0703 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.75 | 5.03 | 1.1706 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.47 | 4.86 | 1.1101 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 13.16 | 12.81 | 1.018 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.25 | 5.78 | 1.0262 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.16 | 19.11 | 1.0046 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.52 | 18.27 | 1.0119 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.78 | 5.56 | 1.0553 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.2 | 13.82 | 1.0458 | gained |
+| layer=o load=decode_32 m=32 | 62 | 6.45 | 6.61 | 1.0453 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 19.84 | 19.6 | 1.0199 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.69 | 18.2 | 1.0226 | flat |
+| layer=router load=decode_32 m=32 | 62 | 6.11 | 5.79 | 1.0327 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.93 | 12.79 | 1.0029 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.29 | 6.07 | 0.9973 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.92 | 18.75 | 0.9985 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.49 | 5.26 | 1.0575 | gained |
+| layer=router load=verify_1 m=8 | 62 | 5.16 | 5.11 | 1.0199 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 17.25 | 16.27 | 1.0628 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.39 | 7.32 | 0.9625 | lost |
+| layer=pooler load=verify_16 m=128 | 62 | 24.69 | 22.8 | 1.0738 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.77 | 18.77 | 1.0475 | gained |
+| layer=router load=verify_16 m=128 | 62 | 7.87 | 7.68 | 0.9997 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.26 | 19.68 | 0.9788 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.41 | 9.25 | 0.9612 | lost |
+| layer=pooler load=verify_32 m=256 | 62 | 30.8 | 30.03 | 1.029 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.22 | 23.99 | 0.9908 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.4 | 9.41 | 1.0015 | flat |
+
+gained on qkv_gate decode_1, decode_32, verify_16; pooler decode_1, verify_16; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32; o decode_32; lost on o verify_16, verify_32. Expected hit: 2/5. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 2 of `cuBLAS nvjet (+splitKreduce) for qkv_gate, pooler, unpooler at m=128/256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify-deepgemm-sm90-explicit-instantiation-stage2 --stage 3`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

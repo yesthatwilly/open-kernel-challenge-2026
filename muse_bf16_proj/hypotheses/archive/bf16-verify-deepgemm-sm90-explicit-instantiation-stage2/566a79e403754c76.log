@@ -1,0 +1,107 @@
+play, 256 MB flush, 41 reps, interleaved): cand median 23.17 us, master median 24.86 us, empty-graph baseline 5.28 us -> net 17.89 vs 19.58 us, cand/master 0.913 (route if <= 0.98)
+[prepare-time] gate B qkv_gate m=128: 0.03s
+[lt] B qkv_gate m=128: profiled kernels ['nvjet_sm90_tst_40x64_64x16_4x2_h_bz_TNN']
+[prepare-time] cell B qkv_gate m=128 total: 0.15s
+PATH CHOSEN B qkv_gate m=128: candidate (cand 17.89 us vs master 19.58 us)
+[prepare-time] lt cell B (heuristic + canary + gate + profile): 0.15s
+[dg] deep_gemm 0.2.1.post1+muse.cbe1727 at /opt/sglang/lib/python3.12/site-packages/deep_gemm; include exists=True; impls n=31, sm90: ['sm90_bf16_gemm.cuh', 'sm90_bmk_bnk_mn.cuh', 'sm90_fp8_gemm_1d1d.cuh', 'sm90_fp8_gemm_1d2d.cuh', 'sm90_fp8_mega_moe.cuh', 'sm90_fp8_mqa_logits.cuh', 'sm90_fp8_paged_mqa_logits.cuh', 'sm90_mega_moe_pre_dispatch.cuh', 'sm90_tf32_hc_prenorm_gemm.cuh']
+[dg] kernel sm90_bf16_gemm_impl in deep_gemm/impls/sm90_bf16_gemm.cuh (namespaced=True, shape-m template param=True, runtime M supported=True)
+[dg] template params (21): cute::UMMA::Major kMajorA | cute::UMMA::Major kMajorB | uint32_t SHAPE_M | uint32_t SHAPE_N | uint32_t SHAPE_K | uint32_t kNumGroups | uint32_t BLOCK_M | uint32_t BLOCK_N | uint32_t BLOCK_K_ | uint32_t kSwizzleAMode | uint32_t kSwizzleBMode | uint32_t kSwizzleDMode | uint32_t kNumStages_ | uint32_t kNumTMAThreads | uint32_t kNumMathThreads | uint32_t kNumTMAMulticast | bool kIsTMAMulticastOnA | uint32_t kNumSMs | GemmType kGemmType | bool kWithAccumulation | typename cd_dtype_t
+[dg] kernel params (7): int* grouped_layout | uint32_t shape_m | uint32_t shape_n | uint32_t shape_k | const __grid_constant__ cute::TmaDescriptor tensor_map_a | const __grid_constant__ cute::TmaDescriptor tensor_map_b | const __grid_constant__ cute::TmaDescriptor tensor_map_cd
+[dg] no JIT template source in the package (expected: the generator lives in compiled csrc); instantiating by template-parameter NAME
+[dg] GemmType enumerators: ['Normal', 'MGroupedContiguous', 'MGroupedMasked', 'KGroupedContiguous', 'Batched', 'MGroupedContiguousWithPsumLayout', 'KGroupedContiguousWithPsumLayout']; epilogue types: ['EpilogueArgs']
+[dg] variant 0 pooler ms=(128,) n=4096 k=8192: BLOCK_M=64 BLOCK_N=64 BLOCK_K=64 multicast=1 stages=12 swz_d=128 math_thr=128 SHAPE_M=128u tiles=128 waves=1 model=26.2us smem=209088
+[dg] variant 1 pooler ms=(130, 200, 256) n=4096 k=8192: BLOCK_M=64 BLOCK_N=128 BLOCK_K=64 multicast=1 stages=8 swz_d=128 math_thr=128 SHAPE_M=0u tiles=128 waves=1 model=39.3us smem=217216
+[dg] variant 2 qkv_gate ms=(128,) n=2304 k=8192: BLOCK_M=64 BLOCK_N=64 BLOCK_K=64 multicast=1 stages=12 swz_d=128 math_thr=128 SHAPE_M=128u tiles=72 waves=1 model=26.2us smem=209088
+[dg] variant 3 qkv_gate ms=(130, 200, 256) n=2304 k=8192: BLOCK_M=64 BLOCK_N=96 BLOCK_K=64 multicast=1 stages=10 swz_d=64 math_thr=128 SHAPE_M=0u tiles=96 waves=1 model=32.8us smem=221344
+[dg] variant 4 unpooler ms=(128,) n=8192 k=4096: BLOCK_M=64 BLOCK_N=128 BLOCK_K=64 multicast=1 stages=8 swz_d=128 math_thr=128 SHAPE_M=128u tiles=128 waves=1 model=19.7us smem=217216
+[dg] variant 5 unpooler ms=(130, 200, 256) n=8192 k=4096: BLOCK_M=128 BLOCK_N=128 BLOCK_K=64 multicast=1 stages=5 swz_d=128 math_thr=256 SHAPE_M=0u tiles=128 waves=1 model=26.2us smem=200784
+[dg] signature mismatch, cannot instantiate: unknown template parameter 'BLOCK_K_' ('uint32_t BLOCK_K_'); master runs (read the template / kernel params printed above)
+[prepare-time] dg cells (discovery + build + self-check + 2-round gate + profile): 0.01s
+[prepare-time] state build (A) total: 4.38s
+[prepare-time] weight splits + NN copies: 0.00s
+[router] swapab m=1 BLOCK_T=16 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=64 n_spills=0 wgmma=16 mma.sync=0 cp.async=65
+[router] swapab m=32 BLOCK_T=32 SPLIT_K=32 grid=(1, 4, 32) stages=3: n_regs=80 n_spills=0 wgmma=16 mma.sync=0 cp.async=71
+[router] m=1: swapab
+[router] m=8: swapab
+[router] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.00s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] bulk / lt / dg per-state buffers (flags inherited): 0.00s
+[prepare-time] state build (B) total: 0.01s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.59e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.52e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component master path) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component master path) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.73e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.81e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component bulk_pooler_ok) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component bulk_pooler_ok) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.69e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component nn_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component nn_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state A (component bulk_qkv_ok) ...
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state B (component bulk_qkv_ok) ...
+[ab] qkv_gate m=1 n=2304: A,B,A,B replays OK, worst rel L2 1.74e-03
+[ab] capture kernel_fn o m=1 n=8192 state A (component bulk_o_ok) ...
+[ab] capture kernel_fn o m=1 n=8192 state B (component bulk_o_ok) ...
+[ab] o m=1 n=8192: A,B,A,B replays OK, worst rel L2 1.70e-03
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state A (component lt_qkv128_ok) ...
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state B (component lt_qkv128_ok) ...
+[ab] qkv_gate m=128 n=2304: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=256 n=2304 state A (component master path) ...
+[ab] capture kernel_fn qkv_gate m=256 n=2304 state B (component master path) ...
+[ab] qkv_gate m=256 n=2304: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn unpooler m=256 n=8192 state A (component master path) ...
+[ab] capture kernel_fn unpooler m=256 n=8192 state B (component master path) ...
+[ab] unpooler m=256 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] done in 0.2s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': True, 'lt_qkv128_ok': True, 'dg_pooler_128_ok': False, 'dg_pooler_256_ok': False, 'dg_qkv_gate_128_ok': False, 'dg_qkv_gate_256_ok': False, 'dg_unpooler_128_ok': False, 'dg_unpooler_256_ok': False}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=True lt_qkv128_ok=True dg_pooler_128_ok=False dg_pooler_256_ok=False dg_qkv_gate_128_ok=False dg_qkv_gate_256_ok=False dg_unpooler_128_ok=False dg_unpooler_256_ok=False; prepare total 4.6s
+[dg] SUMMARY DG kernel sm90_bf16_gemm_impl: 21 template params [kMajorA, kMajorB, SHAPE_M, SHAPE_N, SHAPE_K, kNumGroups, BLOCK_M, BLOCK_N, BLOCK_K_, kSwizzleAMode, kSwizzleBMode, kSwizzleDMode, kNumStages_, kNumTMAThreads, kNumMathThreads, kNumTMAMulticast, kIsTMAMulticastOnA, kNumSMs, kGemmType, kWithAccumulation, cd_dtype_t], runtime_m=True
+[dg] SUMMARY DG VOID: signature mismatch / build skipped / build failed; all cells master
+[dg] FINAL PATH CHOSEN DG pooler m=128: n/a -> final flag dg_pooler_128_ok=False
+[dg] FINAL PATH CHOSEN DG pooler m=256: n/a -> final flag dg_pooler_256_ok=False
+[dg] FINAL PATH CHOSEN DG qkv_gate m=128: n/a -> final flag dg_qkv_gate_128_ok=False
+[dg] FINAL PATH CHOSEN DG qkv_gate m=256: n/a -> final flag dg_qkv_gate_256_ok=False
+[dg] FINAL PATH CHOSEN DG unpooler m=128: n/a -> final flag dg_unpooler_128_ok=False
+[dg] FINAL PATH CHOSEN DG unpooler m=256: n/a -> final flag dg_unpooler_256_ok=False
