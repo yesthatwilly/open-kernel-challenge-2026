@@ -34,3 +34,13 @@ rows that moved, decision. A new session resumes from the last entry.
   v32 full 866.6 -> 851.4; d16 full 290.5 -> 302.3 (drift: same cells as master there).
 - Loads: d1 1.441 (1.449), d16 1.359 (1.325), d32 1.250 (1.206), v1 1.502 (1.447), v16 1.282 (1.266), v32 1.213 (1.214).
 - Decision: scored submit of the same bytes, job 69db8aeb251944c5 (PLAN §6, M0).
+
+## 2026-10-26T05:30Z: M0 scored 1.3408 [1.3207, 1.3609]; landed on master
+
+- Scored submit 69db8aeb251944c5: 13/13, the same 16 cells NEW. Board: decode 1.3164 -> 1.3408, rank 448 -> 434;
+  overall rank 480 -> 460.
+- Rows vs the check: d16 sliding 211.7 -> 198.4, v1 sliding 177.0 -> 168.2, v16 sliding 411.6 -> 428.9 (drift both ways).
+- Landed: master muse_decode_layer/submission.py = branch a1abc1d1 bytes (sha256 74fd5a6b...). DECISIONS.md notes that
+  BEST.json (churn-generated) still names a903b9d0.
+- Next: moe ladder check once its audit returns; Engine A v1 (T <= 8) written, to be audited and checked in moe next.
+
