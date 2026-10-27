@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "2a7b5d2030894c4a",
+ "job": "8f33e5ee4dbd41da",
  "mode": "submit",
- "speedup": 1.7187457730844933,
+ "speedup": 1.722456026474114,
  "ci": [
-  1.692964586488226,
-  1.7445269596807604
+  1.6966191860770024,
+  1.7482928668712256
  ],
- "commit": "a865d15eccfc9bc79053def2add74a0f7ffa5024",
- "submission_blob": "87098ccc556d71b3e71e79654963d058441f673e",
- "slug": "campaign-eb-w6m-fork",
+ "commit": "a4d1c81de390c9c5d00cb641c79f1279cf32e0d4",
+ "submission_blob": "f3f1835fdc444708ac8028cd1bba4027f3bf7d9b",
+ "slug": "campaign-eb-s1a",
  "result": null,
- "updated_at": "2026-10-27T095400Z",
- "master_slug": "campaign-eb-w6m-fork",
- "master_job": "2a7b5d2030894c4a",
- "note": "registered by hand 2026-10-27: campaign expert-bandwidth W6-M (the hot/cold fork raced inside moe's hybrid race; routed H-16f at M=256), branch campaign/eb-w6m-fork; check a80dda1a 1.6978; landed on master. The previous campaign board cf937dd3 (eacf0722 bytes, 1.7076) was never registered here.",
- "score_us": 7824.6010611942165
+ "updated_at": "2026-10-27T2225Z",
+ "master_slug": "campaign-eb-s1a",
+ "master_job": "8f33e5ee4dbd41da",
+ "note": "registered by hand 2026-10-27: X5 S1a bytes (campaign/eb-s1a 826d15fa; Engine S hot kernel present but unrouted, board paths: T=128 master, T=256 forked wg H-16); check 2157c43b 1.7347 (borderline +0.93%, submitted per DAILY-RHYTHM); scored 1.7225 > 1.7187 (2a7b5d20).",
+ "score_us": 7807.746492970984
 }
