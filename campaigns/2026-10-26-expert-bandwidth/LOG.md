@@ -581,3 +581,19 @@ append-only, newest last.
   - no PDL at wg2's w13 -> w2 boundary;
   - H-17 must also clear RT_MARGIN over H-16 (a tie goes to the older path).
 - moe check **c2224c010ea7454d** and decode check **74201da03ab64f40** dispatched.
+
+## 2026-10-27T0114Z: k-slice rung killed; bulk12 P at T=1 wins its gate; scored run sent
+
+- moe e1406e5b05ba4cf7: 1.6990 (diagnostic). VERDICT-kslice: ks8 tok8 x0.974, ks4 tok8 **x1.003** (0 spill, occ2), ks8
+  tok16 x0.869 (72 B spill), ks4 tok16 x0.945 (56 B spill). Every rung is /INEXACT: kslice_exact is all NaN, a bug in
+  the rung's out path (timing runs with out = null).
+  -> **Lever #1 (k-slice consumer) is killed on timing.** Even the clean ks4 tok8 rung ties C-R4, so B-fragment loads
+  are not the consumer's limiter. VERDICT-dq repeats: dq3 x1.000 / x1.019.
+- decode dc3d5614d5e047c8: **1.5332** [1.510, 1.556] vs board 1.5275.
+  - b12p<12,8,4>: P 19.62 -> 15.34 us (x1.277, read flush); T=1 layer 109.1 -> 104.6 us (x1.040, pdl=1).
+  - Stream 58.98 MB vs 75.50 raw; escapes 1.4e-4; round trips bit-exact; canary, layer check and copy check pass.
+  - The rest are unchanged (v4c at T=9..32 / 128 / 256).
+- Scored run of dc3d5614's bytes: **8e3c26d66284496a** (a +0.37% gain, inside the spread; scored runs are plentiful).
+- campaign/eb-b12p-t1 merged into campaign/expert-bandwidth (8cfd91ce). The next decode builds carry b12p.
+- Next: harvest wg2 (c2224c01 moe, 74201da0 decode), then re-rank phase A. Lever #1 is gone; the candidates are T=1 / 8
+  under-streaming (CTAs per expert), bulk12 qkv at T=1, and decode-chain.

@@ -1,0 +1,88 @@
+us (IQR 0.86, p10/p90 328.38/330.53, x0.994, FAIL) | H-48 344.99 us (IQR 1.82, p10/p90 343.71/346.43, x0.948, FAIL) | H32 357.86 us (IQR 1.66, p10/p90 356.45/359.17, x0.914, FAIL) | H48 373.02 us (IQR 1.82, p10/p90 371.33/375.14, x0.877, FAIL)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 1 (graph baseline 5.47 us subtracted): master 363.62 us (IQR 1.38) | H-16 326.56 us (IQR 0.93, p10/p90 325.54/327.58, x1.113) | H-8 359.10 us (IQR 1.70, p10/p90 357.57/360.16, x1.013, FAIL) | H-32 374.98 us (IQR 0.90, p10/p90 374.05/376.00, x0.970, FAIL) | H-48 370.14 us (IQR 1.34, p10/p90 368.80/372.35, x0.982, FAIL) | H32 394.21 us (IQR 1.28, p10/p90 392.90/395.30, x0.922, FAIL) | H48 388.99 us (IQR 1.70, p10/p90 387.74/390.82, x0.935, FAIL)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 2 (graph baseline 5.41 us subtracted): master 362.82 us (IQR 1.18) | H-16 325.79 us (IQR 0.93, p10/p90 324.67/326.82, x1.114) | H-8 358.14 us (IQR 1.09, p10/p90 357.15/358.82, x1.013, FAIL) | H-32 374.11 us (IQR 1.12, p10/p90 373.06/375.20, x0.970, FAIL) | H-48 369.15 us (IQR 2.18, p10/p90 367.78/371.04, x0.983, FAIL) | H32 392.58 us (IQR 1.12, p10/p90 391.49/393.54, x0.924, FAIL) | H48 387.87 us (IQR 1.63, p10/p90 386.43/389.76, x0.935, FAIL)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 1 (graph baseline 5.41 us subtracted): master 411.58 us (IQR 1.28) | H-16 362.34 us (IQR 1.54, p10/p90 361.02/364.00, x1.136) | H-8 386.66 us (IQR 1.63, p10/p90 385.12/387.87, x1.064) | H-32 413.02 us (IQR 1.60, p10/p90 411.55/414.21, x0.997, FAIL) | H-48 412.54 us (IQR 1.31, p10/p90 410.91/413.76, x0.998, FAIL) | H32 434.21 us (IQR 1.41, p10/p90 432.70/435.30, x0.948, FAIL) | H48 433.12 us (IQR 1.89, p10/p90 431.68/435.04, x0.950, FAIL)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 2 (graph baseline 5.44 us subtracted): master 411.36 us (IQR 1.44) | H-16 362.05 us (IQR 1.28, p10/p90 361.34/363.42, x1.136) | H-8 386.34 us (IQR 1.60, p10/p90 385.15/387.52, x1.065) | H-32 412.64 us (IQR 1.54, p10/p90 411.26/414.11, x0.997, FAIL) | H-48 412.16 us (IQR 1.41, p10/p90 411.04/413.73, x0.998, FAIL) | H32 434.18 us (IQR 1.44, p10/p90 432.83/435.17, x0.947, FAIL) | H48 432.90 us (IQR 0.93, p10/p90 431.26/433.95, x0.950, FAIL)
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.069, H-8 x1.008, H-32 x0.970, H-48 x0.945, H32 x0.911, H48 x0.874 -> H-16
+[hybrid-moe] layer check T=256 H=-16 (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00426 (master 0.00387)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] ===== MOE HYBRID (T (128, 256)) SUMMARY (4.9 s; prepare at 164.9 s) =====
+[hybrid-moe] align kernel H=-16: compiled + ran in 0.36 s
+[hybrid-moe] align kernel H=-8: compiled + ran in 0.36 s
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.35 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.35 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.29 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.28 s
+[hybrid-moe] canary H=-16: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00428 (master 0.0039)
+[hybrid-moe] canary H=-8: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00428 (master 0.0039)
+[hybrid-moe] canary H=-32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=-48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] gate input T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes): local routes 201, distinct 16, hot experts 1 (122 rows, max 122), 16-row blocks 23
+[hybrid-moe] gate input T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes): local routes 194, distinct 23, hot experts 5 (100 rows, max 28), 16-row blocks 28
+[hybrid-moe] gate input T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes): local routes 162, distinct 27, hot experts 1 (49 rows, max 49), 16-row blocks 30
+[hybrid-moe] gate T=128 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x0.918, H-8 x0.871, H-32 x0.931, H-48 x0.889, H32 x0.784, H48 x0.761 -> master
+[hybrid-moe] gate input T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes): local routes 333, distinct 22, hot experts 4 (224 rows, max 155), 16-row blocks 34
+[hybrid-moe] gate input T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes): local routes 374, distinct 23, hot experts 7 (274 rows, max 82), 16-row blocks 38
+[hybrid-moe] gate input T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes): local routes 467, distinct 25, hot experts 8 (361 rows, max 143), 16-row blocks 43
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.069, H-8 x1.008, H-32 x0.970, H-48 x0.945, H32 x0.911, H48 x0.874 -> H-16
+[hybrid-moe] layer check T=256 H=-16 (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00426 (master 0.00387)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] PATH CHOSEN T=128 = MASTER (fallback: no H wins every round (H-16 x0.918, H-8 x0.871, H-32 x0.931, H-48 x0.889, H32 x0.784, H48 x0.761); layer us passes): master 273.9, H-16 296.8, H-8 293.8, H-32 294.0, H-48 303.4, H32 349.0, H48 359.8)
+[hybrid-moe] PATH CHOSEN T=256 = HYBRID (hot on Marlin, cold on Engine A v3) H=-16 (hot > 16 rows at block 16); layer us passes): master 411.5, H-16 362.2, H-8 386.5, H-32 412.8, H-48 412.4, H32 434.2, H48 433.0
+[ladder] env sm=132 clk_mhz=1980 build_s=41.1 flush=read256 timer=graph reps=21x2
+[ladder] kernels: k0:48r/0sp/72K/occ3 k1:48r/0sp/108K/occ2 k2:52r/0sp/72K/occ3 k3:76r/0sp/72K/occ3 k4:63r/0sp/72K/occ3 k5:80r/0sp/72K/occ3 k6:83r/0sp/72K/occ3 k7:85r/0sp/72K/occ3 k8:75r/0sp/104K/occ2 k9:83r/0sp/102K/occ2 k10:96r/0sp/151K/occ1 k11:48r/0sp/54K/occ4
+[ladder] kernels: k12:46r/0sp/72K/occ3 k13:62r/0sp/72K/occ3 k14:80r/0sp/72K/occ2 k15:69r/0sp/88K/occ2 k16:84r/0sp/104K/occ2 k17:46r/0sp/108K/occ2 k18:75r/0sp/132K/occ1 k19:56r/0sp/72K/occ3 k20:83r/0sp/72K/occ2 k21:78r/0sp/88K/occ2 k22:96r/0sp/88K/occ2 k23:73r/0sp/104K/occ2
+[ladder] kernels: k24:93r/0sp/104K/occ2 k25:89r/0sp/92K/occ2 k26:96r/72sp/112K/occ2 k27:88r/0sp/92K/occ2 k28:96r/56sp/112K/occ2
+[ladder] dq_exact=0/121856 mismatches (extraction-only 0; other pairs filled); first bad case none; rotation layout extraction mismatches dq3 0 dq4 0
+[ladder] canary: 29 kernels ran clean (error word 0), bank 201.3 MB = 10922 stages
+[ladder] kslice_exact [K-R4 8w ks8 nt1 tok8] vs [C-R4 8w +dq+x nt1 tok8]: FAIL max_abs=nan rms=nan rel=nan nonfinite=16384 (tol 0.001)
+[ladder] kslice_exact [K-R4 8w ks8 nt2 tok16] vs [C-R4 8w +dq+x nt2 tok16]: FAIL max_abs=nan rms=nan rel=nan nonfinite=32768 (tol 0.001)
+[ladder] kslice_exact [K-R4 8w ks4 nt1 tok8] vs [C-R4 8w +dq+x nt1 tok8]: FAIL max_abs=nan rms=nan rel=nan nonfinite=16384 (tol 0.001)
+[ladder] kslice_exact [K-R4 8w ks4 nt2 tok16] vs [C-R4 8w +dq+x nt2 tok16]: FAIL max_abs=nan rms=nan rel=nan nonfinite=32768 (tol 0.001)
+[ladder] graph baseline (empty graph, one tiny kernel) 5.31 us subtracted as t_us; t_raw includes it (true kernel time lies between; tbps uses t_us, tbps_raw uses t_raw)
+[ladder] R1 stream cta-ring D4 occ2: grid=264 t_us=45.02 t_raw=50.34 iqr=1.38 p10=44.67 p90=46.34 tbps=4.47 tbps_raw=4.00 clk_stage_cta=2155 regs=48 spill=0 smem=72K occ=3
+[ladder] R1 stream cta-ring D4 occ3: grid=396 t_us=45.95 t_raw=51.26 iqr=1.44 p10=44.64 p90=46.30 tbps=4.38 tbps_raw=3.93 clk_stage_cta=3299 regs=48 spill=0 smem=72K occ=3
+[ladder] R1 stream cta-ring D6 occ2: grid=264 t_us=45.28 t_raw=50.59 iqr=1.31 p10=44.80 p90=46.40 tbps=4.45 tbps_raw=3.98 clk_stage_cta=2167 regs=48 spill=0 smem=108K occ=2
+[ladder] R1 stream warp-ring D4 occ2: grid=264 t_us=45.31 t_raw=50.62 iqr=1.31 p10=44.74 p90=46.50 tbps=4.44 tbps_raw=3.98 clk_stage_cta=2169 regs=52 spill=0 smem=72K occ=3
+[ladder] R1 stream warp-ring D4 occ3: grid=396 t_us=45.92 t_raw=51.23 iqr=1.25 p10=44.64 p90=46.30 tbps=4.38 tbps_raw=3.93 clk_stage_cta=3297 regs=52 spill=0 smem=72K occ=3
+[ladder] R2 +dq=master occ2: grid=264 t_us=51.26 t_raw=56.58 iqr=0.67 p10=50.82 p90=52.26 tbps=3.93 tbps_raw=3.56 clk_stage_cta=2453 regs=76 spill=0 smem=72K occ=3
+[ladder] R2 +dq=prop occ2: grid=264 t_us=50.27 t_raw=55.58 iqr=0.83 p10=49.70 p90=51.26 tbps=4.00 tbps_raw=3.62 clk_stage_cta=2406 regs=63 spill=0 smem=72K occ=3
+[ladder] R2 +dq=prop occ3: grid=396 t_us=49.89 t_raw=55.20 iqr=1.18 p10=49.54 p90=51.20 tbps=4.04 tbps_raw=3.65 clk_stage_cta=3581 regs=63 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt1 dq=prop: grid=264 t_us=53.92 t_raw=59.23 iqr=0.48 p10=53.66 p90=54.53 tbps=3.73 tbps_raw=3.40 clk_stage_cta=2581 regs=80 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt4 dq=prop: grid=264 t_us=69.15 t_raw=74.46 iqr=0.51 p10=68.80 p90=69.70 tbps=2.91 tbps_raw=2.70 clk_stage_cta=3310 regs=83 spill=0 smem=72K occ=3
+[ladder] R3 +mma const-B nt1 dq=master: grid=264 t_us=59.74 t_raw=65.06 iqr=0.74 p10=59.23 p90=60.48 tbps=3.37 tbps_raw=3.09 clk_stage_cta=2859 regs=85 spill=0 smem=72K occ=3
+[ladder] R4 +x smem-B nt1 tok1: grid=264 t_us=55.58 t_raw=60.90 iqr=0.58 p10=55.23 p90=56.38 tbps=3.62 tbps_raw=3.31 clk_stage_cta=2660 regs=75 spill=0 smem=104K occ=2
+[ladder] R4 +x smem-B nt1 tok8: grid=264 t_us=59.90 t_raw=65.22 iqr=1.15 p10=59.14 p90=60.77 tbps=3.36 tbps_raw=3.09 clk_stage_cta=2867 regs=75 spill=0 smem=104K occ=2
+[ladder] R4 +x smem-B nt2 tok16: grid=264 t_us=70.88 t_raw=76.19 iqr=0.80 p10=70.08 p90=71.39 tbps=2.84 tbps_raw=2.64 clk_stage_cta=3392 regs=83 spill=0 smem=102K occ=2
+[ladder] R4 +x smem-B nt4 tok32: grid=132 t_us=139.84 t_raw=145.15 iqr=0.70 p10=139.14 p90=140.48 tbps=1.44 tbps_raw=1.39 clk_stage_cta=3346 regs=96 spill=0 smem=151K occ=1
+[ladder] R1 stream cta-ring D3 occ2: grid=264 t_us=45.63 t_raw=50.94 iqr=1.38 p10=44.80 p90=46.59 tbps=4.41 tbps_raw=3.95 clk_stage_cta=2184 regs=48 spill=0 smem=54K occ=4
+[ladder] R1 stream cta-ring D3 occ1: grid=132 t_us=45.86 t_raw=51.17 iqr=1.41 p10=45.54 p90=47.26 tbps=4.39 tbps_raw=3.93 clk_stage_cta=1097 regs=48 spill=0 smem=54K occ=4
+[ladder] C-R1 8w x2rec D2 occ2: grid=264 t_us=45.63 t_raw=50.94 iqr=1.22 p10=44.99 p90=46.53 tbps=4.41 tbps_raw=3.95 clk_stage_cta=4368 regs=46 spill=0 smem=72K occ=3
+[ladder] C-R2 8w +dq occ2: grid=264 t_us=50.40 t_raw=55.71 iqr=1.02 p10=49.66 p90=51.39 tbps=3.99 tbps_raw=3.61 clk_stage_cta=4824 regs=62 spill=0 smem=72K occ=3
+[ladder] C-R3 8w +dq+mma constB nt1: grid=264 t_us=53.70 t_raw=59.01 iqr=1.34 p10=52.83 p90=54.75 tbps=3.75 tbps_raw=3.41 clk_stage_cta=5140 regs=80 spill=0 smem=72K occ=2
+[ladder] C-R4 8w +dq+x nt1 tok8: grid=264 t_us=58.53 t_raw=63.84 iqr=1.09 p10=57.79 p90=59.26 tbps=3.44 tbps_raw=3.15 clk_stage_cta=5602 regs=69 spill=0 smem=88K occ=2
+[ladder] C-R4 8w +dq+x nt2 tok16: grid=264 t_us=68.64 t_raw=73.95 iqr=0.77 p10=68.06 p90=69.54 tbps=2.93 tbps_raw=2.72 clk_stage_cta=6570 regs=84 spill=0 smem=104K occ=2
+[ladder] C-R1 8w x2rec D3 occ1: grid=132 t_us=45.28 t_raw=50.59 iqr=1.44 p10=44.96 p90=46.59 tbps=4.45 tbps_raw=3.98 clk_stage_cta=2167 regs=46 spill=0 smem=108K occ=2
+[ladder] C-R4 8w +dq+x nt1 tok8 D3 occ1: grid=132 t_us=58.69 t_raw=64.00 iqr=0.54 p10=58.34 p90=59.17 tbps=3.43 tbps_raw=3.15 clk_stage_cta=2809 regs=75 spill=0 smem=132K occ=1
+[ladder] D-R2 8w +dq3 occ2: grid=264 t_us=52.22 t_raw=57.54 iqr=1.25 p10=51.55 p90=53.22 tbps=3.85 tbps_raw=3.50 clk_stage_cta=4999 regs=56 spill=0 smem=72K occ=3
+[ladder] D-R2 8w +dq4 occ2: grid=264 t_us=56.35 t_raw=61.66 iqr=0.86 p10=55.81 p90=57.50 tbps=3.57 tbps_raw=3.26 clk_stage_cta=5394 regs=83 spill=0 smem=72K occ=2
+[ladder] D-R4 8w +dq3+x nt1 tok8: grid=264 t_us=58.53 t_raw=63.84 iqr=0.83 p10=57.95 p90=59.62 tbps=3.44 tbps_raw=3.15 clk_stage_cta=5602 regs=78 spill=0 smem=88K occ=2
+[ladder] D-R4 8w +dq4+x nt1 tok8: grid=264 t_us=67.36 t_raw=72.67 iqr=0.74 p10=66.72 p90=68.19 tbps=2.99 tbps_raw=2.77 clk_stage_cta=6448 regs=96 spill=0 smem=88K occ=2
+[ladder] D-R4 8w +dq3+x nt2 tok16: grid=264 t_us=67.36 t_raw=72.67 iqr=1.06 p10=66.69 p90=68.38 tbps=2.99 tbps_raw=2.77 clk_stage_cta=6448 regs=73 spill=0 smem=104K occ=2
+[ladder] D-R4 8w +dq4+x nt2 tok16: grid=264 t_us=79.26 t_raw=84.58 iqr=0.61 p10=78.94 p90=80.00 tbps=2.54 tbps_raw=2.38 clk_stage_cta=7587 regs=93 spill=0 smem=104K occ=2
+[ladder] K-R4 8w ks8 nt1 tok8: grid=264 t_us=60.10 t_raw=65.41 iqr=0.77 p10=59.65 p90=60.99 tbps=3.35 tbps_raw=3.08 clk_stage_cta=5752 regs=89 spill=0 smem=92K occ=2
+[ladder] K-R4 8w ks8 nt2 tok16: grid=264 t_us=78.94 t_raw=84.26 iqr=1.02 p10=78.14 p90=79.78 tbps=2.55 tbps_raw=2.39 clk_stage_cta=7556 regs=96 spill=72 smem=112K occ=2
+[ladder] K-R4 8w ks4 nt1 tok8: grid=264 t_us=58.37 t_raw=63.68 iqr=0.86 p10=57.86 p90=59.39 tbps=3.45 tbps_raw=3.16 clk_stage_cta=5587 regs=88 spill=0 smem=92K occ=2
+[ladder] K-R4 8w ks4 nt2 tok16: grid=264 t_us=72.67 t_raw=77.98 iqr=0.93 p10=71.81 p90=74.02 tbps=2.77 tbps_raw=2.58 clk_stage_cta=6956 regs=96 spill=56 smem=112K occ=2
+[ladder] R0 flush=read|zero_ rung=R1 t_us=45.02|54.50 dirty_penalty_us=9.47 dirty_penalty_pct=21.0 (graph baseline 5.31 us subtracted)
+[ladder] R6ref master T=1 local8: active=8 bytes_mb=226.5 t_us=103.55 iqr=1.25 tbps_active=2.19
+[ladder] R6ref master T=1 zipf: active=5 bytes_mb=141.6 t_us=72.35 iqr=0.58 tbps_active=1.96
+[ladder] R6ref master T=8 zipf: active=15 bytes_mb=424.7 t_us=174.91 iqr=0.90 tbps_active=2.43
+[ladder] R6ref master T=32 zipf: active=31 bytes_mb=877.7 t_us=360.19 iqr=1.38 tbps_active=2.44
+[ladder] VERDICT ceiling_tbps=4.47 (raw 4.00) [R1 stream cta-ring D4 occ2]>[R2 +dq=prop occ2]=10.4% [R2 +dq=prop occ2]>[R3 +mma const-B nt1 dq=prop]=6.8% [R3 +mma const-B nt1 dq=prop]>[R4 +x smem-B nt1 tok8]=10.0% [R1 stream cta-ring D3 occ2]>[R4 +x smem-B nt2 tok16]=35.6% [R1 stream cta-ring D3 occ1]>[R4 +x smem-B nt4 tok32]=67.2% dq_master_vs_prop=3.93|4.00 limiter=R2 (R2 +dq=prop occ2) dq_exact
+[ladder] VERDICT-dq (TB/s dq2 prod / dq3 rot-shf / dq4 rot-mul) C-R2: 3.99 / 3.85 (x0.965) / 3.57 (x0.894) | C-R4 tok8: 3.44 / 3.44 (x1.000) / 2.99 (x0.869) | C-R4 tok16: 2.93 / 2.99 (x1.019) / 2.54 (x0.866) | dq_exact rot 0/0
+[ladder] VERDICT-v4-geometry [C-R1 8w x2rec D2 occ2]=4.41 [C-R2 8w +dq occ2]=3.99 [C-R3 8w +dq+mma constB nt1]=3.75 [C-R4 8w +dq+x nt1 tok8]=3.44 [C-R4 8w +dq+x nt2 tok16]=2.93 [C-R1 8w x2rec D3 occ1]=4.45 [C-R4 8w +dq+x nt1 tok8 D3 occ1]=3.43 | drops [C-R1 8w x2rec D2 occ2]>[C-R2 8w +dq occ2]=9.5% [C-R2 8w +dq occ2]>[C-R3 8w +dq+mma constB nt1]=6.1% [C-R3 8w +dq+mma constB nt1]>[C-R4 8w +dq+x nt1
+[ladder] VERDICT-kslice (TB/s ratio vs C-R4, same grid) [ks8 tok8]=x0.974/INEXACT (89r/0sp/occ2) [ks8 tok16]=x0.869/INEXACT (96r/72sp/occ2) [ks4 tok8]=x1.003/INEXACT (88r/0sp/occ2) [ks4 tok16]=x0.945/INEXACT (96r/56sp/occ2) | best 0.000 -> KILL (rule >= 1.05)
+[ladder] ladder seconds 41.4 (prepare at 106.4 s)
