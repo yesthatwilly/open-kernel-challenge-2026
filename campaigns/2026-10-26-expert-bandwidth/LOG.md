@@ -2,6 +2,24 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
+- **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
+  "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
+  'USER' unpriv user. otherwise, stay focused on this campaign specifically, on a loop such that this specific area
+  gets considerable attention with proving, h100/h200 testing, and all other things i can do when im out of check
+  runs. use checks and submissions as you see fit. maximize the value of the h100/h200 as much as you can"
+  - SINGLE-PASS §13 answered: (1) go, now; (2) cu130 installs allowed, only as the unprivileged USER user
+    (node-local); (3) the plan is linked from here.
+  - **Focus: X5 only, on a self-paced loop.** The 3:1 rhythm's phase B/C spending on the other problems is suspended
+    while X5 runs; checks and scored runs at discretion, X5 questions first.
+  - updated: 2026-10-27T1635Z (date -u)
+  - **Code:** `campaign/eb-sp` (worktree `.worktrees/eb-sp`) from 4c0f0253. Tooling: takemyjob 54aaa57 (hopper-probe
+    probe packages, `HP_BUNDLE`, `HP_ONLY`, ssh ControlMaster).
+  - **Hopper:** gpunode06 is IDLE+DRAIN with 0 jobs, but a DCGM diagnostic (`nvvs`, user nvidia-dcgm) has run on all 8
+    GPUs since ~1623Z, with root on pts/0 since 1622Z, so the guard refuses until it is clean. gpunode26 is busy
+    (MIXED+PLANNED). Sol has `cuda-13.0.1-gcc-12.1.0` (nvcc 13.0, no install needed); pypi and pytorch.org are reachable
+    from gpunode06.
+  - **Boards and quota:** unchanged since 1505Z (below).
+- **Earlier today, state at 1505Z (kept for history):**
 - **Today (10-27), phase B** (updated 2026-10-27T1505Z):
   - **Boards** (day start -> now; ranks at 1455Z):
     - decode 1.4956 -> **1.5920** (327 / 794);
@@ -1156,3 +1174,16 @@ append-only, newest last.
 - 1503Z: attention scored run **aa9fc86078f543fb: 1.6183** [1.594, 1.643], passed; under the 1.6340 board, not landed.
   With check 1.6219 the onepass bytes average ~1.620, inside today's attention spread; the verify B=1 row gain
   (14.9 -> 14.6 us) is real but too small for the headline. Kept on its branch for stacking. Worktree removed.
+
+## 2026-10-27T1630Z: X5 started (the user's go)
+
+- The user's go at 1623Z (verbatim in the top block): run SINGLE-PASS.md; cu130 installs only as unprivileged USER;
+  X5 focus on a loop; checks and scored runs at discretion; maximize H100/H200 value.
+- Branch `campaign/eb-sp` from 4c0f0253 (campaign/expert-bandwidth has not moved).
+- Hopper at 1626Z: gpunode06 IDLE+DRAIN / 0 jobs, but `nvvs` (DCGM diag) on all 8 GPUs at 100% / ~700 W; GPU0 and GPU2
+  in SW thermal slowdown at 87 C; root logged in. The guard's foreign-process rule keeps us off. gpunode26 busy.
+- hopper-probe extended (takemyjob 54aaa57): probe packages, named bundles, HP_ONLY, ControlMaster. A classic build
+  on gpunode06's CPU took 16 s.
+- Next: the Gate-0 build workflow (es_g0 variants, calibration ports, a moe judge module as the fallback), then node
+  runs when gpunode06 is clean, or a moe judge check if no window opens.
+
