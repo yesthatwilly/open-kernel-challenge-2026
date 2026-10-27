@@ -756,3 +756,4 @@ append-only, newest last.
   gains). The b12p + fix bytes have scored 1.5276-1.5441 across runs, so 1.5441 was likely a high draw. The d32f row gain
   (x1.077) is real. Not re-rolled; W3-A rides wave 4's decode build, and the next decode scored run should stack W3-A +
   c320 (+ N64 if it lands).
+- 0411Z: bf16 check **670ad7c6b0da41ec**: pooler khalf m=128, b2 only (fp32 partials via bmm out_dtype=float32 + Triton add-cast; hyp/bf16-khalf 83e65c27 on the read-flush branch). Read-flush gate >= 1.03 in both rounds; judge it on the verify_16 pooler row (22.91 us).
