@@ -597,3 +597,14 @@ append-only, newest last.
 - campaign/eb-b12p-t1 merged into campaign/expert-bandwidth (8cfd91ce). The next decode builds carry b12p.
 - Next: harvest wg2 (c2224c01 moe, 74201da0 decode), then re-rank phase A. Lever #1 is gone; the candidates are T=1 / 8
   under-streaming (CTAs per expert), bulk12 qkv at T=1, and decode-chain.
+
+## 2026-10-27T0131Z: wg2 killed on moe; phase-A wave 2 launched
+
+- moe check c2224c010ea7454d: 1.6986. wg2 (H=-17) is correct (canary clean) but slow: T=128 x0.405, T=256 x0.882
+  against H-16's x1.069. The gates kept H-16 / master, so wg2 is killed in this form (its work split; it has 6 units
+  per CTA).
+- decode wg2 check 74201da0 and b12p scored run 8e3c26d6 are still in flight.
+- Workflow wf_9ffcb970-fa3 (base 8cfd91ce) has two builds:
+  - **eat18**: T=1 / 2..8 expert-block streaming, from 2.55 / 2.67 TB/s net toward >= 3.3;
+  - **dchain-pdl**: PDL static-weight prefetch for qkv_gate / o in the T <= 32 chain.
+- Quota 01:30Z: decode 17 checks / 7 scored; moe 17 / 9; bf16, attention and prefill full.
