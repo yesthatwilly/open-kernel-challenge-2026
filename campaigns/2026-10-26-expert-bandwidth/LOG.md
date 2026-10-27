@@ -23,6 +23,9 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **S1a build started (1918Z, the user: "start the S1a hot kernel build now"):** workflow x5-s1a-hot-kernel
+    (design x2 + judge at max, build / 2 audits / fix at high) on `campaign/eb-s1a` from eb-sp 2d5938d7, moe first, with
+    a node test package. Kill rule: < x1.10 on the hot half after 2 judge checks.
   - **Gate 0 confirmed on the judge (moe check 5a641040, 1910Z):** es16 streamed 27.5 el/clk/SM at 3.60 TB/s (x1.02
     over Engine A); consumer el/clk equals the node's to the decimal; all 20 `.text` hashes equal the node's cu130
     builds (the bridge holds). Verdict: S1a + T<=8. Not scored (timed path = board, 1.7199 vs 1.7187 is noise).
