@@ -1,0 +1,101 @@
+ter] m=16: swapab
+[router] m=32: swapab
+[router] m=64: hilo
+[router] m=128: hilo
+[router] m=256: hilo
+[prepare-time] router triton warm-up: 0.00s
+[prepare-time] pooler / qkv / unpooler / o triton warm-up: 0.00s
+[swapab] layer=pooler m=32 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=qkv_gate m=32 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=58
+[swapab] layer=unpooler m=32 N=8192 K=4096 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[swapab] layer=o m=32 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=96 n_spills=0 wgmma=16 mma.sync=0 cp.async=106
+[prepare-time] swapab m17-32 warm-up: 0.00s
+[swapab16] pooler m=16 N=4096 K=8192 SPLIT_K=2 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] qkv_gate m=16 N=2304 K=8192 SPLIT_K=4 BLOCK_K=128 stages=4: n_regs=48 n_spills=0 wgmma=8 mma.sync=0 cp.async=50
+[swapab16] o m=16 N=8192 K=1024 SPLIT_K=1 BLOCK_K=256 stages=4: n_regs=72 n_spills=0 wgmma=16 mma.sync=0 cp.async=90
+[swapab16] unpooler_slice m=8 N=1024 K=4096 SPLIT_K=8 BLOCK_K=128 stages=3: n_regs=56 n_spills=0 wgmma=8 mma.sync=0 cp.async=38
+[incumbent16] pooler _bf16_splitk_kernel m=16: n_regs=96 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] qkv_gate _qkv_splitk_sem_kernel m=16: n_regs=64 n_spills=0 wgmma=0 mma.sync=16 cp.async=50
+[incumbent16] o _pooler_skinny_kernel m=16: n_regs=90 n_spills=0 wgmma=0 mma.sync=32 cp.async=90
+[incumbent16] unpooler_slice _bf16_splitk_kernel m=16: n_regs=72 n_spills=0 wgmma=0 mma.sync=16 cp.async=38
+[prepare-time] swapab16 warm-up: 0.00s
+[prepare-time] bulk / lt / dg per-state buffers (flags inherited): 0.04s
+[prepare-time] state build (B) total: 0.05s
+[ab] capture kernel_fn router m=1 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=1 n=256 state B (component router_cluster_ok) ...
+[ab] router m=1 n=256: A,B,A,B replays OK, worst rel L2 2.49e-06
+[ab] capture kernel_fn router m=8 n=256 state A (component router_cluster_ok) ...
+[ab] capture kernel_fn router m=8 n=256 state B (component router_cluster_ok) ...
+[ab] router m=8 n=256: A,B,A,B replays OK, worst rel L2 2.50e-06
+[ab] capture kernel_fn router m=128 n=256 state A (component master path) ...
+[ab] capture kernel_fn router m=128 n=256 state B (component master path) ...
+[ab] router m=128 n=256: A,B,A,B replays OK, worst rel L2 2.73e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.73e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component b12_pooler_ok) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component b12_pooler_ok) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component nn_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component nn_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state A (component b12_qkv_ok) ...
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state B (component b12_qkv_ok) ...
+[ab] qkv_gate m=1 n=2304: A,B,A,B replays OK, worst rel L2 1.74e-03
+[ab] capture kernel_fn o m=1 n=8192 state A (component b12_o_ok) ...
+[ab] capture kernel_fn o m=1 n=8192 state B (component b12_o_ok) ...
+[ab] o m=1 n=8192: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state A (component lt_qkv128_ok) ...
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state B (component lt_qkv128_ok) ...
+[ab] qkv_gate m=128 n=2304: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=256 n=2304 state A (component master path) ...
+[ab] capture kernel_fn qkv_gate m=256 n=2304 state B (component master path) ...
+[ab] qkv_gate m=256 n=2304: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn unpooler m=256 n=8192 state A (component master path) ...
+[ab] capture kernel_fn unpooler m=256 n=8192 state B (component master path) ...
+[ab] unpooler m=256 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] done in 0.2s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': False, 'lt_qkv128_ok': True, 'b12_pooler_ok': True, 'b12_qkv_ok': True, 'b12_o_ok': True, 'pooler_khalf128_ok': False, 'dg_pooler_256_ok': False, 'dg_qkv_gate_256_ok': False, 'dg_unpooler_128_ok': False, 'dg_unpooler_256_ok': False}
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=False lt_qkv128_ok=True b12_pooler_ok=True b12_qkv_ok=True b12_o_ok=True pooler_khalf128_ok=False dg_pooler_256_ok=False dg_qkv_gate_256_ok=False dg_unpooler_128_ok=False dg_unpooler_256_ok=False; prepare total 30.0s
+[prepare] DECISIONS (20 lines, re-printed for the log tail):
+  [ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+  [router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+  PATH CHOSEN A pooler m=1: candidate (cand 21.86 us vs master 23.30 us)
+  PATH CHOSEN A2 qkv_gate m=1: candidate (cand 13.57 us vs master 14.59 us)
+  PATH CHOSEN A3 o m=1: master (cand 6.72 us vs master 6.72 us); gate: cand/master 1.000 > 0.98
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,8> R=32 grid 128: read 0.835 (13.28 / 15.90 us) write 0.842 (18.59 / 22.08 us)
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,4> R=32 grid 128: read 0.839 (13.34 / 15.90 us) write 0.848 (18.56 / 21.89 us)
+  PATH CHOSEN A12 pooler m=1: candidate b12_kernel<32,8192,8,1,8> R=32 (inst 0) [chosen b12_kernel<32,8192,8,1,8> read 0.835 (13.28 vs 15.90 us), write 0.842 (18.59 vs 22.08 us); route at read <= 0.98]
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,4> R=16 grid 144: read 0.960 (9.18 / 9.57 us) write 0.882 (11.94 / 13.54 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,8> R=16 grid 144: read 0.979 (10.69 / 10.91 us) write 0.862 (11.81 / 13.70 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,8> R=32 grid 72: read 1.030 (9.86 / 9.57 us) write 0.888 (12.13 / 13.66 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,4> R=32 grid 72: read 1.070 (10.24 / 9.57 us) write 0.896 (12.10 / 13.50 us)
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,8> R=32: fails read gate 1.030 > 0.98
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,4> R=32: fails read gate 1.070 > 0.98
+  PATH CHOSEN A2_12 qkv_gate m=1: candidate b12_kernel<16,8192,6,2,4> R=16 (inst 2) [chosen b12_kernel<16,8192,6,2,4> read 0.960 (9.18 vs 9.57 us), write 0.882 (11.94 vs 13.54 us); route at read <= 0.98]
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,8> R=64 grid 128: read 0.938 (4.38 / 4.67 us) write 0.866 (5.79 / 6.69 us)
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,4> R=64 grid 128: read 0.966 (4.54 / 4.70 us) write 0.879 (5.82 / 6.62 us)
+  PATH CHOSEN A3_12 o m=1: candidate b12_kernel<64,1024,8,1,8> R=64 (inst 4) [chosen b12_kernel<64,1024,8,1,8> read 0.938 (4.38 vs 4.67 us), write 0.866 (5.79 vs 6.69 us); route at read <= 0.98]
+  PATH CHOSEN B qkv_gate m=128: candidate (cand 17.82 us vs master 19.46 us)
+  PATH CHOSEN K pooler m=128: master (NN torch.mm) [read-flush gate, r1 master/cand 1.052 (net 22.75 / 21.63 us; med 28.10 / 26.98 us, IQR 0.64 / 1.15, base 5.34); r2 master/cand 1.041 (net 22.62 / 21.73 us; med 27.97 / 27.07 us, IQR 0.45 / 0.77, base 5.34)]; gate: cand IQR > 1.5x master IQR in some round
+[dg] DG [build-time] 23.8 s wall (state build 5 s / module clock 180 s at start), 8/8 instantiations, sass sm_90a
+[dg] DG variants (regs/spill): v0 pool 64x128 248/0, v1 unpo 128x64 168/0, v2 unpo 64x128 248/0, v3 unpo 128x128 168/0, v4 qkv_ 64x64 248/0, v5 qkv_ 64x96 248/0, v6 qkv_ 64x80 248/0, v7 qkv_ 64x112 248/0
+[dg] CELL pooler m=256: v0 64x128 stg8 regs248 spill0 | pre inc 28.74us 598TF 2.55TB/s | v0 64x128 30.24us 568TF 2.43TB/s x0.950 (base 5.54us) | gate 0.913/0.923 (net 30.27v27.65/30.24v27.90 us) | PATH CHOSEN master (gate master/cand 0.913/0.923 (net 30.27v27.65/30.24v27.90 us) not all >= 1.03) | inc kernels nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT
+[dg] CELL qkv_gate m=256: v6 64x80 stg9 regs248 spill0 | pre inc 17.86us 541TF 2.42TB/s | v4 64x64 38.05us 254TF 1.13TB/s x0.469 | v6 64x80 23.10us 418TF 1.87TB/s x0.773 | v5 64x96 25.25us 383TF 1.71TB/s x0.707 | v7 64x112 27.81us 348TF 1.55TB/s x0.642 (base 5.54us) | gate 0.774/0.777 (net 23.04v17.82/23.07v17.92 us) | PATH CHOSEN master (gate master/cand 0.774/0.777 (net 23.04v17.82/23.07v17.92 us) not all >= 1.03) | inc kernels nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN
+[dg] CELL unpooler m=128: v1 128x64 stg8 regs168 spill0 | pre inc 17.86us 481TF 3.93TB/s | v1 128x64 18.66us 460TF 3.77TB/s x0.957 | v2 64x128 18.85us 456TF 3.73TB/s x0.947 (base 5.41us) | gate 0.935/0.939 (net 18.82v17.60/18.82v17.66 us) | PATH CHOSEN master (gate master/cand 0.935/0.939 (net 18.82v17.60/18.82v17.66 us) not all >= 1.03) | inc kernels nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT
+[dg] CELL unpooler m=256: v3 128x128 stg5 regs168 spill0 | pre inc 22.75us 755TF 3.23TB/s | v3 128x128 22.69us 757TF 3.24TB/s x1.003 | v1 128x64 26.11us 658TF 2.81TB/s x0.871 | v2 64x128 30.88us 556TF 2.38TB/s x0.737 (base 5.63us) | gate 0.987/0.992 (net 22.78v22.50/22.78v22.59 us) | PATH CHOSEN master (gate master/cand 0.987/0.992 (net 22.78v22.50/22.78v22.59 us) not all >= 1.03) | inc kernels nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT
+[dg] FINAL dg_pooler_256_ok=False dg_qkv_gate_256_ok=False dg_unpooler_128_ok=False dg_unpooler_256_ok=False

@@ -65,10 +65,10 @@ prior: "bf16-verify-deepgemm-sm90-explicit-instantiation-stage2: it was VOID (no
 rewrite_stage: 3
 replaces: cuBLAS nvjet at m=128/256 for qkv_gate (Lt 40x64 15.7 us at m=128; 96x64 2x4 TNN 19.6 us at m=256), pooler m=256 (NN 128x64 29.0 us) and unpooler (NN 128x64 19.1 us at m=128; 128x128 TNT 24.7 us at m=256)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T133822Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T133822Z
 base_sha: 0dc50d0a5d027659c02f0e6a45778fa2662139e4
 base_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
@@ -87,6 +87,13 @@ attempt_file: 2026-10-27T140051Z-check-bf16-verify-deepgemm-sm90-s3-tparam-alias
 prepared_at: 2026-10-27T140051Z
 job: 6407497bec88470e
 dispatched_at: 2026-10-27T140119Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.274087889871094
+speedup_ci: [1.2549765715230274, 1.2931992082191601]
+harvested_at: 2026-10-27T140553Z
+best_at_harvest: 1.273478298751914
+promotion: null
 ---
 
 # bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
@@ -308,3 +315,54 @@ Other checks:
 - **Below the tile-count rule.** qkv 64x64 at m=256 (144 tiles, 2 waves, 0.55 fill) and 64x112 (84 tiles, 0.64) are under the ~0.7 rule. They are included because the caller listed them explicitly, and the pre-screen decides.
 - **Local-bytes rejection.** `localSizeBytes > 0` rejects a stack frame as well as a spill. That is stricter than "spill > 0", as the review asked.
 - **Build time.** Unknown: 8 instantiations, about 3 per module, the modules in parallel. A failed or rejected build is printed and keeps master; it is not VOID-silent.
+
+## Result
+
+- job `6407497bec88470e` (check), status done, passed True, tests 9/9
+- speedup 1.2741x, 95% CI [1.2550, 1.2932], score 3791.5751640090994 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.273478298751914, "ci": [1.2543761242706353, 1.2925804732331925], "job": "bc147c5b87bc465d"}; base result: muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-explicit-instantiation-stage2.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush.result.json`, `muse_bf16_proj/hypotheses/done/neutral/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush.patch`; branch `hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.94 | 10.59 | 1.0233 | flat |
+| layer=o load=decode_1 m=1 | 62 | 6.19 | 5.95 | 1.0092 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 17.47 | 14.62 | 1.176 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 5.03 | 5.05 | 0.951 | lost |
+| layer=router load=decode_1 m=1 | 62 | 4.86 | 5.1 | 0.9494 | lost |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.81 | 13.14 | 0.9983 | flat |
+| layer=o load=decode_16 m=16 | 62 | 5.78 | 6.11 | 0.9646 | lost |
+| layer=pooler load=decode_16 m=16 | 62 | 19.11 | 19.46 | 0.9674 | lost |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.27 | 18.54 | 0.9783 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.56 | 5.68 | 0.9758 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.82 | 14.12 | 0.9898 | flat |
+| layer=o load=decode_32 m=32 | 62 | 6.61 | 6.6 | 0.9599 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.6 | 19.9 | 0.9726 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.2 | 17.98 | 0.9825 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.79 | 6.1 | 0.9797 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.79 | 12.58 | 0.9996 | flat |
+| layer=o load=verify_1 m=8 | 62 | 6.07 | 5.89 | 1.0253 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 18.75 | 19.05 | 0.9719 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.26 | 5.29 | 1.0089 | flat |
+| layer=router load=verify_1 m=8 | 62 | 5.11 | 5.08 | 1.0139 | flat |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.27 | 15.49 | 1.07 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.32 | 7.33 | 1.0301 | gained |
+| layer=pooler load=verify_16 m=128 | 62 | 22.8 | 23.06 | 1.0336 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.77 | 18.85 | 0.9877 | flat |
+| layer=router load=verify_16 m=128 | 62 | 7.68 | 7.39 | 1.0499 | gained |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.68 | 19.3 | 1.0236 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.25 | 9.11 | 1.0239 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.03 | 28.8 | 1.0073 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 23.99 | 23.77 | 1.0187 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.41 | 8.99 | 1.0396 | gained |
+
+gained on pooler decode_1, verify_16; qkv_gate verify_16; o verify_16; router verify_16, verify_32; lost on unpooler decode_1; router decode_1; o decode_16, decode_32; pooler decode_16. Expected hit: 1/6. Noise ±1.5%.
+
+## Follow-ups
+
+- rewrite stage 3 of `cuBLAS nvjet at m=128/256 for qkv_gate (Lt 40x64 15.7 us at m=128; 96x64 2x4 TNN 19.6 us at m=256), pooler m=256 (NN 128x64 29.0 us) and unpooler (NN 128x64 19.1 us at m=128; 128x128 TNT 24.7 us at m=256)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milestone it reached. The next stage is `/hypothesize muse_bf16_proj "<what to fix or tune>" --kind rewrite --depends-on bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush --stage 4`; a slow or failed first cut is the expected start, not a do-not-retry.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
