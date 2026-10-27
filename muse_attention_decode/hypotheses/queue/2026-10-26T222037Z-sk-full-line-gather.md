@@ -49,7 +49,8 @@ kind: primary
 controls_for: null
 prior: "splitkv-full-line-gather-mapping: same remap, but that run changed stage-1 kernel A, which the stream-K kernel replaced before it could land (splitkv_attn_sk_kernel kept the half-line mapping); A's profile time fell 111.8->106.5 us (B=16) and 245.9->210.4 us (B=32). This ports it to the stream-K kernel on the v3chain base."
 review: required
-status: queued
+status: hold
+hold_reason: "stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)"
 ---
 
 # sk-full-line-gather
