@@ -750,3 +750,4 @@ append-only, newest last.
   open. The ring does not bind. **VERDICT-N (forced N, INEXACT): hot T=128 102.5 -> 69.7 us at N64, T=256 160.1 -> 135.1
   us**, so N=64 hot tiles may be the big-T lever (exact-N buckets, panel P1 L3). This is a wave-5 candidate.
 - 0347Z: wave 5 launched: workflow wf_df13b9f4-24c, exact N=64 / exact-N-bucket wgmma hot tiles for both hybrids (base 75bb6bf8, campaign/eb-w5-n64). Design and judge at max, build and audit at high. The judge may downgrade it to a diagnostic if N64 is not reachable exactly.
+- 0357Z: attention scored 276ff0cda0404ef2 (c320 onepass): **1.6095**, the new board (rank 399). Landed on master; BEST.json registered.
