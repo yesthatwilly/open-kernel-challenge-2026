@@ -752,3 +752,7 @@ append-only, newest last.
 - 0347Z: wave 5 launched: workflow wf_df13b9f4-24c, exact N=64 / exact-N-bucket wgmma hot tiles for both hybrids (base 75bb6bf8, campaign/eb-w5-n64). Design and judge at max, build and audit at high. The judge may downgrade it to a diagnostic if N64 is not reachable exactly.
 - 0357Z: attention scored 276ff0cda0404ef2 (c320 onepass): **1.6095**, the new board (rank 399). Landed on master; BEST.json registered.
 - 0404Z: attention s2b check af08448e: **1.6247**. B=2..16 routed the PDL merge (x1.14 / x1.15; merge +2.9 us); B=17..32 just missed (x1.050 / x1.047). **Scored run a76ee9b03a9f4db4.** Phase-C idea: a B=17..32 bar of 1.03 with the IQR bound.
+- 0407Z: decode scored 973509eb (W3-A full-line): 1.5272, below the 1.5441 board (rank now 334 through others'
+  gains). The b12p + fix bytes have scored 1.5276-1.5441 across runs, so 1.5441 was likely a high draw. The d32f row gain
+  (x1.077) is real. Not re-rolled; W3-A rides wave 4's decode build, and the next decode scored run should stack W3-A +
+  c320 (+ N64 if it lands).
