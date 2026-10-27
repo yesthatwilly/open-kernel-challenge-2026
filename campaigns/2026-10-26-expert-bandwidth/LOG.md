@@ -1020,3 +1020,11 @@ append-only, newest last.
 - 1211Z: moe fsilu-eb check c91cfb6a: **1.7153**, neutral (rows x0.99-1.01). moe T=128 runs Marlin; M=256 hybrid
   race -1%. campaign/expert-bandwidth fast-forwarded to eb-fsilu; the change rides decode's next check.
 - 1213Z: minted bf16 khalf-gate-three-rounds-pooled (3 rounds, every round >= 1.01, median >= 1.03): c65ffcb6 lost khalf on r1 1.025 (r2 1.054), costing bf16 ~1.8% in that run. Review running. Prefill has no other accurate-math epilogue (Triton elsewhere).
+- CORRECTION (khalf review, 2026-10-27): two of my bf16 statements above were wrong.
+  - The 1.2735 board run bc147c5b did not route khalf itself.
+  - c65ffcb6's drop (1.2507) was drift: every load fell 1.7-3.6%. It was not a khalf gate miss.
+  - Both observed khalf misses failed the per-round IQR rule (41-rep IQRs, ~25-30% relative error), not the ratio rule.
+  - khalf is worth ~0.27% headline.
+  - khalf-gate-three-rounds-pooled is **held**. Its queued control companion (a 10-round gate diagnostic: old vs
+    parent vs pooled-IQR rules on the same data) is a phase-C candidate.
+- 1217Z: decode check **f2aece517e8543e1**: the campaign HEAD stack (W6-B + PERHEAD + c320t bar + fork code + fast silu; 971,620 bytes). It asks whether fast silu moves decode's T>=128 rows, and is a scored candidate if it beats 1.5697. Decode: 4 checks / 2 scored after this.
