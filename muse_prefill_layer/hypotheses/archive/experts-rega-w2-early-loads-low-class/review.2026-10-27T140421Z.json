@@ -1,0 +1,22 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Proceed with no companions. The parent's interleaved in-prepare gate measured arm a at the low class at x0.971-0.981 in all 8 rounds, bit-exact on every routing. The review that made low print-only called it HBM-bound on an arithmetic error: low w2 runs at ~2 TB/s (~42% of peak). The expected headline gain is ~0.15%, unreadable in one run; the evidence is the [rega-w2st] low GATE line plus the PATH CHOSEN line showing low routed with which=1.",
+ "justification": "Arm a hoists gsc and the sorted_ids loads ahead of the k loop and serves the route id from the staging tile's pad column. Low class: ~2048 w2 items over 132 CTAs (~15 per CTA at ~10 us); saving ~0.25 us per item matches 164.8 -> 161.0 us cold and 156.7 -> 153.2 us warm on pop:1. Arm b (sharing the early loads) also measured x0.976-0.979 at low, so the gain is the early loads. The parent review's 604 MB is w13's byte count; w2 at low is ~300 MB in 149.9 us (2.01 TB/s) vs a 63 us floor: latency/consumer-bound. FINDINGS: rega_kernel<false,false> is 159.3 us (19.9%) of turn_1 sliding, matching the gate's pop:1 master w2. Expected ~0.46% of turn_1, ~0.15% headline; turn_4 / first_turn flat. Weakest link: the low gate margin is ~0.9% on one routing family, and routing depends on rega_low_variant == 0 (a borderline separate gate). Scored w2 rows are not readable (same-code jobs differ 1.4-14%), and without the SB template arm a's kernel name equals master's, so only PATH CHOSEN attributes it.",
+ "confounders": [
+  "experts-rega-w13-fast-silu-epilogue: arm a lives in the fsilu module; w2st is OFF if rega_fsilu_ext is None; check fsilu's PATH CHOSEN first.",
+  "rega-lo V64/V32 variants: arm a applies only at rega_low_variant == 0 (guard 1.033 borderline); read the [rega-lo] PATH CHOSEN line first.",
+  "align-two-phase-all-t-rega: produces the sorted_ids arm a preloads; exactness passed on all routings.",
+  "experts-turn-rega-s4-port-t4096: the 4-stage ring decides how much epilogue is hidden.",
+  "stack-tonight-five-prefill (zero_nonlocal_w2): arm a keeps the sid skip predicate; torch.equal with the sentinel covers unwritten rows."
+ ],
+ "interference": "No companion: the same-process interleaved gate is the evidence. Build notes: (1) at low also time a heavier-skew guard routing (rega-lo's alpha 2.2, ~1356 routes) and require arm/master <= 1.0 there; (2) print low's which/ok next to rega_low_variant in PATH CHOSEN; (3) whichever of this, experts-rega-epilogue-wg-local-bulk-store and experts-rega-epilogue-overlap-next-stage lands second must re-gate against the other; experts-rega-low-2cta-fullslab-mc2 would replace the low kernel.",
+ "rules_flags": [],
+ "companions": [],
+ "open_questions": [
+  "Without arm b / SB, does the profile distinguish arm a's kernel from master's (same name, different module)?",
+  "Is the rega-lo variant gate stable at variant 0 run to run?",
+  "Which load is judge-like at turn_1: fsilu's pop:1 (~760 routes) or rega-lo's ~1350? Cover both.",
+  "Dropping arm b changes the module hash (a fresh ~33 s build); confirm the deadline holds."
+ ]
+}
