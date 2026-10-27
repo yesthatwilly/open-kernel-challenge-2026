@@ -34,10 +34,10 @@ kind: primary
 controls_for: null
 prior: "sk-ticket-merge-onepass: the same twins; its verify B=1 and sliding decode cells were never timed because the incumbent failed the timing-data check (a harness bug in the [op] phase's timing inputs), so the mechanism there is untested"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T143715Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T143715Z
 base_sha: 6c6219d272efce7c7cfb16581e6a5b87ab96f188
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -56,6 +56,13 @@ attempt_file: 2026-10-27T143947Z-check-sk-onepass-verify1-timing-fix.md
 prepared_at: 2026-10-27T143947Z
 job: bfb0457c9ae84322
 dispatched_at: 2026-10-27T144003Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.6219396882066044
+speedup_ci: [1.5976105928835054, 1.6516121269561428]
+harvested_at: 2026-10-27T145256Z
+best_at_harvest: 1.6339575246416982
+promotion: null
 ---
 
 # sk-onepass-verify1-timing-fix
@@ -168,3 +175,35 @@ lint rc=0, 0 errors
 ```
 
 `python3 -I -m py_compile`: ok, and I removed the `__pycache__` it created in the worktree.
+
+## Result
+
+- job `bfb0457c9ae84322` (check), status done, passed True, tests 16/16
+- speedup 1.6219x, 95% CI [1.5976, 1.6516], score 2322.096208253241 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.6339575246416982, "ci": [1.6094481617720726, 1.6584668875113235], "job": "4e386647edd845f7"}; base result: SGLang (no base result)
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/sk-onepass-verify1-timing-fix.result.json`, `muse_attention_decode/hypotheses/done/neutral/sk-onepass-verify1-timing-fix.patch`; branch `hyp/muse_attention_decode/sk-onepass-verify1-timing-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 20.22 | 10.88 | 1.8591 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 31.66 | 15.55 | 2.0369 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 26.85 | 15.18 | 1.7684 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 200.85 | 104.34 | 1.925 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 31.5 | 17.25 | 1.8261 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 385.17 | 189.52 | 2.0323 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 22.77 | 12.79 | 1.7805 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 35.76 | 29.75 | 1.2022 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 29.28 | 20.1 | 1.4566 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 205.54 | 164.02 | 1.2531 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 34.43 | 27.93 | 1.233 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 391.3 | 303.51 | 1.2892 | gained |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 0/3. Noise ±1.7%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sk-onepass-verify1-timing-fix`) that adds a further change in the same area is the only way to learn more.
+

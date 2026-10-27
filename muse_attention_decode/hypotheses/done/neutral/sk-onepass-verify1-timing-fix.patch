@@ -1,0 +1,757 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 2eb03f76..21166a14 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -1021,6 +1021,8 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
+                 torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t attn_grid, double eps);
+ std::vector<int64_t> sk_attrs(int64_t variant);
++void sk_merge_test(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor s_lo, torch::Tensor s_hi, torch::Tensor o1,
++                   torch::Tensor l1, torch::Tensor m1, torch::Tensor o2, torch::Tensor l2, torch::Tensor m2, int64_t mb);
+ """
+ 
+ _SK_CUDA = r"""
+@@ -1193,6 +1195,55 @@ __device__ __forceinline__ void merge_slots(const float* ws_acc, const float* ws
+   float M;
+   merge_range(ws_acc, ws_ml, c_lo + b, c_hi + b, h, d0, o, L, M);
+ }
++// ONEPASS (sk-ticket-merge-onepass): the same LSE merge in ONE pass over slots s_lo..s_hi, MB slots per batch.
++// Every load of a batch (m, l, the float4 of acc; __ldcg, other CTAs wrote them) is issued before any use; a
++// slot past s_hi reads as m = -inf, l = 0, a = 0. Then an online LSE fold in registers, the -inf handling of
++// c320 ONEPASS exactly: Mn = max(M, max_u m_u), Mnu = (Mn == -inf) ? 0 : Mn, alpha = (M == -inf) ? 0 :
++// ex2(M - Mnu) rescales L and o once per batch, w_u = (m_u == -inf) ? 0 : ex2(m_u - Mnu). o and L end relative
++// to the final raw M (Mout; -inf with L = 0, o = 0 when every slot is empty), as merge_range's are, so a
++// two-level group slot stored from it keeps its meaning. Same fp32 arithmetic up to summation order.
++template <int MB>
++__device__ __forceinline__ void merge_range_onepass(const float* ws_acc, const float* ws_ml, int s_lo, int s_hi,
++                                                    int h, int d0, float4& o, float& L, float& Mout) {
++  const float NEG_INF = __int_as_float(0xff800000u);
++  float M = NEG_INF;
++  o = make_float4(0.f, 0.f, 0.f, 0.f);
++  L = 0.f;
++  for (int c0 = s_lo; c0 <= s_hi; c0 += MB) {
++    float mv[MB], lv[MB];
++    float4 av[MB];
++#pragma unroll
++    for (int u = 0; u < MB; ++u) {  // every load of the batch before any use
++      const int c = c0 + u;
++      if (c <= s_hi) {
++        const int64_t sl = c;
++        mv[u] = __ldcg(ws_ml + sl * 2 * HQ + h);
++        lv[u] = __ldcg(ws_ml + sl * 2 * HQ + HQ + h);
++        av[u] = __ldcg(reinterpret_cast<const float4*>(ws_acc + (sl * HQ + h) * D + d0));
++      } else {
++        mv[u] = NEG_INF;
++        lv[u] = 0.f;
++        av[u] = make_float4(0.f, 0.f, 0.f, 0.f);
++      }
++    }
++    float gm = mv[0];
++#pragma unroll
++    for (int u = 1; u < MB; ++u) gm = fmaxf(gm, mv[u]);
++    const float Mn = fmaxf(M, gm);
++    const float Mnu = Mn == NEG_INF ? 0.f : Mn;
++    const float alpha = M == NEG_INF ? 0.f : ex2(M - Mnu);  // L and o are 0 while M is -inf
++    L *= alpha;
++    o.x *= alpha; o.y *= alpha; o.z *= alpha; o.w *= alpha;
++#pragma unroll
++    for (int u = 0; u < MB; ++u) {
++      const float wt = mv[u] == NEG_INF ? 0.f : ex2(mv[u] - Mnu);  // empty / absent slots weigh 0
++      L += wt * lv[u];
++      o.x += wt * av[u].x; o.y += wt * av[u].y; o.z += wt * av[u].z; o.w += wt * av[u].w;
++    }
++    M = Mn;
++  }
++  Mout = M;
++}
+ 
+ // Release/acquire ticket draw (two-level path): the CTA's partial stores are ordered before the
+ // increment (acq_rel at gpu scope, on top of the caller's __threadfence + __syncthreads), and the
+@@ -1234,7 +1285,9 @@ __device__ __forceinline__ void finalize_store(float4 o, float L, float vs, int
+ // cache_seqlens [B]; ws / ticket / group slots are sized for R. PSEUDO = false is the landed kernel.
+ // TOK = 1 (sliding decode, q_len 1): R = B, row r = request r, sp_r = cache_seqlens[r] (the new key
+ // included), page-table row r. TOK = 8 compiles exactly as before (only constants changed spelling).
+-template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = false, int TOK = 8>
++// ONEPASS (sk-ticket-merge-onepass): 0 = the two-pass merge_range at every merge site (variants 0-7, unchanged);
++// MB > 0 = merge_range_onepass<MB> at every merge site (the twins 8-11). Nothing else depends on it.
++template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = false, int TOK = 8, int ONEPASS = 0>
+ __global__ void __launch_bounds__(THREADS, 2)
+ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
+                        const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
+@@ -1522,7 +1575,10 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+             __threadfence();  // acquire: every group member's partial is visible
+             float4 om;
+             float Lm, Mm;
+-            merge_range(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
++            if constexpr (ONEPASS > 0)
++              merge_range_onepass<ONEPASS>(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
++            else
++              merge_range(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
+             if (tid == 0) gticket[c_b * 32 + gi] = 0;  // all members arrived: clean for the next launch
+             if (ngrp == 1) {
+               finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
+@@ -1538,7 +1594,10 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+                 __threadfence();  // acquire
+                 float4 of;
+                 float Lf, Mf;
+-                merge_range(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
++                if constexpr (ONEPASS > 0)
++                  merge_range_onepass<ONEPASS>(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
++                else
++                  merge_range(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
+                 finalize_store(of, Lf, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
+                 if (tid == 0) ticket[c_b] = 0;  // every group has arrived: clean for the next launch
+               }
+@@ -1555,7 +1614,12 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
+             __threadfence();
+             float4 om;
+             float Lm;
+-            merge_slots(ws_acc, ws_ml, c_b, c_lo, c_hi, h, d0, om, Lm);
++            if constexpr (ONEPASS > 0) {
++              float Mm;
++              merge_range_onepass<ONEPASS>(ws_acc, ws_ml, c_lo + c_b, c_hi + c_b, h, d0, om, Lm, Mm);
++            } else {
++              merge_slots(ws_acc, ws_ml, c_b, c_lo, c_hi, h, d0, om, Lm);
++            }
+             finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
+             if (tid == 0) ticket[c_b] = 0;  // every segment has arrived: clean for the next launch
+           }
+@@ -1591,26 +1655,69 @@ using SkFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*
+                       const float*, const float*, float, const __nv_bfloat16*, int64_t, __nv_bfloat16*,
+                       float*, float*, int*, int*, float*, float*, float);
+ 
++// Merge unit test (sk-ticket-merge-onepass canary, prepare-time only): block i merges slots s_lo[i]..s_hi[i] of
++// a crafted workspace with merge_range (two-pass) and with merge_range_onepass<MB>, writing both results
++// (o [cases, HQ, D], L / M [cases, HQ]) so the host can compare them, -inf slots included.
++template <int MB>
++__global__ void __launch_bounds__(THREADS)
++sk_merge_test_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml, const int* __restrict__ s_lo,
++                     const int* __restrict__ s_hi, float* __restrict__ o1, float* __restrict__ l1,
++                     float* __restrict__ m1, float* __restrict__ o2, float* __restrict__ l2, float* __restrict__ m2) {
++  const int i = blockIdx.x;
++  const int h = threadIdx.x >> 4, d0 = (threadIdx.x & 15) * 4;
++  float4 oa, ob;
++  float La, Ma, Lb, Mb;
++  merge_range(ws_acc, ws_ml, s_lo[i], s_hi[i], h, d0, oa, La, Ma);
++  merge_range_onepass<MB>(ws_acc, ws_ml, s_lo[i], s_hi[i], h, d0, ob, Lb, Mb);
++  *reinterpret_cast<float4*>(o1 + ((int64_t)i * HQ + h) * D + d0) = oa;
++  *reinterpret_cast<float4*>(o2 + ((int64_t)i * HQ + h) * D + d0) = ob;
++  if ((threadIdx.x & 15) == 0) { l1[i * HQ + h] = La; m1[i * HQ + h] = Ma; l2[i * HQ + h] = Lb; m2[i * HQ + h] = Mb; }
++}
++
++// The explicit per-variant table (sk-ticket-merge-onepass): {pseudo, tok, two-level}. Variants 0-7 read exactly
++// what the former inferences gave (pseudo = v >= 4, tok = v >= 6 ? 1 : 8, two = v in {3, 5, 7}); the twins
++// 8 = <4, ticket, ONEPASS 8> (non-PSEUDO, in both builds), 9 = <4, ticket, PSEUDO, TOK 8, ONEPASS 8>,
++// 10 = <4, ticket, PSEUDO, TOK 1, ONEPASS 8>, 11 = <4, ticket, PSEUDO, TOK 8, ONEPASS 4> (readout only).
++constexpr int SK_NV = 12;
++constexpr bool SK_V_PSEUDO[SK_NV] = {false, false, false, false, true, true, true, true, false, true, true, true};
++constexpr int SK_V_TOK[SK_NV] = {8, 8, 8, 8, 8, 8, 1, 1, 8, 8, 1, 8};
++constexpr bool SK_V_TWO[SK_NV] = {false, false, false, true, false, true, false, true, false, false, false, false};
++// Instantiated in this build: 0-3 and 8 always, 4-7 and 9-11 only with SK_PSEUDO.
++bool sk_has(int64_t v) {
++  if (v < 0 || v >= SK_NV) return false;
++  if (v <= SK_MAX_VARIANT) return true;
++  if (v == 8) return true;
++#ifdef SK_PSEUDO
++  return true;
++#else
++  return false;
++#endif
++}
++
+ SkFn sk_pick(int64_t v) {
+ #ifdef SK_PSEUDO
+   if (v == 4) return splitkv_attn_sk_kernel<4, true, false, true>;
+   if (v == 5) return splitkv_attn_sk_kernel<4, true, true, true>;
+   if (v == 6) return splitkv_attn_sk_kernel<4, true, false, true, 1>;
+   if (v == 7) return splitkv_attn_sk_kernel<4, true, true, true, 1>;
++  if (v == 9) return splitkv_attn_sk_kernel<4, true, false, true, 8, 8>;
++  if (v == 10) return splitkv_attn_sk_kernel<4, true, false, true, 1, 8>;
++  if (v == 11) return splitkv_attn_sk_kernel<4, true, false, true, 8, 4>;
+ #endif
++  if (v == 8) return splitkv_attn_sk_kernel<4, true, false, false, 8, 8>;
+   if (v == 3) return splitkv_attn_sk_kernel<4, true, true>;
+   if (v == 1) return splitkv_attn_sk_kernel<4, false>;
+   if (v == 2) return splitkv_attn_sk_kernel<5, true>;
+   return splitkv_attn_sk_kernel<4, true>;
+ }
+ // variant 3 = <4, ticket, two-level>; 4 / 5 = the PSEUDO single-level / two-level ticket kernels (TOK 8, verify);
+-// 6 / 7 = the same with TOK 1 (sliding decode)
++// 6 / 7 = the same with TOK 1 (sliding decode); 8-11 the ONEPASS twins (table above)
+ int sk_smem(int64_t v) {
+-  if (v >= 4) return Lay<4, PS_MAXR, true>::BYTES;
++  if (SK_V_PSEUDO[v]) return Lay<4, PS_MAXR, true>::BYTES;
+   return v == 2 ? Lay<5>::BYTES : Lay<4>::BYTES;
+ }
+ void sk_prepare(int64_t v) {
+-  static bool done[8] = {false, false, false, false, false, false, false, false};  // no device state
++  static bool done[SK_NV] = {};  // no device state
+   if (!done[v]) {
+     C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sk_pick(v)),
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, sk_smem(v)));
+@@ -1626,12 +1733,12 @@ void sk_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torc
+              torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
+              double score_scale, double eps, int64_t grid, int64_t variant) {
+   const int B = static_cast<int>(cache_seqlens.size(0));
+-  TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attn: variant");
+-  const bool pseudo = variant >= 4;
+-  const int tok = variant >= 6 ? 1 : 8;  // rows per request: 8 (verify pseudo-rows) or 1 (decode)
++  TORCH_CHECK(sk_has(variant), "sk_attn: variant");
++  const bool pseudo = SK_V_PSEUDO[variant];
++  const int tok = SK_V_TOK[variant];  // rows per request: 8 (verify pseudo-rows) or 1 (decode)
+   const int R = pseudo ? B * tok : B;  // rows of the tile space (pseudo-rows for verify)
+   TORCH_CHECK(B >= 1 && B <= (pseudo ? PS_MAXR / tok : MAXB), "sk_attn: batch out of range");
+-  if (variant == 3 || variant == 5 || variant == 7) {
++  if (SK_V_TWO[variant]) {
+     TORCH_CHECK(grid <= 1024, "sk_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
+     TORCH_CHECK(gticket.numel() >= R * 32 && gticket.scalar_type() == at::kInt, "sk_attn: gticket");
+     TORCH_CHECK(gacc.size(0) >= R * 32 && gml.size(0) >= R * 32 && gacc.scalar_type() == at::kFloat
+@@ -1671,7 +1778,7 @@ void sk_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_s
+ 
+ // {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
+ std::vector<int64_t> sk_attrs(int64_t variant) {
+-  TORCH_CHECK(variant >= 0 && variant <= SK_MAX_VARIANT, "sk_attrs: variant");
++  TORCH_CHECK(sk_has(variant), "sk_attrs: variant");
+   sk_prepare(variant);
+   cudaFuncAttributes a;
+   C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sk_pick(variant))));
+@@ -1681,13 +1788,38 @@ std::vector<int64_t> sk_attrs(int64_t variant) {
+           static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.maxThreadsPerBlock),
+           static_cast<int64_t>(sk_smem(variant)), static_cast<int64_t>(occ)};
+ }
++
++// The merge unit test: cases = s_lo.numel(), MB 8 or 4. Prepare-time only.
++void sk_merge_test(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor s_lo, torch::Tensor s_hi, torch::Tensor o1,
++                   torch::Tensor l1, torch::Tensor m1, torch::Tensor o2, torch::Tensor l2, torch::Tensor m2, int64_t mb) {
++  const int n = static_cast<int>(s_lo.numel());
++  TORCH_CHECK(n >= 1 && s_hi.numel() == n && (mb == 8 || mb == 4), "sk_merge_test: args");
++  auto stream = at::cuda::getCurrentCUDAStream();
++  if (mb == 8) {
++    sk_merge_test_kernel<8><<<n, THREADS, 0, stream>>>(
++        ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), s_lo.data_ptr<int>(), s_hi.data_ptr<int>(),
++        o1.data_ptr<float>(), l1.data_ptr<float>(), m1.data_ptr<float>(), o2.data_ptr<float>(), l2.data_ptr<float>(),
++        m2.data_ptr<float>());
++  } else {
++    sk_merge_test_kernel<4><<<n, THREADS, 0, stream>>>(
++        ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), s_lo.data_ptr<int>(), s_hi.data_ptr<int>(),
++        o1.data_ptr<float>(), l1.data_ptr<float>(), m1.data_ptr<float>(), o2.data_ptr<float>(), l2.data_ptr<float>(),
++        m2.data_ptr<float>());
++  }
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
+ """
+ 
+ _SK_LABELS = ("<4 stages, ticket>", "<4 stages, no ticket>", "<5 stages, ticket>", "<4 stages, two-level ticket>",
+               "<4 stages, ticket, PSEUDO>", "<4 stages, two-level ticket, PSEUDO>",
+-              "<4 stages, ticket, PSEUDO TOK=1>", "<4 stages, two-level ticket, PSEUDO TOK=1>")
++              "<4 stages, ticket, PSEUDO TOK=1>", "<4 stages, two-level ticket, PSEUDO TOK=1>",
++              "<4 stages, ticket, ONEPASS 8>", "<4 stages, ticket, PSEUDO, ONEPASS 8>",
++              "<4 stages, ticket, PSEUDO TOK=1, ONEPASS 8>", "<4 stages, ticket, PSEUDO, ONEPASS 4>")
+ _EXT2 = None       # the stage-2 module; None keeps stage 1 (A + B) on the gated path
+-_SK_VARIANT = 0    # the timed path: 4 stages + ticket (fixed; the diagnostics call the module directly)
++# The timed full-decode 1 < B <= 64 variant per band (_fused_band: 2 = B=2..16, 3 = B=17..64), import-frozen:
++# 0 = 4 stages + ticket (master); twin 8 (ONEPASS) is compiled but not gated in this restack, so 0 stays
++# (the diagnostics call the module directly).
++_SK_VARIANT = MappingProxyType({2: 0, 3: 0})
+ _SK_ARCH_FLAGS = None
+ _TICKETS = {}
+ 
+@@ -1696,7 +1828,12 @@ _PATH_LINES = []   # every PATH CHOSEN line, re-printed at the end of import so
+ _SK_GATHER = "half-line (incumbent)"  # the K/V copy mapping of the live stage-2 module (_EXT2)
+ 
+ 
++_SAY_MUTE = False  # sk-ticket-merge-onepass: True only around its replay checks (keeps the 16 KB log tail compact)
++
++
+ def _say(msg: str) -> None:
++    if _SAY_MUTE and "PATH CHOSEN" not in msg:
++        return
+     print(msg, flush=True)
+     if "PATH CHOSEN" in msg:
+         _PATH_LINES.append(msg)
+@@ -1751,7 +1888,7 @@ def _build_sk_one(pseudo: bool, full: bool = False):
+             name=name,
+             cpp_sources=_SK_CPP,
+             cuda_sources=_SK_CUDA,
+-            functions=["sk_attn", "sk_combine", "sk_attrs"],
++            functions=["sk_attn", "sk_combine", "sk_attrs", "sk_merge_test"],
+             extra_cuda_cflags=flags,
+             verbose=False,
+         )
+@@ -1764,6 +1901,10 @@ def _build_sk_one(pseudo: bool, full: bool = False):
+         else:
+             os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+     _say(f"[sk] load_inline ({name}) compiled in {time.perf_counter() - t0:.1f}s")
++    # sk-ticket-merge-onepass: the build-time cost of the twins, for comparison with master's line above (same name).
++    _say(f"[sk] compiled-in {time.perf_counter() - t0:.1f}s ({name}): {12 if pseudo else 5} stream-K instantiations "
++         f"(master {8 if pseudo else 4}; + ONEPASS twins {'8, 9, 10, 11' if pseudo else '8'}) + 2 merge-test kernels; "
++         f"import clock {time.perf_counter() - _IMPORT_T0:.0f} s")
+     return ext
+ 
+ 
+@@ -1814,8 +1955,9 @@ def _full_decode_sk(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.T
+         out, _, _ = _sk_launch(data, q, qkv, 3, _SPLITKV_GRID or sms)
+         return out
+     grid = _SPLITKV_GRID or 2 * sms
+-    out, ws_acc, ws_ml = _sk_launch(data, q, qkv, _SK_VARIANT, grid)
+-    if _SK_VARIANT == 1:
++    variant = _SK_VARIANT[_fused_band(data["config"]["batch"])]  # frozen per-band table, config-only
++    out, ws_acc, ws_ml = _sk_launch(data, q, qkv, variant, grid)
++    if variant == 1:
+         _sk_combine(data, qkv, out, ws_acc, ws_ml, grid)
+     return out
+ 
+@@ -9407,6 +9549,441 @@ def _sw_setup() -> None:
+ 
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# sk-ticket-merge-onepass (log tag [op]): the stream-K ticket winner's slot merge in ONE batched pass
++# (merge_range_onepass<8>) instead of merge_range's two dependent runtime-bounded passes, as the twins
++# 8 = <4, ticket, ONEPASS 8> (full decode 1 < B <= 64), 9 = <4, ticket, PSEUDO, ONEPASS 8> (sliding verify B=1) and
++# 10 = <4, ticket, PSEUDO TOK=1, ONEPASS 8> (sliding decode B=17..32); 11 = the variant-9 twin with MB 4 (printed
++# readout only, never routed). Runs LAST (after _sw_setup, so after _ps_setup, _skf_setup and _sd_setup): each
++# cell's incumbent is final. Per cell: the twin's register / local-memory line (a twin that spills is not routed),
++# the incumbent's own correctness cases on the twin, the two-state replay check through kernel_fn with the twin
++# routed, then incumbent vs twin through the real pair (pre-attention + kernel) as interleaved cold-L2 graph
++# replays, empty graph subtracted, two rounds of 21 reps: the twin is routed only if it wins >= 1.01x in BOTH
++# rounds with its IQR <= 1.5x the incumbent's (0.5 us floor). sk-onepass-verify1-timing-fix: the timing data's new
++# K/V rows are written (pre-attention, synced) before its reference is computed, and each cell prints the incumbent's
++# timing-data rel L2; the full-decode bands are not timed (twin 8 stays compiled, never routed).
++# Start deadlines on the import clock: checks 430 s, timing 460 s; a cell whose timing ends past 480 s is discarded.
++# ---------------------------------------------------------------------------------------------
++
++_OP_CHECK_BY, _OP_TIME_BY, _OP_ROUTE_BY = 430.0, 460.0, 480.0
++_OP_GATE = 1.01   # incumbent / twin needed in BOTH rounds
++_OP_IQR = 1.5     # twin IQR <= this x max(incumbent IQR, _OP_IQR_FLOOR) in both rounds
++_OP_IQR_FLOOR = 0.5
++_OP_REPS = 21
++_OP_FULL_NOT_TIMED = "not timed in this restack"  # both full-decode bands' PATH CHOSEN detail
++
++
++def _op_clock() -> float:
++    return time.perf_counter() - _IMPORT_T0
++
++
++def _op_ok(name: str, by: float) -> bool:
++    now = _op_clock()
++    if now > by:
++        _say(f"[op] {name}: skipped: deadline (import clock {now:.0f} s > {by:.0f} s)")
++        return False
++    _say(f"[op] {name}: starting (import clock {now:.0f} s, deadline {by:.0f} s)")
++    return True
++
++
++def _op_quiet(fn, *args):
++    """fn(*args) with _say muted (PATH CHOSEN lines excepted): the replay checks' per-step lines stay out of the log."""
++    global _SAY_MUTE
++    _SAY_MUTE = True
++    try:
++        return fn(*args)
++    finally:
++        _SAY_MUTE = False
++
++
++def _op_merge_canary(mbs) -> "str | None":
++    """merge_range_onepass<MB> vs merge_range on a crafted workspace: single slot, a single empty slot, n = 3 / 8 / 12 /
++    17 / 20 with LEADING empty slots (a whole first batch empty at MB 4), EVERY slot empty, and per-head -inf slots
++    sprinkled at random. Empty slots carry finite garbage l / acc (they must weigh exactly 0). M must match bit for bit
++    (-inf included), L and o to 1e-4 relative; every-slot-empty must give M = -inf, L = 0, o = 0. None on success."""
++    dev = torch.device("cuda")
++    gen = torch.Generator(device="cuda").manual_seed(5150)
++    S = 48
++    ninf = float("-inf")
++    acc = torch.randn((S, 16, 64), generator=gen, device=dev)
++    ml = torch.empty((S, 2, 16), device=dev)
++    ml[:, 0] = 4 * torch.randn((S, 16), generator=gen, device=dev)
++    ml[:, 1] = torch.rand((S, 16), generator=gen, device=dev) * 50 + 1
++    for sl in (1, 2, 3, 10, 11, 12, 13, 22, 23, 24, 25):
++        ml[sl, 0] = ninf               # empty slots: every head
++        ml[sl, 1] = 1e3                # finite garbage that must weigh 0
++        acc[sl] = 1e3
++    hit = torch.rand((S, 16), generator=gen, device=dev) < 0.25
++    hit[:30] = False
++    ml[:, 0][hit] = ninf               # per-head empty slots in 30..47
++    cases = ((0, 0), (1, 1), (5, 7), (2, 9), (2, 18), (10, 13), (22, 33), (30, 47), (26, 45), (0, 47))
++    lo = torch.tensor([c[0] for c in cases], dtype=torch.int32, device=dev)
++    hi = torch.tensor([c[1] for c in cases], dtype=torch.int32, device=dev)
++    n = len(cases)
++    for mb in mbs:
++        o1, o2 = (torch.full((n, 16, 64), float("nan"), device=dev) for _ in range(2))
++        l1, m1, l2, m2 = (torch.full((n, 16), float("nan"), device=dev) for _ in range(4))
++        _EXT2.sk_merge_test(acc, ml, lo, hi, o1, l1, m1, o2, l2, m2, mb)
++        torch.cuda.synchronize()
++        if not torch.equal(m1, m2):
++            return f"MB {mb}: M differs from merge_range"
++        if not (torch.isfinite(o2).all() and torch.isfinite(l2).all()):
++            return f"MB {mb}: non-finite o / L"
++        el = float(((l2 - l1).abs() / l1.abs().clamp_min(1e-30)).max())
++        eo = float(((o2 - o1).norm() / o1.norm().clamp_min(1e-30)))
++        if el > 1e-4 or eo > 1e-4:
++            return f"MB {mb}: L rel {el:.1e} / o rel {eo:.1e} vs merge_range"
++        k = cases.index((10, 13))  # every slot empty
++        if not (bool(torch.isneginf(m2[k]).all()) and float(l2[k].abs().max()) == 0.0 and float(o2[k].abs().max()) == 0.0):
++            return f"MB {mb}: every-slot-empty case is not (M -inf, L 0, o 0)"
++        _say(f"[op] merge canary MB {mb}: {n} cases (leading-empty, every-slot-empty, per-head -inf) match merge_range: "
++             f"M exact, L rel {el:.1e}, o rel {eo:.1e}")
++    return None
++
++
++def _op_run_cases(label: str, kind: str, variant: int, cases, gen) -> "str | None":
++    """The incumbent's own correctness cases run on twin `variant`, one compact line for the whole set (the line before
++    names the set, so a fault is attributable). kind: full (_splitkv_*), ps (verify, L 8) or sd (decode, L 1)."""
++    dev = torch.device("cuda")
++    _say(f"[op] {label}: launching {len(cases)} correctness cases on {_SK_LABELS[variant]}")
++    worst, wtag = 0.0, ""
++    for tag, lens, kv, grid in cases:
++        if kind == "full":
++            data = _splitkv_synthetic(lens, kv, gen, dev)
++            q, qkv = _sk_prepare_q(data)
++            out, _, _ = _sk_launch(data, q, qkv, variant, grid)
++            torch.cuda.synchronize()
++            err, fin = _rel_l2(out, _splitkv_reference(data, lens))
++        else:
++            data = _ps_synthetic(lens, kv, gen, dev, L=8 if kind == "ps" else 1)
++            q, qkv = _ps_prepare_q(data)
++            out = (_ps_launch if kind == "ps" else _sd_sk_launch)(data, q, qkv, variant, grid)
++            torch.cuda.synchronize()
++            err, fin = _rel_l2(out, _ps_reference(data, lens))
++        if not (fin and err < 2e-2):
++            _say(f"[op] {label}: case {tag} grid {grid} FAILED: rel L2 {err:.2e}, finite {fin}")
++            return f"case {tag} grid {grid}"
++        if err > worst:
++            worst, wtag = err, tag
++        del data, q, qkv, out
++    _say(f"[op] {label}: {len(cases)} cases ok, worst rel L2 {worst:.2e} ({wtag})")
++    return None
++
++
++def _op_rounds(fns, flush, nrounds=2):
++    """nrounds interleaved rounds (fresh graphs each, cold L2, empty graph subtracted): per round, per fn (median, IQR)."""
++    out = []
++    for _ in range(nrounds):
++        lists, emp = _sw_rounds(fns, flush, warm=3, reps=_OP_REPS)
++        out.append([_sw_stats(x, emp) for x in lists])
++    return out
++
++
++def _op_eager_ok(fn, ref) -> "tuple[bool, float]":
++    out = fn()
++    torch.cuda.synchronize()
++    err, fin = _rel_l2(out, ref)
++    return fin and err < 2e-2, err
++
++
++def _op_time_cell(cell: str, fns, ref, flush, slots: float, extra=None) -> "tuple[bool, str]":
++    """fns = [incumbent pair, twin pair, (readouts...)]: eager correctness of each on the timing data, then two
++    interleaved rounds. Decision on fns[0] vs fns[1] only. Returns (route the twin, the detail text). The incumbent's
++    (and twin's) timing-data rel L2 leads the detail, so the PATH CHOSEN line shows the timing data matches its ref."""
++    errs = []
++    for i, fn in enumerate(fns):
++        ok, err = _op_eager_ok(fn, ref)
++        if i < 2:
++            errs.append(err)
++            _say(f"[op] {cell}: {'incumbent' if i == 0 else 'onepass twin'} timing-data rel L2 {err:.2e} "
++                 f"({'ok' if ok else 'FAIL'})")
++        if not ok:
++            if i == 0:
++                _say(f"[op] {cell}: INCUMBENT FAILED the timing-data check (rel L2 {err:.2e}): cell not timed, "
++                     f"incumbent kept")
++                return False, f"incumbent failed the timing-data check (rel L2 {err:.2e}): not timed"
++            if i == 1:
++                _say(f"[op] {cell}: ONEPASS TWIN FAILED the timing-data check (rel L2 {err:.2e}; incumbent "
++                     f"{errs[0]:.2e}): cell not timed, incumbent kept")
++                return False, f"twin failed the timing-data check (rel L2 {err:.2e}; incumbent {errs[0]:.2e}): not timed"
++            _say(f"[op] {cell}: readout {i} failed the timing-data check (rel L2 {err:.2e}): dropped")
++            fns = fns[:i]
++            break
++    rounds = _op_rounds(fns, flush)
++    ratios, iqr_ok, parts = [], True, []
++    for rd, st in enumerate(rounds, 1):
++        (ti, ii), (to, io) = st[0], st[1]
++        ti, to = max(ti, 0.5), max(to, 0.5)
++        ratios.append(ti / to)
++        iqr_ok = iqr_ok and io <= _OP_IQR * max(ii, _OP_IQR_FLOOR)
++        parts.append(f"r{rd} {ti:.1f} vs {to:.1f} us ({ti / to:.3f}x, IQR {ii:.1f}/{io:.1f})")
++        _say(f"[op] {cell} round {rd}: incumbent {ti:.1f} us IQR {ii:.1f}, onepass {to:.1f} us IQR {io:.1f} -> "
++             f"{ti / to:.3f}x" + "".join(f"; {extra[j - 2]} {max(st[j][0], 0.5):.1f} us ({ti / max(st[j][0], 0.5):.3f}x)"
++                                         for j in range(2, len(st)) if extra))
++    win = min(ratios) >= _OP_GATE and iqr_ok
++    detail = (f"timing-data rel L2 incumbent {errs[0]:.2e} / onepass {errs[1]:.2e}; "
++              f"{'; '.join(parts)}; ~{slots:.1f} slots/request; needs >= {_OP_GATE:.2f}x both rounds"
++              + ("" if iqr_ok else ", IQR bound MISSED"))
++    return win, detail
++
++
++def _op_readout(cell: str, fns, labels, ref, flush) -> None:
++    """Print-only: one interleaved round of fns (eager-checked first). Never routes."""
++    keep, names = [], []
++    for fn, lab in zip(fns, labels):
++        ok, err = _op_eager_ok(fn, ref)
++        if ok:
++            keep.append(fn)
++            names.append(lab)
++        else:
++            _say(f"[op] {cell} readout {lab}: failed the timing-data check (rel L2 {err:.2e}): not timed")
++    if len(keep) < 2:
++        return
++    st = _op_rounds(keep, flush, nrounds=1)[0]
++    _say(f"[op] {cell} readout (print only, 1 round of {_OP_REPS}): "
++         + ", ".join(f"{lab} {max(m, 0.5):.1f} us (IQR {q:.1f})" for lab, (m, q) in zip(names, st)))
++
++
++def _op_next_spec(specs, spec, grid_of):
++    """The first grid spec after `spec` whose grid differs (one grid step up), else None."""
++    g0 = grid_of(spec)
++    for sp in specs[specs.index(spec) + 1:]:
++        if grid_of(sp) != g0:
++            return sp
++    return None
++
++
++def _op_spill(attrs, v) -> "str | None":
++    a = attrs.get(v)
++    if a is None:
++        return "attributes unavailable"
++    if a[0] != 90:
++        return f"cubin version {a[0]} is not 90"
++    if a[3] > 0:
++        return f"local-memory spill ({a[3]} B)"
++    if a[6] < 1:
++        return "0 CTAs/SM"
++    return None
++
++
++def _op_cell_ps(gen, flush, sms, attrs):
++    """Sliding verify B=1 (the PSEUDO route): twin 9 against routed variant 4; MB-4 twin 11 timed in the same rounds
++    (print only); twin 9 vs 4 one grid step up (print only)."""
++    cell = "sliding verify B=1"
++    if 1 not in _PS_ROUTE:
++        return False, None, "not on the PSEUDO route (FA3 incumbent): not gated"
++    inc, spec = _PS_ROUTE[1]
++    if inc != 4:
++        return False, None, f"incumbent is {_SK_LABELS[inc]} (no single-level twin): not gated"
++    why = _op_spill(attrs, 9)
++    if why is not None:
++        return False, None, f"twin 9 not routable: {why}"
++    if not _op_ok(f"{cell} checks", _OP_CHECK_BY):
++        return False, None, "skipped: deadline before the checks"
++    g1 = _ps_grid(spec, 8, sms)
++    cases = [(tag, lens, kv, _ps_grid(spec, 8 * len(lens), sms) if grid is None else grid)
++             for tag, lens, kv, grid in (
++                 ("canary lens 3", [3], 1.0, 3), ("lens 3", [3], 1.0, None), ("lens 7 kv 0.25", [7], 0.25, None),
++                 ("lens 0", [0], 1.0, None), ("lens 1500", [1500], 1.0, None), ("lens 2045 kv 0.25", [2045], 0.25, None),
++                 ("lens 2047", [2047], 1.0, None), ("lens 2055", [2055], 1.0, None), ("lens 80000", [80000], 1.0, None),
++                 ("lens 80000 kv 0.25", [80000], 0.25, None), ("lens 80000 grid 7", [80000], 1.0, 7),
++                 ("lens 80000 grid 2xSM", [80000], 1.0, 2 * sms),
++                 ("B=3 lens 5/2040/80000", [5, 2040, 80000], 1.0, None),
++                 ("B=3 lens 5/2040/80000 kv 0.25 grid 7", [5, 2040, 80000], 0.25, 7))]
++    reason = _op_run_cases(f"{cell} twin 9", "ps", 9, cases, gen)
++    if reason is not None:
++        return False, None, f"twin 9 failed {reason}"
++    mb4 = _op_spill(attrs, 11) is None and _op_run_cases(f"{cell} MB-4 twin 11", "ps", 11, cases[:3] + cases[8:10],
++                                                         gen) is None
++    _PS_ROUTE[1] = (9, spec)  # the replay check captures kernel_fn with the twin routed
++    try:
++        why = _op_quiet(_ps_replay_check, 1, [80000], 1.0, gen)
++    finally:
++        _PS_ROUTE[1] = (inc, spec)
++    _rezero_tickets()
++    if why is not None:
++        return False, None, f"twin 9 two-state replay failed ({why})"
++    _say(f"[op] {cell}: twin 9 two-state replay check ok")
++    if not _op_ok(f"{cell} timing", _OP_TIME_BY):
++        return False, None, "skipped: deadline before the timing"
++    dev = torch.device("cuda")
++    data = _ps_synthetic([80000], 1.0, gen, dev)
++    # The reference reads the cache as the pre-attention kernel leaves it (the 8 new K/V rows normed, RoPE'd, stored):
++    # write them first, as every correctness case does (idempotent, so the timed pairs re-running it are unchanged).
++    _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    ref = _ps_reference(data, [80000])
++    fns = [lambda: _ps_launch(data, *_ps_prepare_q(data), 4, g1), lambda: _ps_launch(data, *_ps_prepare_q(data), 9, g1)]
++    extra = None
++    if mb4:
++        fns.append(lambda: _ps_launch(data, *_ps_prepare_q(data), 11, g1))
++        extra = ["onepass MB 4"]
++    win, detail = _op_time_cell(f"{cell} grid {g1} ({spec})", fns, ref, flush, g1 / 8, extra)
++    up = _op_next_spec(("p4", "p8", "sm", "2sm"), spec, lambda sp: _ps_grid(sp, 8, sms))
++    if up is not None and _op_clock() <= _OP_TIME_BY:
++        g2 = _ps_grid(up, 8, sms)
++        _op_readout(f"{cell} grid {g2} ({up})",
++                    [lambda: _ps_launch(data, *_ps_prepare_q(data), 4, g2),
++                     lambda: _ps_launch(data, *_ps_prepare_q(data), 9, g2)],
++                    [f"incumbent {up}", f"twin 9 {up}"], ref, flush)
++    del data, ref, fns
++    torch.cuda.empty_cache()
++    _rezero_tickets()
++    if win and _op_clock() > _OP_ROUTE_BY:
++        return False, None, f"{detail}; discarded: timing ended past {_OP_ROUTE_BY:.0f} s"
++    return win, (9, spec), detail + f"; grid {spec}" + ("" if mb4 else "; MB-4 readout n/a")
++
++
++def _op_cell_sd(gen, flush, sms, attrs):
++    """Sliding decode B=17..32 (the sk-window route, gated at B=32): twin 10 against routed variant 6; twin 10 vs 6 one
++    grid step up (print only)."""
++    global _SD_ROUTE
++    cell = "sliding decode B=17..32"
++    if 3 not in _SD_ROUTE:
++        return False, None, "not on the sk-window route (master incumbent): not gated"
++    inc, spec = _SD_ROUTE[3]
++    if inc != 6:
++        return False, None, f"incumbent is {_SK_LABELS[inc]} (no single-level twin): not gated"
++    why = _op_spill(attrs, 10)
++    if why is not None:
++        return False, None, f"twin 10 not routable: {why}"
++    if not _op_ok(f"{cell} checks", _OP_CHECK_BY):
++        return False, None, "skipped: deadline before the checks"
++    rng = random.Random(2027)
++    lens16 = list(_SK_LENS16)
++    lens16[0] = 80000
++    lens32 = [rng.randint(1, 12000) for _ in range(32)]
++    lens32[0], lens32[3], lens32[5], lens32[9], lens32[17] = 80000, 2047, 2048, 1, 0
++    lens32[21], lens32[22], lens32[23] = 2049, 63, 2050
++    cases = [(tag, lens, kv, _sd_grid(spec, len(lens), sms) if grid is None else grid)
++             for tag, lens, kv, grid in (
++                 ("canary B=1 lens 1", [1], 1.0, 3), ("B=1 lens 2047", [2047], 1.0, None),
++                 ("B=1 lens 2049 kv 0.25", [2049], 0.25, 7), ("B=1 lens 80000", [80000], 1.0, None),
++                 ("B=3 lens 1/2047/80000", [1, 2047, 80000], 1.0, 7),
++                 ("B=16 ragged kv 0.25", lens16, 0.25, None), ("B=16 ragged grid 2xSM", lens16, 1.0, 2 * sms),
++                 ("B=32 ragged", lens32, 1.0, None), ("B=32 ragged kv 0.25 grid 7", lens32, 0.25, 7),
++                 ("B=32 ragged grid 2xSM", lens32, 1.0, 2 * sms))]
++    reason = _op_run_cases(f"{cell} twin 10", "sd", 10, cases, gen)
++    if reason is not None:
++        return False, None, f"twin 10 failed {reason}"
++    rng = random.Random(78)
++    lensr = [rng.randint(1, 12000) for _ in range(32)]
++    lensr[0], lensr[1] = 80000, 2047
++    saved = _SD_ROUTE
++    _SD_ROUTE = MappingProxyType({**dict(saved), 3: (10, spec)})  # the replay check captures kernel_fn with the twin
++    try:
++        why = _op_quiet(_sd_replay_check, 32, lensr, 1.0, gen)
++    finally:
++        _SD_ROUTE = saved
++    _rezero_tickets()
++    if why is not None:
++        return False, None, f"twin 10 two-state replay failed ({why})"
++    _say(f"[op] {cell}: twin 10 two-state replay check ok")
++    if not _op_ok(f"{cell} timing", _OP_TIME_BY):
++        return False, None, "skipped: deadline before the timing"
++    dev = torch.device("cuda")
++    g1 = _sd_grid(spec, 32, sms)
++    data = _ps_synthetic([80000] * 32, 1.0, gen, dev, L=1)
++    # As in _op_cell_ps: the new K/V row per request written before the reference reads the cache (idempotent).
++    _ps_prepare_q(data)
++    torch.cuda.synchronize()
++    ref = _ps_reference(data, [80000] * 32)
++    win, detail = _op_time_cell(f"{cell} B=32 grid {g1} ({spec})",
++                                [lambda: _sd_run(data, 6, g1), lambda: _sd_run(data, 10, g1)], ref, flush, g1 / 32)
++    up = _op_next_spec(_SD_SPECS, spec, lambda sp: _sd_grid(sp, 32, sms))
++    if up is not None and _op_clock() <= _OP_TIME_BY:
++        g2 = _sd_grid(up, 32, sms)
++        _op_readout(f"{cell} B=32 grid {g2} ({up})", [lambda: _sd_run(data, 6, g2), lambda: _sd_run(data, 10, g2)],
++                    [f"incumbent {up}", f"twin 10 {up}"], ref, flush)
++    del data, ref
++    torch.cuda.empty_cache()
++    _rezero_tickets()
++    if win and _op_clock() > _OP_ROUTE_BY:
++        return False, None, f"{detail}; discarded: timing ended past {_OP_ROUTE_BY:.0f} s"
++    return win, (10, spec), detail + f" (B=32); grid {spec}; MB-4 readout n/a"
++
++
++def _op_setup() -> None:
++    """Gate every cell, then swap the routed twins into the frozen tables at once. Never raises; every failure,
++    deadline or loss keeps that cell's incumbent exactly."""
++    global _SK_VARIANT, _SD_ROUTE
++    cells = ("sliding verify B=1", "full decode B=2..16", "full decode B=17..64", "sliding decode B=17..32")
++    if _EXT2 is None:
++        for c in cells:
++            _say(f"PATH CHOSEN: sk ticket merge [{c}]: incumbent (stage-2 module unavailable)")
++        return
++    dev = torch.device("cuda")
++    t_all = time.perf_counter()
++    res = {}
++    try:
++        if not _op_ok("attrs + merge canary", _OP_CHECK_BY):
++            for c in cells:
++                _say(f"PATH CHOSEN: sk ticket merge [{c}]: incumbent (skipped: deadline)")
++            return
++        vs = (0, 4, 6, 8, 9, 10, 11) if _PS_BUILT else (0, 8)
++        attrs = {}
++        for v in vs:
++            a = list(_EXT2.sk_attrs(v))
++            attrs[v] = a
++            _say(f"[op] {_SK_LABELS[v]} (v{v}): cubin {a[0]}, regs {a[2]}, local {a[3]} B, dyn smem {a[5]} B, "
++                 f"{a[6]} CTAs/SM" + (" <- twin of v%d" % {8: 0, 9: 4, 10: 6, 11: 4}[v] if v >= 8 else ""))
++        why = _op_merge_canary((8, 4))
++        if why is not None:
++            for c in cells:
++                _say(f"PATH CHOSEN: sk ticket merge [{c}]: incumbent (merge canary failed: {why})")
++            return
++        sms = _sm_count(dev)
++        gen = torch.Generator(device="cuda").manual_seed(6060)
++        flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++        jobs = ((cells[0], lambda: _op_cell_ps(gen, flush, sms, attrs) if _PS_BUILT
++                 else (False, None, "PSEUDO build unavailable")),
++                # Full decode: twin 8 stays compiled (the build and the variant table are unchanged) but is not
++                # gated: the parent measured it at x1.002-1.005, not routable; dropping it saves prepare time.
++                (cells[1], lambda: (False, None, _OP_FULL_NOT_TIMED)),
++                (cells[2], lambda: (False, None, _OP_FULL_NOT_TIMED)),
++                (cells[3], lambda: _op_cell_sd(gen, flush, sms, attrs) if _PS_BUILT
++                 else (False, None, "PSEUDO build unavailable")))
++        for c, job in jobs:
++            try:
++                res[c] = job()
++            except Exception as e:
++                res[c] = (False, None, f"raised {str(e)[:160]!r}")
++                try:
++                    _rezero_tickets()
++                except Exception:
++                    pass
++        del flush
++        torch.cuda.empty_cache()
++        left = (int(_sk_ticket(dev).abs().sum().item()) + int(_sk_gticket(dev).abs().sum().item())
++                + int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item()))
++        if left:
++            for c in list(res):
++                if res[c][0]:
++                    res[c] = (False, None, res[c][2] + f"; dropped: tickets left non-zero ({left})")
++        # Swap the winners in at once (each cell's table entry only; incumbents everywhere else).
++        sk = dict(_SK_VARIANT)
++        for band, c in ((2, cells[1]), (3, cells[2])):
++            if res.get(c, (False,))[0]:
++                sk[band] = 8
++        _SK_VARIANT = MappingProxyType(sk)
++        if res.get(cells[0], (False,))[0]:
++            _PS_ROUTE[1] = res[cells[0]][1]
++        if res.get(cells[3], (False,))[0]:
++            _SD_ROUTE = MappingProxyType({**dict(_SD_ROUTE), 3: res[cells[3]][1]})
++    except Exception as e:
++        _say(f"[op] setup raised {e!r}: incumbent everywhere")
++        res = {c: (False, None, f"setup raised {str(e)[:120]!r}") for c in cells}
++    finally:
++        try:
++            _rezero_tickets()
++        except Exception as e:
++            _say(f"[op] ticket re-zero raised: {e!r}")
++        _say(f"[op] total {time.perf_counter() - t_all:.1f} s (import clock {_op_clock():.0f} s)")
++    for c in cells:
++        win, _, detail = res.get(c, (False, None, "not run"))
++        _say(f"PATH CHOSEN: sk ticket merge [{c}]: {'onepass' if win else 'incumbent'} ({detail})"[:398])
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -9526,6 +10103,11 @@ if torch.cuda.is_available():
+         _SW_ROUTE = MappingProxyType({})
+         _SW_EXT = None
+         _say(f"PATH CHOSEN: sliding verify B=2..32 [sw s2b wgmma + fast merge]: master (fallback: setup raised {_e!r})")
++    # sk-ticket-merge-onepass after everything: every incumbent route (full decode, FUSED_PRE, PSEUDO, sd, sw) is final.
++    try:
++        _op_setup()
++    except Exception as _e:  # never raise at import: every cell keeps its incumbent
++        _say(f"PATH CHOSEN: sk ticket merge: incumbent everywhere (fallback: setup raised {_e!r})")
+     # Decision lines re-printed last: the judge keeps a 16 KB log tail, which the gates' timing lines would otherwise fill.
+     print(f"[paths] {len(_PATH_LINES)} decision lines, re-printed (stream-K K/V gather: {_SK_GATHER}):", flush=True)
+     for _ln in _PATH_LINES:
