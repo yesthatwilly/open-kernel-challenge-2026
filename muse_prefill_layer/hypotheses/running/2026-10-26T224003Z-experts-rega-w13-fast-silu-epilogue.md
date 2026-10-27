@@ -35,9 +35,18 @@ kind: primary
 controls_for: null
 prior: "experts-triton-w13-fused-silu-epilogue: that added silu to the old Triton engine's w13 epilogue (more epilogue work; lost 1-3% at first_turn); rega already fuses silu, and this only swaps the accurate expf and IEEE division for __expf and __frcp_rn"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T112554Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T112554Z
+base_sha: c984c14ea32ac08522ee284ee7e6b46826ad0312
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/experts-rega-w13-fast-silu-epilogue
+worktree: .worktrees/muse_prefill_layer/experts-rega-w13-fast-silu-epilogue
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-w13-fast-silu-epilogue
