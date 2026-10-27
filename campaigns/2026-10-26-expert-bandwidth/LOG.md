@@ -1359,3 +1359,43 @@ append-only, newest last.
 - The pinned trim (`campaign/eb-pin128` 5a33-check bytes, 924,352 B) is now the X5 decode base. Decode's first scored
   run after 00:00Z goes out from it, or from a later candidate carrying the pins.
 
+## 2026-10-27T2200Z: phase C, and the phase-A plan for 2026-10-28
+
+**Phase C so far (3:1 rhythm since 2125Z):**
+- Churn picks:
+  - moe s6 bucket-mix and attention s7 two-level grid: implementing.
+  - moe cuda-fused-split-i-moe-tiny-t: HELD by the adversary (written against a Marlin T<=8 master; Engine A is the
+    incumbent; the sibling fsi-midt measured x0.58-0.81).
+  - moe wg2-pingpong / wg2-w13-occ2: HELD (killed lines: wg2 x0.405/0.882, ping-pong x1.18-1.53 slower).
+  - bf16 lt-nn cells: under review.
+- **X5 S1a judge check 2157c43bb41f4d43** (eb-s1a, the audit fix `_hm_es_swin` finished by hand): does S lose to wg
+  on the H200 as it does on the H100 (x0.89-0.95)? This is judge check 1 of 2 under §5's kill rule.
+
+**What today's checks answered:**
+- Gate 0 on the judge: the bridge holds; es16 27.5 el/clk/SM, so cold stays on Engine A.
+- Decode trim: safe, 51 KB freed.
+- pin128 / pin-both: **the decode headline is a race lottery.** H-16 at T=128 and T=256 is worth ~20 us per row, and
+  the pins reproduce the board's draw.
+
+**Phase-A plan, 2026-10-28 (00:00Z), in order:**
+1. **00:00Z: decode scored run of the pinned trim** (campaign/eb-pin128, 924,352 B; checks 8e3b9874 + 5a33db71). It
+   lands only if it beats 1.5920. That makes the board row, and the final held-out rerun, deterministic at T=128/256.
+2. **More decode pins** (surgical, main thread + 1-2 checks): diff the PATH CHOSEN lines and rows of the 5 judged
+   decode runs (c1daf58b, ced20a71, 8e3b9874, 5a33db71 + earlier archives). Find the other flipping races (T=1 rows
+   93.8 vs 96-97 us; T=17..32 qkv swap-AB; T=256 cells) and pin the arms whose rows win consistently.
+3. **S3, the T<=8 per-expert streaming rate** (one ultracode workflow: design panel at max, build / audit at high,
+   moe testbed first):
+   - Engine A v1 streams each extra local expert at ~2.75 TB/s marginal at T=1 (~10.3 us per expert; the bimodal
+     mode is 2 vs 3 distinct experts), against a 4.45 TB/s ring.
+   - Lever: spread each expert over more SMs (split-K / more CTAs per expert, deeper rings).
+   - Target: <= 7.5 us per expert. That is about -6 us per decode-1 row, ~+1% headline from one of the 6 loads, and
+     the same staircase exists at T=8.
+4. **S1a:** if 2157c43b loses on the judge too, close the Engine S hot kernel. The hot half's remaining gap is fixed
+   costs (eb_prep / align / gather, fix-up, start / tail, PDL across halves), not the K-step. Fold those into the
+   wg hybrid instead (a phase-B candidate).
+5. Phase B / C as usual from the churn queues: decode 0 / moe 9 / bf16 13 / attention 12 / prefill 13 checks left
+   tonight.
+
+**H100:** on hold (USER, 2122Z). The node findings stand. The moe A/B capability needs the nodejudge `setup` again
+with the operator's go-ahead.
+
