@@ -974,3 +974,11 @@ append-only, newest last.
     - A new rega_rot module (master's kernel untouched); shifts 67 / 37; per-class gates high / low / ft, placed last
       in prepare.
     - Prepare-only clock64 span diagnostics (DIAG instantiations) answer whether the ingest cap is per SM or shared L2.
+- 1033Z: phase B harvest (churn): both **neutral**.
+  - bf16 unpooler slice (a6424247, 1.2737): the U12s cell gated read x1.024 vs ouns; not routed.
+  - prefill rotated rega (d00770b6, 1.4664): bit-exact, pop x0.991-1.004; all classes OFF.
+  - The span diagnostic: cycles max/mean 1.06-1.13 vs bytes 1.09-1.20 (corr 0.93-0.98), so the ingest cap is partly
+    shared. Rebalancing has a few percent at most.
+  - LESSONS.md updated (also with the fork result).
+  - Held attention s2-split-combine (superseded by s2b).
+  - Next picks: bf16 b12-qkv-m1-r32-one-cta-per-sm-readflush-gate and prefill experts-rega-fine-n-buckets (reviews).
