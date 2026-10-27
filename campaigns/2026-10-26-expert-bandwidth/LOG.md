@@ -529,3 +529,13 @@ append-only, newest last.
 - Ultracode workflow wf_59d9138b-356 launched: the v4k rung (lever #1, rung first) and bulk12 P@T=1 (lever #5).
   Each is designed, built, audited twice and fixed if needed; the main thread dispatches the checks.
 - X3 glue vs the dq layout waits on the harvest of 0b085ef4 / 9f8a518e.
+
+## 2026-10-27T0031Z: reset-plan harvest (headlines); decode landed; two scored runs sent
+
+- decode scored 2bd373c9e23c4667 (27ef83df bytes): **1.5218** (CI 1.499-1.545) > board 1.4956. Landed on master
+  (4adf7b75, sha256 9aad293f...).
+- decode check 0b085ef420c64ffb (eacf0722): **1.5484** (CI 1.525-1.572), +1.75% vs 1.5218 -> scored run 42b3e39478474bcd.
+- moe check 9f8a518ea6c04d20 (eacf0722): **1.7112** (CI 1.686-1.737), +1.55% vs 1.6851 -> scored run cf937dd3656c4193.
+  The moe T=128 gate kept master (H-16 x0.916, H-8 x0.867).
+- The per-question harvest (VERDICT-dq, H=-8, v4c, anatomy) is with a harvest agent; its branch choice goes in the
+  next entry.
