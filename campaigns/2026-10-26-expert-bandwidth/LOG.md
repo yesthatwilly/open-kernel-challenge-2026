@@ -959,3 +959,4 @@ append-only, newest last.
     starts (moe > bf16 > attention > prefill).
   - The campaign HEAD's bytes (PERHEAD + c320t) average ~1.568 over 4 checks, the same as the board's lucky 1.5697.
     Hold the 2 decode scored runs for a real gain or the end of phase C.
+- 0949Z: **Phase B started** via /churnsubs: picks bf16 b12-unpooler-slice-m1-r16-rowowner and prefill experts-rega-round-rotated-schedule. Their Opus adversarial reviews are running (2 agents). Held the superseded bf16 pooler-khalf-m128 (landed as khalf b2). Skipped the tick's 5 diagnoses (phase-B agent cap). moe scored run 2a7b5d20 in flight.
