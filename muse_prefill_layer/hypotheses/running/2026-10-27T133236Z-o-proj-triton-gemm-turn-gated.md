@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T141128Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-27T141128Z
 base_sha: ecc37b57fc4eacd04877ee607dd9f99db59250e8
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -57,6 +57,12 @@ worktree: .worktrees/muse_prefill_layer/o-proj-triton-gemm-turn-gated
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-27T141758Z
+impl_commit: d103926609338d5a19efa29fd943e644fad873ad
+submission_sha256: 1da98d5a124a60748582cb6dc6eb2a93c3a466ec93f055c8146e6503d2a354b4
+norm_sha256: 62b273354e59379c1e49f9051871e1e66ff307fb4daf57a55ee18f7637086ae0
+submission_blob: ffa750b47ea61fccb3001b9e628d092d00f15170
+lint_warnings: 115
 ---
 
 # o-proj-triton-gemm-turn-gated
