@@ -569,3 +569,15 @@ append-only, newest last.
 - decode scored 42b3e39478474bcd: **1.5275** (CI 1.505-1.550), the new board (rank 342, was 367).
 - moe scored cf937dd3656c4193: **1.7076** (CI 1.682-1.733), the new board (rank 384, was 402).
 - master now holds the eacf0722 bytes for both (decode f97dded7..., moe 78e6ef0c...). Runs archived in runs/.
+
+## 2026-10-27T0112Z: phase-A build 3 (wg2 hot half) checked
+
+- Workflow wf_65a54a25-018 finished: 6 agents, ~0.86M tokens. Branch campaign/eb-wghot 3c450bed (code c17be13f) adds
+  wg2, raced as H=-17 against H=-16 and master in both hybrids. Audit MAJORs fixed: the moe build deadline is now
+  170 s, the log filter keeps 'worst ratio', and the canary poisons scratch first.
+- Accepted risk: a first-launch device fault (no GPU or nvcc on this host).
+- Open MINORs:
+  - N bucket 16 is not hit by the canary;
+  - no PDL at wg2's w13 -> w2 boundary;
+  - H-17 must also clear RT_MARGIN over H-16 (a tie goes to the older path).
+- moe check **c2224c010ea7454d** and decode check **74201da03ab64f40** dispatched.
