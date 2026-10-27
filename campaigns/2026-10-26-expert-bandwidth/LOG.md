@@ -1029,3 +1029,10 @@ append-only, newest last.
     parent vs pooled-IQR rules on the same data) is a phase-C candidate.
 - 1217Z: decode check **f2aece517e8543e1**: the campaign HEAD stack (W6-B + PERHEAD + c320t bar + fork code + fast silu; 971,620 bytes). It asks whether fast silu moves decode's T>=128 rows, and is a scored candidate if it beats 1.5697. Decode: 4 checks / 2 scored after this.
 - 1226Z: decode stack check f2aece51: **1.5783** (> 1.5697). PERHEAD d1s x1.042, c320t d1f x1.034, fast silu clean; T=128 hybrid master (v16 x0.97). **Scored run 17e7915ad7d540d0** (decode: 4 checks / 1 scored left after it).
+- 1236Z: decode scored 17e7915a (stack): **1.5651**, under the 1.5697 board, which stays (rank 333).
+  - T=128 hybrid MASTER again (H-16 x0.984).
+  - The diagnosis: the T=128 hotcold race times candidates with W6-B's cells OFF, but comb only exists under a
+    hybrid. The hybrid loses narrowly cells-off and the v16 rows pay x0.97. The board's 1.5697 drew the hybrid.
+  - **W6-G launched** (wf_5c7c62f3-916, campaign/eb-w6g-hcgate off eb-fsilu): a post-_t128_setup confirm race WITH
+    the routed cells that can PROMOTE a serial hybrid (W6-F's _hcf_confirm minus the fork).
+  - Decode: 4 checks / 1 scored left.
