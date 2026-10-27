@@ -1036,3 +1036,10 @@ append-only, newest last.
   - **W6-G launched** (wf_5c7c62f3-916, campaign/eb-w6g-hcgate off eb-fsilu): a post-_t128_setup confirm race WITH
     the routed cells that can PROMOTE a serial hybrid (W6-F's _hcf_confirm minus the fork).
   - Decode: 4 checks / 1 scored left.
+- 1254Z: W6-G built (wf_5c7c62f3-916: 1 major fixed, a cells check on the wrong routing).
+  - Orchestrator edits: **promote-only** (a hybrid the cells-off race routed is kept; the confirm can no longer demote
+    it on noise), and the confirm runs after PERHEAD's setup.
+  - 975,200 bytes. Decode check **41975d1ce6334756**.
+  - Open minors: the hilo atomics can fail the promotion's exact top-8 check on a near-tie (safe fallback); comb's
+    layer gate under a promoted H is only the race; FINAL PATHS grows ~1 KB (Engine A head lines drop from the tail).
+  - Decode: 3 checks / 1 scored left after this.
