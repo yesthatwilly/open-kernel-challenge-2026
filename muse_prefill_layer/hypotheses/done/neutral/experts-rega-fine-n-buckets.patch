@@ -1,0 +1,677 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f4751fc0..33168720 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -635,14 +635,22 @@ def prepare(weights):
+     # its checks and its gate on the norm-gather-ON block. Never raises; any failure keeps master's low class.
+     lo_lines = _rega_lo_phase(state, weights, device, t_prepare0)
+     torch.cuda.synchronize()
++    # experts-rega-fine-n-buckets: LAST of all setup (after _rega_lo_phase, whose rega_low_variant it needs, and after
++    # every other phase with its own deadline): the separate muse_prefill_rega_fine module, its own start / class /
++    # replay deadlines, per-class exact compare and timing gates. Never raises; any miss keeps master's rega_gemm.
++    fine_lines = _rega_fine_phase(state, weights, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+     for line in fa3c_lines:
+         print(line, flush=True)
+-    # The low-class candidates' summary; its '[rega-lo] PATH CHOSEN low: ...' line is the last prepare() line.
++    # The low-class candidates' summary ('[rega-lo] PATH CHOSEN low: ...').
+     for line in lo_lines:
+         print(line[:1200], flush=True)
++    # The fine-N phase's compact summary; its PATH CHOSEN lines are the last prepare() lines (16 KB log tail).
++    for line in fine_lines:
++        print(line[:700], flush=True)
+     return state
+ 
+ 
+@@ -3127,11 +3135,12 @@ void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+ """
+ 
+ 
+-def _rega_wgmma_src():
++def _rega_wgmma_src(buckets=REGA_BUCKETS):
+     """The four wgmma m64nNk16 RS wrappers (A = 4 bf16x2 registers, B = smem descriptor, fp32 D,
+-    scale-d = 1, scales a/b = 1, B not transposed: K-major), generated per N."""
++    scale-d = 1, scales a/b = 1, B not transposed: K-major), generated per N. buckets: master's REGA_BUCKETS
++    (default: master's text exactly); experts-rega-fine-n-buckets passes its eight N values for its own module."""
+     out = []
+-    for nb in REGA_BUCKETS:
++    for nb in buckets:
+         na = nb // 2
+         d = ", ".join(f"%{i}" for i in range(na))
+         lines = [
+@@ -3539,6 +3548,12 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # shape (the token count) and two prepare-time ints of this state decide; never a tensor value or a pointer.
+     variant = state.get("rega_low_variant", 0) if num_tokens <= REGA_LOW_MAX else 0
+     grid_lo = state.get("rega_low_grid", grid)
++    # experts-rega-fine-n-buckets: a per-class prepare-time bool selects the separate muse_prefill_rega_fine module
++    # (master's rega_kernel with N = 16 * nbk per item instead of four power-of-two N buckets). Never on the
++    # rega_gemm_lo path (variant != 0): the low-class candidates keep precedence. Shape + prepare-time values only.
++    fine_ext = state.get("rega_fine_ext")
++    fine = (not variant and fine_ext is not None
++            and bool(state.get("rega_fine_ok", {}).get(_rega_class(num_tokens), False)))
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+         tracer("before", "align")
+@@ -3563,6 +3578,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
+                                           n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
++    elif fine:
++        fine_ext.rega_gemm_fine(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                                D_EXPERT // 64, size_k, hs, grid, err, REGA_FINE_MODE)
+     else:
+         ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                       D_EXPERT // 64, size_k, hs, grid, err)
+@@ -3579,6 +3597,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(1, variant, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts,
+                                           n_padded, num_slots, size_k // 128, D_EXPERT, y, grid_lo, err)
++    elif fine:
++        fine_ext.rega_gemm_fine(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                                size_k // 128, D_EXPERT, y, grid, err, REGA_FINE_MODE)
+     else:
+         ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
+                       size_k // 128, D_EXPERT, y, grid, err)
+@@ -5760,6 +5781,599 @@ def _rega_lo_run(state, weights, device, t_start, sm, lines):
+     return None, chosen
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-fine-n-buckets: master's rega sizes each item's wgmma N (tokens) and slab TMA box from the chunk's
++# 16-route block count nbk (1..8) with four buckets (nbk <= 1: 16, <= 2: 32, <= 4: 64, else 128): a chunk of 33-48
++# routes runs N = 64 and one of 65-112 runs N = 128 (up to 3/8 of those items' MMA columns and slab rows padding).
++# A SEPARATE extension muse_prefill_rega_fine, built LAST in prepare(), DERIVED from master's head + body by asserted
++# text edits (each must occur exactly its stated number of times, else no build; master's strings, module, v1
++# fallback and their sha256 checks are untouched) runs N = 16 * nbk: eight Wg<NB> wrappers (NB = 16 .. 128 step 16),
++# eight tensor maps (boxes {64, 16 * (b + 1)}, master's SWIZZLE_128B 2-D map; every box fits the 16 KB slab half;
++# Maps = 1 KB __grid_constant__, static_assert'ed; encoded host-side in rega_gemm_fine as master's rega_gemm does, so
++# at capture, never in a replay), decode_item bucket b = nbk - 1, the producer's tx = WST + 2 * 16 * (b + 1) * 128,
++# an 8-case consumer switch. Dequant, ring, smem layout, epilogue (NB / 8 is even for every NB) and register budget
++# (largest N 128) are master's. A runtime int `fine` picks the mapping inside decode_item, which the producer thread
++# and the consumers both call with the same value (same bucket, box and tx on both sides; a mismatch would still end
++# in master's bounded wait, error word 1, class OFF, never a hang): fine = 1 is N = 16 * nbk; fine = 0 is master's
++# 4-bucket mapping (b = 0 / 1 / 3 / 7) through the same 8-case switch, the OVERHEAD CONTROL (fine-4map vs master =
++# code overhead; fine vs fine-4map = the bucket effect).
++# Per class (low T=753 only with rega_low_variant == 0, high T=3012, ft T=16384): canary through _experts_rega, exact
++# hs / y compare with master's rega_gemm on random, skewed, one and pop routings (on a miss: max |diff| and the first
++# mismatching (class, routing, nbk), then master's fp32-reference calibrated bound as the fallback), 2 interleaved
++# rounds x 11 cold-L2 graph alternations of the three pairs (master, fine-4map, fine) and each kernel alone on the
++# pop and random routings, then (timing pass only) the two-state replay check. ON when fine pair / master pair <= 0.98
++# on pop in both rounds AND <= 1.01 on random (rounds pooled). state['rega_fine_ok'][class] is a plain bool,
++# state['rega_fine_ext'] the module (None when every class is OFF).
++# ---------------------------------------------------------------------------------------------------------------
++REGA_FINE_TAG = "[rega-fine]"
++REGA_FINE_EXT_NAME = "muse_prefill_rega_fine"
++REGA_FINE_FUNCS = ("rega_init_fine", "rega_gemm_fine")
++REGA_FINE_NB = tuple(16 * (b + 1) for b in range(8))   # wgmma N of bucket b
++REGA_FINE_MODE = 1                         # the `fine` int kernel_fn passes: N = 16 * nbk (0 = master's mapping)
++REGA_FINE_CLASSES = ("low", "high", "ft")  # gate order; ft (expected flat, the costliest) last
++REGA_FINE_STATE_KEYS = REGA_STATE_KEYS + ("rega_fine_ext", "rega_fine_ok")
++REGA_FINE_START_DEADLINE_S = 200.0         # no nvcc build once prepare() has used this many seconds (300 s hard limit)
++REGA_FINE_CLASS_DEADLINE_S = {"low": 248.0, "high": 248.0, "ft": 236.0}   # no class starts after this
++REGA_FINE_TIMING_DEADLINE_S = {"low": 258.0, "high": 258.0, "ft": 248.0}  # no timing routing starts after this
++REGA_FINE_REPLAY_DEADLINE_S = {"low": 272.0, "high": 270.0, "ft": 260.0}  # no replay check (so no ON) after this
++REGA_FINE_POP_RATIO = 0.98                 # fine pair / master pair on the pop routing, both rounds
++REGA_FINE_RANDOM_RATIO = 1.01              # fine pair / master pair on the random routing, rounds pooled
++REGA_FINE_ROUNDS = 2
++REGA_FINE_ALTERNATIONS = 11
++REGA_FINE_POP_MULT = 1.83                  # pop routing target: this x the uniform local routes (alpha ~2.2)
++REGA_FINE_EXACT_KINDS = ("random", "skewed", "one", "pop")
++REGA_FINE_REPLAY_PLAN = {"low": ((753, ("random", "skewed", "one")),), "high": ((3012, ("random", "skewed")),),
++                         "ft": ((16384, ("random", "local")),)}
++REGA_FINE_VARIANTS = (("m", None), ("f4", 0), ("f", 1))   # (label, fine module `fine` int; None = master's rega_gemm)
++
++_REGA_FINE_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> rega_init_fine();
++void rega_gemm_fine(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t fine);
++"""
++
++_REGA_FINE_SWITCH_OLD = ("      switch (m.bucket) {\n"
++                         "        case 0: WG_CONSUME(16); break;\n"
++                         "        case 1: WG_CONSUME(32); break;\n"
++                         "        case 2: WG_CONSUME(64); break;\n"
++                         "        default: WG_CONSUME(128); break;\n"
++                         "      }\n")
++_REGA_FINE_SWITCH_NEW = ("      switch (m.bucket) {  // bucket b: N = 16 * (b + 1)\n"
++                         + "".join(f"        case {b}: WG_CONSUME({16 * (b + 1)}); break;\n" for b in range(7))
++                         + "        default: WG_CONSUME(128); break;\n"
++                         "      }\n")
++
++# (part, text in master's source, replacement, required occurrence count); any other count -> no fine build
++_REGA_FINE_EDITS = (
++    ("head", "struct __align__(64) Maps { CUtensorMap m[4]; };\n",
++     "struct __align__(64) Maps { CUtensorMap m[8]; };\n"
++     "// experts-rega-fine-n-buckets: one 128 B tensor map per N bucket (16 * (b + 1) rows): a 1 KB __grid_constant__\n"
++     "// kernel parameter, well inside the 4 KB parameter space with the scalar arguments.\n"
++     "static_assert(sizeof(CUtensorMap) == 128 && sizeof(Maps) == 8 * 128, \"Maps: eight 128 B tensor maps\");\n", 1),
++    ("body", "                                            const int* gfirst, const int* gcount) {\n",
++     "                                            const int* gfirst, const int* gcount, int fine) {\n", 1),
++    ("body", "  m.bucket = m.nbk <= 1 ? 0 : (m.nbk <= 2 ? 1 : (m.nbk <= 4 ? 2 : 3));\n",
++     "  // experts-rega-fine-n-buckets: bucket b runs N = 16 * (b + 1). fine = 1: b = nbk - 1 (clamped to 0..7), N =\n"
++     "  // 16 * nbk; fine = 0 (overhead control): master's N 16 / 32 / 64 / 128 (b = 0 / 1 / 3 / 7). The producer and the\n"
++     "  // consumers call decode_item with the same `fine`: the same bucket (box, tx, consume_item<NB>) on both sides.\n"
++     "  m.bucket = fine ? (m.nbk < 1 ? 0 : (m.nbk > 8 ? 7 : m.nbk - 1))\n"
++     "                  : (m.nbk <= 1 ? 0 : (m.nbk <= 2 ? 1 : (m.nbk <= 4 ? 3 : 7)));\n", 1),
++    ("body", "rega_kernel(const __grid_constant__ Maps maps,", "rega_kernel_fine(const __grid_constant__ Maps maps,", 1),
++    ("body", "int out_ld, int* __restrict__ err) {\n#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n",
++     "int out_ld, int* __restrict__ err, int fine) {\n#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n", 1),
++    ("body", "decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount)",
++     "decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount, fine)", 2),
++    ("body", "        const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;\n",
++     "        const uint32_t tx = WST + 2 * (16 * (m.bucket + 1)) * 128;  // two boxes of 16 * (b + 1) rows x 128 B\n", 1),
++    ("body", _REGA_FINE_SWITCH_OLD, _REGA_FINE_SWITCH_NEW, 1),
++    ("body", "  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);\n",
++     "  const void* fn = reinterpret_cast<const void*>(rega_kernel_fine<G, BIG>);\n", 1),
++    ("body", "std::vector<int64_t> rega_init() {\n", "std::vector<int64_t> rega_init_fine() {\n", 1),
++    ("body", "void rega_gather(torch::Tensor x,", "void rega_gather_fine(torch::Tensor x,", 1),
++    ("body", "rega_gather_kernel", "rega_gather_fine_kernel", 2),
++    ("body", "void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,",
++     "void rega_gemm_fine(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,", 1),
++    ("body", "             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, "
++             "torch::Tensor err) {\n",
++     "             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,\n"
++     "             int64_t fine) {\n", 1),
++    ("body", "  TORCH_CHECK(which == 0 || which == 1, \"rega_gemm: which\");\n",
++     "  TORCH_CHECK(which == 0 || which == 1, \"rega_gemm: which\");\n"
++     "  TORCH_CHECK(fine == 0 || fine == 1, \"rega_gemm_fine: fine\");\n", 1),
++    ("body", "    for (int b = 0; b < 4; ++b) {\n      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 << b)};\n",
++     "    for (int b = 0; b < 8; ++b) {  // bucket b: 16 * (b + 1) rows (<= 128 rows x 128 B = SLAB_HALF)\n"
++     "      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 * (b + 1))};\n", 1),
++    ("body", "  rega_kernel<G_, B_><<<", "  rega_kernel_fine<G_, B_><<<", 1),
++    ("body", "reinterpret_cast<int*>(err.data_ptr()))\n",
++     "reinterpret_cast<int*>(err.data_ptr()), static_cast<int>(fine))\n", 1),
++)
++
++
++def _rega_fine_src():
++    """muse_prefill_rega_fine's CUDA source: master's head + the eight-N wgmma wrappers + master's body through
++    _REGA_FINE_EDITS, then sanity checks on the result (no master kernel name and no power-of-two bucket arithmetic
++    left, both decode_item calls pass `fine`, nine WG_CONSUME uses). None on any miss. Master's strings are read,
++    never edited."""
++    parts = {"head": _REGA_HEAD, "body": _REGA_BODY}
++    for part, old, new, n in _REGA_FINE_EDITS:
++        if parts[part].count(old) != n:
++            return None
++        parts[part] = parts[part].replace(old, new)
++    body = parts["body"]
++    if ("rega_kernel<" in body or "rega_kernel(" in body or "16 << " in body or "rega_gather_kernel" in body
++            or body.count("s_gfirst, s_gcount, fine)") != 2 or body.count("WG_CONSUME(") != 9
++            or "CUtensorMap m[8]" not in parts["head"]):
++        return None
++    return parts["head"] + _rega_wgmma_src(REGA_FINE_NB) + body
++
++
++def _rega_fine_audit(src):
++    """Pre-build audit of the fine module: no templated Tensor accessor, no mutable file-scope / static / device
++    globals. Returns the findings."""
++    bad = []
++    for name, text in (("cpp", _REGA_FINE_CPP), ("cuda", src)):
++        for n, line in enumerate(text.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
++                bad.append(f"{name} line {n}: {line.strip()[:100]}")
++    return bad + _rega_audit_cpp(_REGA_FINE_CPP + "\n" + src)
++
++
++def _rega_fine_build(src):
++    """Compile muse_prefill_rega_fine (prepare only, last): ext or None. Master's flags and TORCH_CUDA_ARCH_LIST=9.0a
++    handling, restored after."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    ext = None
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:
++            print(f"{REGA_FINE_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
++                  flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            arch_flags = ["<unknown>"]
++        print(f"{REGA_FINE_TAG} build {REGA_FINE_EXT_NAME}: arch {arch_flags}; cflags {REGA_CUDA_CFLAGS}", flush=True)
++        ext = load_inline(name=REGA_FINE_EXT_NAME, cpp_sources=_REGA_FINE_CPP, cuda_sources=src,
++                          functions=list(REGA_FINE_FUNCS), extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
++    except Exception as e:
++        ext = None
++        print(f"{REGA_FINE_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {str(e)[-400:]!r}",
++              flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    if ext is not None:
++        print(f"{REGA_FINE_TAG} nvcc + load {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _rega_fine_attrs(ext):
++    """Attributes of the four instantiations (w13 / w2 x stage-1 / first-turn class) BEFORE any launch
++    (rega_init_fine sets each one's dynamic smem attribute; setmaxnreg.inc hangs on a short register pool): master's
++    criteria. Returns {big: ok}."""
++    info = ext.rega_init_fine()
++    ok = {False: True, True: True}
++    seen = 0
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, _ = info[i:i + 10]
++        gated, big = bool(flag & 1), bool(flag & 2)
++        seen += 1
++        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        ok[big] = ok[big] and good
++        print(f"{REGA_FINE_TAG} rega_kernel_fine<{'true' if gated else 'false'}, {'true' if big else 'false'}>: attrs "
++              f"{bool(a_ok)} (rc {e1}), regs {regs}, local {local_bytes} B{' SPILL' if local_bytes > 0 else ''}, "
++              f"smem {static_smem}+{dyn_smem} B, CTAs/SM {occ}, bin {bin_v}: {'ok' if good else 'OFF'}", flush=True)
++    if seen != 4:
++        return {False: False, True: False}
++    return ok
++
++
++def _rega_fine_tables(x, lids, state):
++    """prepare() only: the align kernel_fn runs (_align_dispatch) and master's gather: ((sorted_ids, block_experts,
++    n_padded, num_slots), xs)."""
++    num_slots = x.shape[0] * TOP_K
++    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
++    rows = block_experts.shape[0] * REGA_BSM
++    xs = torch.empty((rows, D_EXPERT), device=x.device, dtype=torch.bfloat16)
++    state["rega_ext"].rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
++    return (sorted_ids, block_experts, n_padded, num_slots), xs
++
++
++def _rega_fine_gemm(state, mode, which, src, dst, tabs):
++    """One rega GEMM launch over prepared tables with the arguments _experts_rega passes: master's rega_gemm (mode
++    None) or the fine module's with `fine` = mode (1: N = 16 * nbk, 0: master's mapping). w13 (which 0): xs -> hs;
++    w2 (which 1): hs -> y."""
++    bank, err, grid = state["rega_bank"], state["rega_err"], state["rega_grid"]
++    sorted_ids, block_experts, n_padded, num_slots = tabs
++    if which == 0:
++        args = (src, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 64,
++                D_EXPERT, dst)
++    else:
++        args = (src, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 128,
++                D_EXPERT, dst)
++    if mode is None:
++        state["rega_ext"].rega_gemm(which, *args, grid, err)
++    else:
++        state["rega_fine_ext"].rega_gemm_fine(which, *args, grid, err, int(mode))
++
++
++def _rega_fine_chunks(tabs):
++    """prepare() only: the kernel's chunk cut on these align tables (a chunk starts every 8 blocks of 16 rows into a
++    local expert's run): (nbk of every chunk, nbk of each used block's chunk)."""
++    _, block_experts, n_padded, _ = tabs
++    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
++    be = block_experts[:used].cpu().tolist()
++    nbks, blk = [], [0] * used
++    b = 0
++    while b < used:
++        e, r = be[b], b + 1
++        while r < used and be[r] == e:
++            r += 1
++        if 0 <= e < LOCAL_EXPERTS:
++            for c0 in range(b, r, 8):
++                n = min(8, r - c0)
++                nbks.append(n)
++                blk[c0:c0 + n] = [n] * n
++        b = r
++    return nbks, blk
++
++
++def _rega_fine_hist(nbks):
++    """'1:a 2:b .. 8:h': chunks by nbk (16-route blocks per chunk)."""
++    return " ".join(f"{n}:{nbks.count(n)}" for n in range(1, 9))
++
++
++def _rega_fine_routes(lids):
++    """prepare() only: (local routes, mean routes per touched local expert, max routes of one expert)."""
++    routes = torch.bincount(lids[lids >= 0].long(), minlength=LOCAL_EXPERTS)[:LOCAL_EXPERTS].cpu()
++    touched = routes[routes > 0]
++    return int(routes.sum()), float(touched.float().mean()) if touched.numel() else 0.0, int(routes.max())
++
++
++def _rega_fine_first_diff(a, b, sorted_ids, blk, route_rows):
++    """prepare() only: (max |a - b| (NaN counts as inf), first mismatching row or -1, nbk of that row's chunk or 0).
++    route_rows: a's rows are route slots (y; mapped to the sorted slot through sorted_ids), else sorted slots (hs)."""
++    d = torch.nan_to_num((a.float() - b.float()).abs(), nan=float("inf"))
++    rows = (a != b).any(dim=1).nonzero().flatten()
++    mx = float(d.max()) if d.numel() else 0.0
++    if rows.numel() == 0:
++        return mx, -1, 0
++    r = int(rows[0])
++    slot = r
++    if route_rows:
++        pos = (sorted_ids == r).nonzero().flatten()
++        slot = int(pos[0]) if pos.numel() else -1
++    bi = slot // REGA_BSM if slot >= 0 else -1
++    return mx, r, blk[bi] if 0 <= bi < len(blk) else 0
++
++
++def _rega_fine_med(v):
++    s = sorted(v)
++    return s[len(s) // 2]
++
++
++def _rega_fine_time(state, device, tokens, kind, gen):
++    """prepare() only: interleaved cold-L2 CUDA-graph replays at one T and routing of the three pairs (w13 then w2,
++    one graph each: master's rega_gemm, the fine module with master's mapping (f4), the fine module (f)) and of each
++    kernel alone (w2 alone reads the real hs master's w13 wrote). REGA_FINE_ROUNDS rounds x REGA_FINE_ALTERNATIONS
++    alternations, order rotated and flipped, a 256 MB flush before every replay, an empty-graph baseline subtracted
++    per round (and over the pooled samples). Returns (per-round {name: us}, pooled {name: us}, local routes, nbk
++    histogram)."""
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    err = state["rega_err"]
++    tabs, xs = _rega_fine_tables(x, lids, state)
++    hist = _rega_fine_hist(_rega_fine_chunks(tabs)[0])
++    hs_r = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++    hs_w = torch.zeros_like(hs_r)
++    y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++    err.zero_()
++    _rega_fine_gemm(state, None, 0, xs, hs_r, tabs)  # the real hs for the w2-alone graphs
++    torch.cuda.synchronize()
++
++    def pair(mode):
++        _rega_fine_gemm(state, mode, 0, xs, hs_w, tabs)
++        _rega_fine_gemm(state, mode, 1, hs_w, y, tabs)
++
++    fns = {}
++    for lab, mode in REGA_FINE_VARIANTS:
++        fns[f"pair:{lab}"] = lambda mode=mode: pair(mode)
++        fns[f"w13:{lab}"] = lambda mode=mode: _rega_fine_gemm(state, mode, 0, xs, hs_w, tabs)
++        fns[f"w2:{lab}"] = lambda mode=mode: _rega_fine_gemm(state, mode, 1, hs_r, y, tabs)
++    graphs, flush = {}, None
++    try:
++        graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++        flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
++        ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++        def once(name):
++            flush.zero_()
++            ev[0].record()
++            graphs[name].replay()
++            ev[1].record()
++            torch.cuda.synchronize()
++            return ev[0].elapsed_time(ev[1]) * 1000.0
++
++        names = list(graphs)
++        for name in names:
++            once(name)  # warm-up replay
++        rounds, pooled = [], {name: [] for name in names}
++        for r in range(REGA_FINE_ROUNDS):
++            samples = {name: [] for name in names}
++            for i in range(REGA_FINE_ALTERNATIONS):
++                k = (i + r) % len(names)
++                order = names[k:] + names[:k]
++                if i % 2:
++                    order = order[::-1]
++                for name in order:
++                    samples[name].append(once(name))
++            base = _rega_fine_med(samples["empty"])
++            rounds.append({n: max(_rega_fine_med(v) - base, 0.0) for n, v in samples.items() if n != "empty"})
++            for n, v in samples.items():
++                pooled[n].extend(v)
++        base = _rega_fine_med(pooled["empty"])
++        pooled = {n: max(_rega_fine_med(v) - base, 0.0) for n, v in pooled.items() if n != "empty"}
++        word = _rega_marks(err)[0]
++        if word != 0:
++            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
++        return rounds, pooled, int((lids >= 0).sum()), hist
++    finally:
++        del graphs, flush, fns, xs, hs_r, hs_w, y
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_fine_exact(state, cls, tokens, real, gen, device, weights, cache, trial, tag):
++    """prepare() only, one routing: one align + gather, then master's w13 / w2, the fine module's w13 / w2 (f) and
++    with master's mapping (f4) into zeroed buffers (each w2 fed master's hs). Error word 0 and both launch markers
++    for every launch; fine's hs and y must be bit-identical to master's, else max |diff| and the first mismatching
++    (class, routing, nbk) are printed and the whole block with fine ON (trial) is held to master's fp32-reference
++    calibrated bound (max(2 x the incumbent's own error, 8e-3), worst row 5x). Returns (None or why, exact, f4
++    exact, note, (nbk histogram, chunks, route stats))."""
++    err = state["rega_err"]
++    x, tw, lids = _rega_case(tokens, real, gen, device)
++    tabs, xs = _rega_fine_tables(x, lids, state)
++    nbks, blk = _rega_fine_chunks(tabs)
++    stats = (_rega_fine_hist(nbks), len(nbks), _rega_fine_routes(lids))
++    out, words = {}, {}
++    for lab, mode in REGA_FINE_VARIANTS:
++        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++        err.zero_()
++        _rega_fine_gemm(state, mode, 0, xs, hs, tabs)
++        _rega_fine_gemm(state, mode, 1, out["m"][0] if lab != "m" else hs, y, tabs)
++        torch.cuda.synchronize()
++        word, m13, m2 = _rega_marks(err)
++        words[lab] = (word, _rega_launched(m13, m2))
++        out[lab] = (hs, y)
++    if not all(w == 0 and launched for w, launched in words.values()):
++        return f"exact step {real}: (error word, both markers) per variant {words}", False, False, "", stats
++    exact = bool(torch.equal(out["m"][0], out["f"][0])) and bool(torch.equal(out["m"][1], out["f"][1]))
++    f4 = bool(torch.equal(out["m"][0], out["f4"][0])) and bool(torch.equal(out["m"][1], out["f4"][1]))
++    note = ""
++    if not exact:
++        mh, rh, nh = _rega_fine_first_diff(out["m"][0], out["f"][0], tabs[0], blk, False)
++        my, ry, ny = _rega_fine_first_diff(out["m"][1], out["f"][1], tabs[0], blk, True)
++        where = f"hs row {rh}" if rh >= 0 else f"y row {ry}"
++        note = f"first mismatch ({cls}, {real}, nbk {nh if rh >= 0 else ny}) {where}; max|diff| hs {mh:.3e} y {my:.3e}"
++        print(f"{tag} exact MISS: {note}; fallback: master's fp32-reference calibrated bound", flush=True)
++        del out
++        inc_name, inc_fn = _rega_incumbent(tokens)
++        ref = _rega_reference_out(x, tw, lids, state, weights, cache)
++        err.zero_()
++        new = _experts_rega(x, tw, lids, trial)
++        torch.cuda.synchronize()
++        word, m13, m2 = _rega_marks(err)
++        inc = inc_fn(x, tw, lids, state)
++        torch.cuda.synchronize()
++        e_new, w_new = _ssdq_metrics(new, ref)
++        e_inc, _ = _ssdq_metrics(inc, ref)
++        bound = max(2.0 * e_inc, 8e-3)
++        ok = word == 0 and _rega_launched(m13, m2) and e_new <= bound and w_new <= 5.0 * bound
++        note += (f"; bound: rel L2 {e_new:.2e} row {w_new:.2e} vs {bound:.2e} ({inc_name} {e_inc:.2e}), word {word}: "
++                 f"{'ok' if ok else 'MISS'}")
++        print(f"{tag} exact fallback {real}: {note}", flush=True)
++        if not ok:
++            return f"exact compare and the fp32-reference bound both missed: {note}", False, f4, note, stats
++    return None, exact, f4, note, stats
++
++
++def _rega_fine_class(state, device, cls, weights, lines, t_start):
++    """prepare() only: one class's checks and gate; (on, reason). 1. an eager traced canary of the whole
++    _experts_rega call with fine ON for this class (the norm-gather form kernel_fn uses); 2. the exact compare per
++    routing (_rega_fine_exact); 3. the three-pair timing (_rega_fine_time) on the pop and random routings; 4. when
++    the timing passes, the two-state replay check with fine ON for this class. ON needs every step."""
++    tokens = REGA_GATE_TOKENS.get(cls, REGA_FT_GATE_TOKENS)
++    tag = f"{REGA_FINE_TAG} {cls} T={tokens}"
++    err = state["rega_err"]
++    n_rnd, counts = _rega_pop_counts(tokens, device)
++    alpha, cnt = _rega_pop_pick(counts, REGA_FINE_POP_MULT * n_rnd)
++    pop_kind = f"pop:{alpha:g}"
++    print(f"{tag} pop routing: alpha {alpha:g} -> {cnt:.0f} local routes = {cnt / max(n_rnd, 1.0):.2f}x uniform "
++          f"{n_rnd:.0f}", flush=True)
++    trial = dict(state)
++    trial["rega_fine_ok"] = {c: c == cls for c in REGA_FINE_CLASSES}
++    # 1. canary
++    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++    gen = torch.Generator(device=device).manual_seed(20261102)
++    x0, tw0, l0 = _rega_case(tokens, "random", gen, device)
++    err.zero_()
++    out = _experts_rega(x0, tw0, l0, trial, tracer=_RegaTracer(f"fine canary {cls}"), prenorm=prenorm)
++    torch.cuda.synchronize()
++    word, m13, m2 = _rega_marks(err)
++    finite = bool(torch.isfinite(out.float()).all())
++    print(f"{tag} canary: error word {word} ({REGA_ERR_TEXT.get(word, '?')}), markers {m13:#x}/{m2:#x}, finite "
++          f"{finite}", flush=True)
++    del out, x0, tw0, l0
++    if word != 0 or not _rega_launched(m13, m2) or not finite:
++        return False, f"canary failed (error word {word}, markers {m13:#x}/{m2:#x}, finite {finite})"
++    # 2. exact compare against master's rega_gemm (fp32-reference bound as the fallback)
++    cache, exact_all, f4_all, notes, stats = {}, True, True, [], {}
++    try:
++        for kind in REGA_FINE_EXACT_KINDS:
++            real = pop_kind if kind == "pop" else kind
++            why, exact, f4, note, stats[real] = _rega_fine_exact(state, cls, tokens, real, gen, device, weights, cache,
++                                                                 trial, tag)
++            exact_all, f4_all = exact_all and exact, f4_all and f4
++            if note:
++                notes.append(f"{real}: {note}")
++            if why:
++                return False, why
++    finally:
++        cache.clear()
++        torch.cuda.empty_cache()
++    print(f"{tag} nbk chunks " + "; ".join(f"{k} {h} ({n} chunks; {r} routes, {m:.0f}/expert mean, max {mx})"
++                                           for k, (h, n, (r, m, mx)) in stats.items()), flush=True)
++    h, n, (r, m, mx) = stats[pop_kind]
++    lines.append(f"{tag} nbk {pop_kind} {h} ({n} chunks; {r} routes, {m:.0f}/expert mean, max {mx})")
++    lines.append(f"{tag} exact fine==master hs,y ({'/'.join(stats)}): {'yes' if exact_all else 'NO, fp32 bound ok'}; "
++                 f"f4==master {'yes' if f4_all else 'NO (control suspect)'}" + (f"; {'; '.join(notes)}" if notes else ""))
++    print(lines[-1], flush=True)
++    # 3. timing: the three pairs, pop then random
++    res = {}
++    for rt in ("pop", "random"):
++        used = time.perf_counter() - t_start
++        if used > REGA_FINE_TIMING_DEADLINE_S[cls]:
++            return False, f"SKIPPED: {rt} timing not started (prepare {used:.0f}s > {REGA_FINE_TIMING_DEADLINE_S[cls]:.0f}s)"
++        real = pop_kind if rt == "pop" else "random"
++        rounds, pooled, local, hist = _rega_fine_time(state, device, tokens, real, gen)
++        res[rt] = (rounds, pooled)
++
++        def trip(d, k):
++            return "/".join(f"{d[f'{k}:{lab}']:.1f}" for lab, _ in REGA_FINE_VARIANTS)
++
++        pp = pooled
++        lines.append(f"{tag} KERNELS {real} {local}r nbk {hist}; us m/f4/f: pair "
++                     + " ".join(f"r{i + 1} {trip(rd, 'pair')}" for i, rd in enumerate(rounds))
++                     + f" pooled {trip(pp, 'pair')} (f4/m {pp['pair:f4'] / max(pp['pair:m'], 1e-9):.3f} f/f4 "
++                       f"{pp['pair:f'] / max(pp['pair:f4'], 1e-9):.3f} f/m {pp['pair:f'] / max(pp['pair:m'], 1e-9):.3f})"
++                     + f"; w13 {trip(pp, 'w13')}; w2 {trip(pp, 'w2')}")
++        print(lines[-1], flush=True)
++    pop_r = [rd["pair:f"] / max(rd["pair:m"], 1e-9) for rd in res["pop"][0]]
++    rnd_r = res["random"][1]["pair:f"] / max(res["random"][1]["pair:m"], 1e-9)
++    timing_on = all(x <= REGA_FINE_POP_RATIO for x in pop_r) and rnd_r <= REGA_FINE_RANDOM_RATIO
++    low_v = f"; rega_low_variant {int(state.get('rega_low_variant', 0))}" if cls == "low" else ""
++    lines.append(f"{tag} GATE f/m pair: pop {'/'.join(f'{x:.3f}' for x in pop_r)} (<= {REGA_FINE_POP_RATIO} both), "
++                 f"random pooled {rnd_r:.3f} (<= {REGA_FINE_RANDOM_RATIO}): {'pass' if timing_on else 'MISS'}{low_v}")
++    print(lines[-1], flush=True)
++    if not timing_on:
++        return False, f"timing gate missed (pop {'/'.join(f'{x:.3f}' for x in pop_r)}, random {rnd_r:.3f})"
++    # 4. two-state replay check with fine ON for this class (A, B, C states; fp32-reference bound + markers)
++    used = time.perf_counter() - t_start
++    if used > REGA_FINE_REPLAY_DEADLINE_S[cls]:
++        return False, f"SKIPPED: replay check not started (prepare {used:.0f}s > {REGA_FINE_REPLAY_DEADLINE_S[cls]:.0f}s)"
++    cache = {}
++    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FINE_REPLAY_PLAN[cls],
++                                   keys=REGA_FINE_STATE_KEYS)
++    del cache
++    torch.cuda.empty_cache()
++    if why:
++        return False, f"two-state replay check failed: {why}"
++    print(f"{tag} two-state replay check (fine ON): {line}", flush=True)
++    return True, ""
++
++
++def _rega_fine_phase(state, weights, device, t_start):
++    """prepare() only, LAST (after _rega_lo_phase, _fa3c_setup and _norm_gather_setup). Skips itself (OFF line)
++    when prepare() has used more than REGA_FINE_START_DEADLINE_S before the nvcc build. Builds the separate
++    muse_prefill_rega_fine module, checks its attributes before any launch, then per routed class
++    (state['rega_ok']) runs _rega_fine_class under the class's start deadline; the low class only when
++    rega_low_variant == 0 (rega_gemm_lo keeps precedence). Sets state['rega_fine_ok'][class] (plain bools) and
++    state['rega_fine_ext']. Never raises; every miss leaves master's rega_gemm. Returns the compact summary lines;
++    the PATH CHOSEN lines are last."""
++    t0 = time.perf_counter()
++    state["rega_fine_ext"], state["rega_fine_ok"] = None, {c: False for c in REGA_FINE_CLASSES}
++    lines, verdict, off, secs = [], {}, None, {}
++    v = int(state.get("rega_low_variant", 0))
++    try:
++        used = time.perf_counter() - t_start
++        routed = [c for c in REGA_FINE_CLASSES if state.get("rega_ok", {}).get(c, False)]
++        if not routed:
++            off = "no class is on rega (master's gates): nothing to re-bucket"
++        elif used > REGA_FINE_START_DEADLINE_S:
++            off = (f"SKIPPED: prepare already used {used:.0f}s > {REGA_FINE_START_DEADLINE_S:.0f}s before the nvcc "
++                   f"build")
++        elif not _rega_lo_identity()[0]:
++            off = "master's v2 rega source does not hash to master's (the fine module derives from it)"
++        else:
++            src = _rega_fine_src()
++            bad = ["a text anchor of master's source did not occur as expected"] if src is None else \
++                _rega_fine_audit(src)
++            if bad:
++                off = f"source derivation / audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_FINE_TAG} derived source sha256 "
++                      f"{hashlib.sha256((_REGA_FINE_CPP + src).encode()).hexdigest()[:16]} ({len(src)} chars); audit ok; "
++                      f"N buckets {REGA_FINE_NB}; prepare at {used:.1f}s", flush=True)
++                tb = time.perf_counter()
++                ext = _rega_fine_build(src)
++                secs["build"] = time.perf_counter() - tb
++                if ext is None:
++                    off = "build failed"
++                else:
++                    attrs_ok = _rega_fine_attrs(ext)
++                    state["rega_fine_ext"] = ext
++                    stop = None
++                    for cls in routed:
++                        tc = time.perf_counter()
++                        used = tc - t_start
++                        if stop:
++                            verdict[cls] = (False, stop)
++                        elif not attrs_ok[cls == "ft"]:
++                            verdict[cls] = (False, "attribute / register-pool check failed for this class's kernels")
++                        elif cls == "low" and v:
++                            verdict[cls] = (False, f"low runs rega_gemm_lo (rega_low_variant {v}); fine applies to "
++                                                   f"master's rega_gemm only")
++                        elif used > REGA_FINE_CLASS_DEADLINE_S[cls]:
++                            verdict[cls] = (False, f"SKIPPED: deadline (prepare {used:.0f}s > "
++                                                   f"{REGA_FINE_CLASS_DEADLINE_S[cls]:.0f}s)")
++                        else:
++                            try:
++                                on, why = _rega_fine_class(state, device, cls, weights, lines, t_start)
++                            except Exception as e:  # stop here: anything after a fault would be unreliable
++                                on, why = False, f"raised {e!r}"[:300]
++                                stop = f"an earlier class raised ({why[:80]})"
++                            state["rega_fine_ok"][cls] = bool(on)
++                            verdict[cls] = (bool(on), why)
++                        state["rega_err"].zero_()
++                        secs[cls] = time.perf_counter() - tc
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
++        off = f"fine phase raised {e!r}"[:400]
++        state["rega_fine_ok"] = {c: False for c in REGA_FINE_CLASSES}
++    finally:
++        if not any(state["rega_fine_ok"].values()):
++            state["rega_fine_ext"] = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        if off:
++            lines.append(f"{REGA_FINE_TAG} OFF: {off}")
++            print(lines[-1], flush=True)
++        lines.append(f"{REGA_FINE_TAG} phase {time.perf_counter() - t0:.1f}s ("
++                     + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
++                     + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s; rega_ok {state.get('rega_ok')}")
++        for cls in REGA_FINE_CLASSES:
++            on, why = verdict.get(cls, (False, off or "class not on rega"))
++            lines.append(f"{REGA_FINE_TAG} PATH CHOSEN {cls}: fine={'ON' if on else 'OFF'}"
++                         + ("" if on else f" ({why[:160]})") + (f"; rega_low_variant {v}" if cls == "low" else ""))
++        lines.append(f"{REGA_FINE_TAG} PATH CHOSEN: rega_fine_ok {state['rega_fine_ok']} (ON = N 16*nbk, 8 buckets; OFF = "
++                     f"master's rega_gemm)")
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]

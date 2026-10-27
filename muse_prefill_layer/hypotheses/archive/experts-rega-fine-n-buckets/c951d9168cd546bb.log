@@ -1,0 +1,91 @@
+el<w2> done (170 us eager)
+[rega-fine] low T=753 canary: error word 0 (ok), markers 0x57474d4d/0x57474d4d, finite True
+[rega-fine] low T=753 nbk chunks random 1:3 2:28 3:1 4:0 5:0 6:0 7:0 8:0 (32 chunks; 769 routes, 24/expert mean, max 35); skewed 1:24 2:4 3:0 4:0 5:0 6:0 7:0 8:24 (52 chunks; 3406 routes, 106/expert mean, max 764); one 1:0 2:0 3:0 4:0 5:0 6:0 7:0 8:6 (6 chunks; 753 routes, 753/expert mean, max 753); pop:2.2 1:6 2:11 3:8 4:2 5:1 6:1 7:1 8:3 (33 chunks; 1363 routes, 43/expert mean, max 244)
+[rega-fine] low T=753 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] low T=753 KERNELS pop:2.2 1389r nbk 1:3 2:17 3:4 4:4 5:2 6:0 7:2 8:2; us m/f4/f: pair r1 558.4/580.9/566.9 r2 558.2/583.2/566.8 pooled 558.4/583.1/567.0 (f4/m 1.044 f/f4 0.972 f/m 1.015); w13 369.8/390.6/379.9; w2 188.8/193.2/188.7
+[rega-fine] low T=753 KERNELS random 762r nbk 1:2 2:30 3:0 4:0 5:0 6:0 7:0 8:0; us m/f4/f: pair r1 447.2/463.6/466.5 r2 446.8/463.7/466.4 pooled 447.2/463.7/466.6 (f4/m 1.037 f/f4 1.006 f/m 1.043); w13 301.2/315.9/318.4; w2 146.4/149.3/149.8
+[rega-fine] low T=753 GATE f/m pair: pop 1.015/1.015 (<= 0.98 both), random pooled 1.043 (<= 1.01): MISS; rega_low_variant 0
+[rega-fine] high T=3012 pop routing: alpha 2.2 -> 5517 local routes = 1.83x uniform 3013
+[rega] [fine canary high] launching align
+[rega] [fine canary high] align done (141 us eager)
+[rega] [fine canary high] launching rega_gather
+[rega] [fine canary high] rega_gather done (54 us eager)
+[rega] [fine canary high] launching rega_kernel<w13+silu>
+[rega] [fine canary high] rega_kernel<w13+silu> done (474 us eager)
+[rega] [fine canary high] launching rega_kernel<w2>
+[rega] [fine canary high] rega_kernel<w2> done (234 us eager)
+[rega-fine] high T=3012 canary: error word 0 (ok), markers 0x57474d4d/0x57474d4d, finite True
+[rega-fine] high T=3012 nbk chunks random 1:0 2:0 3:0 4:0 5:1 6:19 7:12 8:0 (32 chunks; 3015 routes, 94/expert mean, max 109); skewed 1:0 2:2 3:17 4:9 5:0 6:0 7:0 8:96 (124 chunks; 13534 routes, 423/expert mean, max 3064); one 1:0 2:0 3:0 4:0 5:1 6:0 7:0 8:23 (24 chunks; 3012 routes, 3012/expert mean, max 3012); pop:2.2 1:3 2:2 3:5 4:3 5:7 6:6 7:4 8:29 (59 chunks; 5604 routes, 175/expert mean, max 939)
+[rega-fine] high T=3012 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] high T=3012 KERNELS pop:2.2 5526r nbk 1:1 2:3 3:0 4:4 5:8 6:9 7:4 8:27; us m/f4/f: pair r1 1169.4/1183.7/1123.3 r2 1272.9/1286.7/1233.9 pooled 1272.0/1284.1/1230.6 (f4/m 1.010 f/f4 0.958 f/m 0.967); w13 863.3/874.0/835.7; w2 404.0/407.9/397.5
+[rega-fine] high T=3012 KERNELS random 2999r nbk 1:0 2:0 3:0 4:0 5:4 6:15 7:13 8:0; us m/f4/f: pair r1 736.2/746.8/675.1 r2 749.6/763.3/689.0 pooled 747.2/761.7/687.6 (f4/m 1.019 f/f4 0.903 f/m 0.920); w13 508.8/517.7/469.2; w2 240.4/245.1/221.8
+[rega-fine] high T=3012 GATE f/m pair: pop 0.961/0.969 (<= 0.98 both), random pooled 0.920 (<= 1.01): pass
+[rega] copy B: bank 0xa5800000000 vs A 0xa57dc000000, err 0xa5a6bf51200 vs A 0xa5a6bf20400 (shared: False)
+[rega] copy C: bank 0xa583c000000 vs A 0xa57dc000000, err 0xa5a6bf54600 vs A 0xa5a6bf20400 (shared: False)
+[rega] replay T=3012 random state A: rega rel L2 5.409e-04 worst row 1.868e-03; marlin 5.634e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state B: rega rel L2 5.500e-04 worst row 2.037e-03; marlin 5.650e-03; bound 1.130e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state C: rega rel L2 5.684e-04 worst row 2.116e-03; marlin 5.637e-03; bound 1.127e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state A: rega rel L2 5.522e-04 worst row 2.160e-03; marlin 5.639e-03; bound 1.128e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 random state B: rega rel L2 5.528e-04 worst row 2.886e-03; marlin 5.638e-03; bound 1.128e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state A: rega rel L2 6.843e-04 worst row 1.834e-03; marlin 5.671e-03; bound 1.134e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state B: rega rel L2 6.869e-04 worst row 2.053e-03; marlin 5.667e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state C: rega rel L2 6.845e-04 worst row 1.940e-03; marlin 5.669e-03; bound 1.134e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state A: rega rel L2 6.951e-04 worst row 2.020e-03; marlin 5.668e-03; bound 1.134e-02; error word 0; launch markers w13 yes w2 yes
+[rega] replay T=3012 skewed state B: rega rel L2 6.940e-04 worst row 1.983e-03; marlin 5.665e-03; bound 1.133e-02; error word 0; launch markers w13 yes w2 yes
+[rega-fine] high T=3012 two-state replay check (fine ON): 10 refilled graph replays over states A, B (deepcopy), C (tensor clone) at [(3012, ('random', 'skewed'))]; LAUNCHED = rega on 10/10 (both launch markers); worst rel L2 6.95e-04 (incumbent 5.67e-03)
+[rega-fine] ft T=16384 pop routing: alpha 2.2 -> 30478 local routes = 1.86x uniform 16354
+[rega] [fine canary ft] launching align
+[rega] [fine canary ft] align done (152 us eager)
+[rega] [fine canary ft] launching rega_gather
+[rega] [fine canary ft] rega_gather done (126 us eager)
+[rega] [fine canary ft] launching rega_kernel<w13+silu>
+[rega] [fine canary ft] rega_kernel<w13+silu> done (1965 us eager)
+[rega] [fine canary ft] launching rega_kernel<w2>
+[rega] [fine canary ft] rega_kernel<w2> done (953 us eager)
+[rega-fine] ft T=16384 canary: error word 0 (ok), markers 0x57474d4d/0x57474d4d, finite True
+[rega-fine] ft T=16384 nbk chunks random 1:10 2:7 3:1 4:2 5:1 6:4 7:1 8:122 (148 chunks; 16483 routes, 515/expert mean, max 564); skewed 1:10 2:5 3:0 4:0 5:0 6:1 7:6 8:569 (591 chunks; 73688 routes, 2303/expert mean, max 16638); one 1:0 2:0 3:0 4:0 5:0 6:0 7:0 8:128 (128 chunks; 16384 routes, 16384/expert mean, max 16384); pop:2.2 1:5 2:3 3:2 4:3 5:4 6:2 7:6 8:226 (251 chunks; 30344 routes, 948/expert mean, max 5005)
+[rega-fine] ft T=16384 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] ft T=16384 KERNELS pop:2.2 30482r nbk 1:6 2:5 3:5 4:3 5:3 6:5 7:1 8:228; us m/f4/f: pair r1 5888.9/5967.4/5948.9 r2 6172.3/6266.4/6258.0 pooled 5965.0/6019.4/6020.8 (f4/m 1.009 f/f4 1.000 f/m 1.009); w13 4053.4/4091.3/4088.4; w2 1903.1/1938.1/1933.8
+[rega-fine] ft T=16384 KERNELS random 16215r nbk 1:6 2:2 3:2 4:0 5:0 6:2 7:10 8:116; us m/f4/f: pair r1 3090.5/3147.4/3127.6 r2 3071.5/3123.2/3107.2 pooled 3085.0/3132.6/3118.7 (f4/m 1.015 f/f4 0.996 f/m 1.011); w13 2093.2/2126.7/2111.4; w2 992.7/1007.5/1007.9
+[rega-fine] ft T=16384 GATE f/m pair: pop 1.010/1.014 (<= 0.98 both), random pooled 1.011 (<= 1.01): MISS
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 18.1 us; chunk 512 9.1 us; chunk 1024 20.5 us; chunk chosen 512 ratio 0.501 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 70.0 us; chunk 512 8.8 us; chunk 1024 21.7 us; chunk chosen 512 ratio 0.125 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 391.7 us; chunk 512 26.6 us; chunk 1024 22.8 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8039.3 us, contig-varlen 7642.7 us, contig-batched n/a us (gather alone 16.7 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4471.9 us, contig-varlen 4253.3 us, contig-batched n/a us (gather alone 12.6 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 900.7 us, contig-varlen 862.4 us, contig-batched n/a us (gather alone 8.6 us; bar 0.98 x paged, best/paged 0.958) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1629.3 us, contig-varlen 1588.7 us, contig-batched n/a us (gather alone 49.3 us; bar 0.97 x paged, best/paged 0.975) -> A
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 425.6 us, contig-varlen 419.1 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.985) -> A
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: A; turn_1 b1 L753 ctx80000: A; setup 1.0s, prepare total 126.4s
+[rega-lo] guard routing at T=753: alpha 2.2 -> 1356 local routes (target 1350, the TASK.md floor-implied judge turn_1 load) = 1.83x the uniform 742; calibration 1:725, 1.1:827, 1.2:891, 1.3:932, 1.4:987, 1.5:998, 1.6:1114, 1.7:1150, 1.8:1194, 1.9:1266, 2:1290, 2.1:1338, 2.2:1356, 2.3:1416, 2.4:1485, 2.5:1534, 2.6:1567, 2.7:1625, 2.8:1665, 2.9:1676, 3:1725
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): master block 473.8 us (ratio vs master 1.000); KERNELS w13 303.3 us 1.99 TB/s, w2 148.3 us 2.04 TB/s; chunks 32 (max 1 per expert); grid 132
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V64 block 415.6 us (ratio vs master 0.877); KERNELS w13 262.6 us 2.30 TB/s, w2 128.9 us 2.34 TB/s; chunks 32 (max 1 per expert); grid 264
+[rega-lo] LOW GATE random T=753 random (752 local routes = 1.01x random, 32 experts, max 33 routes/expert): V32 block 414.4 us (ratio vs master 0.875); KERNELS w13 260.5 us 2.32 TB/s, w2 131.2 us 2.30 TB/s; chunks 33 (max 2 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): master block 542.8 us (ratio vs master 1.000); KERNELS w13 344.4 us 1.75 TB/s, w2 172.8 us 1.75 TB/s; chunks 33 (max 2 per expert); grid 132
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V64 block 559.1 us (ratio vs master 1.030); KERNELS w13 355.6 us 1.70 TB/s, w2 176.9 us 1.71 TB/s; chunks 39 (max 4 per expert); grid 264
+[rega-lo] LOW GATE guard T=753 pop:2.2 (1380 local routes = 1.86x random, 32 experts, max 228 routes/expert): V32 block 718.8 us (ratio vs master 1.324); KERNELS w13 458.1 us 1.32 TB/s, w2 232.4 us 1.30 TB/s; chunks 58 (max 8 per expert); grid 264
+[rega-lo] LOW GATE verdict (norm-gather-ON block): no candidate at <= 0.95 random AND <= 1.0 guard (random, guard ratios {'V64': (0.877, 1.03), 'V32': (0.875, 1.324)}): master kept
+[rega-lo] SKEW CURVE 1.0x 0.877 1.2x 0.987 1.5x 0.967 1.8x 1.030 (V64 block / master block; 1.0x: 752 routes (1.01x), 32 experts, max 33 routes/expert, max 1 chunks/expert; 1.2x: 864 routes (1.16x), 32 experts, max 152 routes/expert, max 3 chunks/expert; 1.5x: 1080 routes (1.46x), 32 experts, max 183 routes/expert, max 3 chunks/expert; 1.8x: 1380 routes (1.86x), 32 experts, max 228 routes/expert, max 4 chunks/expert)
+[rega-lo] phase took 39.8s; prepare total 166.9s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)
+[rega-fine] low T=753 nbk pop:2.2 1:6 2:11 3:8 4:2 5:1 6:1 7:1 8:3 (33 chunks; 1363 routes, 43/expert mean, max 244)
+[rega-fine] low T=753 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] low T=753 KERNELS pop:2.2 1389r nbk 1:3 2:17 3:4 4:4 5:2 6:0 7:2 8:2; us m/f4/f: pair r1 558.4/580.9/566.9 r2 558.2/583.2/566.8 pooled 558.4/583.1/567.0 (f4/m 1.044 f/f4 0.972 f/m 1.015); w13 369.8/390.6/379.9; w2 188.8/193.2/188.7
+[rega-fine] low T=753 KERNELS random 762r nbk 1:2 2:30 3:0 4:0 5:0 6:0 7:0 8:0; us m/f4/f: pair r1 447.2/463.6/466.5 r2 446.8/463.7/466.4 pooled 447.2/463.7/466.6 (f4/m 1.037 f/f4 1.006 f/m 1.043); w13 301.2/315.9/318.4; w2 146.4/149.3/149.8
+[rega-fine] low T=753 GATE f/m pair: pop 1.015/1.015 (<= 0.98 both), random pooled 1.043 (<= 1.01): MISS; rega_low_variant 0
+[rega-fine] high T=3012 nbk pop:2.2 1:3 2:2 3:5 4:3 5:7 6:6 7:4 8:29 (59 chunks; 5604 routes, 175/expert mean, max 939)
+[rega-fine] high T=3012 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] high T=3012 KERNELS pop:2.2 5526r nbk 1:1 2:3 3:0 4:4 5:8 6:9 7:4 8:27; us m/f4/f: pair r1 1169.4/1183.7/1123.3 r2 1272.9/1286.7/1233.9 pooled 1272.0/1284.1/1230.6 (f4/m 1.010 f/f4 0.958 f/m 0.967); w13 863.3/874.0/835.7; w2 404.0/407.9/397.5
+[rega-fine] high T=3012 KERNELS random 2999r nbk 1:0 2:0 3:0 4:0 5:4 6:15 7:13 8:0; us m/f4/f: pair r1 736.2/746.8/675.1 r2 749.6/763.3/689.0 pooled 747.2/761.7/687.6 (f4/m 1.019 f/f4 0.903 f/m 0.920); w13 508.8/517.7/469.2; w2 240.4/245.1/221.8
+[rega-fine] high T=3012 GATE f/m pair: pop 0.961/0.969 (<= 0.98 both), random pooled 0.920 (<= 1.01): pass
+[rega-fine] ft T=16384 nbk pop:2.2 1:5 2:3 3:2 4:3 5:4 6:2 7:6 8:226 (251 chunks; 30344 routes, 948/expert mean, max 5005)
+[rega-fine] ft T=16384 exact fine==master hs,y (random/skewed/one/pop:2.2): yes; f4==master yes
+[rega-fine] ft T=16384 KERNELS pop:2.2 30482r nbk 1:6 2:5 3:5 4:3 5:3 6:5 7:1 8:228; us m/f4/f: pair r1 5888.9/5967.4/5948.9 r2 6172.3/6266.4/6258.0 pooled 5965.0/6019.4/6020.8 (f4/m 1.009 f/f4 1.000 f/m 1.009); w13 4053.4/4091.3/4088.4; w2 1903.1/1938.1/1933.8
+[rega-fine] ft T=16384 KERNELS random 16215r nbk 1:6 2:2 3:2 4:0 5:0 6:2 7:10 8:116; us m/f4/f: pair r1 3090.5/3147.4/3127.6 r2 3071.5/3123.2/3107.2 pooled 3085.0/3132.6/3118.7 (f4/m 1.015 f/f4 0.996 f/m 1.011); w13 2093.2/2126.7/2111.4; w2 992.7/1007.5/1007.9
+[rega-fine] ft T=16384 GATE f/m pair: pop 1.010/1.014 (<= 0.98 both), random pooled 1.011 (<= 1.01): MISS
+[rega-fine] phase 44.3s (build 41.7s, low 0.2s, high 0.7s, ft 1.6s); prepare total 211.2s of 300s; rega_ok {'low': True, 'high': True, 'ft': True}
+[rega-fine] PATH CHOSEN low: fine=OFF (timing gate missed (pop 1.015/1.015, random 1.043)); rega_low_variant 0
+[rega-fine] PATH CHOSEN high: fine=ON
+[rega-fine] PATH CHOSEN ft: fine=OFF (timing gate missed (pop 1.010/1.014, random 1.011))
+[rega-fine] PATH CHOSEN: rega_fine_ok {'low': False, 'high': True, 'ft': False} (ON = N 16*nbk, 8 buckets; OFF = master's rega_gemm)
