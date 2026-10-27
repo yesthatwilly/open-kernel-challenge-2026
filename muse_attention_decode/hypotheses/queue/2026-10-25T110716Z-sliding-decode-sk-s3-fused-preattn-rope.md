@@ -73,9 +73,10 @@ controls_for: null
 rewrite_stage: 3
 replaces: "sliding decode (q_len 1, page 1, tp8, 2<=B<=32): stage-2 [_pre_attention_kernel + splitkv_attn_sk_kernel TOK=1] pair at B=17..32 and master Triton _sliding_fused_kernel at B=2..16"
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-26T220207Z
 review_companions: null
+hold_reason: "killed 2026-10-27 by the campaign (check 877a6ba5: B=2..16 failed correctness runs, B=17..32 x0.99-1.005)"
 ---
 
 # sliding-decode-sk-s3-fused-preattn-rope
