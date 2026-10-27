@@ -738,3 +738,14 @@ append-only, newest last.
 - Workflow wf_40d4513d-fdc (base 7cdbcf17): 2 designs plus a judge at effort max, then build, 2 audits and fix at
   effort high (the user's new per-role effort). Branch campaign/eb-w4-c320.
 - 0345Z: attention check **af08448e82c04fdf**: s2b fast merge (hyp/attn-s2b 9f428796 on c320 0453ca70). It races a PDL combine against an in-kernel ticket merge per band, at >= 1.05x in both rounds; the merge cost is printed per grid.
+
+## 2026-10-27T0347Z: wave-3 results: W3-A real gain (scored run sent), W3-C killed, W3-B points to N=64
+
+- **W3-A** cc7d142af3fb4308: 1.5403 (noise-low). Full-line routed at d16f (layer x1.019) and d32f (layer x1.088). sk
+  alone at d32f 219 -> 182 us. Rows vs ba57a64f on their own SGLang: d32f **x1.077**, d16f x0.993, the rest x0.963-1.017
+  (SGLang drift). Merged into campaign/expert-bandwidth (75bb6bf8). **Scored run 973509ebe8df4766.**
+- **W3-C** e775df93: x-static x1.031, x-cp.async x1.003, so x-copy is **killed**. The compute-only ceiling at tok8 is
+  x1.153.
+- **W3-B** 8263c7bc: variant B x0.80, but ptxas serialized it (C7512 register shortage), so the overlap question is
+  open. The ring does not bind. **VERDICT-N (forced N, INEXACT): hot T=128 102.5 -> 69.7 us at N64, T=256 160.1 -> 135.1
+  us**, so N=64 hot tiles may be the big-T lever (exact-N buckets, panel P1 L3). This is a wave-5 candidate.
