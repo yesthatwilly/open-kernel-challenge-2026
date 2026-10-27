@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-27T140341Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-27T143426Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -116,6 +116,7 @@ Regenerated 2026-10-27T140341Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-27T132706Z | sliding-decode1-ph-push-merge | primary | sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132752Z | attn-fast-math-epilogues | primary | output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132814Z | combo-tail-onepass-push-fastepi | primary | combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T143409Z | sk-onepass-verify1-timing-fix | primary | stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-27T142523Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
+Regenerated 2026-10-27T143426Z. Best: 1.4897x [1.4674,1.5121] job `99767cf374bb4688` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

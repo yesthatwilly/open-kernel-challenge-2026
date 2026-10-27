@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T140341Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T143426Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -261,4 +261,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
+- queue: sk-onepass-verify1-timing-fix [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] p2 queued
 - 17 stale holds expired to `done/expired/` (not run)

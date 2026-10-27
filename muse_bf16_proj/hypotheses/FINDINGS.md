@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T142523Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T143426Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -237,4 +237,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 queued
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 queued
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 queued
+- queue: router-pdl-plus-khalf-pooled-iqr-gate [router m=9..256 PDL (restack) + pooler m=128 khalf gate rule] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

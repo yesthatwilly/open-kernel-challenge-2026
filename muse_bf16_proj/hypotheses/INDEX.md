@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-27T142523Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
+Regenerated 2026-10-27T143426Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -92,6 +92,7 @@ Regenerated 2026-10-27T142523Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc4
 | 2026-10-27T132819Z | bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | done/neutral | neutral | 1.2741 | [1.255,1.293] | 6407497bec88470e | check |  | proceed | 1/6 |
 | 2026-10-27T132845Z | pooler-khalf-lt-batched-plan-m128-m256 | primary | pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132918Z | router-hilo-m128-m256-readflush-config-sweep | primary | router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T143409Z | router-pdl-plus-khalf-pooled-iqr-gate | primary | router m=9..256 PDL (restack) + pooler m=128 khalf gate rule | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
