@@ -649,3 +649,13 @@ append-only, newest last.
 - decode check **655304067cd74dfe**: dchain-pdl (campaign/eb-dchain-pdl eb690a25 bytes), o_pdl cells keyed by
   (predecessor path, batch, q_len). Only sliding T=1 can route in this check. Audit: the real headline gain is about
   half the builder's +0.6-0.8%.
+
+## 2026-10-27T0217Z: phase B started alongside (two decode-portable items)
+
+- attention check **00acb91008824b1e**: sk-full-line-gather (hyp/attn-skfull e4daaa4b, base master + v3chain patch,
+  b4b20425's bytes at 1.5360). Full-line issue_tile under SK_FULLLINE, with canary + _sk_validate, else the half-line
+  incumbent. No in-run timing A/B, so judge it on the sk profile rows (108.3 / 226.3 us at decode_16 / 32). The board
+  entry is a78f29ae (1.5347); attention BEST.json is stale.
+- bf16 check **a3dcd4cb46a84648**: the read-flush gate (hyp/bf16-readflush d7bf1c76, base 4b79139c). Every bulk12 gate
+  routes on the read flush (0.98 at m=1, 0.95 at m >= 8), qkv gets R=32 one-CTA-per-SM variants, and a DECISIONS block is
+  re-printed. Read it for the read vs write ratios (pooler / qkv / o) and the qkv decode_1 row (10.54 us).
