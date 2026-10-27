@@ -85,6 +85,7 @@ speedup_ci: [1.4785189471984148, 1.5235499811232396]
 harvested_at: 2026-10-27T140020Z
 best_at_harvest: 1.488912488847924
 promotion: null
+confirm_queued: experts-rega-w2-epilogue-prefetch-bulk-store-cf
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
