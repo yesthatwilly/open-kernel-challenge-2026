@@ -834,3 +834,10 @@ append-only, newest last.
   size allows). T=1 no-op R 3.4-3.7 us (G2 alive), combine 2.0. At T=8 every fold clears its bar (R 2.7-3.0,
   boundaries 4.0-4.4 each / 8.4 both, combine 2.9-3.6), so the **T=2..8 folds** go into tomorrow's phase-A list.
 - 0750Z: PERHEAD build launched (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87): the attention board's sliding_cluster PERHEAD kernel ported to d1s; gate attention side >= 1.03 vs the best Triton variant, layer >= 1.003; generated file < 975,000 bytes (comment strip allowed).
+- 0800Z: W6-A check ea65cba7: **1.5484** (noise). G1 and G2 are exact (G2 bit-exact) and **slower**.
+  - G1 x0.974: +2.2 us vs off. The no-op ceiling is 3.65 us at d1s and 3.95 at d1f.
+  - G2 x0.981: +1.65 / +1.14 us. The ceiling is 4.8 us.
+  - **W6-A killed.** The last-arriver tail (one CTA running the next kernel's work after a ticket) costs about
+    2x the launch it saves at T=1.
+  - **Lesson for the T=2..8 folds:** no single-CTA tails. A fold must keep the work spread over CTAs, e.g. by
+    trigger-first PDL on the existing kernels (the panel's "trigger-first boundary probe") rather than merging.
