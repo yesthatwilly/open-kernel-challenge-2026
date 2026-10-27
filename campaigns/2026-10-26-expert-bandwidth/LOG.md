@@ -2,6 +2,16 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
+- **Today (10-27), phase A** (updated 2026-10-27T0612Z):
+  - Boards: decode **1.5507** (rank 331; day start 1.4956), moe **1.7076** (384), attention **1.6114** (scored
+    4e386647 pending, check 1.6129), bf16 **1.2735**, prefill 1.4677.
+  - Killed today: dq3 / dq4, H=-8, k-slice, wg2, eat18, o_pdl, x-copy, variant B, W5 wgx / exact-N; attention s2, s3.
+  - In flight: attention scored run 4e386647 (sw17 bar 1.03); panel 2 wf_b09b62b9-df5 (the sliding-weighted
+    re-rank, max effort) is in its verify-loads agent, then the judge.
+  - Next: harvest 4e386647 (land on master if it beats 1.6114); when panel 2 returns, save its verdict to
+    research/ and launch wave 6 (design/judge max, build/audit/fix high) on campaign/expert-bandwidth 40391ed0
+    (dl-slim, 941 KB; its bytes ride wave 6's first decode check).
+  - Quota 06:10Z: decode 12 checks / 4 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
 
 ## Now
 
