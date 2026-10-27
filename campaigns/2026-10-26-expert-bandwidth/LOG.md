@@ -799,3 +799,4 @@ append-only, newest last.
   x0.957-0.979, below the x1.04 rule; H-20 vs H-16 x0.975; exact-N (force 8) <= x1.006, so dropped. Cut-4 helps only a
   single big T=128 expert (x1.10-1.15), and T=128 routes master. Decode W5 check skipped. The hot-half line is
   exhausted for today: re-split, wg2, variant B and N tiles all failed.
+- 0524Z: **re-rank by score weighting.** The wave-4 judge found the headline = geomean over 6 loads of (46 t_sliding + 16 t_full), so sliding rows weigh ~2.9x full rows, and today's decode wins hit mostly full rows. Panel 2 (wf_b09b62b9-df5, max effort, read-only) re-ranks decode levers on that weighting and specs wave 6.
