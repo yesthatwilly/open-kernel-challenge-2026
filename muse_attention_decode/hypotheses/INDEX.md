@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-27T094830Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-27T103501Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -101,7 +101,7 @@ Regenerated 2026-10-27T094830Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-25T212052Z | full-decode-sk-s5-deferred-ticket-fault-fix | rewrite | full-layer attention (decode 1<B<=64, stream-K ticket epilogue) | done/neutral | neutral | 1.5162 | [1.493,1.539] | f1d6d493c24244f4 | check |  | proceed | 1/5 |
 | 2026-10-25T212052Z | merge-perkvhead-v3chain-sv32-tiled | primary | full decode_1 split-KV launch chain (merge onto per-kvhead master, with SV32 tiled pre-attention) | done/neutral | neutral | 1.5360 | [1.513,1.565] | b4b20425eaff4942 | check |  | proceed | 3/5 |
 | 2026-10-26T222037Z | sk-full-line-gather | primary | full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T222100Z | sliding-verify-wgmma-window-s2-split-combine | rewrite | sliding-layer attention (verify B=2..32, wgmma window kernel merge) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T222100Z | sliding-verify-wgmma-window-s2-split-combine | rewrite | sliding-layer attention (verify B=2..32, wgmma window kernel merge) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T222117Z | c320-combine-onepass | primary | full decode_1 split-KV combine (c320 chain) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222131Z | c320-pdl-early-trigger | primary | launch overhead (full decode_1 c320 kernel A -> combine PDL) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222147Z | combo-sk-full-line-c320-tail | primary | combination (full decode B>=2 gather mapping + full decode_1 combine tail) | queue | queued |  |  |  |  |  | required |  |
@@ -127,3 +127,4 @@ Regenerated 2026-10-27T094830Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 - sliding-verify1-triton-pseudo-decode: adversarial review: HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions =
 - full-verify1-sk-pseudo-decode: Reviewer: low priority; dispatch after full-verify-wgmma-s4-multitile-fix (51b0d5c110f3459c) and after sliding-verify-sk-pseudo-decode-s1 harvest; build on s1 PSEUDO code with window=0; if the wgmma fix works, full-verify1-wgmma-s4-batch1-grid-sm owns this row.
 - preattention-tiled-every-verify-block: adversarial review: Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to S
+- sliding-verify-wgmma-window-s2-split-combine: superseded 2026-10-27: s2 was checked and killed by the campaign; its successor s2b landed on master (scored a76ee9b0, then sw17 4e386647 1.6340)

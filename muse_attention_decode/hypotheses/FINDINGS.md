@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T103501Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -243,7 +243,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 queued
 - queue: sliding-verify1-pseudo-fused-preattn-rope [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] p1 queued
 - queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 queued
-- queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 queued
+- queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 hold
 - queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 queued
 - queue: c320-pdl-early-trigger [launch overhead (full decode_1 c320 kernel A -> combine PDL)] p2 queued
 - queue: combo-sk-full-line-c320-tail [combination (full decode B>=2 gather mapping + full decode_1 combine tail)] p2 queued
