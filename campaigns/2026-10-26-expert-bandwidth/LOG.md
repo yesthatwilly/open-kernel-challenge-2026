@@ -1075,3 +1075,4 @@ append-only, newest last.
     - bf16 router-zero-pdl needs Triton gdc_wait/launch_pdl on the judge (check before spending);
     - don't run the two router items in one check;
     - prefill rega_lo's silu is dead code (master won its gate in 10 of 10 logs).
+- 1338Z: bf16 DeepGEMM s3 review: **proceed**. Corrections: mc=1 only (hang risk); tile-count variant set (pooler m=256 64x128; unpooler m=128 128x64; qkv m=256 64x64-112); SHAPE_M=0, <= 8 instantiations, a pre-build deadline; DG after khalf in prepare and above the NN/khalf/Lt returns in kernel_fn. Claimed on a **stale base** (stage 2's 0dc50d0a lacks 8f233e88): the implementer merges master first.
