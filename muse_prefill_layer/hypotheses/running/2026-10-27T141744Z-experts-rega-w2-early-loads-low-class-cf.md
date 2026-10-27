@@ -15,7 +15,7 @@ confirm_of: experts-rega-w2-early-loads-low-class
 confirm_of_job: 59eb665f162a4ac9
 review: proceed
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T141759Z
 base_sha: 52169f1783ec72c5ee8b2e97b0648a0e91426c87
 base_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
@@ -32,6 +32,8 @@ submission_blob: 50b7846d13be612454d82662a08fd3c6842b48af
 lint_warnings: 112
 attempt_file: 2026-10-27T141814Z-check-experts-rega-w2-early-loads-low-class-cf.md
 prepared_at: 2026-10-27T141815Z
+job: 8716d98c405f417d
+dispatched_at: 2026-10-27T141829Z
 ---
 
 # experts-rega-w2-early-loads-low-class-cf
