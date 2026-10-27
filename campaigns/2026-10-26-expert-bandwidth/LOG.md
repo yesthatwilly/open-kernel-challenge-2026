@@ -992,3 +992,14 @@ append-only, newest last.
   - Both claimed; implementers running (2 agents).
 - 1043Z: bf16 qkv-swapab16-five-stage-ring check **c65ffcb6d9ab4f95** (5-stage ring for qkv at m=2..16; smem cap, bitwise canary, strict four-of-four 1.03 read gate).
 - 1050Z: prefill experts-rega-fine-n-buckets check **c951d9168cd546bb**: 8 N buckets (16*(b+1)) in a muse_prefill_rega_fine module; three timed pairs (master / fine-4map / fine); a 200 s pre-build skip; low class only at rega_low_variant 0; ft expected flat.
+- 1118Z: phase B harvest:
+  - **bf16 qkv-swapab16-five-stage** (c65ffcb6, 1.2507): S5 never routed (read 0.95-0.97: 5 stages are slower). The
+    drop is **pooler_khalf128_ok=False in this run** (khalf b2's own gate missed). Churn filed it as a regression; a
+    DECISIONS note corrects that.
+  - **Watch:** khalf's gate is flaky on bf16, a risk for any future bf16 scored run.
+  - **prefill experts-rega-fine-n-buckets** (c951d916, 1.4573, neutral): **fine=ON at the high class**. In-prepare
+    pop 0.961/0.969, random 0.920 (-41 / -60 us), bit-exact; fine-4map overhead control 1.01-1.02. Low and ft OFF.
+    Judged turn_4 rows unreadable (SGLang -5% the same run).
+  - Held as dead or superseded: the prefill rotation combos (x2) and attention s3.
+  - Minted prefill **experts-rega-fine-n-high-plus-fast-silu** (restacks fine-N at high only, plus fast-silu
+    gated per class, no rotation). Its Opus review is running.
