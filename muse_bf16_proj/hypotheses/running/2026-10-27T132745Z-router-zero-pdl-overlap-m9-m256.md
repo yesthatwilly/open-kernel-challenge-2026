@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T141019Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T141019Z
 base_sha: 93f6f7fa2f41100d0f75cf209e2ff5e6c65f97e7
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -81,6 +81,8 @@ submission_blob: af2b30819ebb4235c69ef00ac9c6b294a5eaf5ca
 lint_warnings: 54
 attempt_file: 2026-10-27T142101Z-check-router-zero-pdl-overlap-m9-m256.md
 prepared_at: 2026-10-27T142101Z
+job: a20f80486c5b4bc1
+dispatched_at: 2026-10-27T142114Z
 ---
 
 # router-zero-pdl-overlap-m9-m256
