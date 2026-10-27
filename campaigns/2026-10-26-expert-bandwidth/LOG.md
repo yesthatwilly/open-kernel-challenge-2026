@@ -990,3 +990,4 @@ append-only, newest last.
   - prefill experts-rega-fine-n-buckets: **proceed**. Low-class precedence; a budget check before nvcc (prepare reached
     179 s in d00770b6); random <= 1.01; a fine-4map overhead control in the same prepare; ft expected flat.
   - Both claimed; implementers running (2 agents).
+- 1043Z: bf16 qkv-swapab16-five-stage-ring check **c65ffcb6d9ab4f95** (5-stage ring for qkv at m=2..16; smem cap, bitwise canary, strict four-of-four 1.03 read gate).
