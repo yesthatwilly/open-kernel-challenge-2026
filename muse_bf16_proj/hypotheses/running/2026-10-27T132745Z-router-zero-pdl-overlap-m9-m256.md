@@ -64,7 +64,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T141019Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-27T141019Z
 base_sha: 93f6f7fa2f41100d0f75cf209e2ff5e6c65f97e7
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -73,6 +73,12 @@ worktree: .worktrees/muse_bf16_proj/router-zero-pdl-overlap-m9-m256
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-27T142100Z
+impl_commit: 5cacba603e5067efe55ae157d43fbebef3fb1895
+submission_sha256: 6c4e693c2acfbe8e089941aae9bd3e09844d48094750096c98e060409a3a8a14
+norm_sha256: 16d343d98cd37482b1ab9e64a3ea0283525eeb3f80eb3da5a1efc315a56c1275
+submission_blob: af2b30819ebb4235c69ef00ac9c6b294a5eaf5ca
+lint_warnings: 54
 ---
 
 # router-zero-pdl-overlap-m9-m256
@@ -119,3 +125,45 @@ No companion. Add a third gate arm (Triton zero kernel + router PDL=False, no la
 - At m=256: 16 zero CTAs + 128 router CTAs at ~144 KB smem; confirm no placement delay.
 - Check both rounds' IQRs before trusting a marginal 1.03 pass.
 
+
+## Implementation notes
+
+Implemented 2026-10-27T141953Z in the worktree's `muse_bf16_proj/submission.py` only (uncommitted; base 93f6f7fa). Diff: 1 file, +482 / -39.
+
+- **Kernels.** `_router_hilo_kernel` and `_router_swapab_kernel` get `PDL: tl.constexpr`. With `PDL` true there is one `tl.extra.cuda.gdc_wait()` after the K-loop, right before `tl.atomic_add`; nothing else moves. Every launch passes `PDL`, and `PDL=False` with no `launch_pdl` is master's kernel. New `_router_zero_pdl_kernel(out_ptr, numel, BLOCK)`: `gdc_launch_dependents()` first, then a masked zero store, grid cdiv(numel, 4096), BLOCK 4096, 4 warps. New prepare-only `_router_zero_slow_kernel`: the same trigger, about 20000 cycles of `%clock64` spin (roughly 10 us), then the same stores. kernel_fn never launches it.
+- **Launch / forward.** New helpers `_router_swapab_launch` / `_router_hilo_launch` take `pdl` and `launch_pdl`. The routed forwards always pass them equal, `zmode == 1`. `_router_out` gives `torch.zeros` (zmode 0, master) or `torch.empty` + the zero kernel (zmode 1 or 2). `_router_forward` / `_router_hilo_forward` take `zmode=0` by default, so `_router_prepare`'s calls are unchanged. kernel_fn computes `zmode = _router_zmode(m, state)` from the class flag, which depends only on shape and state. Flags: `router_pdl_ok_{16,32,128,256}`. m <= 8 maps to no flag, so the cluster path and master's swap-AB fallback stay untouched. m 9..16 maps to the 16 flag, 17..32 to 32, 33..128 to 128, and > 128 to 256. Mode 2 (`ROUTER_ZMODE_NOPDL`: zero kernel, PDL off, no launch_pdl) is set only on `_cell_gate`'s third-arm copy of state.
+- **Probe + warm (`_router_pdl_probe`, state A, right after `_router_prepare`, before any capture).**
+  - Prints the Triton version. Feature-detects `gdc_wait` / `gdc_launch_dependents`, and prints whether `CUDAOptions` has `launch_pdl` (information only; the launch itself is the real test).
+  - Per class m (16 / 32 / 128 / 256), one announced, synced launch each of the zero kernel, the PDL router (launch_pdl=True) and master's variant.
+  - PTX checks (`_router_pdl_ptx_why`):
+    - zero kernel: exactly one `launch_dependents`, before the first `st.global`, and no wait.
+    - each PDL router variant: EXACTLY ONE `griddepcontrol.wait`, after the last `wgmma.mma_async` / `mma.sync` and before the first line-start `red.` / `atom.`. An auto-inserted entry wait makes the count 2 and fails the check.
+    - master variant: no griddepcontrol at all.
+  - Any miss or exception sets `state["router_pdl_cap"]` to the reason, prints it, and keeps master for every class.
+  - Then `_router_pdl_warm` runs m in (9, 16, 32, 64, 128, 256) through `_router_forward` / `_router_hilo_forward` (kernel_fn's exact kwargs) in zmodes 0, 1 and 2. ROUTER_WARM_MS m <= 8 never take a flag. State B, when it inherits any flag on, warms zmodes 0 and 1 before the A/B captures.
+- **Selector (`_router_pdl_prepare`, state A, new step (8b) right after the router cluster prepare).** It cannot sit literally right after `_router_prepare`: kernel_fn needs `swapab_stages` / `swapab16_stages` / `router_cluster_ok` first. Per class:
+  - (a) `_cell_check` through kernel_fn at m (9, 16) / (32) / (64, 128) / (256), with new optional args `rel_bound=AB_ROUTER_REL_L2` (5e-5) and `repeat_rel=5e-5`. The bitwise repeat check becomes a tolerance compare (relaxed fp32 atomics), and the power-of-two probe row stays <= 1e-4. Defaults leave every earlier caller unchanged.
+  - (b) `_router_pdl_race`: graphs on one x buffer for master (flag off), the candidate (kernel_fn, flag on), the slow-primary stand-in (spin kernel, then the PDL router with its wait, launched the same way) and a no-wait control (stand-in, then master's router body with launch_pdl=True). 32 rounds of refilled x. Candidate and stand-in must stay within 5e-5 of master on every replay. The no-wait control's wrong-replay count is printed only, never routed. When it is 0, the line says the race was not observable (no early launch?).
+  - (c) Two `_cell_gate` rounds, flush_mode `B12_GATE_FLUSH` ("read"), rule master/cand >= 1.03 in both rounds and cand IQR <= 1.5x max(master IQR, 0.5 us). New optional `_cell_gate(extra=...)` adds the third arm "nopdl" (zero kernel + PDL off), interleaved in rotation and printed with its net us beside cand/master. Routing still reads cand vs master only. `extra=None` keeps the two-arm loop exactly.
+  - (d) `_cell_kernels` must see exactly one `_router_zero_pdl_kernel` and one `_router_swapab_kernel` / `_router_hilo_kernel`, and no `vectorized_elementwise` / fill (order-insensitive).
+  - One compact `PATH CHOSEN R-PDL router m=<b>` `_decision` line per class: both rounds' ratio, net master/cand/nopdl us, the three IQRs, the race summary and why not. These lines are re-printed in the end-of-prepare DECISIONS block. If the probe fails, a single line covers all classes.
+- **A/B.** `NEW_CELL_FLAGS += ROUTER_PDL_FLAGS`, so the flags join A/B inheritance, the failure-path reset and FINAL FLAGS. `AB_CASES` gains router m = 16 / 32 / 256 (128 was already there). `_ab_component` maps a router m > 8 cell to its class flag when that flag is on, so a miss switches off only that class.
+- **Deviations / notes.**
+  - Section placement is (8b), not literally right after `_router_prepare`, for the reason given above. Only the probe and warm-up sit there.
+  - Correctness also covers m = 9 (16 class) and m = 64 (128 class); the gates run at 16 / 32 / 128 / 256 only.
+  - The no-wait negative control reuses master's kernel body with launch_pdl=True instead of adding a no-wait variant to the routed kernels, so nothing debug-only is in the routed code.
+  - Edge type under capture is not printed (no cheap Python API). The race check (real edge, wait honoured) and the third arm (overlap vs fill change) stand in for it.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/router-zero-pdl-overlap-m9-m256 diff`:
+
+- [x] CUDA-graph capturable: kernel_fn's new code is `_router_zmode` (a dict lookup on shape and state flags), `torch.empty` and two Triton launches (one with launch_pdl). No `.item()`, `.cpu()`, synchronize or tensor prints; every sync and `.item()` the diff adds is in prepare-only helpers (lint: all host-sync warnings are outside kernel_fn's call graph). No control flow on input values.
+- [x] Nothing derived from `data` is cached across calls: the output is allocated per call; state holds only bool flags and the prepare-time capability string.
+- [x] Weights: untouched. The router still uses master's bf16 hi + lo split with fp32 accumulation, and no new weight copies exist.
+- [x] Activations BF16 where SGLang keeps BF16: x stays bf16, and the router output stays fp32 as before.
+- [x] n/a: no attention in this problem (dense projections only).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only new import is stdlib `re` (PTX text check). `triton.backends.nvidia.compiler.CUDAOptions` is read, never modified.
+- [x] All work happens inside the timed call: the zero fill and the router GEMM run every call. No output caching or replay; the race and gate graphs are prepare-only and discarded.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): **OK with warnings**. 0 errors. The 54 warnings are all `host-sync ... (outside kernel_fn's call graph; fine in prepare())` or the existing uint8 flush-buffer `dtype` notes. New ones point at the R-PDL prepare helpers' synchronize calls (L554-L750). `py_compile` passed, and no `__pycache__` is left in the worktree.
