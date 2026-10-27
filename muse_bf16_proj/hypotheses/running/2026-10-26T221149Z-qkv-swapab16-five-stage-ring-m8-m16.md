@@ -41,9 +41,18 @@ kind: primary
 controls_for: null
 prior: "qkv-swapab-m32-splitk8-stages3: that run doubled the split (4 -> 8) and cut the ring to 3 stages at m=17..32 and lost in the reduce tail; this keeps split-K 4, the tile and 2 CTAs/SM and only deepens the m<=16 ring from 4 to 5 stages (+33% weight bytes in flight), gated per m"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T103831Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T103831Z
+base_sha: 8f8cca6a58905f50bf7dd6d8b3836520f7443c83
+base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
+branch: hyp/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16
+worktree: .worktrees/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # qkv-swapab16-five-stage-ring-m8-m16
