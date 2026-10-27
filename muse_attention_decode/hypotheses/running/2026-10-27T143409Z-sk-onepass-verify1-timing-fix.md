@@ -37,7 +37,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T143715Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T143715Z
 base_sha: 6c6219d272efce7c7cfb16581e6a5b87ab96f188
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -54,6 +54,8 @@ submission_blob: 21166a140086e6d4431a5dd0a219311831020632
 lint_warnings: 103
 attempt_file: 2026-10-27T143947Z-check-sk-onepass-verify1-timing-fix.md
 prepared_at: 2026-10-27T143947Z
+job: bfb0457c9ae84322
+dispatched_at: 2026-10-27T144003Z
 ---
 
 # sk-onepass-verify1-timing-fix
