@@ -1087,3 +1087,9 @@ append-only, newest last.
   - Master merged in via merge-file; 8 variants in 3 threaded load_inline modules (threads are allowed; lint forbids
     only subprocess / multiprocessing / exec / eval); mc=1.
   - Read the [build-time] and PRE / CELL lines first.
+- 1403Z: attention sk-ticket-merge-onepass check ba8c8a61: **1.6177** (neutral).
+  - Twins compiled (no spill); merge canary exact.
+  - **Full decode x1.002-1.005**: the merge is not the bottleneck.
+  - The target cells (sliding verify B=1, sliding decode B=17..32) were **not timed**: the incumbent itself failed the
+    gate's timing-data check (rel L2 9.6e-2 / 3.7e-2), a harness bug.
+  - A follow-up for phase C: rerun only the verify B=1 cell with the timing inputs fixed (reuse the correctness inputs).
