@@ -1,0 +1,692 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_attention_decode",
+   "picks": [
+    {
+     "slug": "full-verify1-wgmma-s7-grid-sm-two-level",
+     "mode": "check",
+     "priority": 2,
+     "review": "proceed",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_bf16_proj",
+   "picks": [
+    {
+     "slug": "lt-nn-layout-cells-o-m128-qkv-m128",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_decode_layer",
+   "picks": [
+    {
+     "slug": "sliding-cluster-c4-s3-satfinite-on-sk-ticket",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "cuda-fused-split-i-moe-tiny-t",
+     "mode": "check",
+     "priority": 1,
+     "review": "required",
+     "kind": "rewrite",
+     "controls_for": null
+    }
+   ]
+  },
+  {
+   "problem": "muse_prefill_layer",
+   "picks": [
+    {
+     "slug": "experts-rega-w2-early-loads-low-class-cf",
+     "mode": "check",
+     "priority": 1,
+     "review": "proceed",
+     "kind": "confirm",
+     "controls_for": "experts-rega-w2-early-loads-low-class"
+    },
+    {
+     "slug": "front-qknorm-rope-fp8-store-fusion-restack",
+     "mode": "check",
+     "priority": 2,
+     "review": "required",
+     "kind": "primary",
+     "controls_for": null
+    }
+   ]
+  }
+ ],
+ "wake_s": 1305,
+ "needs_human": [],
+ "diagnose": [
+  "muse_attention_decode",
+  "muse_bf16_proj",
+  "muse_decode_layer",
+  "muse_moe_w4a16",
+  "muse_prefill_layer"
+ ],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 5,
+      "left": 15
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 4,
+      "left": 6
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 7,
+      "left": 13
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 2,
+      "left": 8
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 8,
+      "left": 12
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 10,
+      "left": 0
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 17,
+      "left": 3
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 5,
+      "left": 15
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 9.7,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-rega-w2-early-loads-low-class",
+     "job": "59eb665f162a4ac9",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.4986157844369536,
+     "ci": [
+      1.4761365476703994,
+      1.5210950212035077
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-27T140120Z-experts-rega-w2-early-loads-low-class.md"
+    }
+   ],
+   "pending": [],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "reclassify": {
+   "ok": true,
+   "margin_1run_pct": 1.237,
+   "margin_2run_pct": 1.072,
+   "problems": [
+    {
+     "problem": "muse_attention_decode",
+     "best": 1.6339575246416982,
+     "flips": [
+      {
+       "slug": "paired-heads-launch-cleanup-ab-tune-batch-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2686,
+       "best_then": 1.1705932092473075
+      },
+      {
+       "slug": "sliding-fused-triton-decode1-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2931,
+       "best_then": 1.2686474414890054
+      },
+      {
+       "slug": "splitkv-full-line-gather-mapping",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.416,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "full-decode-splitkv-s2-streamk-ticket-inproc",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4171,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "full-decode1-streamk-s3-two-level-ticket",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4322,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "sliding-verify-sk-pseudo-decode-s1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4705,
+       "best_then": 1.4321773019894537
+      },
+      {
+       "slug": "full-decode1-sk-pdl-from-preattn",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4571,
+       "best_then": 1.4321773019894537
+      },
+      {
+       "slug": "restack-sk-pseudo-b1-cluster-c16-c4",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.487,
+       "best_then": 1.444132502888963
+      },
+      {
+       "slug": "sliding-decode-sk-window-route",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4973,
+       "best_then": 1.444132502888963
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "best": 1.273478298751914,
+     "flips": [
+      {
+       "slug": "pooler-triton-splitk2-blockn64-semaphore",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1664,
+       "best_then": 1.1432568936693237
+      },
+      {
+       "slug": "bf16-shape-gated-triton-winners-combo",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.176,
+       "best_then": 1.1432568936693237
+      },
+      {
+       "slug": "bf16-m32-swapab-wgmma-triton",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1984,
+       "best_then": 1.1760470299345995
+      },
+      {
+       "slug": "bf16-restack-m16-swapab-router-swapab-m32",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2215,
+       "best_then": 1.1958517819004566
+      },
+      {
+       "slug": "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2366,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "router-cuda-cluster-dsmem-splitk-rewrite",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1897,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "o-swapab-m32-splitk2-two-ctas-per-sm",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.186,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "qkv-swapab-m32-splitk8-stages3",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1963,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "unpooler-full-m16-swapab-route",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1885,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "pooler-unpooler-m128-nn-layout-gated",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1953,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "bf16-lossless-exp4-decode-only-throughput-probe",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1904,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "bf16-verify-deepgemm-bf16-gemm-nt-route",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.2027,
+       "best_then": 1.2215006063849365
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_decode_layer",
+     "best": 1.5920184790343794,
+     "flips": [
+      {
+       "slug": "expert-id-map-single-kernel",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0374,
+       "best_then": 1.020038644953596
+      },
+      {
+       "slug": "fa3-hdim128-head-pairing-batched",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0874,
+       "best_then": 1.0634521974439426
+      },
+      {
+       "slug": "full-decode-cuda-splitkv-port",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1862,
+       "best_then": 1.1664628806987323
+      },
+      {
+       "slug": "full-decode-splitkv-restack-on-pdl",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.268,
+       "best_then": 1.2521147631671776
+      },
+      {
+       "slug": "stack-align-par-sliding1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2444,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "stack-sidestream-sliding-batched",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2443,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "stack-align-par-sidestream-sliding1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2495,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "w2-marlin-atomic-add-t1-port",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2856,
+       "best_then": 1.2680313318618024
+      },
+      {
+       "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3018,
+       "best_then": 1.2725637226942819
+      },
+      {
+       "slug": "qkv-o-swapab16-t2-t16-no-fork",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3056,
+       "best_then": 1.2725637226942819
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "best": 1.7187457730844933,
+     "flips": [
+      {
+       "slug": "w2-marlin-atomic-add-small-m",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3445,
+       "best_then": 1.3278240305297715
+      },
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3744,
+       "best_then": 1.3438953504561806
+      },
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-b128-n32-deep-ring",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.369,
+       "best_then": 1.3438953504561806
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "best": 1.488912488847924,
+     "flips": [
+      {
+       "slug": "experts-triton-w4a16-first-turn-blockt256",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0229,
+       "best_then": 1.0038664293875537
+      },
+      {
+       "slug": "experts-triton-turn4-persistent-local-align-control-no-persi",
+       "was": "neutral/within-ci",
+       "now": "regression/regression",
+       "speedup": 1.0557,
+       "best_then": 1.074386115190733
+      },
+      {
+       "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1004,
+       "best_then": 1.074386115190733
+      },
+      {
+       "slug": "experts-turn4-ssdq-s2-tma-raw-weight-ring",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1293,
+       "best_then": 1.1075501334948785
+      },
+      {
+       "slug": "align-two-phase-all-t-rega",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4458,
+       "best_then": 1.4060131381907617
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    }
+   ],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 13,
+     "scored_left": 6,
+     "hours_to_reset": 9.7,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 19,
+     "queue": 11,
+     "need": 19,
+     "pace": 3,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "full-verify1-wgmma-s7-grid-sm-two-level",
+       "mode": "check",
+       "priority": 2,
+       "review": "proceed",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 8,
+     "reason": null,
+     "wake_s": 1649
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 15,
+     "scored_left": 9,
+     "hours_to_reset": 9.7,
+     "in_flight": 1,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 24,
+     "queue": 4,
+     "need": 24,
+     "pace": 3,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "lt-nn-layout-cells-o-m128-qkv-m128",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 20,
+     "reason": null,
+     "wake_s": 1305
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 3,
+     "scored_left": 0,
+     "hours_to_reset": 9.7,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 3,
+     "queue": 6,
+     "need": 3,
+     "pace": 1,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "sliding-cluster-c4-s3-satfinite-on-sk-ticket",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 0,
+     "reason": null,
+     "wake_s": 3600
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 12,
+     "scored_left": 8,
+     "hours_to_reset": 9.7,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 20,
+     "queue": 5,
+     "need": 20,
+     "pace": 3,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "cuda-fused-split-i-moe-tiny-t",
+       "mode": "check",
+       "priority": 1,
+       "review": "required",
+       "kind": "rewrite",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 15,
+     "reason": null,
+     "wake_s": 1566
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 15,
+     "scored_left": 9,
+     "hours_to_reset": 9.7,
+     "in_flight": 2,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 24,
+     "queue": 11,
+     "need": 24,
+     "pace": 3,
+     "N": 2,
+     "picks": [
+      {
+       "slug": "experts-rega-w2-early-loads-low-class-cf",
+       "mode": "check",
+       "priority": 1,
+       "review": "proceed",
+       "kind": "confirm",
+       "controls_for": "experts-rega-w2-early-loads-low-class"
+      },
+      {
+       "slug": "front-qknorm-rope-fp8-store-fusion-restack",
+       "mode": "check",
+       "priority": 2,
+       "review": "required",
+       "kind": "primary",
+       "controls_for": null
+      }
+     ],
+     "shortfall": 13,
+     "reason": null,
+     "wake_s": 1305
+    }
+   ],
+   "wake_s": 1305,
+   "dispatch_total": 6,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_bf16_proj/hypotheses/INDEX.md",
+    "muse_bf16_proj/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
