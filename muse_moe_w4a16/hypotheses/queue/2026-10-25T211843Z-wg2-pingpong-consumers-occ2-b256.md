@@ -38,9 +38,10 @@ kind: primary
 controls_for: null
 prior: "cuda-nvfp4-wgmma-rega-pingpong-consumers: same schedule, but that queued file builds on master's single-CTA s5 wg_kernel; this one rebases it onto wg2 at OCC2 (the board code) as DIAGNOSIS action 3 asks, and adds the 2x2 OCC x PP diag to separate TLP from intra-CTA overlap. Prefill's experts-rega-pingpong-consumers-all-t lost 1.18-1.47x because there the limiter was activation ingest at 5.8-6 TB/s L2->SM; moe B256 is weight-DRAM bound at ~2 TB/s with small N, so the ingest rate must be printed to show which regime applies"
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T212523Z
 review_companions: null
+hold_reason: "killed line (X5 2026-10-27): wg2 re-split measured x0.405/0.882 (SINGLE-PASS s1 killed table), ping-pong consumer WGs x1.18-1.53 slower (prefill rega-pp, campaign K5 prior); the T<=8 incumbent is Engine A, not the wg consumer; adversary of cuda-fused-split-i-moe-tiny-t asked to close remaining wg-consumer items"
 ---
 
 # wg2-pingpong-consumers-occ2-b256
