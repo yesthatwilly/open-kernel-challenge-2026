@@ -65,7 +65,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T134016Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T134016Z
 base_sha: bb6c492319e7d6ef89caaf609741556209472f17
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -82,6 +82,8 @@ submission_blob: faed6a62e4ecaed3859d1ed77eaabcb22951d8fd
 lint_warnings: 101
 attempt_file: 2026-10-27T135307Z-check-sk-ticket-merge-onepass.md
 prepared_at: 2026-10-27T135307Z
+job: ba8c8a6103124f71
+dispatched_at: 2026-10-27T135321Z
 ---
 
 # sk-ticket-merge-onepass
