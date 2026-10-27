@@ -56,9 +56,18 @@ kind: primary
 controls_for: null
 prior: "experts-rega-w13-fast-silu-epilogue: that cut w13's epilogue math (accurate expf + IEEE divide); this leaves w13 alone and removes w2's epilogue latency (post-k-loop gs load, per-chunk sorted_ids loads, synchronous scatter loop), inside the fsilu module whose w2 is already compiled but unused, so it costs no nvcc build"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T133940Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T133940Z
+base_sha: 2750f9d64192321654244084e3a9cf73fd461482
+base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
+branch: hyp/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store
+worktree: .worktrees/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
