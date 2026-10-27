@@ -773,3 +773,4 @@ append-only, newest last.
   - **Headroom is only ~27 KB.** Tomorrow: delete dead code (Engine D's _ED_SRC 25 KB + Python, eaf / W3 diagnostics,
     the ladder in decode) before adding more.
 - decode check **d08b11fe295f4acf**: W4 c320 at d1f (campaign/eb-w4-c320), also carrying W3-A.
+- 0452Z: attention check **877a6ba556e142d4**: sliding-decode s3 fused pre-attn + RoPE (hyp/attn-s3 8a31112b on ea24b53c, both review fixes, 17 edge-key cases). Routes at >= 1.05x in both rounds per band.
