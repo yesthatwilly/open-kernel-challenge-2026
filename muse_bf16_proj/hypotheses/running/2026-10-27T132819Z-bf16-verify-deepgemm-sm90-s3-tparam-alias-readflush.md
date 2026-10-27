@@ -74,7 +74,7 @@ base_sha: 0dc50d0a5d027659c02f0e6a45778fa2662139e4
 base_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
 branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
 worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
-mode: null
+mode: check
 restack_of: null
 stale_base: true
 implemented_at: 2026-10-27T140050Z
@@ -83,6 +83,8 @@ submission_sha256: ef7265da3cefafe9804489586cb45aa8636ff5175dc102b3bc2b714e699db
 norm_sha256: 66d556a6d10ef4f52706b5cd65aee5f750935e39b28afb4fd38c297e5ea11e27
 submission_blob: 73b304b6996a68f9ae633659e65f1be5e31247ac
 lint_warnings: 50
+attempt_file: 2026-10-27T140051Z-check-bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush.md
+prepared_at: 2026-10-27T140051Z
 ---
 
 # bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
