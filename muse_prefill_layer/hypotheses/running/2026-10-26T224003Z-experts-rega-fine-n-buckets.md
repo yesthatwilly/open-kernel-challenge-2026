@@ -52,9 +52,18 @@ kind: primary
 controls_for: null
 prior: "experts-turn-rega-s4-port-t4096: the port shipped rega with four power-of-two N buckets (16/32/64/128); this adds 48/80/96/112 so an item runs N = 16 * nbk; tile, dequant, ring and epilogue are unchanged"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T103810Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T103810Z
+base_sha: ec7851655c2c3f1ab2abfe571da8dc10d63062ea
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/experts-rega-fine-n-buckets
+worktree: .worktrees/muse_prefill_layer/experts-rega-fine-n-buckets
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-fine-n-buckets
