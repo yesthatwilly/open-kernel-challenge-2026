@@ -45,7 +45,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-round-rotated-schedule: this carries that rotation together with experts-rega-fine-n-buckets and experts-rega-w13-fast-silu-epilogue in one module with a per-flag-set gate, so the combination is measured today instead of after the three parents finish"
 review: required
-status: queued
+status: hold
+hold_reason: "rotation was neutral on its own 2026-10-27 (d00770b6: pop x0.991-1.004, all classes OFF); a combo built on it would carry dead code. Re-mint fine-N (high class) + fast-silu without rotation via /hypothesize."
 ---
 
 # experts-rega-rotate-finebucket-fastsilu-combo
