@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-27T140023Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
+Regenerated 2026-10-27T140341Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -89,7 +89,7 @@ Regenerated 2026-10-27T140023Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc4
 | 2026-10-27T121238Z | khalf-gate-three-rounds-pooled | primary | pooler m=128 khalf (b2) cell gate (_khalf prepare gate only) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-27T121627Z | khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr | control→khalf-gate-three-rounds-pooled | pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132745Z | router-zero-pdl-overlap-m9-m256 | primary | router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-27T132819Z | bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-27T132819Z | bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | running | running |  |  | 6407497bec88470e | check |  | proceed |  |
 | 2026-10-27T132845Z | pooler-khalf-lt-batched-plan-m128-m256 | primary | pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132918Z | router-hilo-m128-m256-readflush-config-sweep | primary | router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep) | queue | queued |  |  |  |  |  | required |  |
 
