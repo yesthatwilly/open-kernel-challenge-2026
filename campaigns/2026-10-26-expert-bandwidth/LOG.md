@@ -614,3 +614,14 @@ append-only, newest last.
 - decode check 74201da03ab64f40: 1.5176, below the 1.5275 board. H-17 (wg2) x0.920 at T=128 and x1.017 at T=256, against
   H-16 x1.050 / x1.156 and H-8 x1.052 / x1.161. The gate chose H-8 by a hair: an H-8 / H-16 near tie, flipping between
   runs. **wg2 is killed in this form.** The big-T hot half needs a different idea, not a re-split.
+
+## 2026-10-27T0143Z: b12p scored run FAILED (intermittent illegal address); decode scored runs on hold
+
+- 8e3c26d66284496a (the bytes of check dc3d5614, which passed): returncode 112. A sticky CUDA_ERROR_ILLEGAL_ADDRESS in
+  prepare, reported asynchronously at _hc_anatomy's torch.Generator, after b12p PATH CHOSEN. Board unchanged (1.5275,
+  rank 343).
+- **Rule until it is diagnosed:** no decode scored run that carries b12p. Wave 2 builds on 8cfd91ce (b12p included),
+  so harvest it with this in mind.
+- A diagnosis agent is running (fix branch campaign/eb-b12p-fix if one is clear).
+- End-game note: the final standings rerun the board bytes. Consider turning off the prepare-time diagnostics
+  (anatomies, ladder) in the final bytes, so a diagnostic can never fail the rerun.
