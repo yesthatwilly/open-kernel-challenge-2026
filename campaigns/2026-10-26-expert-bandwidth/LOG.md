@@ -563,3 +563,9 @@ append-only, newest last.
   per-entry /INEXACT and /GRID-DIFF tags first.
 - decode check **dc3d5614d5e047c8**: bulk12 P at T=1 (branch campaign/eb-b12p-t1 e033fb35), gated with a read flush;
   the incumbent stays on any miss.
+
+## 2026-10-27T0052Z: scored runs of eacf0722 land on both boards
+
+- decode scored 42b3e39478474bcd: **1.5275** (CI 1.505-1.550), the new board (rank 342, was 367).
+- moe scored cf937dd3656c4193: **1.7076** (CI 1.682-1.733), the new board (rank 384, was 402).
+- master now holds the eacf0722 bytes for both (decode f97dded7..., moe 78e6ef0c...). Runs archived in runs/.
