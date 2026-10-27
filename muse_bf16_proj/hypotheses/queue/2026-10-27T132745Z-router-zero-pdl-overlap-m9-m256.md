@@ -60,8 +60,10 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "router-splitk-semaphore-no-memset: that deleted the memset with a ticket-semaphore last-arriver reduce, a serialized epilogue that DISTILL 3.1 measured x1.07-1.10 slower than the memset under graph replay; this keeps the memset and the relaxed atomics exactly and only lets the router kernel's weight stream and MMAs run while the zero kernel executes (PDL), with no new reduce or serialization"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-27T141019Z
+review_companions: null
 ---
 
 # router-zero-pdl-overlap-m9-m256
@@ -82,3 +84,29 @@ Built on master (8f233e88 lineage). At m > 8 the router is two graph nodes: torc
 ## Risk
 
 Headline ~+0.3-0.4% (four router rows x ~0.5 us; 0.18-0.23 %/us on the verify loads, ~0.6% of each decode_16/32 load): sub-margin alone, so judge it on the four router rows and the R-PDL gate lines, then stack. Risk 1 (VOID): the judge's Triton lacks tl.extra.cuda.gdc_wait / launch_pdl (added in Triton 3.4-era; torch 2.14.1+cu130 should ship newer). Before dispatch, grep a recent judge log or the sglang env for the Triton version; the probe prints it and keeps master otherwise. Risk 2: a programmatic edge must survive CUDA-graph capture (CUDA 12.3+ captures PDL edges; the judge is cu130); the race check catches a lost edge as large errors. Risk 3: gdc_wait must sit after the loop: if Triton hoists or sinks it, the PTX order check (griddepcontrol.wait after the last wgmma, before the red/atom) is the guard. Decode-portable: decode's T=128 'hilo router' cell (W6-B) is the same torch.zeros + _router_hilo_kernel pair. Do not combine with router-hilo-m128-m256-readflush-config-sweep in one check (two routable novelties on the same rows, DISTILL 3.2.7).
+
+## Adversarial review
+
+Reviewed 2026-10-27T141019Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Plausible and a different lever from every earlier router attempt: it overlaps the graph's memset node with the router kernel (earlier attempts tuned the kernel or replaced the memset with a ticket epilogue). Deleting the memset at m<=8 saved 0.40-0.54 us, and PDL paid between our own kernels in decode. The in-prepare interleaved read-flush gate gives master vs candidate on identical surroundings; no companion. Tighten two guards: the PTX check must count exactly one griddepcontrol.wait, and the race check needs a slow-primary stand-in.
+
+### Justification
+Router rows at m=16/32/128/256 (5.48/5.95/7.95/9.51 us vs floors 1.8-2.7 us) are a fill node (0.7-0.9 us) plus the Triton split-K kernel with atomics. The m<=8 memset deletion (~0.4-0.5 us) is the realistic ceiling; m=128/256 predictions are ~0.2 us optimistic; a realistic 5-6% still clears drift and the 1.03 gate. Headline ~+0.3%, unreadable: judge on the four router rows and the R-PDL gate lines, not profile top_kernels (PDL-inflated rows). Prior router-splitk-semaphore-no-memset serialized the reduce; this keeps the relaxed atomics and the memset. Weakest link: whether Triton 3.8's launch_pdl under graph capture produces a real programmatic edge, and whether Triton auto-inserts a griddepcontrol.wait at entry; either gives a misleading flat result. Assert exactly one griddepcontrol.wait per router kernel (after the last mma, before the red/atom) and exactly one launch_dependents in the zero kernel at entry.
+
+### Confounders on the current kernel
+- bf16-restack-m16-swapab-router-swapab-m32: sets the K-loop available to hide the fill; a precondition shared by both arms.
+- router-triton-hilo-fused-control-splitk-all-m: the split-K atomic + zeros design; a precondition.
+- restack-three-cell-wins (router_kernel<8,8>, no memset at m<=8): m<=8 rows stay flat.
+- Queued router-hilo-m128-m256-readflush-config-sweep: same rows; keep separate checks; whichever lands second re-gates.
+
+### Interference and A/B needs
+No companion. Add a third gate arm (Triton zero kernel + router PDL=False, no launch_pdl) and print its net us beside cand/master, to separate the fill change from PDL.
+
+### Open questions
+- Does Triton 3.8 insert griddepcontrol.wait at entry with launch_pdl=True? Count waits and check position.
+- Race check: add a stand-in primary that spins ~10 us before storing zeros; a debug variant without the wait must fail.
+- Does graph capture keep the programmatic edge on the judge (cu130)? Print the edge type if cheap.
+- At m=256: 16 zero CTAs + 128 router CTAs at ~144 KB smem; confirm no placement delay.
+- Check both rounds' IQRs before trusting a marginal 1.03 pass.
+
