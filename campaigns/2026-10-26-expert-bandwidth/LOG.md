@@ -1008,3 +1008,10 @@ append-only, newest last.
 - 1120Z: prefill fine-N-high + fast-silu **held** by its review: no gain in the parent's scored profile at turn_4 (1096.6 vs 1098.5 us), and prepare (166.9 s before the phase, 200 s build deadline) fits only one ~42 s build. Next: experts-rega-w13-fast-silu-epilogue alone (review running).
 - 1126Z: prefill experts-rega-w13-fast-silu-epilogue reviewed: **proceed**, but sized at <= ~1% of w13 (0.1-0.3% of a shape). Gate on w13 alone (<= 0.99 both rounds, pair <= 1.00), cold- and warm-L2, judge-like routing alpha per class, __fdividef, an hg sweep canary. Claimed; implementer running. Its purpose is to close or open the silu-epilogue line.
 - 1138Z: prefill experts-rega-w13-fast-silu-epilogue check **21911eb694ce467c**: a derived module with one edit (__fdividef), gated on w13 alone across cold and warm L2, pop and random, a judge-band routing, an hg sweep (jiterator) and ndiff > 0. Expected: all OFF, closing the line.
+- 1204Z: **prefill fast-silu: GAIN.** Check 21911eb6 scored **1.4949** (+1.85% vs 1.4677).
+  - fsilu ON in all classes. w13 alone x0.917-0.944 (cold and warm L2), pair x0.94-0.96.
+  - Accuracy: output error x0.996-1.003 of master's vs fp64; the hg sweep passed.
+  - Churn promoted it to master; **scored run ec3bd01859574bf1**.
+  - The review's <= 1% estimate was 5-10x low (LESSONS line added).
+  - **Portable lead:** the same accurate-silu epilogue may exist in prefill's rega_lo, moe's and decode's Engine A
+    silu, and moe's Marlin/wg paths. grep for 'expf(' in epilogues without fast math; a phase-C / tomorrow item.
