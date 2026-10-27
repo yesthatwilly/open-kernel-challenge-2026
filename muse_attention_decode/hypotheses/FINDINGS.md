@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T143426Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T145300Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -184,6 +184,9 @@ Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md`
 ### stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)
 - **sk-ticket-merge-onepass** → neutral (within-ci), 1.6177x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Built on master 2eb03f76 (no depends_on). ONE mechanism, the load structure of the in-kernel ticket merge in _SK_CUDA splitkv_attn_sk_kernel. Today merge_range 
 
+### stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)
+- **sk-onepass-verify1-timing-fix** → neutral (within-ci), 1.6219x — gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Restack of sk-ticket-merge-onepass (neutral 1.6177 in check ba8c8a61; twins compiled, merge canary exact, full decode measured only x1.002-1.005) with ONE fix: 
+
 ## Open follow-ups
 
 - full-decode-splitkv-s2-streamk-ticket-inproc: rewrite stage 2 of `full-layer decode at 1<batch<=64: splitkv_attn_kernel A + splitkv_combine_kernel B (stage 1, master)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the f
@@ -222,6 +225,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **full-verify-fa3-num-splits-band-gate** [FA3 call (full verify split count)] neutral, within-ci: Built on current master (no depends_on). Full verify still runs FA3: B=1 unpaired (FA3 mai
 - **combo-naive-c320-fd1-tiled-preattn-verify** [combination (naive top-row stack: full decode_1 chunk320 + verify tiled pre-attention)] neutral, within-ci: COMBINATION 1 of 3, the naive top-row stack. Built on current master 7e12891 (blob 5cf8fae
 - **sk-ticket-merge-onepass** [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] neutral, within-ci: ONE mechanism, the load structure of the in-kernel ticket merge in _SK_CUDA splitkv_attn_s
+- **sk-onepass-verify1-timing-fix** [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] neutral, within-ci: Restack of sk-ticket-merge-onepass (neutral 1.6177 in check ba8c8a61; twins compiled, merg
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
 - **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
@@ -261,5 +265,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
-- queue: sk-onepass-verify1-timing-fix [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] p2 queued
 - 17 stale holds expired to `done/expired/` (not run)

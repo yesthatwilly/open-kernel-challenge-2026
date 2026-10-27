@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T143426Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T145300Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2735x [1.2544,1.2926] from job `bc147c5b87bc465d` (submit), master commit `8f233e88d4`, hypothesis pooler-khalf-m128-fp32-partials-triton-castadd
+1.2740x [1.2549,1.2931] from job `254c83ae55834807` (submit), master commit `478146a174`, hypothesis router-pdl-plus-khalf-pooled-iqr-gate
 
 Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -156,6 +156,9 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 ### router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL)
 - **router-zero-pdl-overlap-m9-m256** → neutral (within-ci), 1.2715x — gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Built on master (8f233e88 lineage). At m > 8 the router is two graph nodes: torch.zeros((m, 256), fp32) (profile: at::native vectorized_elementwise fill, 0.7 us
 
+### router m=9..256 PDL (restack) + pooler m=128 khalf gate rule
+- **router-pdl-plus-khalf-pooled-iqr-gate** → neutral (within-ci), 1.2723x — gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Restack of router-zero-pdl-overlap-m9-m256 (neutral 1.2715 in check a20f8048, but ROUTED in all 4 classes: m=16 1.040/1.091, m=32 1.086/1.101, m=128 1.031/1.059
+
 ### shape-gated restack: router GEMM m<=8 + unpooler-slice GEMM m<=8 + pooler/unpooler GEMM m=65..128
 - **restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128** → neutral (unproven-vs-best), 1.2366x — gained on unpooler decode_1, verify_1; router decode_1, decode_32, verify_1; pooler verify_16; lost on o verify_32. Built on current master (b99b1dd, bf16-restack-m16-swapab-router-swapab-m32, check 1e90292c7b954d96, 1.2215). Stack the three row wins that were each checked al
 
@@ -213,6 +216,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **pooler-k-halves-fp32-partials-restack-m128-m256** [pooler GEMM (m=128/256, K-split as a 2-batch cuBLAS GEMM)] neutral, not confirmed (pooled 1.2636332647989572): DIAGNOSIS Action 1. Built on master 36c26199 (blob ad8d7254). Port the [khalf] path from b
 - **bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole** [bf16 GEMM dispatch (m=128/256, per-cell cuBLASLt plan selector)] neutral, within-ci: DIAGNOSIS Action 2, narrowed by today's evidence. Built on master 36c26199. Generalise mas
 - **router-zero-pdl-overlap-m9-m256** [router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL)] neutral, within-ci: At m > 8 the router is two graph nodes: torch.zeros((m, 256), fp32) (profile: at::native v
+- **router-pdl-plus-khalf-pooled-iqr-gate** [router m=9..256 PDL (restack) + pooler m=128 khalf gate rule] neutral, within-ci: Restack of router-zero-pdl-overlap-m9-m256 (neutral 1.2715 in check a20f8048, but ROUTED i
 - **router-triton-hilo-fused** [router GEMM] regression, regression: Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the 
 - **unpooler-slice-triton-gemv** [unpooler GEMM] regression, regression: For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight
 - **qkv-gate-triton-skinny-m32** [qkv GEMM] regression, regression: Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <=
@@ -234,8 +238,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: lt-nn-layout-cells-o-m128-qkv-m128 [o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy)] p2 queued
 - queue: lt-config-sweep-m256-beyond-heuristic [bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic)] p3 queued
 - queue: khalf-gate-three-rounds-pooled [pooler m=128 khalf (b2) cell gate (_khalf prepare gate only)] p1 hold
-- queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 queued
+- queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 queued
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 queued
-- queue: router-pdl-plus-khalf-pooled-iqr-gate [router m=9..256 PDL (restack) + pooler m=128 khalf gate rule] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

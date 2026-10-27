@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-27T143426Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
+Regenerated 2026-10-27T145300Z. Best: 1.2740x [1.2549,1.2931] job `254c83ae55834807` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -87,12 +87,12 @@ Regenerated 2026-10-27T143426Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc4
 | 2026-10-26T221237Z | lt-nn-layout-cells-o-m128-qkv-m128 | primary | o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T221256Z | lt-config-sweep-m256-beyond-heuristic | primary | bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T121238Z | khalf-gate-three-rounds-pooled | primary | pooler m=128 khalf (b2) cell gate (_khalf prepare gate only) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-27T121627Z | khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr | control→khalf-gate-three-rounds-pooled | pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T121627Z | khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr | control→khalf-gate-three-rounds-pooled | pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T132745Z | router-zero-pdl-overlap-m9-m256 | primary | router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL) | done/neutral | neutral | 1.2715 | [1.252,1.291] | a20f80486c5b4bc1 | check |  | proceed | 4/6 |
 | 2026-10-27T132819Z | bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush | rewrite | bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel) | done/neutral | neutral | 1.2741 | [1.255,1.293] | 6407497bec88470e | check |  | proceed | 1/6 |
 | 2026-10-27T132845Z | pooler-khalf-lt-batched-plan-m128-m256 | primary | pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132918Z | router-hilo-m128-m256-readflush-config-sweep | primary | router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-27T143409Z | router-pdl-plus-khalf-pooled-iqr-gate | primary | router m=9..256 PDL (restack) + pooler m=128 khalf gate rule | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T143409Z | router-pdl-plus-khalf-pooled-iqr-gate | primary | router m=9..256 PDL (restack) + pooler m=128 khalf gate rule | done/neutral | neutral | 1.2723 | [1.253,1.291] | 023f4260e86e423e | check |  | proceed | 4/6 |
 
 ## Held
 
@@ -100,3 +100,4 @@ Regenerated 2026-10-27T143426Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc4
 - pooler-khalf-m128-fp32-partials-triton-castadd: superseded: khalf (b2) landed on master by the campaign 2026-10-27 (commit 8f233e88, branch hyp/bf16-khalf), board 1.2735
 - b12-qkv-m1-r32-one-cta-per-sm-readflush-gate: adversarial review: Every part of this hypothesis, (a) to (e), is already on master: it came in through d7bf1c76 (hyp/bf16-readflush, which names this slug) and landed in 8f233e88 
 - khalf-gate-three-rounds-pooled: adversarial review: The premise is contradicted by the archived logs: the board run bc147c5b (1.2735) itself did not route khalf, and failed on the IQR rule, not the ratio rule; c6
+- khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr: folded into router-pdl-plus-khalf-pooled-iqr-gate (its 10-round diagnostic and OLD/PARENT/POOLED readout run there), per that hypothesis's adversarial review 2026-10-27
