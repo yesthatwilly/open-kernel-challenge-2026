@@ -65,9 +65,18 @@ prior: "bf16-verify-deepgemm-sm90-explicit-instantiation-stage2: it was VOID (no
 rewrite_stage: 3
 replaces: cuBLAS nvjet at m=128/256 for qkv_gate (Lt 40x64 15.7 us at m=128; 96x64 2x4 TNN 19.6 us at m=256), pooler m=256 (NN 128x64 29.0 us) and unpooler (NN 128x64 19.1 us at m=128; 128x128 TNT 24.7 us at m=256)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T133822Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T133822Z
+base_sha: 0dc50d0a5d027659c02f0e6a45778fa2662139e4
+base_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
+branch: hyp/muse_bf16_proj/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
+worktree: .worktrees/muse_bf16_proj/bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
