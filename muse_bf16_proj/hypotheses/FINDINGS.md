@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T133339Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T140023Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -230,7 +230,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: khalf-gate-three-rounds-pooled [pooler m=128 khalf (b2) cell gate (_khalf prepare gate only)] p1 hold
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 queued
 - queue: router-zero-pdl-overlap-m9-m256 [router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL)] p1 queued
-- queue: bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p2 queued
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 queued
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 queued
+- running: bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p2 running
 - 8 stale holds expired to `done/expired/` (not run)

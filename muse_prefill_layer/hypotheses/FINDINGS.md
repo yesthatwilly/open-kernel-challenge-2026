@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T133340Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T140023Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -116,6 +116,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### w13 + w2 expert GEMMs (rega persistent item->CTA schedule)
 - **experts-rega-round-rotated-schedule** → neutral (within-ci), 1.4664x — no shape moved outside noise. Built on master (blob f4751fc0). Only the order in which rega_kernel's persistent CTAs walk items changes; every item is computed by master's code, so outputs a
+
+### w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)
+- **experts-rega-w2-epilogue-prefetch-bulk-store** → neutral (unproven-vs-best), 1.5010x — no shape moved outside noise. Built on master (blob 42ded471, experts-rega-w13-fast-silu-epilogue landed). NO NEW nvcc BUILD: master's muse_prefill_rega_fsilu module already compiles rega_ke
 
 ### w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)
 - **experts-rega-fine-n-buckets** → neutral (within-ci), 1.4573x — no shape moved outside noise. Built on master (blob f4751fc0). rega sizes each item's wgmma N (tokens) and its slab TMA box from the chunk's 16-route block count nbk (1..8) with four buckets
@@ -253,9 +256,9 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: front-routing-pdl-launch-diet-stack [launch overhead (front fusion + routing fusion + PDL chain regate, stacked)] p4 queued
 - queue: routing-triton-hilo-sum-topk-localids [routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel)] p3 queued
 - queue: experts-rega-fine-n-high-plus-fast-silu [rega experts kernel (w13/w2 N buckets at the high class + w13 silu epilogue)] p1 hold
-- queue: experts-rega-w2-epilogue-prefetch-bulk-store [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 queued
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 queued
 - queue: o-proj-triton-gemm-turn-gated [o GEMM (attention output projection at 200 < T <= 4096)] p2 queued
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 queued
+- queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 queued
 - running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

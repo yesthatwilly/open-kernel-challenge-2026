@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-27T133339Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-27T140023Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -112,7 +112,7 @@ Regenerated 2026-10-27T133339Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-26T222305Z | sk-full-line-5stage-select | primary | full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222324Z | sliding-decode-band2-sk-gate | primary | sliding-layer attention (decode B=2..16, stream-K window route gate) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222353Z | full-verify-wgmma-s7-split-combine | rewrite | full-layer attention (verify B=2..64, wgmma stream-K kernel merge) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-27T132640Z | sk-ticket-merge-onepass | primary | stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T132640Z | sk-ticket-merge-onepass | primary | stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32) | running | running |  |  | ba8c8a6103124f71 | check |  | proceed |  |
 | 2026-10-27T132706Z | sliding-decode1-ph-push-merge | primary | sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132752Z | attn-fast-math-epilogues | primary | output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132814Z | combo-tail-onepass-push-fastepi | primary | combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails) | queue | queued |  |  |  |  |  | required |  |

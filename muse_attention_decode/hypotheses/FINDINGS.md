@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T133339Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T140023Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -254,8 +254,8 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sk-full-line-5stage-select [full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap)] p4 queued
 - queue: sliding-decode-band2-sk-gate [sliding-layer attention (decode B=2..16, stream-K window route gate)] p4 queued
 - queue: full-verify-wgmma-s7-split-combine [full-layer attention (verify B=2..64, wgmma stream-K kernel merge)] p4 queued
-- queue: sk-ticket-merge-onepass [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] p1 queued
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
+- running: sk-ticket-merge-onepass [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] p1 running
 - 17 stale holds expired to `done/expired/` (not run)
