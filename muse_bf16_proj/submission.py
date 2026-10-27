@@ -57,6 +57,12 @@ unpooler's n == 1024 slice run the same _bf16_swapab_kernel with BLOCK_T = WS_M 
 m64n16k16) and their own 16-row workspaces / tickets, routed BEFORE the m <= 16 kernels above
 (which stay in the file, no longer routed for these shapes). The unpooler full width at m = 16
 keeps cuBLAS; every m >= 17 shape keeps its path.
+
+Pooler K-halves at m == 128 (hypothesis pooler-khalf-m128-fp32-partials-triton-castadd, candidate b2 only), section
+(11): one strided-batched cuBLAS GEMM over the two K halves of master's NN weight with fp32 output (fp32 partials,
+never bf16), then one Triton kernel (_add2_cast_kernel) adds the two fp32 partials and rounds once to bf16, the
+numerics of cuBLAS's own fp32 split-K reduce. Own flag (pooler_khalf128_ok), canary, two read-flush gate rounds and a
+profiler assertion of exactly two launches; any miss keeps master's NN torch.mm.
 """
 
 import os
@@ -1558,14 +1564,13 @@ def _ouns_prepare(state: dict) -> None:
     dim, run the graph-replay gate, and fix state["ouns_cl"] (0 = restack's path) for the run."""
     state["ouns_cl"] = 0
     if _OUNS_EXT is None:
-        print("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module", flush=True)
+        _decision("[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path (swapab16): no CUDA module")
         return
     w = state["unpooler"]
     if not (w.dim() == 2 and w.dtype == torch.bfloat16 and w.shape[0] >= OUNS_N
             and w.shape[1] == OUNS_K and w.stride(1) == 1 and w.stride(0) % 8 == 0
             and w.data_ptr() % 16 == 0):
-        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected",
-              flush=True)
+        _decision(f"[ouns] PATH CHOSEN: unpooler slice m<=8 -> restack path: weight {tuple(w.shape)} unexpected")
         return
     chosen = 0
     try:
@@ -1600,12 +1605,12 @@ def _ouns_prepare(state: dict) -> None:
         if key in state:
             state[key].zero_()
     if state["ouns_cl"]:
-        print(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
+        _decision(f"[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim "
               f"{state['ouns_cl']}; self-check passed (m {OUNS_CHECK_MS}) and graph-replay gate won at m "
-              f"{OUNS_GATE_MS} (see the [ouns] gate lines for both medians)", flush=True)
+              f"{OUNS_GATE_MS} (see the [ouns] gate lines for both medians)")
     else:
-        print("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
-              "(see the [ouns] lines above for why)", flush=True)
+        _decision("[ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> restack path (swapab16); cluster route off "
+              "(see the [ouns] lines above for why)")
 
 
 # --- (8) router, 1 <= m <= 8: hand-written CUDA split-K reduced through cluster DSMEM ---------
@@ -2044,9 +2049,9 @@ def _router_cluster_prepare(state: dict) -> None:
         print(f"[router_cluster] prepare failed ({e!r}); swap-AB router path for every m", flush=True)
         ok = False
     state["router_cluster_ok"] = ok
-    print("[router_cluster] PATH CHOSEN router m<=8 (n=256): "
+    _decision("[router_cluster] PATH CHOSEN router m<=8 (n=256): "
           + ("CUDA cluster kernel router_kernel<8,8>, no memset" if ok else "swap-AB Triton router (cluster off)")
-          + "; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo", flush=True)
+          + "; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo")
 
 
 # --- (9) m == 1 bulk-TMA row-owner stream (pooler A, qkv_gate A2, o A3) and qkv_gate m == 128 on a
@@ -2086,6 +2091,17 @@ BULK_REF_TBS = 3.95          # best effective rate the row-owner kernel reached 
 CELL_MAX_RATIO = 0.98        # route only if candidate / master <= this (graph replay, cold L2)
 CELL_GATE_REPS = 41
 CELL_FLUSH_BYTES = 256 * 1024 * 1024
+CELL_FLUSH_MODES = ("write", "read")   # _cell_gate: zero_() the flush buffer, or read all of it (the judge reads)
+# prepare()-only log: every routing decision line (PATH CHOSEN, bulk12 gate summaries, A/B misses), printed when made
+# and re-printed together at the end of prepare(), because the judge keeps only a 16 KB log tail. Cleared at the start
+# and the end of prepare(); kernel_fn never reads it.
+_DECISION_LINES = []
+
+
+def _decision(line: str) -> None:
+    print(line, flush=True)
+    _DECISION_LINES.append(line)
+
 CELL_REL_L2 = 3e-3           # vs fp64 on random x
 CELL_PROBE_REL = 1e-4        # the single power-of-two row (a weight column, exact)
 LT_M = 128
@@ -2645,12 +2661,20 @@ def _cell_capture(fn):
     return gr
 
 
-def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: dict):
+def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: dict, flush_mode: str = "write",
+               stats=None, route_txt=None):
     """Model selector (copied from _ouns_gate): kernel_fn captured with the cell's flag on
     (candidate) and off (master's path, byte-identical routing otherwise) on shallow copies of
     state, the same synthetic x; CELL_GATE_REPS interleaved replays (order swapped every rep), a
-    CELL_FLUSH_BYTES write before each, medians minus an empty-graph baseline. Returns
-    (candidate_us, master_us), both net. prepare()-only."""
+    CELL_FLUSH_BYTES flush before each, medians minus an empty-graph baseline. flush_mode "write"
+    (default, section 9's callers) zeroes the buffer; "read" reads all of it (one int32 sum, as the
+    judge does before each replay and as rewrite/lib/rt.py _rt_time(flush="read")), which leaves L2
+    full of clean lines instead of ~50 MB of dirty ones that the timed kernel would write back
+    (DISTILL 3.2.1). Returns (candidate_us, master_us), both net. stats (optional dict, pooler K-halves cell) is
+    filled with each side's raw median / IQR and the baseline; route_txt (optional) replaces the printed route rule.
+    Both default to None, which leaves every earlier caller's behaviour and print unchanged. prepare()-only."""
+    if flush_mode not in CELL_FLUSH_MODES:
+        raise ValueError(f"_cell_gate: flush_mode {flush_mode!r} not in {CELL_FLUSH_MODES}")
     dev = state["router"].device
     st_c = dict(state)
     st_c[flag] = True
@@ -2662,8 +2686,13 @@ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: d
     scratch = torch.zeros(1, dtype=torch.float32, device=dev)
     ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
 
+    flush_i32 = flush.view(torch.int32)
+
     def replay_us(gr) -> float:
-        flush.zero_()
+        if flush_mode == "read":
+            flush_i32.sum()
+        else:
+            flush.zero_()
         ev[0].record()
         gr.replay()
         ev[1].record()
@@ -2681,12 +2710,17 @@ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: d
             times[name].append(replay_us(graphs[name]))
     med = {name: _ouns_median(v) for name, v in times.items()}
     adj = {name: max(v - base, 0.25) for name, v in med.items()}
-    print(f"[cell] gate {tag} {layer} m={m} (graph replay, {CELL_FLUSH_BYTES >> 20} MB flush, "
+    print(f"[cell] gate {tag} {layer} m={m} (graph replay, {CELL_FLUSH_BYTES >> 20} MB {flush_mode} flush, "
           f"{CELL_GATE_REPS} reps, interleaved): cand median {med['cand']:.2f} us, master median "
           f"{med['master']:.2f} us, empty-graph baseline {base:.2f} us -> net {adj['cand']:.2f} vs "
-          f"{adj['master']:.2f} us, cand/master {adj['cand'] / adj['master']:.3f} (route if <= "
-          f"{CELL_MAX_RATIO})", flush=True)
-    del graphs, g_base, flush
+          f"{adj['master']:.2f} us, cand/master {adj['cand'] / adj['master']:.3f} ("
+          + (route_txt if route_txt is not None else f"route if <= {CELL_MAX_RATIO}") + ")", flush=True)
+    if stats is not None:
+        for name, v in times.items():
+            sv = sorted(v)
+            stats[name] = {"med": med[name], "iqr": sv[(3 * len(sv)) // 4] - sv[len(sv) // 4], "net": adj[name]}
+        stats["base"] = base
+    del graphs, g_base, flush, flush_i32
     torch.cuda.synchronize()
     return adj["cand"], adj["master"]
 
@@ -2716,8 +2750,8 @@ def _bulk_prepare(state: dict, flags=None) -> None:
     if _BULK_EXT is None:
         if flags is None:
             for layer, spec in BULK_CELLS.items():
-                print(f"PATH CHOSEN {spec[0]} {layer} m={BULK_M}: master (cand n/a us vs master n/a us; "
-                      f"no bulk module)", flush=True)
+                _decision(f"PATH CHOSEN {spec[0]} {layer} m={BULK_M}: master (cand n/a us vs master n/a us; "
+                      f"no bulk module)")
         return
     dev = state["router"].device
     state["bulk_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
@@ -2793,9 +2827,9 @@ def _bulk_prepare(state: dict, flags=None) -> None:
             state.pop("bulk_wt_" + layer, None)
         state["bulk_err"].zero_()
         print(f"[prepare-time] cell {src} {layer} m={BULK_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
-        print(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
+        _decision(f"PATH CHOSEN {src} {layer} m={BULK_M}: {'candidate' if state[flag] else 'master'} "
               f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
-              + ("" if state[flag] else f"; {why}"), flush=True)
+              + ("" if state[flag] else f"; {why}"))
     torch.cuda.synchronize()
 
 
@@ -2827,7 +2861,7 @@ def _lt_prepare(state: dict, flags=None) -> None:
     state["lt_ws_qkv128"] = None
     if _LT_EXT is None:
         if flags is None:
-            print(f"PATH CHOSEN B qkv_gate m={LT_M}: master (cand n/a us vs master n/a us; no Lt module)", flush=True)
+            _decision(f"PATH CHOSEN B qkv_gate m={LT_M}: master (cand n/a us vs master n/a us; no Lt module)")
         return
     w = state["qkv_gate"]
     dev = w.device
@@ -2910,9 +2944,9 @@ def _lt_prepare(state: dict, flags=None) -> None:
         state["lt_ws_qkv128"] = None
     torch.cuda.synchronize()
     print(f"[prepare-time] cell B qkv_gate m={LT_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
-    print(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
+    _decision(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
           f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
-          + ("" if state[LT_FLAG] else f"; {why}"), flush=True)
+          + ("" if state[LT_FLAG] else f"; {why}"))
 
 
 # --- (10) m == 1 row-owner stream on lossless 12-bit weights (bulk12: A12 pooler, A2_12 qkv_gate, A3_12 o) ----
@@ -2939,19 +2973,44 @@ def _lt_prepare(state: dict, flags=None) -> None:
 # Each layer tries its instances (CTA shapes) behind section (9)'s cell machinery: occupancy query, encode, host +
 # device round trip, canary + fp64 correctness (_cell_check), the model-selector graph gate (_cell_gate, which times
 # kernel_fn with the cell's flag on vs off: off is whatever routes today, the raw bulk cell included), and routes the
-# fastest only at candidate / incumbent <= CELL_MAX_RATIO, after a torch.profiler kernel-name assertion.
+# fastest only at candidate / incumbent <= CELL_MAX_RATIO, after a torch.profiler kernel-name assertion. Since
+# b12-qkv-m1-r32-one-cta-per-sm-readflush-gate every bulk12 gate routes on a READ flush (the judge reads a buffer
+# larger than L2 before each replay; the write flush flattered bulk12) with the write flush printed beside it, the
+# threshold is 0.95 at m >= 8, and qkv_gate also tries the pooler's R=32 instances (72 CTAs, 1 CTA/SM) as challengers.
 B12_EXT_NAME = "muse_bf16_bulk12_m1_v1"
 B12_ESC_BYTES = 2048          # per-CTA escape block: uint16 row offsets [R + 1] in its first 256 B, then entries
 B12_ESC_CAP = (B12_ESC_BYTES - 256) // 8   # 224 entries of (row << 16 | k, true bf16 bits) per CTA
 B12_M = 1
-# layer -> (source tag, N, K, rows per CTA R, ((instance id, ring stages S, min CTAs/SM, consumer warps CW), ...),
-#           state flag)
+# layer -> (source tag, N, K, the cell's home R (rows per CTA),
+#           ((instance id, ring stages S, min CTAs/SM, consumer warps CW, rows per CTA R), ...), state flag)
+# Each variant carries its own R (the encoding is per R). A variant whose R differs from the home R is a challenger
+# (hypothesis b12-qkv-m1-r32-one-cta-per-sm-readflush-gate: qkv_gate on the pooler's R=32 instances 0 / 1, grid
+# 2304 / 32 = 72 CTAs at 1 CTA/SM, two m16 tiles per k16 step): it routes only if it passes BOTH flush gates and its
+# read-flush ratio is at least B12_CHALLENGER_MARGIN below the best home-R variant's (see _b12_pick).
 B12_CELLS = {
-    "pooler":   ("A12", 4096, 8192, 32, ((0, 8, 1, 8), (1, 8, 1, 4)), "b12_pooler_ok"),
-    "qkv_gate": ("A2_12", 2304, 8192, 16, ((2, 6, 2, 4), (3, 6, 2, 8)), "b12_qkv_ok"),
-    "o":        ("A3_12", 8192, 1024, 64, ((4, 8, 1, 8), (5, 8, 1, 4)), "b12_o_ok"),
+    "pooler":   ("A12", 4096, 8192, 32, ((0, 8, 1, 8, 32), (1, 8, 1, 4, 32)), "b12_pooler_ok"),
+    "qkv_gate": ("A2_12", 2304, 8192, 16, ((2, 6, 2, 4, 16), (3, 6, 2, 8, 16), (0, 8, 1, 8, 32), (1, 8, 1, 4, 32)),
+                 "b12_qkv_ok"),
+    "o":        ("A3_12", 8192, 1024, 64, ((4, 8, 1, 8, 64), (5, 8, 1, 4, 64)), "b12_o_ok"),
 }
+B12_INST_R = {0: 32, 1: 32, 2: 16, 3: 16, 4: 64, 5: 64}   # the R of each B12Inst (the CUDA template's first argument)
+for _layer, _spec in B12_CELLS.items():
+    for _v in _spec[4]:
+        assert B12_INST_R[_v[0]] == _v[4], f"B12_CELLS {_layer}: instance {_v[0]} is R={B12_INST_R[_v[0]]}, not {_v[4]}"
+        assert _spec[1] % _v[4] == 0 and _v[4] % 16 == 0, f"B12_CELLS {_layer}: n {_spec[1]} vs R {_v[4]}"
+del _layer, _spec, _v
 B12_FLAGS = tuple(spec[5] for spec in B12_CELLS.values())
+# Every bulk12 gate times under a READ flush (DISTILL 3.2.1: the write flush flattered bulk12, qkv 0.88 gated vs ~1.00
+# judged, o 0.87 vs 0.97). The write flush still runs beside it as a diagnostic and as the challenger's second gate.
+B12_GATE_FLUSH = "read"
+B12_MAX_RATIO_M8 = 0.95       # route at m >= 8 only at read-flush cand / incumbent <= this (b12x / b12r lessons)
+B12_CHALLENGER_MARGIN = 0.03  # a challenger-R variant must beat the best home-R variant's read ratio by this much
+
+
+def _b12_max_ratio(m: int) -> float:
+    """The routing threshold on the read-flush cand / incumbent ratio: CELL_MAX_RATIO at m < 8, B12_MAX_RATIO_M8 at
+    m >= 8."""
+    return B12_MAX_RATIO_M8 if m >= 8 else CELL_MAX_RATIO
 
 _B12_CPP = r"""
 #include <torch/extension.h>
@@ -3414,10 +3473,12 @@ def _b12_forward(layer: str, x: torch.Tensor, state: dict) -> torch.Tensor:
     return out
 
 
-def _b12_encode_into(state: dict, layer: str, w: torch.Tensor, rows: int, inst: int, verbose: bool) -> None:
-    """Encode w into the state's buffers for this cell and check the round trip on the device through the kernel's
-    own decode (b12_unpack): every non-escape element bit-exact, every escape slot at w_floor's bits. Raises on any
-    mismatch."""
+def _b12_encode_checked(layer: str, w: torch.Tensor, rows: int, inst: int, verbose: bool):
+    """Encode w at R = rows and check the round trip on the device through the kernel's own decode (b12_unpack with
+    an instance of that R): every non-escape element bit-exact, every escape slot at w_floor's bits. Returns
+    (wc, esc, base). Raises on any mismatch."""
+    if B12_INST_R[inst] != rows:
+        raise RuntimeError(f"instance {inst} is R={B12_INST_R[inst]}, encoding is R={rows}")
     wc, esc, base, n_esc, max_cta = _b12_encode(w, rows)
     dec = torch.empty(tuple(w.shape), dtype=torch.int16, device=w.device)
     _B12_EXT.b12_unpack(wc, dec, inst, base)
@@ -3429,31 +3490,45 @@ def _b12_encode_into(state: dict, layer: str, w: torch.Tensor, rows: int, inst: 
         raise RuntimeError("device round trip (b12_unpack) differs from the weight")
     if not bool((dec[escm].to(torch.int32) == (base << 8)).all()):
         raise RuntimeError("device escape slots do not decode to w_floor")
-    state["b12_wc_" + layer], state["b12_esc_" + layer] = wc, esc
-    state["b12_base_" + layer], state["b12_inst_" + layer] = base, inst
     if verbose:
         el = w.numel()
-        print(f"[b12] {layer}: base {base} (e71 window {base}..{base + 7}, binades {2 * base - 127}.."
+        print(f"[b12] {layer} R={rows}: base {base} (e71 window {base}..{base + 7}, binades {2 * base - 127}.."
               f"{2 * base + 15 - 127}), escapes {n_esc} ({n_esc / el:.2e} of {el}), max {max_cta} per CTA (cap "
               f"{B12_ESC_CAP}); stream {wc.numel() / 1e6:.2f} MB + escape blocks {esc.numel() / 1e6:.3f} MB vs "
               f"raw {el * 2 / 1e6:.2f} MB (x{(wc.numel() + esc.numel()) / (el * 2):.4f}); host + device round "
               f"trips bit-exact", flush=True)
+    return wc, esc, base
+
+
+def _b12_load(state: dict, layer: str, enc, inst: int) -> None:
+    """Put one encoding (wc, esc, base) and the instance that runs it into the state's buffers for this cell."""
+    wc, esc, base = enc
+    state["b12_wc_" + layer], state["b12_esc_" + layer] = wc, esc
+    state["b12_base_" + layer], state["b12_inst_" + layer] = base, inst
+
+
+def _b12_encode_into(state: dict, layer: str, w: torch.Tensor, inst: int, verbose: bool) -> None:
+    """Encode w at the instance's own R (B12_INST_R), check both round trips, load it into the state's buffers."""
+    _b12_load(state, layer, _b12_encode_checked(layer, w, B12_INST_R[inst], inst, verbose), inst)
 
 
 def _b12_prepare(state: dict, flags=None) -> None:
     """A12 / A2_12 / A3_12. Sets state[flag] (False unless every step passes) and, per routed cell, the state's own
     encoded weight; one per-state error word. flags None (the judge's state): per cell and instance query attributes
-    + occupancy (needs MINB CTAs/SM), encode + host / device round trips, canary + correctness, model-selector gate
-    against kernel_fn with the flag off (today's route, the raw bulk cell included); the fastest passing instance
-    routes at <= CELL_MAX_RATIO after a torch.profiler kernel-name assertion; one PATH CHOSEN line per cell. flags a
-    dict (the A/B check's second state): inherit each flag and instance, encode only for cells that are on."""
+    + occupancy (needs MINB CTAs/SM), encode once per distinct R + host / device round trips, the variant's buffers
+    loaded into state, canary + correctness, model-selector gates against kernel_fn with the flag off (today's route,
+    the raw bulk cell included) under a READ flush (routing) and a write flush (diagnostic; a challenger-R variant
+    must pass both); _b12_pick chooses, the winner routes at read ratio <= _b12_max_ratio(m) after a torch.profiler
+    kernel-name assertion and only its buffers stay; one compact gate line per variant and one PATH CHOSEN line per
+    cell (both re-printed at the end of prepare). flags a dict (the A/B check's second state): inherit each flag and
+    instance, encode at that instance's R (B12_INST_R) only for cells that are on."""
     for spec in B12_CELLS.values():
         state[spec[5]] = False
     if _B12_EXT is None:
         if flags is None:
             for layer, spec in B12_CELLS.items():
-                print(f"PATH CHOSEN {spec[0]} {layer} m={B12_M}: incumbent (cand n/a us vs incumbent n/a us; "
-                      f"no b12 module)", flush=True)
+                _decision(f"PATH CHOSEN {spec[0]} {layer} m={B12_M}: incumbent (cand n/a us vs incumbent n/a us; "
+                      f"no b12 module)")
         return
     dev = state["router"].device
     state["b12_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
@@ -3462,16 +3537,18 @@ def _b12_prepare(state: dict, flags=None) -> None:
         for layer, spec in B12_CELLS.items():
             if flags.get(spec[5]) and insts.get(layer) is not None:
                 try:   # a failure here turns off only this cell in this state, never the whole A/B
-                    _b12_encode_into(state, layer, state[layer], spec[3], insts[layer], verbose=False)
+                    _b12_encode_into(state, layer, state[layer], insts[layer], verbose=False)
                     state[spec[5]] = True
                 except Exception as e:
                     print(f"[b12] second state: {spec[0]} {layer} encode raised {type(e).__name__}: {e}; "
                           f"cell off in this state", flush=True)
         return
     for layer, spec in B12_CELLS.items():
-        src, n, k, rows, variants, flag = spec
+        src, n, k, home_r, variants, flag = spec
+        maxr = _b12_max_ratio(B12_M)
         t0 = time.perf_counter()
-        best = None   # (cand_us, incumbent_us, inst, label)
+        results = []   # one dict per gated variant: inst, R, label, read / write (cand_us, incumbent_us), rr, wr
+        choice = None
         why = ""
         try:
             w = state[layer]
@@ -3480,59 +3557,79 @@ def _b12_prepare(state: dict, flags=None) -> None:
             else:
                 st_on = dict(state)
                 st_on[flag] = True
-                encoded = False
-                for inst, stages, minb, cw in variants:
+                encs = {}   # R -> (wc, esc, base), or None if that R's encoding failed; one encoding per distinct R
+                faulted = False
+                for inst, stages, minb, cw, rows in variants:
                     label = f"b12_kernel<{rows},{k},{stages},{minb},{cw}>"
                     info = [int(v) for v in _B12_EXT.b12_setup(inst)]
-                    print(f"[b12] {src} {layer} {label}: regs={info[0]} local(spill)={info[1]} B static smem="
-                          f"{info[2]} B dyn smem={info[3]} B, occupancy {info[4]} CTA/SM (needs {minb}), grid "
+                    print(f"[b12] {src} {layer} {label} (inst {inst}): regs={info[0]} local(spill)={info[1]} B static "
+                          f"smem={info[2]} B dyn smem={info[3]} B, occupancy {info[4]} CTA/SM (needs {minb}), grid "
                           f"{n // rows} x {32 * (cw + 1)} threads", flush=True)
                     if info[4] < minb:
                         why = f"{label}: occupancy {info[4]} CTA/SM < {minb}"
+                        _decision(f"[b12] gate {src} {layer} m={B12_M} {label}: skipped, {why}")
                         continue
-                    if not encoded:
-                        _b12_encode_into(state, layer, w, rows, inst, verbose=True)
-                        encoded = True
-                    state["b12_inst_" + layer] = inst
+                    if rows not in encs:
+                        try:
+                            encs[rows] = _b12_encode_checked(layer, w, rows, inst, verbose=True)
+                        except Exception as e:   # this R only: the other R's variants still run
+                            encs[rows] = None
+                            print(f"[b12] {src} {layer} R={rows}: encode raised {type(e).__name__}: "
+                                  f"{str(e)[-300:]}", flush=True)
+                    if encs[rows] is None:
+                        why = f"{label}: R={rows} encoding failed"
+                        _decision(f"[b12] gate {src} {layer} m={B12_M} {label}: skipped, {why}")
+                        continue
+                    # The variant's own buffers go into the state before its canary, check and gates.
+                    _b12_load(state, layer, encs[rows], inst)
                     st_on.update({key: state[key] for key in ("b12_wc_" + layer, "b12_esc_" + layer,
                                                               "b12_base_" + layer, "b12_inst_" + layer, "b12_err")})
-                    bad = _cell_check(f"{src} {label}", lambda xx: _b12_forward(layer, xx, st_on), w, B12_M, n, k,
-                                      err=state["b12_err"])
+                    bad = _cell_check(f"{src} {layer} {label} inst {inst}", lambda xx: _b12_forward(layer, xx, st_on),
+                                      w, B12_M, n, k, err=state["b12_err"])
                     if bad:
                         why = f"{label}: {bad}"
+                        _decision(f"[b12] gate {src} {layer} m={B12_M} {label}: canary/check failed, {bad}")
                         continue
+                    res = {"inst": inst, "R": rows, "label": label}
                     tg = time.perf_counter()
-                    cand_us, inc_us = _cell_gate(f"{src} {label}", layer, B12_M, n, k, flag, state)
+                    for mode in (B12_GATE_FLUSH, "write"):
+                        res[mode] = _cell_gate(f"{src} {label}", layer, B12_M, n, k, flag, state, flush_mode=mode)
                     code = int(state["b12_err"].item())
-                    print(f"[prepare-time] gate {src} {label}: {time.perf_counter() - tg:.2f}s; cand {cand_us:.2f} us "
-                          f"(raw-equivalent {n * k * 2 / (cand_us * 1e-6) / 1e12:.2f} TB/s, stream "
-                          f"{n * k * 1.5 / (cand_us * 1e-6) / 1e12:.2f} TB/s) vs incumbent {inc_us:.2f} us", flush=True)
+                    res["rr"] = res["read"][0] / res["read"][1]
+                    res["wr"] = res["write"][0] / res["write"][1]
+                    c_us = res["read"][0]
+                    print(f"[prepare-time] gates {src} {label}: {time.perf_counter() - tg:.2f}s; read-flush cand "
+                          f"{c_us:.2f} us (raw-equivalent {n * k * 2 / (c_us * 1e-6) / 1e12:.2f} TB/s, stream "
+                          f"{n * k * 1.5 / (c_us * 1e-6) / 1e12:.2f} TB/s) vs incumbent {res['read'][1]:.2f} us",
+                          flush=True)
+                    _decision(f"[b12] gate {src} {layer} m={B12_M} {label} R={rows} grid {n // rows}: read "
+                              f"{res['rr']:.3f} ({res['read'][0]:.2f} / {res['read'][1]:.2f} us) write {res['wr']:.3f} "
+                              f"({res['write'][0]:.2f} / {res['write'][1]:.2f} us)"
+                              + (f"; error word {code}" if code else ""))
                     if code:   # a fault in any instance keeps the incumbent for the whole cell
-                        why = f"{label}: error word {code} after the gate"
-                        best = None
+                        why = f"{label}: error word {code} after the gates"
+                        faulted = True
                         break
-                    if best is None or cand_us < best[0]:
-                        best = (cand_us, inc_us, inst, label)
-                if best is not None:
-                    cand_us, inc_us, inst, label = best
-                    state["b12_inst_" + layer] = inst
-                    st_on["b12_inst_" + layer] = inst
-                    if not cand_us <= CELL_MAX_RATIO * inc_us:
-                        why = f"gate: best {label} cand/incumbent {cand_us / inc_us:.3f} > {CELL_MAX_RATIO}"
-                    else:
-                        why = ""
-                        data = {"x": torch.randn((B12_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16),
-                                "config": {"m": B12_M, "n": n, "k": k, "layer": layer}}
-                        try:
-                            names = _cell_kernels(lambda: kernel_fn(data, st_on))
-                            print(f"[b12] {src} {layer} m={B12_M}: profiled kernels {names}", flush=True)
-                            if names and not (len(names) == 1 and "b12_kernel" in names[0]):
-                                why = f"profiled kernels {names}: expected exactly one b12_kernel"
-                        except Exception as e:  # own extension, direct launch: keep the route
-                            print(f"[b12] {src} {layer}: profiler unavailable ({type(e).__name__}: {e}); route kept "
-                                  f"(kernel_fn calls b12_run directly)", flush=True)
-                        if not why:
-                            state[flag] = True
+                    results.append(res)
+                if not faulted and results:
+                    choice, why = _b12_pick(src, layer, results, home_r, maxr)
+                if choice is not None:
+                    _b12_load(state, layer, encs[choice["R"]], choice["inst"])
+                    st_on.update({key: state[key] for key in ("b12_wc_" + layer, "b12_esc_" + layer,
+                                                              "b12_base_" + layer, "b12_inst_" + layer)})
+                    data = {"x": torch.randn((B12_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16),
+                            "config": {"m": B12_M, "n": n, "k": k, "layer": layer}}
+                    try:
+                        names = _cell_kernels(lambda: kernel_fn(data, st_on))
+                        print(f"[b12] {src} {layer} m={B12_M}: profiled kernels {names}", flush=True)
+                        if names and not (len(names) == 1 and "b12_kernel" in names[0]):
+                            why = f"profiled kernels {names}: expected exactly one b12_kernel"
+                    except Exception as e:  # own extension, direct launch: keep the route
+                        print(f"[b12] {src} {layer}: profiler unavailable ({type(e).__name__}: {e}); route kept "
+                              f"(kernel_fn calls b12_run directly)", flush=True)
+                    if not why:
+                        state[flag] = True
+                encs.clear()   # only the winner's buffers stay (in state)
         except Exception as e:  # never raises: any surprise keeps the incumbent path for this cell
             why = f"raised {type(e).__name__}: {str(e)[-300:]}"
             state[flag] = False
@@ -3540,15 +3637,258 @@ def _b12_prepare(state: dict, flags=None) -> None:
             for key in ("b12_wc_", "b12_esc_", "b12_base_", "b12_inst_"):
                 state.pop(key + layer, None)
         state["b12_err"].zero_()
-        c_txt = "n/a" if best is None else f"{best[0]:.2f}"
-        i_txt = "n/a" if best is None else f"{best[1]:.2f}"
+        shown = choice if choice is not None else (min(results, key=lambda r: r["rr"]) if results else None)
+        if shown is None:
+            r_txt = "read n/a, write n/a"
+        else:
+            r_txt = (f"{shown['label']} read {shown['rr']:.3f} ({shown['read'][0]:.2f} vs {shown['read'][1]:.2f} us), "
+                     f"write {shown['wr']:.3f} ({shown['write'][0]:.2f} vs {shown['write'][1]:.2f} us)")
         print(f"[prepare-time] cell {src} {layer} m={B12_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
-        print(f"PATH CHOSEN {src} {layer} m={B12_M}: {'candidate ' + best[3] if state[flag] else 'incumbent'} "
-              f"(cand {c_txt} us vs incumbent {i_txt} us)" + ("" if state[flag] else f"; {why}"), flush=True)
+        _decision(f"PATH CHOSEN {src} {layer} m={B12_M}: "
+                  + (f"candidate {choice['label']} R={choice['R']} (inst {choice['inst']})" if state[flag]
+                     else "incumbent")
+                  + f" [{'chosen' if state[flag] else 'best-read'} {r_txt}; route at read <= {maxr}]"
+                  + ("" if state[flag] else f"; {why}"))
     torch.cuda.synchronize()
 
 
+def _b12_pick(src: str, layer: str, results: list, home_r: int, maxr: float):
+    """Routing rule over the gated variants of one cell (prepare()-only). Returns (choice or None, why).
+    Home-R variants: the best read-flush ratio routes if it is <= maxr. A challenger (R != the cell's home R) replaces
+    it only if it passes BOTH gates (read and write ratio <= maxr) and its read ratio is at least
+    B12_CHALLENGER_MARGIN below the best home-R variant's read ratio; with no gated home-R variant, no challenger
+    routes (the incumbent stays)."""
+    home = [r for r in results if r["R"] == home_r]
+    best_home = min(home, key=lambda r: r["rr"]) if home else None
+    choice, why = None, ""
+    if best_home is None:
+        why = f"no home-R (R={home_r}) variant gated"
+    elif best_home["rr"] <= maxr:
+        choice = best_home
+    else:
+        why = f"gate: best home-R {best_home['label']} read-flush cand/incumbent {best_home['rr']:.3f} > {maxr}"
+    for r in results:
+        if r["R"] == home_r:
+            continue
+        if best_home is None:
+            verdict = "not eligible (no home-R variant to compare)"
+        elif not r["rr"] <= maxr:
+            verdict = f"fails read gate {r['rr']:.3f} > {maxr}"
+        elif not r["wr"] <= maxr:
+            verdict = f"fails write gate {r['wr']:.3f} > {maxr}"
+        elif not r["rr"] <= best_home["rr"] - B12_CHALLENGER_MARGIN:
+            verdict = (f"read {r['rr']:.3f} not >= {B12_CHALLENGER_MARGIN} below home-R {best_home['label']} "
+                       f"read {best_home['rr']:.3f}")
+        else:
+            verdict = f"eligible (read {r['rr']:.3f} vs home-R {best_home['rr']:.3f})"
+            if choice is None or choice["R"] == home_r or r["rr"] < choice["rr"]:
+                choice, why = r, ""
+        _decision(f"[b12] challenger {src} {layer} {r['label']} R={r['R']}: {verdict}")
+    return choice, why
+
+
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + B12_FLAGS   # section (10)'s cells join the A/B check and the FINAL FLAGS line
+
+
+# (11) Pooler K-halves at m == 128 with fp32 partials (hypothesis pooler-khalf-m128-fp32-partials-triton-castadd,
+# candidate (b2) only). Master runs this cell as torch.mm(x, pooler_t): a cuBLAS split-K nvjet GEMM plus a separate
+# cublasLt splitKreduce node. Here the two K halves run as ONE strided-batched cuBLAS GEMM over master's NN weight
+# with fp32 output (bf16 x / W, fp32 accumulation, fp32 partials [2, 128, 4096]), then ONE Triton kernel adds the two
+# fp32 partials in fp32 and rounds once to bf16: the numerics of cuBLAS's / SGLang's own fp32 split-K reduce. No bf16
+# partials anywhere (DISTILL 3.4). Own flag, canary, two read-flush gate rounds and a profiler kernel-name assertion;
+# any miss keeps master's NN torch.mm. Pooler m=256, every m <= 32 path and every other layer are untouched.
+KHALF_M = 128
+KHALF_FLAG = "pooler_khalf128_ok"
+KHALF_HALF = POOLER_K // 2
+KHALF_ADD_BLOCK = 2048           # fp32 elements per program: 128 threads x 16 (4 x 16-byte loads per partial)
+KHALF_ADD_WARPS = 4
+KHALF_ROUNDS = 2                 # independent read-flush _cell_gate rounds; BOTH must clear the bar
+KHALF_MIN_RATIO = 1.03           # master / candidate, net of the empty-graph baseline, each round
+KHALF_MAX_IQR = 1.5              # candidate IQR <= this x max(master IQR, KHALF_IQR_FLOOR_US), each round
+KHALF_IQR_FLOOR_US = 0.5
+KHALF_GATE_FLUSH = "read"        # the judge reads a buffer larger than L2 before each replay (DISTILL 3.2.1)
+KHALF_START_DEADLINE_S = 170.0   # no khalf phase later than this after state A's build began (prepare has 300 s)
+
+
+@triton.jit
+def _add2_cast_kernel(p_ptr, out_ptr, numel, BLOCK: tl.constexpr):
+    """out[i] = bf16(p[i] + p[numel + i]): the two fp32 K-half partials of the pooler K-halves cell, added once in
+    fp32 and rounded once (round-to-nearest-even) to bf16. p is the contiguous [2, m, n] fp32 bmm output."""
+    pid = tl.program_id(0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    offs = tl.max_contiguous(tl.multiple_of(offs, BLOCK), BLOCK)
+    mask = offs < numel
+    a = tl.load(p_ptr + offs, mask=mask, other=0.0)
+    b = tl.load(p_ptr + numel + offs, mask=mask, other=0.0)
+    tl.store(out_ptr + offs, (a + b).to(tl.bfloat16), mask=mask)
+
+
+def _add2_cast(p: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+    numel = out.numel()
+    _add2_cast_kernel[(triton.cdiv(numel, KHALF_ADD_BLOCK),)](p, out, numel, BLOCK=KHALF_ADD_BLOCK,
+                                                             num_warps=KHALF_ADD_WARPS)
+    return out
+
+
+def _khalf_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
+    """Pooler at m == 128 as two K halves: xh is a strided view of x (no copy), wh = pooler_t.view(2, 4096, 4096)
+    (master's lossless NN copy, no copy); one batched cuBLAS GEMM with fp32 output gives fp32 partials
+    [2, m, 4096]; _add2_cast_kernel sums them in fp32 and stores bf16 once into a fresh output."""
+    m = x.shape[0]
+    xh = x.view(m, 2, KHALF_HALF).permute(1, 0, 2)
+    wh = state["pooler_t"].view(2, KHALF_HALF, POOLER_N)
+    p = torch.bmm(xh, wh, out_dtype=torch.float32)
+    if not p.is_contiguous():   # layout metadata only (never true for a fresh bmm output); never input values
+        p = p.contiguous()
+    out = torch.empty((m, POOLER_N), dtype=torch.bfloat16, device=x.device)
+    return _add2_cast(p, out)
+
+
+def _khalf_route_ok(x: torch.Tensor, cfg, state: dict) -> bool:
+    """pooler at cfg m == KHALF_M with its own flag on: cfg, shapes and state only, never input values."""
+    if cfg["m"] != KHALF_M or not state.get(KHALF_FLAG):
+        return False
+    wt = state["pooler_t"]
+    return (cfg["n"] == POOLER_N and cfg["k"] == POOLER_K
+            and tuple(wt.shape) == (POOLER_K, POOLER_N) and wt.is_contiguous()
+            and x.dim() == 2 and x.shape[0] == KHALF_M and x.shape[1] == POOLER_K
+            and x.dtype == torch.bfloat16 and x.is_contiguous())
+
+
+def _khalf_names_ok(names: list) -> str:
+    """"" if the profiled launches of one candidate call are exactly two: a cuBLAS GEMM with no split-K in its name
+    and _add2_cast_kernel; else why not (a copy of xh / wh, a split-K reduce node, a third launch, ...)."""
+    low = [nm.lower() for nm in names]
+    if len(low) != 2:
+        return f"expected exactly 2 launches (GEMM + _add2_cast_kernel), profiler saw {len(low)}"
+    adds = [nm for nm in low if "_add2_cast_kernel" in nm]
+    gemms = [nm for nm in low if "_add2_cast_kernel" not in nm]
+    if len(adds) != 1:
+        return "no single _add2_cast_kernel launch"
+    g = gemms[0]
+    if not any(t in g for t in ("nvjet", "gemm", "cutlass", "sm90", "xmma")):
+        return f"second launch is not GEMM-like ({names})"
+    if "splitk" in g or "reduce" in g:
+        return f"the GEMM is a split-K variant ({g[:120]})"
+    if any(t in g for t in ("memcpy", "copy", "contiguous")):
+        return "a copy kernel was launched (xh / wh not consumed in place)"
+    return ""
+
+
+def _khalf_add_canary(dev) -> str:
+    """Named, synced canary of the new Triton kernel alone, before any timing: fp32 partials at the real cell
+    shape (with magnitudes spread over many binades), compared bit for bit with torch's fp32 add rounded once to
+    bf16. Returns "" on pass, else why."""
+    g = torch.Generator(device=dev)
+    g.manual_seed(24680)
+    numel = KHALF_M * POOLER_N
+    p = torch.randn((2, KHALF_M, POOLER_N), device=dev, dtype=torch.float32, generator=g)
+    p *= torch.exp2(torch.randint(-20, 21, (2, KHALF_M, POOLER_N), device=dev, generator=g).float())
+    out = torch.empty((KHALF_M, POOLER_N), dtype=torch.bfloat16, device=dev)
+    print(f"[khalf] LAUNCH canary _add2_cast_kernel numel={numel} grid {triton.cdiv(numel, KHALF_ADD_BLOCK)} "
+          f"BLOCK {KHALF_ADD_BLOCK} warps {KHALF_ADD_WARPS} ...", flush=True)
+    _add2_cast(p, out)
+    torch.cuda.synchronize()
+    print("[khalf] DONE   canary _add2_cast_kernel (synced)", flush=True)
+    ref = (p[0] + p[1]).to(torch.bfloat16)
+    if not torch.equal(out, ref):
+        nbad = int((out.view(torch.int16) != ref.view(torch.int16)).sum().item())
+        return f"_add2_cast_kernel differs from torch fp32 add + one bf16 rounding in {nbad} of {numel} elements"
+    return ""
+
+
+def _khalf_prepare(state: dict, t_start: float) -> None:
+    """State A only. Sets state[KHALF_FLAG]; every surprise keeps master's NN torch.mm. Steps: weight layout check,
+    a synced bmm(out_dtype=float32) probe, the add kernel's own canary (bit-exact), _cell_check through kernel_fn
+    (canary + rel L2 vs fp64 + probe row + repeat bit-identical), KHALF_ROUNDS read-flush _cell_gate rounds against
+    master's actually-routed path (flag off), then one torch.profiler assertion. One PATH CHOSEN decision line with
+    each round's ratio and medians. Never raises."""
+    state[KHALF_FLAG] = False
+    t0 = time.perf_counter()
+    why = ""
+    rounds = []
+    try:
+        if t0 - t_start > KHALF_START_DEADLINE_S:
+            why = f"skipped: deadline ({t0 - t_start:.0f}s into the state build > {KHALF_START_DEADLINE_S:.0f}s)"
+        w, wt = state["pooler"], state["pooler_t"]
+        if not why and not (tuple(w.shape) == (POOLER_N, POOLER_K) and w.dtype == torch.bfloat16
+                            and tuple(wt.shape) == (POOLER_K, POOLER_N) and wt.dtype == torch.bfloat16
+                            and wt.is_contiguous()):
+            why = f"weight layout unexpected (pooler {tuple(w.shape)}, pooler_t {tuple(wt.shape)})"
+        dev = w.device
+        cfg = {"m": KHALF_M, "n": POOLER_N, "k": POOLER_K, "layer": "pooler"}
+        st_on = dict(state)
+        st_on[KHALF_FLAG] = True
+        if not why:
+            xs = torch.randn((KHALF_M, POOLER_K), device=dev, dtype=torch.float32).to(torch.bfloat16)
+            print("[khalf] LAUNCH probe torch.bmm(out_dtype=torch.float32) m=128 ...", flush=True)
+            try:
+                pp = torch.bmm(xs.view(KHALF_M, 2, KHALF_HALF).permute(1, 0, 2), wt.view(2, KHALF_HALF, POOLER_N),
+                               out_dtype=torch.float32)
+                torch.cuda.synchronize()
+                print(f"[khalf] DONE   probe torch.bmm(out_dtype=torch.float32) (synced): {tuple(pp.shape)} "
+                      f"{pp.dtype} contiguous={pp.is_contiguous()}", flush=True)
+                if not (tuple(pp.shape) == (2, KHALF_M, POOLER_N) and pp.dtype == torch.float32):
+                    why = f"bmm out_dtype probe gave {tuple(pp.shape)} {pp.dtype}"
+                del pp
+            except Exception as e:
+                why = f"torch.bmm(out_dtype=torch.float32) rejected ({type(e).__name__}: {str(e)[-160:]})"
+        if not why:
+            why = _khalf_add_canary(dev)
+        if not why and _khalf_route_ok(xs, cfg, st_on) is not True:
+            why = "route check failed on a synthetic m=128 x"
+        if not why:
+            bad = _cell_check("khalf-b2 fp32 partials", lambda xx: kernel_fn({"x": xx, "config": cfg}, st_on),
+                              w, KHALF_M, POOLER_N, POOLER_K)
+            if bad:
+                why = f"canary/check: {bad}"
+        if not why:
+            bar = f"route if master/cand >= {KHALF_MIN_RATIO} in every round and IQR <= {KHALF_MAX_IQR}x master"
+            for rnd in range(KHALF_ROUNDS):
+                st = {}
+                cand_us, master_us = _cell_gate(f"khalf-b2 round {rnd + 1}/{KHALF_ROUNDS}", "pooler", KHALF_M,
+                                                POOLER_N, POOLER_K, KHALF_FLAG, state, flush_mode=KHALF_GATE_FLUSH,
+                                                stats=st, route_txt=bar)
+                st["ratio"] = master_us / cand_us
+                rounds.append(st)
+            iqr_ok = all(r["cand"]["iqr"] <= KHALF_MAX_IQR * max(r["master"]["iqr"], KHALF_IQR_FLOOR_US)
+                         for r in rounds)
+            ratio_ok = all(r["ratio"] >= KHALF_MIN_RATIO for r in rounds)
+            if not ratio_ok:
+                why = (f"gate: master/cand {[round(r['ratio'], 3) for r in rounds]} not all >= {KHALF_MIN_RATIO} "
+                       f"(not a measured loss of the row unless < 1)")
+            elif not iqr_ok:
+                why = f"gate: cand IQR > {KHALF_MAX_IQR}x master IQR in some round"
+        if not why:
+            data = {"x": xs, "config": cfg}
+            try:
+                names = _cell_kernels(lambda: kernel_fn(data, st_on))
+                print(f"[khalf] m={KHALF_M}: profiled kernels {names}", flush=True)
+                why = _khalf_names_ok(names)
+            except Exception as e:   # the assertion is part of the routing contract: no profile, no route
+                why = f"profiler unavailable ({type(e).__name__}: {str(e)[-160:]})"
+            try:
+                mnames = _cell_kernels(lambda: kernel_fn(data, state))
+                print(f"[khalf] m={KHALF_M}: master (flag off, actually routed) kernels {mnames}", flush=True)
+            except Exception as e:
+                print(f"[khalf] master profile unavailable ({type(e).__name__})", flush=True)
+        if not why:
+            state[KHALF_FLAG] = True
+    except Exception as e:  # never raises: any surprise keeps master's NN path
+        why = f"raised {type(e).__name__}: {str(e)[-200:]}"
+        state[KHALF_FLAG] = False
+    torch.cuda.synchronize()
+    r_txt = "; ".join(
+        f"r{i + 1} master/cand {r['ratio']:.3f} (net {r['master']['net']:.2f} / {r['cand']['net']:.2f} us; "
+        f"med {r['master']['med']:.2f} / {r['cand']['med']:.2f} us, IQR {r['master']['iqr']:.2f} / "
+        f"{r['cand']['iqr']:.2f}, base {r['base']:.2f})" for i, r in enumerate(rounds)) or "gate not run"
+    print(f"[prepare-time] khalf pooler m={KHALF_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
+    _decision(f"PATH CHOSEN K pooler m={KHALF_M}: "
+              + ("candidate b2 (bmm fp32 partials + _add2_cast_kernel)" if state[KHALF_FLAG] else "master (NN torch.mm)")
+              + f" [{KHALF_GATE_FLUSH}-flush gate, {r_txt}]" + ("" if state[KHALF_FLAG] else f"; {why}"))
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (KHALF_FLAG,)   # section (11)'s cell joins the A/B check and the FINAL FLAGS line
 
 
 def _prepare_state(weights: Weights, flags=None) -> dict:
@@ -3577,6 +3917,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         state[name + "_t"] = state[name].t().contiguous()
     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
+    state[KHALF_FLAG] = False    # pooler m == 128 K-halves: off until state A's selector (or B's inherit) says so
     t = tick("weight splits + NN copies", t)
     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
     _router_prepare(state)
@@ -3644,11 +3985,15 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         t = tick("bulk12 cells A12/A2_12/A3_12 (setup + encode + round trips + canary + gate + profile)", t)
         _lt_prepare(state)
         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
+        # (11) pooler m == 128 K-halves, fp32 partials + Triton add-cast (own flag), after every other cell.
+        _khalf_prepare(state, t_all)
+        t = tick("pooler k-halves cell K (probe + canary + check + 2 read-flush gates + profile)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
         state["nn_ok"] = flags["nn_ok"]
         state["nn_p256_ok"] = flags["nn_p256_ok"]
+        state[KHALF_FLAG] = bool(flags.get(KHALF_FLAG, False))   # no per-state buffers (pooler_t is per state)
         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
         _bulk_prepare(state, flags=flags)
         _b12_prepare(state, flags=flags)
@@ -3671,6 +4016,8 @@ def _ab_component(layer: str, m: int, st=None) -> str:
     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell. A
     bulk12 cell that is on in st serves its m == 1 cell ahead of the raw bulk cell."""
+    if st is not None and layer == "pooler" and m == KHALF_M and st.get(KHALF_FLAG):
+        return KHALF_FLAG   # checked first: a miss turns off only this cell, never nn_ok (unpooler m=128 shares it)
     if st is not None and layer in B12_CELLS and m == B12_M and st.get(B12_CELLS[layer][5]):
         return B12_CELLS[layer][5]
     if layer in BULK_CELLS and m == BULK_M:
@@ -3759,9 +4106,9 @@ def _ab_selfcheck(weights: Weights, state_a: dict) -> None:
                         raise RuntimeError(f"rel L2 {err:.2e} > {bound:.0e} (state {tag}, round {rnd})")
             print(f"[ab] {layer} m={m} n={n}: A,B,A,B replays OK, worst rel L2 {worst:.2e}", flush=True)
         except Exception as e:
-            print(f"[ab] MISS {layer} m={m} n={n}: {type(e).__name__}: {e}"
-                  + (f" -> switching {comp} off in both states" if comp else
-                     " (master path cell: nothing to switch off)"), flush=True)
+            _decision(f"[ab] MISS {layer} m={m} n={n}: {type(e).__name__}: {e}"
+                      + (f" -> switching {comp} off in both states" if comp else
+                         " (master path cell: nothing to switch off)"))
             if comp:
                 bad[comp] = True
         finally:
@@ -3782,6 +4129,7 @@ def prepare(weights: Weights) -> dict:
     (router cluster, unpooler cluster, NN layout), A/B-check the whole dispatch on two states, and
     release every gate / self-check scratch buffer before returning."""
     t0 = time.perf_counter()
+    _DECISION_LINES.clear()
     state = _prepare_state(weights)
     t = time.perf_counter()
     _ab_selfcheck(weights, state)
@@ -3803,6 +4151,11 @@ def prepare(weights: Weights) -> dict:
           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
           + f"; prepare total {time.perf_counter() - t0:.1f}s", flush=True)
+    # The judge keeps a 16 KB log tail: every decision line again, last, so none is lost to the earlier noise.
+    print(f"[prepare] DECISIONS ({len(_DECISION_LINES)} lines, re-printed for the log tail):", flush=True)
+    for line in _DECISION_LINES:
+        print(f"  {line}", flush=True)
+    _DECISION_LINES.clear()
     return state
 
 
@@ -3836,6 +4189,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         ws, cnt = _swapab_buffers(state, layer)
         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
     if layer != "router":
+        if layer == "pooler" and _khalf_route_ok(x, cfg, state):   # m == 128: bmm fp32 K-halves + add-cast
+            return _khalf_forward(x, state)
         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
                 and ((state["nn_ok"] and NN_GATED_MIN_M <= cfg["m"] <= NN_GATED_MAX_M)
                      or (layer == "pooler" and state["nn_p256_ok"]
