@@ -23,6 +23,17 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **PIVOT (the user, ~2125Z): "ive put h100 submission on hold momentarily, priority pivot back to 3:1 schedule".**
+    - USER stopped all H100 work at 2122Z (peer session takemyjob-40: runner stopped, nodejudge env and
+      /tmp/USER-hopper removed). **No GPU runs until they say.**
+    - Stopped at 2127-2129Z because their next stages could GPU-validate: the H100 program workflow (E1 / E2 builders
+      mid-edit) and S1a (in its fix stage). Their uncommitted partial edits stay as they are:
+      - takemyjob nodejudge {nodejudge.py, shims.py, configs/decode.json, README};
+      - musespark .worktrees/eb-s1a {rewrite/lib/hotcold_moe.py, muse_moe_w4a16/submission.py}.
+    - **S1a's build** (eb-s1a c020f1e2 / bc87b3d3; takemyjob probes/es1a af083a7): 29/29 PASS on both toolchains,
+      sanitizers clean. **S/wg hot half at T=256 p10/p50/p90 x0.889/0.922/0.946, i.e. ~x1.08, under §5's x1.10
+      kill bar.** Two audits ran (results in workflow journal wf_b65a89ce-1f7); the fix was interrupted.
+    - Phase C (2125Z): checks left moe 11, bf16 13, attention 12, prefill 13, decode 0.
   - **More H100 work (2115Z, the user: "design more use for the h100s ... especially when we are awaiting"):** queued
     without new enablers:
     - moe-k9 x2: T=1/8/16 replay time vs distinct local experts, 2000 reps (the S3 per-expert target);
