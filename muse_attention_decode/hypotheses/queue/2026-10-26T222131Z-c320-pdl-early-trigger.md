@@ -40,7 +40,8 @@ kind: primary
 controls_for: null
 prior: "combo-b1-chain-c320-fused-pre-pdl: its V4 already launches the combine with PDL but triggers at the very end of kernel A and measured equal to V3 (18.91 vs 18.91 us); this moves only the trigger to A's prologue so the dependent launch overlaps A"
 review: required
-status: queued
+status: hold
+hold_reason: "stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)"
 ---
 
 # c320-pdl-early-trigger
