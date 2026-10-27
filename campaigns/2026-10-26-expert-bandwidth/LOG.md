@@ -946,3 +946,16 @@ append-only, newest last.
     - the fork stream is module-level, shared across copies (safe with sequential host calls);
     - an exception in the forked checks drops that T to master rather than the serial pick;
     - one fallback layer check lacks a deadline guard.
+- 0947Z: W6-M moe check a80dda1a: **1.6978** (below the 1.7076 board).
+  - **The fork routed at M=256:** x1.024-1.060 over serial H-16, about -13 us in the race; verify-32 row x1.014.
+  - M=128 stays master (H-16f x0.980).
+  - Scored run **2a7b5d2030894c4a**, a borderline call: never-scored bytes, a real one-row gain, 9 moe scored runs left.
+  - New tool: scratchpad/rowcmp_moe.py (moe rows by load).
+- 0947Z: W6-F decode check ee9142eb: **1.5645**. T=128 race: H-16 x1.001, H-16f x1.003 vs master.
+  - **The decode fork is killed:** the x0.93 block gain does not survive inside the layer. In moe it does.
+  - c320t (d1f x1.035) and PERHEAD (d1s x1.043) routed again; d32f is x0.95-0.97 in every run vs 4a7a49d0 (its lucky
+    draw).
+  - **Decode, 1000Z:** 4 checks / 2 scored left; no decode build in flight. **Phase A is done for decode**; phase B
+    starts (moe > bf16 > attention > prefill).
+  - The campaign HEAD's bytes (PERHEAD + c320t) average ~1.568 over 4 checks, the same as the board's lucky 1.5697.
+    Hold the 2 decode scored runs for a real gain or the end of phase C.
