@@ -1028,3 +1028,4 @@ append-only, newest last.
   - khalf-gate-three-rounds-pooled is **held**. Its queued control companion (a 10-round gate diagnostic: old vs
     parent vs pooled-IQR rules on the same data) is a phase-C candidate.
 - 1217Z: decode check **f2aece517e8543e1**: the campaign HEAD stack (W6-B + PERHEAD + c320t bar + fork code + fast silu; 971,620 bytes). It asks whether fast silu moves decode's T>=128 rows, and is a scored candidate if it beats 1.5697. Decode: 4 checks / 2 scored after this.
+- 1226Z: decode stack check f2aece51: **1.5783** (> 1.5697). PERHEAD d1s x1.042, c320t d1f x1.034, fast silu clean; T=128 hybrid master (v16 x0.97). **Scored run 17e7915ad7d540d0** (decode: 4 checks / 1 scored left after it).
