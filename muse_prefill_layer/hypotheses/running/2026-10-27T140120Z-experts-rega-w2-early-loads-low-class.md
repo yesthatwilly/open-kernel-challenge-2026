@@ -46,7 +46,7 @@ base_sha: 564d44539536723987b824306ca1ce595bbe50dd
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
 branch: hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class
 worktree: .worktrees/muse_prefill_layer/experts-rega-w2-early-loads-low-class
-mode: null
+mode: check
 restack_of: experts-rega-w2-epilogue-prefetch-bulk-store
 stale_base: null
 implemented_at: 2026-10-27T141036Z
@@ -55,6 +55,8 @@ submission_sha256: 874433d1d7a6e540d1e090f8ddf50add07edf0a444c9d51a4d4560fa50b7c
 norm_sha256: 43002eb32fb0b8a658dfbb49423583e797b09ba45f2c3b0b918629233dc73da4
 submission_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
 lint_warnings: 112
+attempt_file: 2026-10-27T141037Z-check-experts-rega-w2-early-loads-low-class.md
+prepared_at: 2026-10-27T141037Z
 ---
 
 # experts-rega-w2-early-loads-low-class
