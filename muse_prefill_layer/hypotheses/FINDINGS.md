@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T141747Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T142523Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -66,6 +66,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 ### launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)
 - **experts-rega-pdl-chain-gather-w13-w2** → neutral (within-ci), 1.4622x — no shape moved outside noise. DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill has no programmatic dependent launch (griddepcontrol appears 0 times i
 
+### o GEMM (attention output projection at 200 < T <= 4096)
+- **o-proj-triton-gemm-turn-gated** → neutral (within-ci), 1.4863x — lost on full first_turn. Built on master (blob 42ded471). Only the call attn_output = _gemm(o, dense['o']) in kernel_fn changes, and only at 200 < T <= 4096. MECHANISM: the o projection
+
 ### pre-attention norm+rope + cache store
 - **qk-norm-fp8-cache-store-fusion** → neutral (unproven-vs-best), 1.0093x — no shape moved outside noise. One Triton kernel replaces five launches on the attention front: FusedQKNorm, k.to(FP8), v.to(FP8), store_cache and q.view(T, 16, 64).to(FP8). One program per t
 
@@ -80,6 +83,7 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class
 - **experts-rega-w2-early-loads-low-class** → neutral (unproven-vs-best), 1.4986x — no shape moved outside noise. Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in muse_prefill_layer/hypotheses/done/neutral/) on current master, with 
+- **experts-rega-w2-early-loads-low-class-cf** → neutral (unproven-vs-best), 1.4994x — no shape moved outside noise. Confirmation rerun of experts-rega-w2-early-loads-low-class: its implementation commit 52169f1783ec72c5ee8b2e97b0648a0e91426c87 unchanged except one trailing co
 
 ### restack: pre-expert norm + rega gather fused (all rega classes) on master 1.4587; naive per-shape winner stack
 - **combo-a-master-normgather-naive-stack** → neutral (unproven-vs-best), 1.4605x — no shape moved outside noise. COMBINATION A (naive top-row stack, restack of measured ON paths only). Start from the resolved 3-way merge /home/user/git/musespark/muse_prefill_layer/hypothes
@@ -240,6 +244,8 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **experts-rega-pdl-chain-gather-w13-w2** [launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)] neutral, within-ci: DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill 
 - **experts-rega-round-rotated-schedule** [w13 + w2 expert GEMMs (rega persistent item->CTA schedule)] neutral, within-ci: Only the order in which rega_kernel's persistent CTAs walk items changes; every item is co
 - **experts-rega-fine-n-buckets** [w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)] neutral, within-ci: rega sizes each item's wgmma N (tokens) and its slab TMA box from the chunk's 16-route blo
+- **o-proj-triton-gemm-turn-gated** [o GEMM (attention output projection at 200 < T <= 4096)] neutral, within-ci: Only the call attn_output = _gemm(o, dense['o']) in kernel_fn changes, and only at 200 < T
+- **experts-rega-w2-early-loads-low-class** [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] neutral, not confirmed (pooled 1.499021779478406): Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
@@ -262,7 +268,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 queued
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 queued
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- queue: experts-rega-w2-early-loads-low-class-cf [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] p1 queued
 - running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
-- running: o-proj-triton-gemm-turn-gated [o GEMM (attention output projection at 200 < T <= 4096)] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

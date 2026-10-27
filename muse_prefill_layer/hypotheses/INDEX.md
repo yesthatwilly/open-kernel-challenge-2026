@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-27T141747Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
+Regenerated 2026-10-27T142523Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -103,11 +103,11 @@ Regenerated 2026-10-27T141747Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574
 | 2026-10-27T111744Z | experts-rega-fine-n-high-plus-fast-silu | primary | rega experts kernel (w13/w2 N buckets at the high class + w13 silu epilogue) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-27T133154Z | experts-rega-w2-epilogue-prefetch-bulk-store | primary | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | done/neutral | neutral | 1.5010 | [1.479,1.524] | 665c32dd8c794c0b | check |  | proceed | 1/3 |
 | 2026-10-27T133216Z | experts-rega-epilogue-wg-local-bulk-store | primary | w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-27T133236Z | o-proj-triton-gemm-turn-gated | primary | o GEMM (attention output projection at 200 < T <= 4096) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-27T133236Z | o-proj-triton-gemm-turn-gated | primary | o GEMM (attention output projection at 200 < T <= 4096) | done/neutral | neutral | 1.4863 | [1.464,1.509] | af3b0d0d84834ee9 | check |  | proceed | 2/3 |
 | 2026-10-27T133257Z | experts-rega-epilogue-overlap-next-stage | primary | w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T140020Z | experts-rega-w2-epilogue-prefetch-bulk-store-cf | confirm→experts-rega-w2-epilogue-prefetch-bulk-store | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4986 | [1.476,1.521] | 59eb665f162a4ac9 | check |  | proceed | 2/3 |
-| 2026-10-27T141744Z | experts-rega-w2-early-loads-low-class-cf | confirm→experts-rega-w2-early-loads-low-class | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-27T141744Z | experts-rega-w2-early-loads-low-class-cf | confirm→experts-rega-w2-early-loads-low-class | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4994 | [1.477,1.522] | 8716d98c405f417d | check |  | proceed |  |
 
 ## Held
 
