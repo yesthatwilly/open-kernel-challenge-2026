@@ -794,3 +794,4 @@ append-only, newest last.
 - moe check **489191841c364d3d**. decode follows once the moe canary is clean (spec order).
 - The dl-slim agent is told to leave Engine D alone (W5 already removed it).
 - 0513Z: decode scored 7ceab934 (b12p + fix + W3-A full-line + W4 c320): **1.5507**, the new board (rank 331). Landed on master (sha256 91f6e23b..., 973 KB).
+- 0516Z: dl-slim merged into campaign/expert-bandwidth (40391ed0): ea5 kernels omitted from decode (EA_BUILD_V5=False), C320_FUSED blocks removed (preprocessed CUDA identical), one unused const. decode 973 -> **941 KB** (~59 KB headroom); moe byte-identical. Its bytes ride W5's decode check before any scored run.
