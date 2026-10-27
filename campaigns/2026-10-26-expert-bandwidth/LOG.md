@@ -659,3 +659,15 @@ append-only, newest last.
 - bf16 check **a3dcd4cb46a84648**: the read-flush gate (hyp/bf16-readflush d7bf1c76, base 4b79139c). Every bulk12 gate
   routes on the read flush (0.98 at m=1, 0.95 at m >= 8), qkv gets R=32 one-CTA-per-SM variants, and a DECISIONS block is
   re-printed. Read it for the read vs write ratios (pooler / qkv / o) and the qkv decode_1 row (10.54 us).
+
+## 2026-10-27T0233Z: wave 2 killed (eat18, dchain-pdl o); scored run of b12p + fix sent
+
+- 5b4e5b8f (eat18): 1.5311. eaf at T=1 x0.991 vs v1 (margin 1.02), so v1 kept. Killed in this form.
+- 65530406 (dchain-pdl): 1.5326. The isolated o_pdl ran > 1.3x the incumbent in every cell, so all were killed: the
+  Triton swap-AB o at 4.5-5 us cannot be beaten by a CUDA PDL rewrite of this shape.
+- In both, the anatomy stages synced clean. The T=128 hybrid fell back to master in both (H-16 x0.969 / x1.004; it won
+  at x1.05-1.06 earlier), so the H-16 gate at T=128 is a near tie.
+- **Scored run ba57a64f66864219** of 7844b6c9's bytes (b12p + fix; judged 1.5276 / 1.5311 / 1.5326 with inert extras).
+  Above 1.5275, it also makes the board bytes fault-free.
+- Phase A status: 4 of 6 levers killed today (k-slice, wg2, eaf, o_pdl); b12p landed. Next: a design panel re-ranks
+  decode levers on today's evidence before any more builds.
