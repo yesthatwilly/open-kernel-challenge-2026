@@ -40,7 +40,8 @@ kind: primary
 controls_for: null
 prior: "merge-perkvhead-v3chain-sv32-tiled: same base (1.5360 check); this adds s1's sliding-verify wgmma module with the s2 split-combine fix so a winning SV16/SV32 route lands on the best code in one check"
 review: required
-status: queued
+status: hold
+hold_reason: "stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)"
 ---
 
 # sliding-verify-wgmma-split-combine-on-v3chain
