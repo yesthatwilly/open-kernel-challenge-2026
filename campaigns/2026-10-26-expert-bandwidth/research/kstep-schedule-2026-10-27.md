@@ -178,3 +178,5 @@ All 1,072 KV lines are ok. memcheck and synccheck are clean (named barriers). 17
 - **Soaks** (moe-soak x2, 1000 reps per shape, every replay checked vs the fp32 reference, fresh inputs): **12,000
   checked replays, 0 faults, 0 miscompares**. Headlines x1.3900 / x1.3862.
 - **Flip rates:** 4 cold-prepare runs routed every moe race identically; headlines 1.3893-1.3929.
+- **Replicates** (8 queued jobs, 20:30-20:40Z, different GPUs): the cold N=16 rows reproduce within 0.16% (S4 30.35 /
+  30.40). The K4 rows' median spread is 0.55%. The ladder numbers are stable to well under the effects they decide.
