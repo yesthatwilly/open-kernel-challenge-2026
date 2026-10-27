@@ -1,0 +1,746 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f4751fc0..7625a6d5 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -635,14 +635,23 @@ def prepare(weights):
+     # its checks and its gate on the norm-gather-ON block. Never raises; any failure keeps master's low class.
+     lo_lines = _rega_lo_phase(state, weights, device, t_prepare0)
+     torch.cuda.synchronize()
++    # experts-rega-round-rotated-schedule: LAST of all setup (after _rega_lo_phase, whose rega_low_variant it needs,
++    # and after _fa3c_setup / _norm_gather_setup), so every earlier phase's deadlines are unaffected: the separate
++    # muse_prefill_rega_rot module, per-class exact compare / timing / replay gates, its own deadlines.
++    rot_lines = _rega_rot_phase(state, weights, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+     for line in fa3c_lines:
+         print(line, flush=True)
+-    # The low-class candidates' summary; its '[rega-lo] PATH CHOSEN low: ...' line is the last prepare() line.
++    # The low-class candidates' summary ('[rega-lo] PATH CHOSEN low: ...').
+     for line in lo_lines:
+         print(line[:1200], flush=True)
++    # The rotated-schedule phase's summary: its PATH CHOSEN lines and the prepare total are the last prepare() lines
++    # (the judge keeps the 16 KB log tail).
++    for line in rot_lines:
++        print(line[:900], flush=True)
+     return state
+ 
+ 
+@@ -3539,6 +3548,14 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # shape (the token count) and two prepare-time ints of this state decide; never a tensor value or a pointer.
+     variant = state.get("rega_low_variant", 0) if num_tokens <= REGA_LOW_MAX else 0
+     grid_lo = state.get("rega_low_grid", grid)
++    # experts-rega-round-rotated-schedule: a per-class prepare-time bool selects the separate muse_prefill_rega_rot
++    # module (master's rega_kernel with only the persistent item->CTA order rotated per round; bit-identical
++    # output). Never on the rega_gemm_lo path (variant != 0): the low-class candidates keep precedence. Shapes and
++    # prepare-time values only; the shifts are prepare-time ints.
++    rot_ext = state.get("rega_rot_ext")
++    rot = (not variant and rot_ext is not None
++           and bool(state.get("rega_rot_ok", {}).get(_rega_class(num_tokens), False)))
++    shift13, shift2 = state.get("rega_rot_shift", (0, 0))
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+         tracer("before", "align")
+@@ -3563,6 +3580,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
+                                           n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
++    elif rot:
++        rot_ext.rega_gemm_rot(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                              D_EXPERT // 64, size_k, hs, grid, err, shift13)
+     else:
+         ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                       D_EXPERT // 64, size_k, hs, grid, err)
+@@ -3579,6 +3599,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(1, variant, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts,
+                                           n_padded, num_slots, size_k // 128, D_EXPERT, y, grid_lo, err)
++    elif rot:
++        rot_ext.rega_gemm_rot(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                              size_k // 128, D_EXPERT, y, grid, err, shift2)
+     else:
+         ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
+                       size_k // 128, D_EXPERT, y, grid, err)
+@@ -5760,6 +5783,681 @@ def _rega_lo_run(state, weights, device, t_start, sm, lines):
+     return None, chosen
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-round-rotated-schedule: master's rega_kernel walks items it = blockIdx.x + r * G (G = 132 CTAs), and
++# decode_item gives CTA b chunk (b mod k) of every expert with k = 2 / 4 chunks (G and every group start f * T are
++# multiples of 4), so the short tail chunks pile onto the same CTAs; in the low class (k = 1) CTAs < 64 see mostly
++# even expert groups. A SEPARATE extension muse_prefill_rega_rot, built LAST in prepare(), DERIVED from master's
++# head + wgmma wrappers + body by exact-once text edits (any miss -> no build; master's strings, module, v1 fallback
++# and their sha256 checks are untouched), changes ONLY the item order: both the producer loop and the consumer loop
++# become for (rnd = 0;; ++rnd) { it = rot_item(rnd, shift); if (it >= total) break; <master's body> } with
++# rot_item = rnd * G + (b + rnd * shift) % G: each round still covers items [rnd * G, rnd * G + G) (a bijection
++# inside the round), but an odd shift moves every CTA's chunk index and group parity every round. Every item is
++# computed by master's code (decode_item, consume_item, epilogue unchanged), so the output is bit-identical by
++# construction; producer and consumers call the same rot_item with the same (rnd, shift), so the mbarrier ring
++# sees the same item / stage sequence on both sides (master's bounded-wait error word 1 stays: a mismatch would
++# end in error word 1 and the class OFF, never a hang). Shifts: coprime to the grid (67 for w13, 37 for w2 at
++# G = 132; n_tiles + 1 = 33 divides 132 for w2). A prepare-only diagnostic instantiation (template DIAG = true,
++# stage-1 tables only, its own host entry rega_gemm_rot_diag) records each CTA's clock64 span of the consumer item
++# loop, stages and bytes; the timed instantiations are DIAG = false (if constexpr: no clock code in them).
++# Per class (high T=3012, low T=753, ft T=16384): canary, bit-exact hs / y compare with master's rega_gemm on
++# random, skewed, one and pop routings, then 2 interleaved rounds x 11 cold-L2 graph alternations of master's
++# rega pair (w13 + w2) vs the rot pair on the pop routing (~1.83x uniform local routes) and the random routing,
++# then (timing ON only) the two-state replay check. ON when pop pair <= 0.98 in both rounds AND random pair (both
++# rounds pooled) <= 1.00 (low, ft) / 1.01 (high: random routing gives k = 1 for every expert there, so rotation
++# cannot act and the guard only rules out a regression). The low class only when rega_low_variant == 0.
++# state['rega_rot_ok'][class] is a plain bool, state['rega_rot_shift'] two ints, state['rega_rot_ext'] the module.
++# ---------------------------------------------------------------------------------------------------------------
++REGA_ROT_TAG = "[rega-rot]"
++REGA_ROT_EXT_NAME = "muse_prefill_rega_rot"
++REGA_ROT_FUNCS = ("rega_init_rot", "rega_gemm_rot", "rega_gemm_rot_diag")
++REGA_ROT_CLASSES = ("high", "low", "ft")    # gate order: the class the hypothesis expects most from first
++REGA_ROT_STATE_KEYS = REGA_STATE_KEYS + ("rega_rot_ext", "rega_rot_ok", "rega_rot_shift")
++REGA_ROT_SHIFT_PREF = (67, 37)              # (w13, w2); made coprime to the actual grid by _rega_rot_shift
++REGA_ROT_START_DEADLINE_S = 200.0           # no build once prepare() has used this many seconds
++REGA_ROT_CLASS_DEADLINE_S = {"high": 262.0, "low": 262.0, "ft": 248.0}   # no step of a class starts after this
++REGA_ROT_REPLAY_DEADLINE_S = 276.0          # no two-state replay check (so no ON) after this
++REGA_ROT_DIAG_DEADLINE_S = 280.0            # no print-only span diagnostic after this
++REGA_ROT_POP_RATIO = 0.98                   # rot pair / master pair on the pop routing, both rounds
++REGA_ROT_RANDOM_RATIO = {"high": 1.01, "low": 1.00, "ft": 1.00}   # rot pair / master pair, random, rounds pooled
++REGA_ROT_ROUNDS = 2
++REGA_ROT_ALTERNATIONS = 11
++REGA_ROT_POP_MULT = 1.83                    # pop routing target: this x the uniform routing's local routes
++REGA_ROT_EXACT_KINDS = ("random", "skewed", "one", "pop")
++REGA_ROT_REPLAY_PLAN = {"low": ((753, ("random", "skewed", "one")),), "high": ((3012, ("random", "skewed")),),
++                        "ft": ((16384, ("random", "local")),)}
++REGA_ROT_DIAG_CLASSES = ("high", "low")     # the diagnostic instantiation has the stage-1 tables only
++
++_REGA_ROT_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> rega_init_rot();
++void rega_gemm_rot(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t rot_shift);
++void rega_gemm_rot_diag(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t rot_shift, torch::Tensor spans);
++"""
++
++_REGA_ROT_ITEM = r"""// experts-rega-round-rotated-schedule: round rnd of the persistent loop covers items [rnd * G, rnd * G + G) exactly
++// as master's it = blockIdx.x + rnd * G does (the same set per round, a bijection inside it), but CTA b takes item
++// rnd * G + (b + rnd * shift) % G; shift 0 is master's order exactly. The producer thread and the consumer
++// warpgroups both call THIS function with the same (rnd, shift): identical item sequences (and stage counters).
++__device__ __forceinline__ int rot_item(int rnd, int shift) {
++  const int g = static_cast<int>(gridDim.x);
++  return rnd * g + (static_cast<int>(blockIdx.x) + rnd * shift) % g;
++}
++
++"""
++
++_REGA_ROT_LOOP_OLD = "for (int it = blockIdx.x; it < total; it += gridDim.x) {"
++_REGA_ROT_LOOP_NEW = ("for (int rnd = 0;; ++rnd) {\n"
++                      "        const int it = rot_item(rnd, rot_shift);  // the same expression in both loops\n"
++                      "        if (it >= total) break;")
++
++_REGA_ROT_LAUNCH = r"""#define WG_LAUNCH(G_, B_, D_)                                                                              \
++  rega_kernel_rot<G_, B_, D_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                  \
++      mp, reinterpret_cast<uint8_t*>(wbank.data_ptr()), reinterpret_cast<float*>(gs.data_ptr()),                 \
++      reinterpret_cast<int*>(sorted_ids.data_ptr()), reinterpret_cast<int*>(block_experts.data_ptr()),            \
++      reinterpret_cast<int*>(n_padded.data_ptr()), blocks_len, static_cast<int>(num_routes),                      \
++      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                               \
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)),                           \
++      reinterpret_cast<int*>(err.data_ptr()), static_cast<int>(rot_shift), spans)
++  TORCH_CHECK(grid > 0 && rot_shift >= 0 && rot_shift < grid, "rega_gemm_rot: shift outside [0, grid)");
++  if (spans != nullptr) {
++    // prepare-only diagnostic instantiation (stage-1 tables only): per-CTA clock64 span of the consumer item loop
++    TORCH_CHECK(!big, "rega_gemm_rot_diag: stage-1 class only");
++    if (which == 0) WG_LAUNCH(true, false, true); else WG_LAUNCH(false, false, true);
++  } else if (which == 0) {
++    if (big) WG_LAUNCH(true, true, false); else WG_LAUNCH(true, false, false);
++  } else {
++    if (big) WG_LAUNCH(false, true, false); else WG_LAUNCH(false, false, false);
++  }
++#undef WG_LAUNCH
++"""
++
++_REGA_ROT_WRAPPERS = r"""
++// The timed entry (DIAG = false instantiations only) and the prepare-only diagnostic entry (DIAG = true).
++void rega_gemm_rot(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t rot_shift) {
++  rega_gemm_rot_impl(which, bsrc, wbank, gs, sorted_ids, block_experts, n_padded, num_routes, n_tiles, K, out, grid,
++                     err, rot_shift, nullptr);
++}
++
++void rega_gemm_rot_diag(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
++             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
++             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,
++             int64_t rot_shift, torch::Tensor spans) {
++  TORCH_CHECK(spans.is_cuda() && spans.is_contiguous() && spans.scalar_type() == at::kLong && spans.numel() >= 3 * grid,
++              "rega_gemm_rot_diag: spans (cuda, contiguous, int64, >= 3 x grid)");
++  rega_gemm_rot_impl(which, bsrc, wbank, gs, sorted_ids, block_experts, n_padded, num_routes, n_tiles, K, out, grid,
++                     err, rot_shift, reinterpret_cast<long long*>(spans.data_ptr()));
++}
++"""
++
++# (part, text in master's source, replacement); every text must occur exactly once (else no rot build)
++_REGA_ROT_EDITS = (
++    ("body", "// Dequantize one pipeline stage (two 64-k records)",
++     _REGA_ROT_ITEM + "// Dequantize one pipeline stage (two 64-k records)"),
++    ("body", "template <bool G, bool BIG>\n__global__ void __launch_bounds__(THREADS, 1)\nrega_kernel(const __grid_constant__ Maps maps,",
++     "template <bool G, bool BIG, bool DIAG>\n__global__ void __launch_bounds__(THREADS, 1)\nrega_kernel_rot(const __grid_constant__ Maps maps,"),
++    ("body", "int out_ld, int* __restrict__ err) {\n#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n",
++     "int out_ld, int* __restrict__ err, int rot_shift,\n          long long* __restrict__ spans) {\n"
++     "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)\n"),
++    ("body", "    const int ctid = tid - 128, cw = ctid >> 5;\n    int n = 0;\n",
++     "    const int ctid = tid - 128, cw = ctid >> 5;\n    int n = 0;\n"
++     "    long long span_t0 = 0, span_bytes = 0;  // DIAG instantiations only (if constexpr below)\n"
++     "    if constexpr (DIAG) span_t0 = clock64();\n"),
++    ("body", "#define WG_CONSUME(NB_)",
++     "      if constexpr (DIAG) span_bytes += static_cast<long long>(KS) * (WST + 2 * (16 << m.bucket) * 128);\n"
++     "#define WG_CONSUME(NB_)"),
++    ("body", "#undef WG_CONSUME\n    }\n",
++     "#undef WG_CONSUME\n    }\n"
++     "    if constexpr (DIAG) {\n"
++     "      if (ctid == 0) {\n"
++     "        spans[3 * blockIdx.x] = clock64() - span_t0;\n"
++     "        spans[3 * blockIdx.x + 1] = n;\n"
++     "        spans[3 * blockIdx.x + 2] = span_bytes;\n"
++     "      }\n"
++     "    }\n"),
++    ("body", "template <bool G, bool BIG>\nvoid info_one(std::vector<int64_t>& r) {\n"
++             "  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);\n",
++     "template <bool G, bool BIG, bool D>\nvoid info_one(std::vector<int64_t>& r) {\n"
++     "  const void* fn = reinterpret_cast<const void*>(rega_kernel_rot<G, BIG, D>);\n"),
++    ("body", "  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));\n", "  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0) + (D ? 4 : 0));\n"),
++    ("body", "std::vector<int64_t> rega_init() {\n  std::vector<int64_t> r;\n  info_one<true, false>(r);\n"
++             "  info_one<false, false>(r);\n  info_one<true, true>(r);\n  info_one<false, true>(r);\n  return r;\n}\n",
++     "std::vector<int64_t> rega_init_rot() {\n  std::vector<int64_t> r;\n  info_one<true, false, false>(r);\n"
++     "  info_one<false, false, false>(r);\n  info_one<true, true, false>(r);\n  info_one<false, true, false>(r);\n"
++     "  info_one<true, false, true>(r);\n  info_one<false, false, true>(r);\n  return r;\n}\n"),
++    ("body", "void rega_gather(torch::Tensor x,", "void rega_gather_rot(torch::Tensor x,"),
++    ("body", "void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,",
++     "void rega_gemm_rot_impl(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,"),
++    ("body", "int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {\n",
++     "int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err,\n"
++     "             int64_t rot_shift, long long* spans) {\n"),
++)
++
++
++def _rega_rot_src():
++    """muse_prefill_rega_rot's CUDA source, derived from master's head + wgmma wrappers + body by the exact-once
++    edits above, the two loop headers (exactly two, both replaced by the same rot_item loop), the launch block
++    (replaced between its '#define WG_LAUNCH' and '#undef WG_LAUNCH' lines) and a gather-kernel rename, plus the two
++    host entries. None when any anchor does not occur as expected. Master's strings are read, never edited."""
++    parts = {"head": _REGA_HEAD, "body": _REGA_BODY}
++    for part, old, new in _REGA_ROT_EDITS:
++        if parts[part].count(old) != 1:
++            return None
++        parts[part] = parts[part].replace(old, new)
++    body = parts["body"]
++    if body.count(_REGA_ROT_LOOP_OLD) != 2:
++        return None
++    body = body.replace(_REGA_ROT_LOOP_OLD, _REGA_ROT_LOOP_NEW)
++    begin, end = "#define WG_LAUNCH(G_, B_)", "#undef WG_LAUNCH\n"
++    if body.count(begin) != 1 or body.count(end) != 1 or body.index(begin) > body.index(end):
++        return None
++    body = body[:body.index(begin)] + _REGA_ROT_LAUNCH + body[body.index(end) + len(end):]
++    if (body.count("rega_gather_kernel") != 2 or "rega_kernel<" in body or "rega_kernel(" in body
++            or body.count("rot_item(rnd, rot_shift)") != 2 or "it += gridDim.x" in body):
++        return None
++    body = body.replace("rega_gather_kernel", "rega_gather_rot_kernel")
++    return parts["head"] + _rega_wgmma_src() + body + _REGA_ROT_WRAPPERS
++
++
++def _rega_rot_audit(src):
++    """Pre-build audit of the rot module: no templated Tensor accessor, no mutable file-scope / static / device
++    globals. Returns the findings."""
++    bad = []
++    for name, text in (("cpp", _REGA_ROT_CPP), ("cuda", src)):
++        for n, line in enumerate(text.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
++                bad.append(f"{name} line {n}: {line.strip()[:100]}")
++    return bad + _rega_audit_cpp(_REGA_ROT_CPP + "\n" + src)
++
++
++def _rega_rot_build(src):
++    """Compile muse_prefill_rega_rot (prepare only, after master's whole setup): ext or None. Master's flags and
++    TORCH_CUDA_ARCH_LIST=9.0a handling, restored after; prints the arch flags and the build time."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    ext = None
++    try:
++        from torch.utils import cpp_extension
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        try:
++            arch_flags = cpp_extension._get_cuda_arch_flags()
++        except Exception as e:
++            print(f"{REGA_ROT_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
++                  flush=True)
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++            arch_flags = ["<unknown>"]
++        print(f"{REGA_ROT_TAG} build {REGA_ROT_EXT_NAME}: TORCH_CUDA_ARCH_LIST="
++              f"{os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> {arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}",
++              flush=True)
++        ext = load_inline(name=REGA_ROT_EXT_NAME, cpp_sources=_REGA_ROT_CPP, cuda_sources=src,
++                          functions=list(REGA_ROT_FUNCS), extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
++    except Exception as e:
++        ext = None
++        print(f"{REGA_ROT_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {str(e)[-400:]!r}",
++              flush=True)
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    if ext is not None:
++        print(f"{REGA_ROT_TAG} nvcc + load {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext
++
++
++def _rega_rot_attrs(ext):
++    """Attributes of every instantiation BEFORE any launch (rega_init_rot also sets each one's dynamic smem
++    attribute; setmaxnreg.inc hangs on a short register pool). Returns ({big: ok} for the timed DIAG = false
++    instantiations, ok of the two diagnostic DIAG = true ones)."""
++    info = ext.rega_init_rot()
++    ok = {False: True, True: True}
++    diag_ok, seen = True, 0
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
++        gated, big, diag = bool(flag & 1), bool(flag & 2), bool(flag & 4)
++        seen += 1
++        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        print(f"{REGA_ROT_TAG} kernel rega_kernel_rot<{'true' if gated else 'false'}, {'true' if big else 'false'}, "
++              f"{'true' if diag else 'false'}> ({'w13+silu' if gated else 'w2'}, {'first-turn' if big else 'stage-1'}"
++              f"{', DIAG' if diag else ''}): attrs ok {bool(a_ok)} (SetAttribute rc {e1}), regs {regs}, local bytes "
++              f"{local_bytes}{' (SPILL)' if local_bytes > 0 else ''}, static smem {static_smem} B, dynamic smem "
++              f"{dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}: {'ok' if good else 'OFF'}", flush=True)
++        if diag:
++            diag_ok = diag_ok and good
++        else:
++            ok[big] = ok[big] and good
++    if seen != 6:
++        return {False: False, True: False}, False
++    return ok, diag_ok
++
++
++def _rega_rot_shift(pref, grid):
++    """The first shift >= pref (mod grid) that is coprime to the grid (0 when the grid is 1): every CTA then visits
++    every in-round position over grid rounds instead of a few (n_tiles + 1 = 33 divides 132 for w2)."""
++    if grid <= 1:
++        return 0
++    s = pref % grid
++    for _ in range(grid):
++        a, b = s, grid
++        while b:
++            a, b = b, a % b
++        if s != 0 and a == 1:
++            return s
++        s = (s + 1) % grid
++    return 0
++
++
++def _rega_rot_tables(x, lids, state):
++    """prepare() only: the align kernel_fn runs (_align_dispatch) and master's gather: ((sorted_ids, block_experts,
++    n_padded, num_slots), xs)."""
++    num_slots = x.shape[0] * TOP_K
++    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
++    rows = block_experts.shape[0] * REGA_BSM
++    xs = torch.empty((rows, D_EXPERT), device=x.device, dtype=torch.bfloat16)
++    state["rega_ext"].rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
++    return (sorted_ids, block_experts, n_padded, num_slots), xs
++
++
++def _rega_rot_gemm(state, rot, which, src, dst, tabs, shift, spans=None):
++    """One rega GEMM launch over prepared tables, with the same arguments _experts_rega passes: master's rega_gemm
++    (rot None), the rot module's timed entry, or (spans given) its diagnostic entry. w13 (which 0): xs -> hs;
++    w2 (which 1): hs -> y."""
++    bank, err, grid = state["rega_bank"], state["rega_err"], state["rega_grid"]
++    sorted_ids, block_experts, n_padded, num_slots = tabs
++    if which == 0:
++        args = (src, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 64,
++                D_EXPERT, dst)
++    else:
++        args = (src, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 128,
++                D_EXPERT, dst)
++    if rot is None:
++        state["rega_ext"].rega_gemm(which, *args, grid, err)
++    elif spans is None:
++        rot.rega_gemm_rot(which, *args, grid, err, shift)
++    else:
++        rot.rega_gemm_rot_diag(which, *args, grid, err, shift, spans)
++
++
++def _rega_rot_khist(tabs):
++    """prepare() only: chunks per touched local expert (k = ceil(blocks / 8)) on these align tables: ('1:a 2:b 3:c 4:d
++    >4:e', total chunks, max k)."""
++    _, block_experts, n_padded, _ = tabs
++    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
++    be = block_experts[:used].cpu().long()
++    counts = torch.bincount(be[(be >= 0) & (be < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS)
++    k = ((counts + 7) // 8)[counts > 0]
++    hist = " ".join(f"{lab}:{int(sel.sum())}" for lab, sel in
++                    (("1", k == 1), ("2", k == 2), ("3", k == 3), ("4", k == 4), (">4", k > 4)))
++    return hist, int(k.sum()), int(k.max()) if k.numel() else 0
++
++
++def _rega_rot_med(v):
++    s = sorted(v)
++    return s[len(s) // 2]
++
++
++def _rega_rot_time(state, device, tokens, kind, shifts, gen):
++    """prepare() only: interleaved cold-L2 CUDA-graph replays at one T and routing of master's rega pair (w13 then
++    w2, one graph) vs the rot pair, and of each kernel alone (w2 alone reads the real hs master's w13 wrote).
++    REGA_ROT_ROUNDS rounds x REGA_ROT_ALTERNATIONS alternations, order rotated and flipped, a 256 MB flush before
++    every replay, an empty-graph baseline subtracted per round (and over the pooled samples). Returns
++    (per-round {name: us}, pooled {name: us}, local routes, k histogram)."""
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    rot, err = state["rega_rot_ext"], state["rega_err"]
++    s13, s2 = shifts
++    tabs, xs = _rega_rot_tables(x, lids, state)
++    rows, num_slots = xs.shape[0], tabs[3]
++    hs_a = torch.zeros((rows, D_EXPERT), device=device, dtype=torch.bfloat16)
++    hs_b = torch.zeros_like(hs_a)
++    y_a = torch.zeros((num_slots, D_EXPERT), device=device, dtype=torch.bfloat16)
++    y_b = torch.zeros_like(y_a)
++    err.zero_()
++    _rega_rot_gemm(state, None, 0, xs, hs_a, tabs, 0)  # the real hs for the w2-alone graphs
++    torch.cuda.synchronize()
++
++    def pair(mod, hs, y):
++        _rega_rot_gemm(state, mod, 0, xs, hs, tabs, s13)
++        _rega_rot_gemm(state, mod, 1, hs, y, tabs, s2)
++
++    fns = {"pair:master": lambda: pair(None, hs_a, y_a), "pair:rot": lambda: pair(rot, hs_b, y_b),
++           "w13:master": lambda: _rega_rot_gemm(state, None, 0, xs, hs_a, tabs, 0),
++           "w13:rot": lambda: _rega_rot_gemm(state, rot, 0, xs, hs_b, tabs, s13),
++           "w2:master": lambda: _rega_rot_gemm(state, None, 1, hs_a, y_a, tabs, 0),
++           "w2:rot": lambda: _rega_rot_gemm(state, rot, 1, hs_a, y_b, tabs, s2)}
++    graphs, flush = {}, None
++    try:
++        graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++        flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
++        ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++        def once(name):
++            flush.zero_()
++            ev[0].record()
++            graphs[name].replay()
++            ev[1].record()
++            torch.cuda.synchronize()
++            return ev[0].elapsed_time(ev[1]) * 1000.0
++
++        names = list(graphs)
++        for name in names:
++            once(name)  # warm-up replay
++        rounds, pooled = [], {name: [] for name in names}
++        for r in range(REGA_ROT_ROUNDS):
++            samples = {name: [] for name in names}
++            for i in range(REGA_ROT_ALTERNATIONS):
++                k = (i + r) % len(names)
++                order = names[k:] + names[:k]
++                if i % 2:
++                    order = order[::-1]
++                for name in order:
++                    samples[name].append(once(name))
++            base = _rega_rot_med(samples["empty"])
++            rounds.append({n: max(_rega_rot_med(v) - base, 0.0) for n, v in samples.items() if n != "empty"})
++            for n, v in samples.items():
++                pooled[n].extend(v)
++        base = _rega_rot_med(pooled["empty"])
++        pooled = {n: max(_rega_rot_med(v) - base, 0.0) for n, v in pooled.items() if n != "empty"}
++        word = _rega_marks(err)[0]
++        if word != 0:
++            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
++        return rounds, pooled, int((lids >= 0).sum()), _rega_rot_khist(tabs)
++    finally:
++        del graphs, flush, fns, xs, hs_a, hs_b, y_a, y_b
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_rot_class(state, device, cls, weights, lines, t_start, shifts, info):
++    """prepare() only: one class's checks and gate; (on, reason). 1. an eager traced canary of the whole
++    _experts_rega call with rot ON for this class (flushed print before / sync + print after each launch);
++    2. per routing (random, skewed, one, pop) one align + gather, master's w13 / w2 and the rot w13 / w2 (w2 fed
++    master's hs) into zeroed buffers: hs and y must be bit-identical, the error word 0 and both rot launch markers
++    set; 3. the pair timing (_rega_rot_time) on the pop and random routings; 4. when the timing says ON, the
++    two-state replay check with rot ON for this class. ON needs every step."""
++    tokens = REGA_GATE_TOKENS.get(cls, REGA_FT_GATE_TOKENS)
++    tag = f"{REGA_ROT_TAG} {cls} T={tokens}"
++    err = state["rega_err"]
++    rot = state["rega_rot_ext"]
++    s13, s2 = shifts
++    n_rnd, counts = _rega_pop_counts(tokens, device)
++    alpha, cnt = _rega_pop_pick(counts, REGA_ROT_POP_MULT * n_rnd)
++    pop_kind = f"pop:{alpha:g}"
++    info["pop_kind"] = pop_kind
++    print(f"{tag} pop routing: alpha {alpha:g} -> {cnt:.0f} local routes = {cnt / max(n_rnd, 1.0):.2f}x the uniform "
++          f"{n_rnd:.0f} (target {REGA_ROT_POP_MULT}x)", flush=True)
++    # 1. canary through the dispatch kernel_fn uses (fused norm-gather when it is ON for this class)
++    st_on = dict(state)
++    st_on["rega_rot_ok"] = {c: c == cls for c in REGA_ROT_CLASSES}
++    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++    gen = torch.Generator(device=device).manual_seed(20261031)
++    x0, tw0, l0 = _rega_case(tokens, "random", gen, device)
++    err.zero_()
++    out = _experts_rega(x0, tw0, l0, st_on, tracer=_RegaTracer(f"rot canary {cls}"), prenorm=prenorm)
++    torch.cuda.synchronize()
++    word, m13, m2 = _rega_marks(err)
++    finite = bool(torch.isfinite(out.float()).all())
++    print(f"{tag} canary: error word {word} ({REGA_ERR_TEXT.get(word, '?')}), launch markers w13 {m13:#x} w2 {m2:#x}, "
++          f"finite {finite}", flush=True)
++    del out, x0, tw0, l0
++    if word != 0 or not _rega_launched(m13, m2) or not finite:
++        return False, f"canary failed (error word {word}, markers {m13:#x}/{m2:#x}, finite {finite})"
++    # 2. bit-exact hs / y against master's rega_gemm
++    khist = {}
++    for kind in REGA_ROT_EXACT_KINDS:
++        real = pop_kind if kind == "pop" else kind
++        x, tw, lids = _rega_case(tokens, real, gen, device)
++        tabs, xs = _rega_rot_tables(x, lids, state)
++        hs_m = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        hs_r = torch.zeros_like(hs_m)
++        y_m = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++        y_r = torch.zeros_like(y_m)
++        err.zero_()
++        _rega_rot_gemm(state, None, 0, xs, hs_m, tabs, 0)
++        _rega_rot_gemm(state, None, 1, hs_m, y_m, tabs, 0)
++        torch.cuda.synchronize()
++        word_m = _rega_marks(err)[0]
++        err.zero_()
++        _rega_rot_gemm(state, rot, 0, xs, hs_r, tabs, s13)
++        _rega_rot_gemm(state, rot, 1, hs_m, y_r, tabs, s2)
++        torch.cuda.synchronize()
++        word, m13, m2 = _rega_marks(err)
++        same_h, same_y = bool(torch.equal(hs_m, hs_r)), bool(torch.equal(y_m, y_r))
++        khist[kind] = _rega_rot_khist(tabs)
++        del x, tw, lids, tabs, xs, hs_m, hs_r, y_m, y_r
++        if word_m != 0 or word != 0 or not _rega_launched(m13, m2) or not (same_h and same_y):
++            return False, (f"exact compare missed at {real} (hs identical {same_h}, y identical {same_y}, master "
++                           f"error word {word_m}, rot error word {word}, markers {m13:#x}/{m2:#x})")
++    torch.cuda.empty_cache()
++    lines.append(f"{tag} exact: rot hs and y bit-identical to master's rega_gemm on "
++                 f"{', '.join(pop_kind if k == 'pop' else k for k in REGA_ROT_EXACT_KINDS)} (error word 0, both rot "
++                 f"launch markers); experts by k (chunks of 8 blocks) " +
++                 "; ".join(f"{pop_kind if k == 'pop' else k} {h} (chunks {c}, max k {m})"
++                           for k, (h, c, m) in khist.items()))
++    print(lines[-1], flush=True)
++    # 3. timing: master's pair vs the rot pair, pop then random
++    res = {}
++    for rt in ("pop", "random"):
++        if time.perf_counter() - t_start > REGA_ROT_CLASS_DEADLINE_S[cls] + 8.0:
++            return False, f"skipped: deadline before the {rt} timing (prepare {time.perf_counter() - t_start:.0f}s)"
++        real = pop_kind if rt == "pop" else "random"
++        rounds, pooled, local, (h, c, m) = _rega_rot_time(state, device, tokens, real, shifts, gen)
++        res[rt] = (rounds, pooled)
++
++        def trip(d, k):
++            return f"{k} {d[k + ':master']:.1f}/{d[k + ':rot']:.1f} ({d[k + ':rot'] / max(d[k + ':master'], 1e-9):.3f})"
++
++        lines.append(f"{tag} KERNELS {real} ({local} local routes = {local / max(n_rnd, 1.0):.2f}x uniform; k {h}; "
++                     f"chunks {c}) master/rot us (rot/master): "
++                     + "; ".join(f"r{i + 1} " + ", ".join(trip(rd, k) for k in ("pair", "w13", "w2"))
++                                 for i, rd in enumerate(rounds))
++                     + "; pooled " + ", ".join(trip(pooled, k) for k in ("pair", "w13", "w2")))
++        print(lines[-1], flush=True)
++
++    def ratio(d):
++        return d["pair:rot"] / max(d["pair:master"], 1e-9)
++
++    pop_r = [ratio(rd) for rd in res["pop"][0]]
++    rnd_r = ratio(res["random"][1])
++    lim = REGA_ROT_RANDOM_RATIO[cls]
++    timing_on = all(r <= REGA_ROT_POP_RATIO for r in pop_r) and rnd_r <= lim
++    lines.append(f"{tag} GATE pair (w13 + w2): pop {'/'.join(f'{r:.3f}' for r in pop_r)} (<= {REGA_ROT_POP_RATIO} "
++                 f"both rounds), random pooled {rnd_r:.3f} (<= {lim}); shifts w13 {s13} w2 {s2}: "
++                 f"{'pass' if timing_on else 'MISS'}")
++    print(lines[-1], flush=True)
++    if not timing_on:
++        return False, f"timing gate missed (pop {'/'.join(f'{r:.3f}' for r in pop_r)}, random {rnd_r:.3f})"
++    # 4. two-state replay check with rot ON for this class (A, B, C states; tolerance + markers vs fp32 reference)
++    if time.perf_counter() - t_start > REGA_ROT_REPLAY_DEADLINE_S:
++        return False, "skipped: deadline before the two-state replay check"
++    trial = dict(state)
++    trial["rega_rot_ok"] = {c: c == cls for c in REGA_ROT_CLASSES}
++    cache = {}
++    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_ROT_REPLAY_PLAN[cls],
++                                   keys=REGA_ROT_STATE_KEYS)
++    del cache
++    torch.cuda.empty_cache()
++    if why:
++        return False, f"two-state replay check failed: {why}"
++    lines.append(f"{tag} two-state replay check (rot ON): {line}")
++    print(lines[-1], flush=True)
++    return True, ""
++
++
++def _rega_rot_spans(state, device, cls, pop_kind, shifts):
++    """prepare() only, print-only (review open question: is rega's ingest cap per SM or a shared L2 limit?). On
++    the class's pop routing, the DIAG = true instantiation of the rot module (a separate, prepare-only
++    instantiation; the timed kernels have no clock code) once with shift 0 (master's item order exactly) and once
++    with the rot shift, per GEMM, eager after a warm-up and a 256 MB flush. Per CTA: clock64 span of the consumer
++    item loop, stages, bytes (weights + activation slabs). A per-SM cap predicts cycles tracking bytes (cycles
++    max/mean ~ bytes max/mean, corr ~ 1); a shared-L2 limit predicts cycles flatter than bytes. Returns lines."""
++    tokens = REGA_GATE_TOKENS[cls]
++    rot, err, grid = state["rega_rot_ext"], state["rega_err"], int(state["rega_grid"])
++    gen = torch.Generator(device=device).manual_seed(20261101)
++    x, tw, lids = _rega_case(tokens, pop_kind, gen, device)
++    tabs, xs = _rega_rot_tables(x, lids, state)
++    hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++    y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++    spans = torch.zeros(3 * grid, dtype=torch.int64, device=device)
++    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
++    out = []
++    try:
++        _rega_rot_gemm(state, None, 0, xs, hs, tabs, 0)  # the real hs for w2
++        for which, name, shift in ((0, "w13", shifts[0]), (1, "w2", shifts[1])):
++            src, dst = (xs, torch.empty_like(hs)) if which == 0 else (hs, y)
++            parts = []
++            for label, s in (("master order", 0), (f"rot shift {shift}", shift)):
++                _rega_rot_gemm(state, rot, which, src, dst, tabs, s, spans=spans)  # warm-up
++                spans.zero_()
++                err.zero_()
++                flush.zero_()
++                _rega_rot_gemm(state, rot, which, src, dst, tabs, s, spans=spans)
++                torch.cuda.synchronize()
++                word = _rega_marks(err)[0]
++                sp = spans.view(grid, 3).cpu().double()
++                cyc, byt = sp[:, 0], sp[:, 2]
++                cm, bm = float(cyc.mean()), float(byt.mean())
++                cs, bs = float(cyc.std()), float(byt.std())
++                corr = float(((cyc - cm) * (byt - bm)).mean() / (cs * bs)) if cs > 0 and bs > 0 else float("nan")
++                srt = sorted(cyc.tolist())
++                parts.append(f"{label}: kcyc min/med/max {srt[0] / 1e3:.0f}/{srt[len(srt) // 2] / 1e3:.0f}/"
++                             f"{srt[-1] / 1e3:.0f} max/mean {srt[-1] / max(cm, 1.0):.3f}, bytes max/mean "
++                             f"{float(byt.max()) / max(bm, 1.0):.3f}, corr {corr:.2f}, stages max/min "
++                             f"{int(sp[:, 1].max())}/{int(sp[:, 1].min())}, word {word}")
++            out.append(f"{REGA_ROT_TAG} SPANS {cls} T={tokens} {pop_kind} {name} (DIAG instantiation, eager, cold L2, "
++                       f"{grid} CTAs): " + "; ".join(parts))
++            print(out[-1], flush=True)
++    finally:
++        del flush, spans, xs, hs, y, tabs
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    return out
++
++
++def _rega_rot_phase(state, weights, device, t_start):
++    """prepare() only, LAST (after _rega_lo_phase, _fa3c_setup and _norm_gather_setup). Builds the separate
++    muse_prefill_rega_rot module, checks its attributes before any launch, then per routed class (state['rega_ok'])
++    runs _rega_rot_class; the low class only when rega_low_variant == 0 (rega_gemm_lo keeps precedence). Then the
++    print-only per-CTA span diagnostic. Sets state['rega_rot_ok'][class] (plain bools), state['rega_rot_shift'] and
++    state['rega_rot_ext']. Never raises; every miss leaves master's exact path. Returns the summary lines; the last
++    is '[rega-rot] PATH CHOSEN: ...'."""
++    t0 = time.perf_counter()
++    grid = int(state.get("rega_grid", 0) or 0)
++    shifts = (_rega_rot_shift(REGA_ROT_SHIFT_PREF[0], grid), _rega_rot_shift(REGA_ROT_SHIFT_PREF[1], grid))
++    state["rega_rot_ext"], state["rega_rot_ok"] = None, {c: False for c in REGA_ROT_CLASSES}
++    state["rega_rot_shift"] = shifts
++    lines, verdict, off, span_lines, infos = [], {}, None, [], {}
++    try:
++        used = time.perf_counter() - t_start
++        routed = [c for c in REGA_ROT_CLASSES if state.get("rega_ok", {}).get(c, False)]
++        if not routed:
++            off = "no class is on rega (master's gates), so there is no rega launch to reorder"
++        elif used > REGA_ROT_START_DEADLINE_S:
++            off = f"skipped: deadline (prepare already used {used:.0f}s > {REGA_ROT_START_DEADLINE_S:.0f}s start)"
++        elif not _rega_lo_identity()[0]:
++            off = "master's v2 rega source does not hash to master's (the rot module derives from it)"
++        elif min(shifts) <= 0:
++            off = f"no usable shift for grid {grid}: {shifts}"
++        else:
++            src = _rega_rot_src()
++            bad = ["a text anchor of master's source did not occur as expected"] if src is None else _rega_rot_audit(src)
++            if bad:
++                off = f"source derivation / audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_ROT_TAG} derived source sha256 "
++                      f"{hashlib.sha256((_REGA_ROT_CPP + src).encode()).hexdigest()[:16]} ({len(src)} chars); source "
++                      f"audit ok; shifts w13 {shifts[0]} w2 {shifts[1]} (grid {grid})", flush=True)
++                ext = _rega_rot_build(src)
++                if ext is None:
++                    off = "build failed"
++                else:
++                    attrs_ok, diag_ok = _rega_rot_attrs(ext)
++                    state["rega_rot_ext"] = ext
++                    stop = None
++                    for cls in routed:
++                        v = int(state.get("rega_low_variant", 0))
++                        if stop:
++                            verdict[cls] = (False, stop)
++                        elif not attrs_ok[cls == "ft"]:
++                            verdict[cls] = (False, "attribute / register-pool check failed for this class's kernels")
++                        elif cls == "low" and v:
++                            verdict[cls] = (False, f"the low class runs rega_gemm_lo (rega_low_variant {v}); rot "
++                                                   f"applies to master's rega_gemm only")
++                        elif time.perf_counter() - t_start > REGA_ROT_CLASS_DEADLINE_S[cls]:
++                            verdict[cls] = (False, f"skipped: deadline (prepare already used "
++                                                   f"{time.perf_counter() - t_start:.0f}s > "
++                                                   f"{REGA_ROT_CLASS_DEADLINE_S[cls]:.0f}s)")
++                        else:
++                            infos[cls] = {}
++                            try:
++                                on, why = _rega_rot_class(state, device, cls, weights, lines, t_start, shifts,
++                                                          infos[cls])
++                            except Exception as e:  # stop here: anything after a fault would be unreliable
++                                on, why = False, f"raised {e!r}"[:300]
++                                stop = f"an earlier class raised ({why[:80]})"
++                            state["rega_rot_ok"][cls] = bool(on)
++                            verdict[cls] = (bool(on), why)
++                        state["rega_err"].zero_()
++                    # print-only: per-CTA spans on the diagnostic instantiation (after every verdict)
++                    if stop is None and diag_ok:
++                        for cls in REGA_ROT_DIAG_CLASSES:
++                            if "pop_kind" not in infos.get(cls, {}):
++                                continue
++                            if time.perf_counter() - t_start > REGA_ROT_DIAG_DEADLINE_S:
++                                span_lines.append(f"{REGA_ROT_TAG} SPANS skipped: deadline")
++                                break
++                            try:
++                                span_lines.extend(_rega_rot_spans(state, device, cls, infos[cls]["pop_kind"], shifts))
++                            except Exception as e:
++                                span_lines.append(f"{REGA_ROT_TAG} SPANS {cls} raised {e!r}"[:300])
++                                break
++                        state["rega_err"].zero_()
++                    elif not diag_ok:
++                        span_lines.append(f"{REGA_ROT_TAG} SPANS skipped: diagnostic instantiation attribute check")
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
++        off = f"rot phase raised {e!r}"[:400]
++        state["rega_rot_ok"] = {c: False for c in REGA_ROT_CLASSES}
++    finally:
++        if not any(state["rega_rot_ok"].values()):
++            state["rega_rot_ext"] = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        lines.extend(span_lines)
++        if off:
++            lines.append(f"{REGA_ROT_TAG} OFF: {off}")
++            print(lines[-1], flush=True)
++        v = int(state.get("rega_low_variant", 0))
++        for cls in REGA_ROT_CLASSES:
++            if cls in verdict:
++                lines.append(f"{REGA_ROT_TAG} PATH CHOSEN {cls}: rot={'ON' if verdict[cls][0] else 'OFF'}"
++                             + ("" if verdict[cls][0] else f" ({verdict[cls][1]})")
++                             + (f"; rega_low_variant {v}" if cls == "low" else ""))
++        lines.append(f"{REGA_ROT_TAG} phase took {time.perf_counter() - t0:.1f}s; prepare total "
++                     f"{time.perf_counter() - t_start:.1f}s; flags (echo for the log tail): rega_ok "
++                     f"{state.get('rega_ok')}, norm_gather_ok {state.get('norm_gather_ok')}, rega_low_variant {v}, "
++                     f"zero_nonlocal_w2 {state.get('zero_nonlocal_w2')}")
++        lines.append(f"{REGA_ROT_TAG} PATH CHOSEN: rega_rot_ok {state['rega_rot_ok']} (ON = round-rotated item order, "
++                     f"shifts w13 {shifts[0]} w2 {shifts[1]} on grid {grid}; OFF = master's rega_gemm; the low class "
++                     f"never with rega_low_variant != 0)" + (f"; OFF reason: {off}" if off else ""))
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]

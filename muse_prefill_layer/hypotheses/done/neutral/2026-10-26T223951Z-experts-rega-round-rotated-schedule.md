@@ -53,10 +53,10 @@ kind: primary
 controls_for: null
 prior: "experts-triton-persistent-grid-first-turn: that changed the old Triton engine's grid size at T > 4096; this keeps rega's 132-CTA persistent grid and only rotates the item->CTA map so CTAs stop aliasing onto chunk (b % k) of k=2/4 experts and onto one expert-group parity"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T095330Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T095330Z
 base_sha: bb27243410f70166648b1b7ac353fa74b08cb1ad
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -75,6 +75,13 @@ attempt_file: 2026-10-27T100624Z-check-experts-rega-round-rotated-schedule.md
 prepared_at: 2026-10-27T100624Z
 job: d00770b6caef4445
 dispatched_at: 2026-10-27T100637Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.466386322115784
+speedup_ci: [1.4443905272840472, 1.4883821169475207]
+harvested_at: 2026-10-27T103233Z
+best_at_harvest: 1.4677493909229
+promotion: null
 ---
 
 # experts-rega-round-rotated-schedule
@@ -157,3 +164,31 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 `python3 -I -m py_compile` OK; no `__pycache__` left in the worktree.
+
+## Result
+
+- job `d00770b6caef4445` (check), status done, passed True, tests 5/5
+- speedup 1.4664x, 95% CI [1.4444, 1.4884], score 264189.5209722306 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.4677493909229, "ci": [1.4457331500590564, 1.4897656317867434], "job": "73b40cd13fdf4bb0"}; base result: muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-round-rotated-schedule.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-round-rotated-schedule.patch`; branch `hyp/muse_prefill_layer/experts-rega-round-rotated-schedule`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 756.7 | 711.92 | 1.0032 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1150.28 | 1132.13 | 0.9914 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2197.82 | 2108.32 | 0.9982 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3744.83 | 3670.61 | 0.995 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11889.83 | 11390.71 | 0.9986 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 11119.71 | 10829.97 | 1.0068 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15073.37 | 14917.27 | 0.9891 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18589.69 | 18188.04 | 0.9951 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-round-rotated-schedule`) that adds a further change in the same area is the only way to learn more.
+
