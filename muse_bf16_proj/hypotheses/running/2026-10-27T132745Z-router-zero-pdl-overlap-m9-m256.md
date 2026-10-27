@@ -70,7 +70,7 @@ base_sha: 93f6f7fa2f41100d0f75cf209e2ff5e6c65f97e7
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
 branch: hyp/muse_bf16_proj/router-zero-pdl-overlap-m9-m256
 worktree: .worktrees/muse_bf16_proj/router-zero-pdl-overlap-m9-m256
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T142100Z
@@ -79,6 +79,8 @@ submission_sha256: 6c4e693c2acfbe8e089941aae9bd3e09844d48094750096c98e060409a3a8
 norm_sha256: 16d343d98cd37482b1ab9e64a3ea0283525eeb3f80eb3da5a1efc315a56c1275
 submission_blob: af2b30819ebb4235c69ef00ac9c6b294a5eaf5ca
 lint_warnings: 54
+attempt_file: 2026-10-27T142101Z-check-router-zero-pdl-overlap-m9-m256.md
+prepared_at: 2026-10-27T142101Z
 ---
 
 # router-zero-pdl-overlap-m9-m256
