@@ -14,7 +14,8 @@ controls_for: experts-rega-w2-epilogue-prefetch-bulk-store
 confirm_of: experts-rega-w2-epilogue-prefetch-bulk-store
 confirm_of_job: 665c32dd8c794c0b
 review: proceed
-status: queued
+status: hold
+hold_reason: "orchestrator 2026-10-27: nothing routed in the parent's run (every class OFF; 1.5010 is noise), so a confirm rerun measures nothing new. The parent's real finding (arm a x0.971-0.981 at the LOW class, print-only) goes to a new hypothesis."
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store-cf
