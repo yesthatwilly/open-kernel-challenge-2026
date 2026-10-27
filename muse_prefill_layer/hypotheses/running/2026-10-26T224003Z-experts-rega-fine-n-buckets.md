@@ -55,7 +55,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T103810Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T103810Z
 base_sha: ec7851655c2c3f1ab2abfe571da8dc10d63062ea
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -72,6 +72,8 @@ submission_blob: 33168720bd67d9a79723f8b955a61b0d42988b46
 lint_warnings: 105
 attempt_file: 2026-10-27T105011Z-check-experts-rega-fine-n-buckets.md
 prepared_at: 2026-10-27T105011Z
+job: c951d9168cd546bb
+dispatched_at: 2026-10-27T105023Z
 ---
 
 # experts-rega-fine-n-buckets
