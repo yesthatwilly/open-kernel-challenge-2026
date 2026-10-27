@@ -63,9 +63,11 @@ speedup: 1.4949064012876574
 speedup_ci: [1.4724828052683425, 1.517329997306972]
 harvested_at: 2026-10-27T120420Z
 best_at_harvest: 1.4677493909229
-promotion: merged
+promotion: submitted
 promotion_commit: 9fbde72cc980ca534c8db9600bf6f101c82d5a29
 promotion_attempt: 2026-10-27T120421Z-submit-experts-rega-w13-fast-silu-epilogue.md
+promotion_job: ec3bd01859574bf1
+promotion_at: 2026-10-27T120442Z
 ---
 
 # experts-rega-w13-fast-silu-epilogue

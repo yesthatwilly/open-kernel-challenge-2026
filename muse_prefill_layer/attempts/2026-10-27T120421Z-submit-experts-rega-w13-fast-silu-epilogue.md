@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/gain/2026-10-26T224003Z-experts-rega-w13-fast-silu-epilogue.md` (branch `hyp/muse_prefill_layer/experts-rega-w13-fast-silu-epilogue`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `ec3bd01859574bf1` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `eb09bf4e`
 
 ## Goal
