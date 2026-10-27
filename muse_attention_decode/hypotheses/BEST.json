@@ -1,19 +1,19 @@
 {
  "problem": "muse_attention_decode",
- "job": "276ff0cda0404ef2",
+ "job": "a76ee9b03a9f4db4",
  "mode": "submit",
- "speedup": 1.6094507617350808,
+ "speedup": 1.611396417767595,
  "ci": [
-  1.5853090003090546,
-  1.6335925231611068
+  1.5872254715010812,
+  1.6355673640341089
  ],
- "score_us": 2340.1150812092637,
- "commit": "09f041758ea23ed90309a95b918f69614471889b",
- "submission_blob": "09d8594a016590f6c38a00005c11b8b61addcf86",
- "slug": "c320-combine-onepass",
+ "score_us": 2337.289544938779,
+ "commit": "ea24b53c7a365228225c66f1bef3994d73309ac1",
+ "submission_blob": "376da16663bf84fe6a1720d607f349485662d1de",
+ "slug": "sliding-verify-wgmma-window-s2b-fast-merge",
  "result": null,
- "updated_at": "2026-10-27T035715Z",
- "master_slug": "c320-combine-onepass",
- "master_job": "276ff0cda0404ef2",
- "note": "registered by hand 2026-10-27: c320 onepass combine (early trigger not routed) on sk-full-line + v3chain; branch hyp/attn-c320 0453ca70; landed on master. Check 508cfca7 1.6279."
+ "updated_at": "2026-10-27T042151Z",
+ "master_slug": "sliding-verify-wgmma-window-s2b-fast-merge",
+ "master_job": "a76ee9b03a9f4db4",
+ "note": "registered by hand 2026-10-27: s2b PDL merge (B=2..16) on c320 onepass + sk-full-line + v3chain; branch hyp/attn-s2b 9f428796; landed on master. Check af08448e 1.6247."
 }
