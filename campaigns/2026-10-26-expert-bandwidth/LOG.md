@@ -1399,3 +1399,13 @@ append-only, newest last.
 **H100:** on hold (USER, 2122Z). The node findings stand. The moe A/B capability needs the nodejudge `setup` again
 with the operator's go-ahead.
 
+## 2026-10-27T2210Z: S1a judge check: S loses on the H200 too (closed); borderline moe scored run sent
+
+- **2157c43bb41f4d43** (eb-s1a 826d15fa: the S1a hot kernel + the audit fix) passed at 1.7347; moe board 1.7187.
+  - S did not route: T=128 master (H-116 x0.890, wg H-16 x0.916); T=256 the board's forked wg H-16.
+  - es1a `.text` equals the node's; canary 14 routings, worst rel-L2 0.00167.
+- **S1a closed on evidence:** S/wg x0.89-0.95 on the H100 and x0.890 vs master (below wg's 0.916) on the H200. Today's
+  wg hot half already runs at the K4 rate; the gap is fixed costs.
+- The +0.93% headline is a draw on the board's paths. It is borderline under ~1.2%, so a **scored run was sent per
+  DAILY-RHYTHM: 8f33e5ee4dbd41da** (same bytes). Archived runs/2157c43bb41f4d43.json.gz.
+
