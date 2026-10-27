@@ -1,16 +1,19 @@
 {
  "problem": "muse_decode_layer",
- "job": "a903b9d004d2452d",
+ "job": "4a7a49d0ae82440f",
  "mode": "submit",
- "speedup": 1.3142361220457452,
+ "speedup": 1.569652619308697,
  "ci": [
-  1.294522580215059,
-  1.3339496638764312
+  1.5461078300190665,
+  1.5931974085983274
  ],
- "score_us": 17211.74728083805,
- "commit": "ec89382beb4990b340cef17f37a963295ee61c0f",
- "submission_blob": "3fc72e97304e132db432fcc87872be997f842929",
- "slug": "combo-measured-rows-slide-batched-preattn-t8-tail",
- "result": "muse_decode_layer/hypotheses/done/neutral/combo-measured-rows-slide-batched-preattn-t8-tail.result.json",
- "updated_at": "2026-10-25T192100Z"
+ "score_us": 14411.023000721256,
+ "commit": "c97837175942f989bd14e9cf8e17fe7b6390935a",
+ "submission_blob": "5b2e4078322422484da8b4ddfe77835856e94139",
+ "slug": "campaign-eb-w6b-t128diet",
+ "result": null,
+ "updated_at": "2026-10-27T074700Z",
+ "master_slug": "campaign-eb-w6b-t128diet",
+ "master_job": "4a7a49d0ae82440f",
+ "note": "registered by hand 2026-10-27: campaign expert-bandwidth (b12p, SK full-line, c320, dl-slim, Engine D stubs, W6-B T>=128 diet); branch campaign/eb-w6b-t128diet; check 27a008fa 1.5554; landed on master. Earlier campaign boards 7ceab934 1.5507 were not registered here."
 }

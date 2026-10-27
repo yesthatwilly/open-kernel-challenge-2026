@@ -849,3 +849,10 @@ append-only, newest last.
   - campaign/expert-bandwidth fast-forwarded to W6-B. **Scored run 4a7a49d0ae82440f.**
   - (Stamp fix: the 0745 / 0750 / 0800Z entries above were estimates; corrected to 0722 / 0722 / 0728Z from the
     commit times.)
+- 0747Z: decode scored 4a7a49d0 (W6-B): **1.5697** (CI 1.546-1.593), the new board (rank 323; was 1.5507 / 331).
+  - Routed: T=128 norm + comb + pool + hilo + unpool; T=256 norm + hilo.
+  - Rows: v16s x1.063, v16f x1.051, v32s x1.063, v32f x1.031.
+  - Landed on master (sha256 of the file below). BEST.json registered (it was stale at 1.3142 from 10-25).
+  - d1f is ~103 us in every run since 7ceab934, which drew c320t (TRIG, layer x1.039). Later runs pick plain c320
+    (x1.022-1.025), so the d1f "regression" is that draw. Phase-C question: c320t's head-to-head bar.
+  - submission sha256 60776cbb07209794...
