@@ -38,7 +38,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T112554Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T112554Z
 base_sha: c984c14ea32ac08522ee284ee7e6b46826ad0312
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -55,6 +55,8 @@ submission_blob: 42ded47196d5f0417c17f38574876508f0d822f1
 lint_warnings: 107
 attempt_file: 2026-10-27T113829Z-check-experts-rega-w13-fast-silu-epilogue.md
 prepared_at: 2026-10-27T113829Z
+job: 21911eb694ce467c
+dispatched_at: 2026-10-27T113841Z
 ---
 
 # experts-rega-w13-fast-silu-epilogue
