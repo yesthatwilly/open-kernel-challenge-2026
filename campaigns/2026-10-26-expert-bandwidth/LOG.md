@@ -28,8 +28,13 @@ append-only, newest last.
     - T=256 flipped to H-8 and lost ~20 us per (32,8) row.
     - Across three judged runs, H-16 beats master at T=128 and H-8 at T=256 by ~20 us per row. The board's 1.5920 drew
       H-16 at both.
-    - **Pin-both check 5a33db7194c24282** (eb-pin128: `HC_PIN {128: -16, 256: -16}`) was the last decode check of the
-      day. A scored run tomorrow if it holds.
+    - **Pin-both 5a33db71: passed, 1.5847** (-0.46% vs the board, inside the noise band). Both pins routed, and the rows
+      match the board's draw ((16,8) 339.6 / 489.9; (32,8) 448.9 / 709.6).
+    - **Plan:** the pins go into the X5 decode base (`campaign/eb-pin128`). Decode's first scored run after 00:00Z goes
+      out from these bytes, or from a later candidate carrying the pins.
+    - **For the user:** the final held-out rerun runs the board row's bytes. c1daf58b's races can draw H-8 / master
+      (~1-2% worse), so the deterministic pinned bytes should become the row. That needs a pinned scored run to beat
+      1.5920 (or a withdrawal, which is the user's call).
   - **The user, ~1945Z (PRIMARY FOCUS NOW):** "brainstorm and queue up as much h100 work as you can do; i want these
     findings in place as right now's primary focus ... much quicker and surgically applicable than the check process
     ... use any number of checks where it is the better choice ... what matters is good rigorous methodology"; and
@@ -1321,4 +1326,11 @@ append-only, newest last.
   judged rows. Decode's run-to-run spread is mostly race draws, not timing noise.
 - **Pin-both check 5a33db7194c24282:** `HC_PIN = {128: -16, 256: -16}` in `_hc_setup`'s class race (layer checks still
   guard it) plus the W6-G backstop; 924,352 B.
+
+## 2026-10-27T2025Z: pin-both 5a33db7194c24282: 1.5847 passed; the pins reproduce the board's draw
+
+- Both pins routed (T=128 H-16+comb, T=256 H-16). The (16,8) and (32,8) rows land at the board run's H-16 values
+  within noise. The headline is -0.46%, inside the band.
+- The pinned trim (`campaign/eb-pin128` 5a33-check bytes, 924,352 B) is now the X5 decode base. Decode's first scored
+  run after 00:00Z goes out from it, or from a later candidate carrying the pins.
 
