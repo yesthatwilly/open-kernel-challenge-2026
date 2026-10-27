@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-26T220308Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2664x [1.2474,1.2854] from job `3834ceeca7c0410d` (submit), master commit `5325ea40`, hypothesis campaign-bulk12-lossless-12bit-m1
+1.2735x [1.2544,1.2926] from job `bc147c5b87bc465d` (submit), master commit `8f233e88d4`, hypothesis pooler-khalf-m128-fp32-partials-triton-castadd
 
 Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -216,4 +216,10 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 ## Queue and in flight
 
 - queue: combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16 [combination (pooler K-halves m=128/256 + qkv row-owner m=8/16 + per-cell Lt plans m=128/256)] p2 hold
+- queue: pooler-khalf-m128-fp32-partials-triton-castadd [pooler GEMM (m=128, K-split as a 2-batch cuBLAS GEMM)] p1 queued
+- queue: b12-qkv-m1-r32-one-cta-per-sm-readflush-gate [qkv GEMM (m=1, bulk12 12-bit row-owner CTA shape)] p1 queued
+- queue: qkv-swapab16-five-stage-ring-m8-m16 [qkv GEMM (m<=16, swap-AB Triton)] p2 queued
+- queue: b12-unpooler-slice-m1-r16-rowowner [unpooler GEMM (sliced n=1024, m=1, bulk12 12-bit row-owner)] p2 queued
+- queue: lt-nn-layout-cells-o-m128-qkv-m128 [o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy)] p2 queued
+- queue: lt-config-sweep-m256-beyond-heuristic [bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic)] p3 queued
 - 8 stale holds expired to `done/expired/` (not run)

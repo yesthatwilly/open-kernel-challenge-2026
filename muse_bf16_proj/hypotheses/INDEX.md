@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-26T220308Z. Best: 1.2664x [1.2474,1.2854] job `3834ceeca7c0410d` (submit)
+Regenerated 2026-10-27T094830Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -80,6 +80,12 @@ Regenerated 2026-10-26T220308Z. Best: 1.2664x [1.2474,1.2854] job `3834ceeca7c04
 | 2026-10-25T211857Z | bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole | primary | bf16 GEMM dispatch (m=128/256, per-cell cuBLASLt plan selector) | done/neutral | neutral | 1.2525 | [1.234,1.271] | 37ed8722bc9b402d | check |  | proceed | 2/4 |
 | 2026-10-25T211857Z | qkv-rowowner-a2-widen-m8-m16 | primary | qkv GEMM (m=8/16, bulk row-owner kernel) | done/neutral | neutral | 1.2603 | [1.241,1.279] | 0124ea8fcaf14b3c | check |  | proceed | 1/3 |
 | 2026-10-26T015638Z | pooler-k-halves-fp32-partials-restack-m128-m256-cf | confirm→pooler-k-halves-fp32-partials-restack-m128-m256 | pooler GEMM (m=128/256, K-split as a 2-batch cuBLAS GEMM) | done/neutral | neutral | 1.2590 | [1.240,1.278] | caaa76cc288d47c7 | check |  | proceed |  |
+| 2026-10-26T221113Z | pooler-khalf-m128-fp32-partials-triton-castadd | primary | pooler GEMM (m=128, K-split as a 2-batch cuBLAS GEMM) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221132Z | b12-qkv-m1-r32-one-cta-per-sm-readflush-gate | primary | qkv GEMM (m=1, bulk12 12-bit row-owner CTA shape) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221149Z | qkv-swapab16-five-stage-ring-m8-m16 | primary | qkv GEMM (m<=16, swap-AB Triton) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221215Z | b12-unpooler-slice-m1-r16-rowowner | primary | unpooler GEMM (sliced n=1024, m=1, bulk12 12-bit row-owner) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221237Z | lt-nn-layout-cells-o-m128-qkv-m128 | primary | o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221256Z | lt-config-sweep-m256-beyond-heuristic | primary | bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

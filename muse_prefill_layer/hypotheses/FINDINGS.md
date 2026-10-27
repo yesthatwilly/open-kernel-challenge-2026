@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-26T220308Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -232,5 +232,17 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: experts-rega-low-2cta-fullslab-mc2 [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster] p4 queued
 - queue: experts-rega-mc2-bm256-stack-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked] p3 queued
 - queue: experts-rega-mc4-cluster-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast] p5 hold
+- queue: experts-rega-round-rotated-schedule [w13 + w2 expert GEMMs (rega persistent item->CTA schedule)] p1 queued
+- queue: experts-rega-fine-n-buckets [w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)] p1 queued
+- queue: experts-rega-rotate-finebucket-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module)] p2 queued
+- queue: experts-rega-rotation-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module)] p2 queued
+- queue: experts-rega-w13-fast-silu-epilogue [silu-mul (rega w13 epilogue)] p2 queued
+- queue: experts-rega-pdl-chain-regate-iqr-slack [launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only)] p3 queued
+- queue: front-qknorm-rope-fp8-store-fusion-restack [pre-attention norm+rope + cache store (five launches -> one Triton kernel)] p2 queued
+- queue: experts-rega-lpt-group-order [w13 + w2 expert GEMMs (rega persistent schedule: expert groups heaviest first)] p4 queued
+- queue: experts-rega-dynamic-item-scheduler [w13 + w2 expert GEMMs (rega persistent schedule: atomic work counter)] p3 queued
+- queue: experts-rega-stage-anatomy-diag [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] p5 queued
+- queue: front-routing-pdl-launch-diet-stack [launch overhead (front fusion + routing fusion + PDL chain regate, stacked)] p4 queued
+- queue: routing-triton-hilo-sum-topk-localids [routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel)] p3 queued
 - running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

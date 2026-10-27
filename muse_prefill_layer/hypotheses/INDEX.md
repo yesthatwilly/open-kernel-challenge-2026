@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-26T220308Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4bb0` (submit)
+Regenerated 2026-10-27T094830Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4bb0` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -88,6 +88,18 @@ Regenerated 2026-10-26T220308Z. Best: 1.4677x [1.4457,1.4898] job `73b40cd13fdf4
 | 2026-10-25T211833Z | experts-rega-pdl-chain-gather-w13-w2 | primary | launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2) | done/neutral | neutral | 1.4622 | [1.440,1.484] | 8e4685f303c143a8 | check |  | proceed | 1/3 |
 | 2026-10-25T211857Z | experts-rega-mc4-cluster-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-26T023858Z | experts-rega-s4-bm256-wide-tile-high-ft-cf | confirm→experts-rega-s4-bm256-wide-tile-high-ft | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | done/neutral | neutral | 1.4711 | [1.449,1.493] | 13cfaf1e25c341af | check |  | proceed |  |
+| 2026-10-26T223951Z | experts-rega-round-rotated-schedule | primary | w13 + w2 expert GEMMs (rega persistent item->CTA schedule) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224003Z | experts-rega-fine-n-buckets | primary | w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224003Z | experts-rega-rotate-finebucket-fastsilu-combo | primary | w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224003Z | experts-rega-rotation-fastsilu-combo | primary | w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224003Z | experts-rega-w13-fast-silu-epilogue | primary | silu-mul (rega w13 epilogue) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224004Z | experts-rega-pdl-chain-regate-iqr-slack | primary | launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224004Z | front-qknorm-rope-fp8-store-fusion-restack | primary | pre-attention norm+rope + cache store (five launches -> one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224008Z | experts-rega-lpt-group-order | primary | w13 + w2 expert GEMMs (rega persistent schedule: expert groups heaviest first) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | experts-rega-dynamic-item-scheduler | primary | w13 + w2 expert GEMMs (rega persistent schedule: atomic work counter) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | experts-rega-stage-anatomy-diag | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | front-routing-pdl-launch-diet-stack | primary | launch overhead (front fusion + routing fusion + PDL chain regate, stacked) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | routing-triton-hilo-sum-topk-localids | primary | routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

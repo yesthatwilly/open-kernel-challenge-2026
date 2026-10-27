@@ -1,25 +1,10 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.3142x [1.2945,1.3339] from job `a903b9d004d2452d` (submit), master commit `ec89382beb`, hypothesis combo-measured-rows-slide-batched-preattn-t8-tail
-
-Where the time goes (per scored shape, top kernels):
-
-- batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60: yours 118.5µs vs SGLang 171.0µs (SoL 40.0µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 42.5µs 34.4%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.5µs 17.4%, _sliding_fused_kernel 13.5µs 10.9%
-- batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60: yours 124.3µs vs SGLang 182.1µs (SoL 44.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 42.6µs 32.7%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 21.6µs 16.6%, void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 20.5µs 15.7%
-- batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic: yours 210.5µs vs SGLang 263.2µs (SoL 76.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 94.9µs 46.0%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.3µs 12.8%, void (anonymous namespace)::dl_pooler_router_kernel<2>(__... 24.6µs 11.9%
-- batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic: yours 290.5µs vs SGLang 430.7µs (SoL 137.5µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 110.5µs 40.8%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 73.6µs 27.2%, nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 26.5µs 9.8%
-- batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic: yours 239.5µs vs SGLang 260.2µs (SoL 84.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 122.2µs 50.1%, nvjet_sm90_tst_64x32_64x16_2x1_v_bz_TNT 27.1µs 11.1%, void (anonymous namespace)::dl_pooler_router_kernel<4>(__... 26.6µs 10.9%
-- batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic: yours 446.4µs vs SGLang 620.6µs (SoL 208.1µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 224.0µs 51.2%, void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 113.4µs 25.9%, void (anonymous namespace)::dl_pooler_router_kernel<4>(__... 26.8µs 6.1%
-- batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8: yours 181.1µs vs SGLang 263.1µs (SoL 62.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 85.1µs 47.2%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 22.5µs 12.5%, nvjet_sm90_tst_128x8_64x12_4x1_v_bz_splitK_TNT 12.8µs 7.1%
-- batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8: yours 189.5µs vs SGLang 271.3µs (SoL 66.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 85.4µs 43.9%, void (anonymous namespace)::dl_pooler_router_kernel<1>(__... 23.8µs 12.3%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 18.6µs 9.6%
-- batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 414.7µs vs SGLang 524.5µs (SoL 126.6µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 314.8µs 67.4%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 28.5µs 6.1%, nvjet_sm90_tst_64x64_64x13_2x1_v_bz_TNT 26.2µs 5.6%
-- batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 593.4µs vs SGLang 751.9µs (SoL 188.7µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 272.9µs 47.2%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 155.6µs 26.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 29.8µs 5.2%
-- batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 599.8µs vs SGLang 720.9µs (SoL 143.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 397.2µs 67.9%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.4µs 5.9%, nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 30.8µs 5.3%
-- batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 866.6µs vs SGLang 1073.7µs (SoL 267.2µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 375.5µs 44.5%, void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.4µs 34.2%, nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 34.0µs 4.0%
+1.5697x [1.5461,1.5932] from job `4a7a49d0ae82440f` (submit), master commit `c978371759`, hypothesis campaign-eb-w6b-t128diet
 
 Today's clean-context diagnosis: `muse_decode_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 

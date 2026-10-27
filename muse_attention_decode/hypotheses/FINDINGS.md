@@ -1,25 +1,10 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
-1.5295x [1.5066,1.5525] from job `8713665f3064462c` (submit), master commit `5d528bf313`, hypothesis combo-b1-chain-c320-fused-pre-pdl
-
-Where the time goes (per scored shape, top kernels):
-
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1: yours 12.1µs vs SGLang 20.9µs (SoL 0.1µs) · (anonymous namespace)::sliding_cluster_kernel(__nv_bfloat... 10.6µs 100.0%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1: yours 17.4µs vs SGLang 31.3µs (SoL 4.3µs) · void (anonymous namespace)::c320_attn_kernel<320, true>(u... 11.4µs 73.0%, void (anonymous namespace)::c320_combine_kernel<320, 16, ... 4.2µs 27.0%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic: yours 15.5µs vs SGLang 26.9µs (SoL 1.6µs) · _sliding_fused_kernel 12.7µs 100.0%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic: yours 110.8µs vs SGLang 200.6µs (SoL 63.2µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 108.2µs 98.1%, _pre_attention_kernel 2.1µs 1.9%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic: yours 17.5µs vs SGLang 31.3µs (SoL 3.3µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 14.0µs 86.5%, _pre_attention_kernel 2.2µs 13.5%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic: yours 226.9µs vs SGLang 383.8µs (SoL 126.4µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 222.7µs 99.0%, _pre_attention_kernel 2.2µs 1.0%
-- batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8: yours 13.2µs vs SGLang 22.7µs (SoL 0.1µs) · void (anonymous namespace)::splitkv_attn_sk_kernel<4, tru... 9.9µs 86.8%, _pre_attention_kernel 1.5µs 13.2%
-- batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8: yours 30.3µs vs SGLang 36.0µs (SoL 4.3µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 15.2µs 54.6%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 7.2µs 25.8%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 2.8µs 10.0%
-- batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic: yours 22.6µs vs SGLang 29.1µs (SoL 1.9µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 10.7µs 52.2%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 3.8µs 18.8%, _pre_attention_kernel 2.7µs 13.3%
-- batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic: yours 162.5µs vs SGLang 205.3µs (SoL 63.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 148.7µs 91.0%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.4µs 3.9%, void flash::prepare_varlen_num_blocks_kernel<1, true>(int... 3.1µs 1.9%
-- batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic: yours 29.0µs vs SGLang 34.4µs (SoL 3.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 14.8µs 56.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 4.3µs 16.1%, _pre_attention_kernel 4.1µs 15.6%
-- batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic: yours 302.0µs vs SGLang 390.0µs (SoL 126.8µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 288.7µs 94.1%, void cutlass::device_kernel<flash::FlashAttnFwdCombine<cu... 6.7µs 2.2%, _pre_attention_kernel 4.1µs 1.3%
+1.6340x [1.6094,1.6585] from job `4e386647edd845f7` (submit), master commit `26498226d8`, hypothesis sliding-verify-s2b-b17-32-bar103
 
 Today's clean-context diagnosis: `muse_attention_decode/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -257,4 +242,16 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
 - queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 queued
 - queue: sliding-verify1-pseudo-fused-preattn-rope [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] p1 queued
+- queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 queued
+- queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 queued
+- queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 queued
+- queue: c320-pdl-early-trigger [launch overhead (full decode_1 c320 kernel A -> combine PDL)] p2 queued
+- queue: combo-sk-full-line-c320-tail [combination (full decode B>=2 gather mapping + full decode_1 combine tail)] p2 queued
+- queue: sliding-verify-wgmma-window-s2b-fast-merge [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p3 queued
+- queue: c320-attn-full-line-gather [full-layer attention (batch-1 decode, c320 kernel A K/V gather mapping)] p3 queued
+- queue: sliding-verify-wgmma-split-combine-on-v3chain [sliding-layer attention (verify B=2..32, wgmma window kernel merge) on the v3chain base] p3 queued
+- queue: sliding-decode1-perkvhead-launch-select [sliding-layer attention (batch-1 decode, cluster kernel launch configuration)] p4 queued
+- queue: sk-full-line-5stage-select [full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap)] p4 queued
+- queue: sliding-decode-band2-sk-gate [sliding-layer attention (decode B=2..16, stream-K window route gate)] p4 queued
+- queue: full-verify-wgmma-s7-split-combine [full-layer attention (verify B=2..64, wgmma stream-K kernel merge)] p4 queued
 - 17 stale holds expired to `done/expired/` (not run)
