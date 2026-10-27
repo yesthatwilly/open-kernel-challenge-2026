@@ -869,3 +869,9 @@ append-only, newest last.
     - no window-edge key in the canary;
     - the canary does not assert that the PH route ran (read the 'vs BN64' figure, which must be non-zero);
     - master's host bounds check was not ported (today's inputs are in range).
+- 0806Z: PERHEAD-on-W6-B check fff7d3e7: **1.5754** (CI 1.552-1.599). PERHEAD routed at d1s.
+  - Attention side x1.094-1.117 vs the best Triton kernel; layer x1.028-1.035 (99.8 -> 96.7 us).
+  - Critical path 13.6 -> 11.0 us. d1s row x1.028 (about -2 us vs its own SGLang time).
+  - The canary, alternation, layer and copy checks are all ok.
+  - **Scored run ca44d5c0feba416c.**
+  - One minor to watch: 32 B of local memory in the kernel, likely a small spill.
