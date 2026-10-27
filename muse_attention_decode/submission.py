@@ -6026,6 +6026,12 @@ _C320_BUDGET = 480.0    # s of import clock by which every added phase must be a
 _C320_GATE = 0.98       # route the best variant only if best / V0 <= this (head-to-head pass)
 _C320_EXT = None        # the c320 module (None until built and initialised)
 _C320_SOURCES = {0: "master pre-attn + two-level", 1: "A", 2: "A+D", 3: "A+C", 4: "A+C+D"}
+# hyp/attn-c320: two changes on the routed chain, each behind its own canary + checks + in-run A/B gate, frozen
+# at import. The knobs are config-free import-time route flags read by _c320_run (never data-derived).
+_C320_INCUMBENT = (False, False, 16)  # (combine onepass, kernel A early PDL trigger, PDL-combine warps)
+_C320_KNOBS = _C320_INCUMBENT          # frozen once at the end of _c320_setup; kernel_fn only reads it
+_C320_AB_MARGIN = 1.01                 # adopt a change only if t_incumbent / t_candidate >= this (head to head)
+_C320_PASSED = ()                      # the chain variants that passed GATE A's checks (set by _c320_setup_body)
 
 _C320_CPP = r"""
 #include <torch/extension.h>
@@ -6037,11 +6043,13 @@ void c320_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, to
 void c320_attn_fused(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
                      torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
                      int64_t qkv_stride, torch::Tensor cache_loc, torch::Tensor ws_acc, torch::Tensor ws_ml,
-                     double score_scale, double eps, int64_t max_chunks, int64_t grid);
+                     double score_scale, double eps, int64_t max_chunks, int64_t grid, int64_t early);
 void c320_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
+                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps,
+                  int64_t onepass);
 void c320_combine_pdl(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps,
+                      int64_t onepass, int64_t nw);
 std::vector<int64_t> c320_attrs(int64_t v);
 """
 
@@ -6138,7 +6146,10 @@ __device__ __forceinline__ float warp_sum(float v) {
 }
 #endif
 
-template <int CHUNK, bool FUSED>
+// EARLY (c320-pdl-early-trigger; instantiated FUSED only): griddepcontrol.launch_dependents right after the
+// prologue instead of as the last statement. A no-op without a programmatic dependent; the dependent combine's
+// griddepcontrol.wait still blocks until this grid has completed and flushed, so only its launch moves.
+template <int CHUNK, bool FUSED, bool EARLY = false>
 __global__ void __launch_bounds__(THREADS, 2)
 c320_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D] (unused when FUSED)
                  uint8_t* __restrict__ kc,               // e4m3 [rows, ROW]; FUSED stores the new row
@@ -6249,6 +6260,7 @@ c320_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D] (unu
   cp_commit();
   cp_wait<0>();
   __syncthreads();
+  if constexpr (EARLY) asm volatile("griddepcontrol.launch_dependents;" :::);  // c320-pdl-early-trigger
 #pragma unroll
   for (int j = 0; j < STAGES - 1; ++j) {
     if (j < N) {
@@ -6474,11 +6486,17 @@ c320_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D] (unu
   }
   // PDL (SOURCE D): let a programmatic dependent (the combine, PDL variants only) launch now; its
   // griddepcontrol.wait still blocks until this grid has completed and flushed. No-op without one.
-  asm volatile("griddepcontrol.launch_dependents;" :::);
+  // (EARLY instantiations triggered after the prologue instead.)
+  if constexpr (!EARLY) asm volatile("griddepcontrol.launch_dependents;" :::);
   cp_wait<0>();  // the trailing groups are empty; drain anyway
 }
 
-template <int CHUNK, int NW, bool PDL>
+// ONEPASS (c320-combine-onepass): one pass instead of max-then-fold. Each warp issues the loads of up to OP_GROUP
+// of its partials (c = w + NW * i) before any use, folds them with an online LSE (running M; L and acc rescaled by
+// ex2(M_old - M_new); an m = -inf partial weighs 0), repeating only when n > NW * OP_GROUP; then one barrier and
+// warp 0 merges the NW warp states with the same LSE weights. Same arithmetic up to fp32 summation order.
+constexpr int OP_GROUP = 16;
+template <int CHUNK, int NW, bool PDL, bool ONEPASS = false>
 __global__ void __launch_bounds__(NW * 32)
 c320_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
                     const int* __restrict__ seqlens, const float* __restrict__ v_scale,
@@ -6505,6 +6523,63 @@ c320_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ 
     asm volatile("griddepcontrol.wait;" ::: "memory");
   }
 
+  float o0 = 0.f, o1 = 0.f, Ls = 0.f;  // warp 0's merged sums (both bodies)
+  if constexpr (ONEPASS) {
+    float Mw = NEG_INF, Lw = 0.f, w0 = 0.f, w1 = 0.f;  // this warp's running state
+    for (int gb = warp; gb < n; gb += NW * OP_GROUP) {
+      float mv[OP_GROUP], lv[OP_GROUP];
+      float2 av[OP_GROUP];
+#pragma unroll
+      for (int i = 0; i < OP_GROUP; ++i) {  // every load of the group before any use
+        const int c = gb + NW * i;
+        if (c < n) {
+          const int64_t sl = base + c;
+          mv[i] = ws_ml[sl * 2 * HQ + h];
+          lv[i] = ws_ml[sl * 2 * HQ + HQ + h];
+          av[i] = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
+        } else {
+          mv[i] = NEG_INF;
+          lv[i] = 0.f;
+          av[i] = make_float2(0.f, 0.f);
+        }
+      }
+      float gm = mv[0];
+#pragma unroll
+      for (int i = 1; i < OP_GROUP; ++i) gm = fmaxf(gm, mv[i]);
+      const float Mn = fmaxf(Mw, gm);
+      const float Mnu = Mn == NEG_INF ? 0.f : Mn;
+      const float alpha = Mw == NEG_INF ? 0.f : ex2(Mw - Mnu);  // Lw, w0, w1 are 0 while Mw is -inf
+      Lw *= alpha;
+      w0 *= alpha;
+      w1 *= alpha;
+#pragma unroll
+      for (int i = 0; i < OP_GROUP; ++i) {
+        const float wt = mv[i] == NEG_INF ? 0.f : ex2(mv[i] - Mnu);  // empty / absent partials weigh 0
+        Lw += wt * lv[i];
+        w0 += wt * av[i].x;
+        w1 += wt * av[i].y;
+      }
+      Mw = Mn;
+    }
+    red_acc[warp][lane * 2] = w0;
+    red_acc[warp][lane * 2 + 1] = w1;
+    if (lane == 0) { red_m[warp] = Mw; red_l[warp] = Lw; }
+    __syncthreads();
+    if (warp == 0) {
+      float M = red_m[0];
+#pragma unroll
+      for (int w = 1; w < NW; ++w) M = fmaxf(M, red_m[w]);
+      const float Mu = M == NEG_INF ? 0.f : M;
+#pragma unroll
+      for (int w = 0; w < NW; ++w) {
+        const float mw = red_m[w];
+        const float wt = mw == NEG_INF ? 0.f : ex2(mw - Mu);
+        Ls += wt * red_l[w];
+        o0 += wt * red_acc[w][lane * 2];
+        o1 += wt * red_acc[w][lane * 2 + 1];
+      }
+    }
+  } else {
   float M = NEG_INF;
   for (int c = tid; c < n; c += NW * 32) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
 #pragma unroll
@@ -6532,9 +6607,11 @@ c320_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ 
   if (lane == 0) red_l[warp] = L;
   __syncthreads();
   if (warp == 0) {
-    float o0 = 0.f, o1 = 0.f, Ls = 0.f;
 #pragma unroll
     for (int w = 0; w < NW; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
+  }
+  }  // !ONEPASS
+  if (warp == 0) {
     float vs, g0, g1;
     if constexpr (PDL) {
       vs = vs_pre; g0 = g0_pre; g1 = g1_pre;
@@ -6556,9 +6633,9 @@ c320_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ 
   }
 }
 
-template <bool FUSED>
+template <bool FUSED, bool EARLY = false>
 void set_attn_smem() {
-  auto kern = c320_attn_kernel<CHUNK_B1, FUSED>;
+  auto kern = c320_attn_kernel<CHUNK_B1, FUSED, EARLY>;
   C10_CUDA_CHECK(cudaFuncSetAttribute(kern, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_a(CHUNK_B1, FUSED)));
 }
 
@@ -6589,6 +6666,7 @@ void c320_init() {
   set_attn_smem<false>();
 #ifdef C320_FUSED
   set_attn_smem<true>();
+  set_attn_smem<true, true>();  // c320-pdl-early-trigger
 #endif
 }
 
@@ -6613,7 +6691,7 @@ void c320_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, to
 void c320_attn_fused(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
                      torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor qkv,
                      int64_t qkv_stride, torch::Tensor cache_loc, torch::Tensor ws_acc, torch::Tensor ws_ml,
-                     double score_scale, double eps, int64_t max_chunks, int64_t grid) {
+                     double score_scale, double eps, int64_t max_chunks, int64_t grid, int64_t early) {
   const int B = static_cast<int>(cache_seqlens.size(0));
   TORCH_CHECK(B == 1, "c320_attn_fused: batch 1 only");
   TORCH_CHECK(page_table.stride(1) == 1 && k_cache.is_contiguous() && v_cache.is_contiguous(), "c320_attn_fused: layout");
@@ -6625,7 +6703,9 @@ void c320_attn_fused(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor
               "c320_attn_fused: qkv layout");
   TORCH_CHECK(ws_acc.size(0) >= max_chunks && ws_ml.size(0) >= max_chunks, "c320_attn_fused: workspace");
   auto stream = at::cuda::getCurrentCUDAStream();
-  c320_attn_kernel<CHUNK_B1, true><<<static_cast<unsigned>(grid), THREADS, smem_a(CHUNK_B1, true), stream>>>(
+  // early != 0: the c320-pdl-early-trigger instantiation (same smem, same arguments).
+  auto kern = early ? c320_attn_kernel<CHUNK_B1, true, true> : c320_attn_kernel<CHUNK_B1, true, false>;
+  kern<<<static_cast<unsigned>(grid), THREADS, smem_a(CHUNK_B1, true), stream>>>(
       nullptr, reinterpret_cast<uint8_t*>(k_cache.data_ptr()), reinterpret_cast<uint8_t*>(v_cache.data_ptr()),
       page_table.data_ptr<int>(), page_table.stride(0), cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(),
       v_scale.data_ptr<float>(), static_cast<float>(score_scale), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
@@ -6636,11 +6716,14 @@ void c320_attn_fused(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor
 #endif
 
 void c320_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
+                  torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps,
+                  int64_t onepass) {
   check_combine(ws_acc, ws_ml, cache_seqlens, out, max_chunks);
   const int B = static_cast<int>(cache_seqlens.size(0));
   auto stream = at::cuda::getCurrentCUDAStream();
-  c320_combine_kernel<CHUNK_B1, NW_B1, false><<<dim3(B, HQ), NW_B1 * 32, 0, stream>>>(
+  auto kern = onepass ? c320_combine_kernel<CHUNK_B1, NW_B1, false, true>
+                      : c320_combine_kernel<CHUNK_B1, NW_B1, false, false>;
+  kern<<<dim3(B, HQ), NW_B1 * 32, 0, stream>>>(
       ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
       reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
       reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
@@ -6649,13 +6732,17 @@ void c320_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache
 
 // The PDL entry point: programmatic stream serialization on THIS launch only (it must directly follow kernel A
 // on the same stream). No fallback: whether PDL is used is decided once at import by the capture/replay check.
+// onepass: the c320-combine-onepass body; nw: 16 (incumbent) or 8 warps (c320-pdl-early-trigger's co-residency
+// fallback, PDL only).
 void c320_combine_pdl(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
+                      torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps,
+                      int64_t onepass, int64_t nw) {
+  TORCH_CHECK(nw == NW_B1 || nw == 8, "c320_combine_pdl: nw must be 16 or 8");
   check_combine(ws_acc, ws_ml, cache_seqlens, out, max_chunks);
   const int B = static_cast<int>(cache_seqlens.size(0));
   cudaLaunchConfig_t cfg = {};
   cfg.gridDim = dim3(B, HQ);
-  cfg.blockDim = dim3(NW_B1 * 32);
+  cfg.blockDim = dim3(static_cast<unsigned>(nw * 32));
   cfg.dynamicSmemBytes = 0;
   cfg.stream = at::cuda::getCurrentCUDAStream();
   cudaLaunchAttribute attr[1];
@@ -6671,12 +6758,18 @@ void c320_combine_pdl(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor c
   __nv_bfloat16* p_out = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
   const int mc = static_cast<int>(max_chunks);
   const float ep = static_cast<float>(eps);
-  void (*kern)(const float*, const float*, const int*, const float*, const __nv_bfloat16*, int64_t, __nv_bfloat16*,
-               int, float) = c320_combine_kernel<CHUNK_B1, NW_B1, true>;
+  using CombineFn = void (*)(const float*, const float*, const int*, const float*, const __nv_bfloat16*, int64_t,
+                             __nv_bfloat16*, int, float);
+  CombineFn kern = nw == NW_B1 ? (onepass ? (CombineFn)c320_combine_kernel<CHUNK_B1, NW_B1, true, true>
+                                          : (CombineFn)c320_combine_kernel<CHUNK_B1, NW_B1, true, false>)
+                               : (onepass ? (CombineFn)c320_combine_kernel<CHUNK_B1, 8, true, true>
+                                          : (CombineFn)c320_combine_kernel<CHUNK_B1, 8, true, false>);
   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, kern, p_acc, p_ml, p_seq, p_vs, p_qkv, qkv_stride, p_out, mc, ep));
 }
 
-// v: 0 = A<320, false>, 1 = A<320, true> (FUSED builds only), 2 = combine<320, 16, false>, 3 = the PDL combine.
+// v: 0 = A<320, false>, 1 = A<320, true> (FUSED builds only), 2 = combine<320, 16, false>, 3 = the PDL combine;
+// 4 = A<320, true, EARLY> (FUSED builds only), 5 = combine<320, 16, false, ONEPASS>, 6 = combine<320, 16, true,
+// ONEPASS>, 7 = combine<320, 8, true>, 8 = combine<320, 8, true, ONEPASS>.
 // Call c320_init() first (the occupancy of kernel A depends on its dynamic-smem attribute).
 std::vector<int64_t> c320_attrs(int64_t v) {
   if (v == 0) return attrs_of(c320_attn_kernel<CHUNK_B1, false>, THREADS, smem_a(CHUNK_B1, false));
@@ -6685,6 +6778,13 @@ std::vector<int64_t> c320_attrs(int64_t v) {
 #endif
   if (v == 2) return attrs_of(c320_combine_kernel<CHUNK_B1, NW_B1, false>, NW_B1 * 32, 0);
   if (v == 3) return attrs_of(c320_combine_kernel<CHUNK_B1, NW_B1, true>, NW_B1 * 32, 0);
+#ifdef C320_FUSED
+  if (v == 4) return attrs_of(c320_attn_kernel<CHUNK_B1, true, true>, THREADS, smem_a(CHUNK_B1, true));
+#endif
+  if (v == 5) return attrs_of(c320_combine_kernel<CHUNK_B1, NW_B1, false, true>, NW_B1 * 32, 0);
+  if (v == 6) return attrs_of(c320_combine_kernel<CHUNK_B1, NW_B1, true, true>, NW_B1 * 32, 0);
+  if (v == 7) return attrs_of(c320_combine_kernel<CHUNK_B1, 8, true, false>, 8 * 32, 0);
+  if (v == 8) return attrs_of(c320_combine_kernel<CHUNK_B1, 8, true, true>, 8 * 32, 0);
   TORCH_CHECK(false, "c320_attrs: no such kernel in this build: ", v);
   return {};
 }
@@ -6756,10 +6856,11 @@ def _c320_run(data: Inputs, fused: bool, pdl: bool, grid=None) -> torch.Tensor:
     out = torch.empty((1, 1, hq * d), dtype=torch.bfloat16, device=device)
     g = grid or 2 * _sm_count(device)
     scale = cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E
-    if fused:
+    onepass, early, pnw = _C320_KNOBS
+    if fused:  # the EARLY trigger only matters with a programmatic dependent (the PDL combine)
         _C320_EXT.c320_attn_fused(data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"],
                                   data["k_scale"], data["v_scale"], qkv, qkv.stride(0), data["cache_loc"],
-                                  ws_acc, ws_ml, scale, RMS_EPS, max_chunks, g)
+                                  ws_acc, ws_ml, scale, RMS_EPS, max_chunks, g, int(early and pdl))
     else:
         q = torch.empty((1, hq, d), dtype=FP8, device=device)
         _pre_attention_kernel[(1, hq + hkv)](
@@ -6771,8 +6872,12 @@ def _c320_run(data: Inputs, fused: bool, pdl: bool, grid=None) -> torch.Tensor:
         )
         _C320_EXT.c320_attn(q, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["k_scale"],
                             ws_acc, ws_ml, scale, max_chunks, g)
-    combine = _C320_EXT.c320_combine_pdl if pdl else _C320_EXT.c320_combine
-    combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out, max_chunks, RMS_EPS)
+    if pdl:
+        _C320_EXT.c320_combine_pdl(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
+                                   max_chunks, RMS_EPS, int(onepass), int(pnw))
+    else:
+        _C320_EXT.c320_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
+                               max_chunks, RMS_EPS, int(onepass))
     return out
 
 
@@ -7072,7 +7177,7 @@ def _c320_gate_run(passed, gen):
 def _c320_setup_body():
     """Build, init, checks, gate. Returns (route, detail); route 0 keeps master. Each phase starts only when the
     import clock leaves room for its deadline, and its result is discarded if it finishes past that deadline."""
-    global _C320_EXT, _C320_FN
+    global _C320_EXT, _C320_FN, _C320_PASSED
     dev = torch.device("cuda")
     # Phase 1: build (deadline 120 s per attempt). FUSED first; on failure one rebuild without FUSED (V1/V2).
     if not _c320_may_start(120):
@@ -7150,6 +7255,7 @@ def _c320_setup_body():
          f"eager + capture/replay: {pdl}; tried {[v for v in variants if v in (2, 4)]})")
     if time.perf_counter() - t1 > 60:
         return 0, f"checks finished past their 60 s deadline ({time.perf_counter() - t1:.0f} s)"
+    _C320_PASSED = tuple(passed)
     if not passed:
         return 0, "no c320 variant passed its checks"
     # Phase 3: speed gate (iii) (deadline 60 s).
@@ -7162,10 +7268,217 @@ def _c320_setup_body():
     return route, detail
 
 
+def _c320_kname(v: int, knobs) -> str:
+    """The kernels a chain variant launches under knobs (for canary and readout lines)."""
+    onepass, early, pnw = knobs
+    pdl = v in (2, 4)
+    a = ("c320_attn_kernel<320, true" + (", EARLY>" if early and pdl else ">") if v in (3, 4)
+         else "pre-attn + c320_attn_kernel<320, false>")
+    nw = pnw if pdl else 16
+    c = f"c320_combine_kernel<320, {nw}, {'true' if pdl else 'false'}{', ONEPASS' if onepass else ''}>"
+    return f"{a} + {c}"
+
+
+def _c320_check_knobs(label: str, v: int, knobs, gen) -> "str | None":
+    """GATE A's correctness for chain variant V<v> with knobs set: a named, synced canary first (5 keys), then
+    every other _C320_CASES case, then the two-state replays (80000 keys kv 1.0, 4097 keys kv 0.25). Leaves
+    _C320_KNOBS as it found it. None on success, else the reason."""
+    global _C320_KNOBS, _C320_FN
+    prev = _C320_KNOBS
+    name = _c320_kname(v, knobs)
+    try:
+        _C320_KNOBS = knobs
+        _say(f"[{label}] canary V{v} [{name}]: launching (5 keys, synced)")
+        try:
+            ok = _c320_case(v, f"{label} canary 5 keys", [4], 1.0, None, gen)
+        except Exception as e:
+            _say(f"[{label}] canary V{v} [{name}] raised: {e!r}")
+            return f"canary raised {e!r}"
+        _say(f"[{label}] canary V{v} [{name}]: returned, {'ok' if ok else 'FAIL'}")
+        if not ok:
+            return "canary failed"
+        for tag, lens, kv, grid in _C320_CASES[1:]:
+            if not _c320_case(v, f"{label} {tag}", lens, kv, grid, gen):
+                return f"case {tag!r} failed"
+        for lens, kv in (([79999], 1.0), ([4096], 0.25)):
+            why = _c320_alt(v, lens, kv, gen)
+            if why is not None:
+                return why
+        return None
+    except Exception as e:
+        return f"checks raised {e!r}"
+    finally:
+        _C320_KNOBS = prev
+        _C320_FN = None
+
+
+def _c320_ab_time(label: str, cands, reps: int, flush, data):
+    """Interleaved kernel_fn graph timing (cold L2, empty graph subtracted) of each (v, knobs) candidate on data.
+    Returns the (median, p25, p75) per candidate, in order."""
+    global _C320_FN, _C320_KNOBS
+
+    def mk(v, knobs):
+        def f():
+            global _C320_FN, _C320_KNOBS
+            _C320_FN, _C320_KNOBS = _C320_VARIANTS[v], knobs  # captured per graph
+            kernel_fn(data)
+        return f
+
+    try:
+        return _c320_timed([mk(v, k) for v, k in cands], flush, reps=reps)
+    finally:
+        _C320_FN, _C320_KNOBS = None, _C320_INCUMBENT
+
+
+def _c320_ab_decide(label: str, inc, cand, readout: str, flush, data):
+    """Head-to-head pass (41 reps) of the incumbent (v, knobs) vs the candidate; adopt only if the head-to-head
+    ratio t_inc / t_cand >= _C320_AB_MARGIN and the readout pass's ratio (given) also favoured it. Returns
+    (adopt, detail)."""
+    _say(f"[{label}] head to head: incumbent V{inc[0]} [{_c320_kname(*inc)}] vs candidate V{cand[0]} "
+         f"[{_c320_kname(*cand)}], median of 41")
+    t_inc, t_cand = _c320_ab_time(label, [inc, cand], 41, flush, data)
+    ratio = t_inc[0] / t_cand[0] if t_cand[0] > 0 else 0.0
+    _say(f"[{label}] head to head: incumbent {t_inc[0]:.2f} us [p25 {t_inc[1]:.2f}, p75 {t_inc[2]:.2f}], "
+         f"candidate {t_cand[0]:.2f} us [p25 {t_cand[1]:.2f}, p75 {t_cand[2]:.2f}], inc/cand {ratio:.3f}")
+    return ratio, (f"h2h {t_inc[0]:.2f} -> {t_cand[0]:.2f} us, inc/cand {ratio:.3f} vs margin {_C320_AB_MARGIN:.2f}; "
+                   f"{readout}")
+
+
+def _c320_gate_onepass(route: int, gen, flush, data):
+    """c320-combine-onepass: checks on V<route> and the other passing fused variants (the V3 / V4 readouts), a
+    readout pass (old vs ONEPASS combine per variant, 31 reps), then the head-to-head A/B on the routed variant.
+    Returns (adopt, detail, the variants whose ONEPASS combine passed its checks)."""
+    label = "c320-onepass"
+    if not _c320_may_start(60):
+        return False, f"skipped: import clock {_c320_clock():.0f} s + 60 s > {_C320_BUDGET:.0f} s", []
+    t0 = time.perf_counter()
+    on = (True, False, 16)
+    vs = sorted({route} | {v for v in (3, 4) if v in _C320_PASSED})
+    ok = []
+    for v in vs:
+        why = _c320_check_knobs(label, v, on, gen)
+        _say(f"[{label}] V{v} [{_c320_kname(v, on)}] checks: {'ok' if why is None else 'FAIL: ' + why}")
+        if why is None:
+            ok.append(v)
+    if route not in ok:
+        return False, f"the routed V{route}'s ONEPASS combine failed its checks", ok
+    if time.perf_counter() - t0 > 45:
+        return False, f"checks took {time.perf_counter() - t0:.0f} s (> 45 s of the 60 s phase): no timing", ok
+    cands = [c for v in ok for c in ((v, _C320_INCUMBENT), (v, on))]
+    _say(f"[{label}] readout pass: {['V%d%s' % (v, '-1p' if k[0] else '') for v, k in cands]} interleaved, median of 31")
+    tt = dict(zip(cands, _c320_ab_time(label, cands, 31, flush, data)))
+    parts = []
+    for v in ok:
+        a, b = tt[(v, _C320_INCUMBENT)][0], tt[(v, on)][0]
+        _say(f"[{label}] readout V{v}: incumbent combine {a:.2f} us, ONEPASS {b:.2f} us, delta {b - a:+.2f} us, "
+             f"ratio {a / b if b > 0 else 0:.3f}")
+        parts.append(f"V{v} {a:.2f}->{b:.2f}")
+    r1 = tt[(route, _C320_INCUMBENT)][0] / tt[(route, on)][0] if tt[(route, on)][0] > 0 else 0.0
+    ratio, detail = _c320_ab_decide(label, (route, _C320_INCUMBENT), (route, on),
+                                    f"readout {', '.join(parts)} us (V{route} ratio {r1:.3f})", flush, data)
+    if time.perf_counter() - t0 > 60:
+        return False, f"finished past its 60 s deadline ({time.perf_counter() - t0:.0f} s); {detail}", ok
+    return ratio >= _C320_AB_MARGIN and r1 > 1.0, detail, ok
+
+
+def _c320_gate_early(route: int, onepass: bool, onepass_ok, gen, flush, data):
+    """c320-pdl-early-trigger on V4 (kernel A FUSED + PDL combine): candidates EARLY with the 16-warp and the
+    8-warp PDL combine (combine body per the onepass decision); readout pass with the incumbent and V4 late
+    trigger; head-to-head A/B of the best EARLY candidate vs the incumbent. Returns (adopt, knobs, detail)."""
+    label = "c320-early"
+    inc = (route, (onepass, False, 16))
+    if route not in (3, 4) or 4 not in _C320_PASSED:
+        return False, inc[1], f"no fused PDL chain to trigger early (route V{route}, passed {list(_C320_PASSED)})"
+    if not _c320_may_start(60):
+        return False, inc[1], f"skipped: import clock {_c320_clock():.0f} s + 60 s > {_C320_BUDGET:.0f} s"
+    t0 = time.perf_counter()
+    try:
+        a = {k: list(_C320_EXT.c320_attrs(k)) for k in (1, 4, 3, 6, 7, 8)}
+        nm = {1: "A<320,true>", 4: "A<320,true,EARLY>", 3: "combine<320,16,PDL>", 6: "combine<320,16,PDL,1P>",
+              7: "combine<320,8,PDL>", 8: "combine<320,8,PDL,1P>"}
+        _say(f"[{label}] attrs: " + "; ".join(f"{nm[k]} regs {v[2]} local {v[3]} B {v[6]} CTAs/SM" for k, v in a.items()))
+        ra = a[4][2] * 256 * 2
+        _say(f"[{label}] co-residency estimate: 2 A CTAs/SM use {ra} of 65536 regs; a 16-warp combine CTA needs "
+             f"{a[6 if onepass else 3][2] * 512}, an 8-warp one {a[8 if onepass else 7][2] * 256}; A fills "
+             f"{2 * _sm_count(torch.device('cuda'))} slots with its grid, so combine CTAs land on the slots A leaves free")
+        if a[4][0] != 90 or a[4][6] < 1:
+            return False, inc[1], f"EARLY kernel A not loadable (binaryVersion {a[4][0]}, {a[4][6]} CTAs/SM)"
+    except Exception as e:
+        return False, inc[1], f"attrs raised {e!r}"
+    ok = []
+    for nw in (16, 8):
+        k = (onepass, True, nw)
+        why = _c320_check_knobs(label, 4, k, gen)
+        _say(f"[{label}] V4 [{_c320_kname(4, k)}] checks: {'ok' if why is None else 'FAIL: ' + why}")
+        if why is None:
+            ok.append(k)
+    if not ok:
+        return False, inc[1], "every EARLY candidate failed its checks"
+    if time.perf_counter() - t0 > 45:
+        return False, inc[1], f"checks took {time.perf_counter() - t0:.0f} s (> 45 s of the 60 s phase): no timing"
+    late4 = (4, (onepass, False, 16))
+    cands = [inc] + ([late4] if route != 4 and (not onepass or 4 in onepass_ok) else []) + [(4, k) for k in ok]
+    _say(f"[{label}] readout pass: {[f'V{v} [{_c320_kname(v, k)}]' for v, k in cands]} interleaved, median of 31")
+    tt = dict(zip(cands, _c320_ab_time(label, cands, 31, flush, data)))
+    for c in cands:
+        _say(f"[{label}] readout V{c[0]} [{_c320_kname(*c)}]: {tt[c][0]:.2f} us [p25 {tt[c][1]:.2f}, p75 {tt[c][2]:.2f}]")
+    late = tt[inc if route == 4 else late4][0] if (route == 4 or late4 in tt) else None
+    best = min(ok, key=lambda k: tt[(4, k)][0])
+    tb = tt[(4, best)][0]
+    parts = [f"V{route} inc {tt[inc][0]:.2f}"] + ([f"V4 late {late:.2f}"] if late is not None else []) + \
+        [f"V4 early nw{k[2]} {tt[(4, k)][0]:.2f}" for k in ok]
+    if late is not None:
+        _say(f"[{label}] readout: trigger effect V4 late - V4 early nw{best[2]} = {late - tb:+.2f} us; "
+             f"V3/V4 incumbent V{route} {tt[inc][0]:.2f} us vs V4 early {tb:.2f} us")
+    r1 = tt[inc][0] / tb if tb > 0 else 0.0
+    ratio, detail = _c320_ab_decide(label, inc, (4, best), f"readout {', '.join(parts)} us (ratio {r1:.3f})",
+                                    flush, data)
+    if time.perf_counter() - t0 > 60:
+        return False, inc[1], f"finished past its 60 s deadline ({time.perf_counter() - t0:.0f} s); {detail}"
+    adopt = ratio >= _C320_AB_MARGIN and r1 > 1.0
+    return adopt, (best if adopt else inc[1]), detail
+
+
+def _c320_ab_gates(route: int):
+    """The two hyp/attn-c320 A/B gates after the chain gate, each with its own PATH CHOSEN line. Returns
+    (variant, knobs) to freeze; the incumbent (route, _C320_INCUMBENT) on any miss."""
+    if not route:
+        for nm in ("c320-combine-onepass", "c320-pdl-early-trigger"):
+            _say(f"PATH CHOSEN: full decode_1 [{nm}]: incumbent kept (the chain routed V0 master; nothing to gate)")
+        return 0, _C320_INCUMBENT
+    dev = torch.device("cuda")
+    gen = torch.Generator(device="cuda").manual_seed(3202)
+    data = _splitkv_synthetic([79999], 1.0, gen, dev)
+    _c320_bounds(data, "[c320-ab]")
+    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
+    v, knobs = route, _C320_INCUMBENT
+    try:
+        try:
+            adopt, detail, onepass_ok = _c320_gate_onepass(route, gen, flush, data)
+        except Exception as e:
+            adopt, detail, onepass_ok = False, f"gate raised {e!r}", []
+        if adopt:
+            knobs = (True, False, 16)
+        _say(f"PATH CHOSEN: full decode_1 [c320-combine-onepass]: {'ONEPASS combine' if adopt else 'incumbent combine kept'} "
+             f"on V{route} ({detail})")
+        try:
+            adopt2, k2, detail2 = _c320_gate_early(route, knobs[0], onepass_ok, gen, flush, data)
+        except Exception as e:
+            adopt2, k2, detail2 = False, knobs, f"gate raised {e!r}"
+        if adopt2:
+            v, knobs = 4, k2
+        _say(f"PATH CHOSEN: full decode_1 [c320-pdl-early-trigger]: "
+             f"{'V4 EARLY trigger, PDL combine %d warps' % k2[2] if adopt2 else 'incumbent trigger kept'} ({detail2})")
+    finally:
+        del flush, data
+        torch.cuda.empty_cache()
+    return v, knobs
+
+
 def _c320_setup() -> None:
     """Run the c320 phases, then freeze the full decode_1 route ONCE (before any capture by the judge). Never
     raises; any failure keeps master (V0)."""
-    global _C320_FN
+    global _C320_FN, _C320_KNOBS
     route, detail = 0, "not run"
     try:
         route, detail = _c320_setup_body()
@@ -7179,12 +7492,30 @@ def _c320_setup() -> None:
             _say(f"[c320] ticket re-zero raised: {e!r}")
     if route and _C320_EXT is None:
         route, detail = 0, "module unavailable"
-    _C320_FN = _C320_VARIANTS[route] if route else None  # frozen: kernel_fn only reads it
     if route:
         _say(f"PATH CHOSEN: full decode_1 [chain]: V{route} ({_C320_SOURCES[route]}) ({detail}); import clock "
              f"{_c320_clock():.0f} s")
     else:
         _say(f"PATH CHOSEN: full decode_1 [chain]: V0 master (fallback: {detail}); import clock {_c320_clock():.0f} s")
+    # hyp/attn-c320: the two changes, each gated on its own after the chain's route (incumbent on any miss).
+    final, knobs = route, _C320_INCUMBENT
+    try:
+        final, knobs = _c320_ab_gates(route)
+    except Exception as e:
+        final, knobs = route, _C320_INCUMBENT
+        _say(f"PATH CHOSEN: full decode_1 [c320-combine-onepass + c320-pdl-early-trigger]: incumbent kept "
+             f"(A/B gates raised {e!r})")
+    finally:
+        _C320_FN = None
+        try:
+            _rezero_tickets()  # the checks' V0 runs used master's self-resetting tickets
+        except Exception as e:
+            _say(f"[c320] ticket re-zero raised: {e!r}")
+    _C320_KNOBS = knobs if final else _C320_INCUMBENT          # frozen: _c320_run only reads it
+    _C320_FN = _C320_VARIANTS[final] if final else None        # frozen: kernel_fn only reads it
+    _say(f"PATH CHOSEN: full decode_1 [chain final]: " + (f"V{final} [{_c320_kname(final, _C320_KNOBS)}]" if final
+         else "V0 master") + f"; onepass {_C320_KNOBS[0]}, early trigger {_C320_KNOBS[1]}; import clock "
+         f"{_c320_clock():.0f} s")
 
 
 def _cx_clock() -> float:
