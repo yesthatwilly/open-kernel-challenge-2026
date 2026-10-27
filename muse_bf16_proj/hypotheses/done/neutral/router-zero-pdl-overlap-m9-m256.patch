@@ -1,0 +1,712 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index d51c745a..af2b3081 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -63,9 +63,17 @@ Pooler K-halves at m == 128 (hypothesis pooler-khalf-m128-fp32-partials-triton-c
+ never bf16), then one Triton kernel (_add2_cast_kernel) adds the two fp32 partials and rounds once to bf16, the
+ numerics of cuBLAS's own fp32 split-K reduce. Own flag (pooler_khalf128_ok), canary, two read-flush gate rounds and a
+ profiler assertion of exactly two launches; any miss keeps master's NN torch.mm.
++
++Router zero fill under PDL (hypothesis router-zero-pdl-overlap-m9-m256), per m class 9..16 / 17..32 / 33..128 / > 128
++(own flags router_pdl_ok_<16|32|128|256>): torch.zeros becomes torch.empty + _router_zero_pdl_kernel (trigger at
++entry), and the router kernel (swap-AB or hilo, PDL constexpr) is launched with launch_pdl=True and one
++griddepcontrol.wait right before its atomic_add, so its K-loop overlaps the fill. Feature probe + PTX order check +
++warm-up after the router warm-up; per class a check, a race check with a slow-primary stand-in, two read-flush gate
++rounds (third arm: zero kernel, PDL off) and a kernel-name assertion; any miss keeps master. m <= 8 is untouched.
+ """
+ 
+ import os
++import re
+ import time
+ from typing import TypedDict
+ 
+@@ -120,6 +128,8 @@ NN_POOLER_MAX_M = 256
+ # Cells of the prepare()-time A/B/A/B graph self-check: (layer, n, k, m).
+ AB_CASES = (
+     ("router", ROUTER_N, ROUTER_K, 1), ("router", ROUTER_N, ROUTER_K, 8), ("router", ROUTER_N, ROUTER_K, 128),
++    # router-zero-pdl-overlap-m9-m256: the other three R-PDL cells (m=128 is above), each mapped to its own flag.
++    ("router", ROUTER_N, ROUTER_K, 16), ("router", ROUTER_N, ROUTER_K, 32), ("router", ROUTER_N, ROUTER_K, 256),
+     ("unpooler", 1024, 4096, 1), ("unpooler", 1024, 4096, 8), ("unpooler", 8192, 4096, 128),
+     ("pooler", 4096, 8192, 1), ("pooler", 4096, 8192, 8), ("pooler", 4096, 8192, 128),
+     ("pooler", 4096, 8192, 256),
+@@ -163,6 +173,7 @@ def _router_hilo_kernel(
+     stride_xm, stride_wn, stride_om,
+     K_SLICE: tl.constexpr,
+     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
++    PDL: tl.constexpr,
+ ):
+     """out[M, N] (+)= x[M, K] @ (hi + lo)[N, K]^T over this program's K-slice, fp32 accumulate.
+ 
+@@ -170,6 +181,8 @@ def _router_hilo_kernel(
+     Program (pid_m, pid_n, pid_k) covers rows of M [pid_m*BLOCK_M, +BLOCK_M), rows of N
+     [pid_n*BLOCK_N, +BLOCK_N) and K [pid_k*K_SLICE, +K_SLICE), with no loop over M; its fp32
+     K-partial is atomically added into the zeroed output. K_SLICE is a multiple of BLOCK_K.
++    PDL (launched with launch_pdl=True after _router_zero_pdl_kernel): one griddepcontrol.wait after
++    the K-loop, immediately before the atomic; PDL False compiles master's kernel.
+     """
+     pid_m = tl.program_id(0)
+     pid_n = tl.program_id(1)
+@@ -197,6 +210,8 @@ def _router_hilo_kernel(
+         hi_ptrs += BLOCK_K
+         lo_ptrs += BLOCK_K
+     out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :]
++    if PDL:   # the zero kernel's grid has completed and its stores are visible before any atomic
++        tl.extra.cuda.gdc_wait()
+     tl.atomic_add(out_ptrs, acc, mask=m_mask[:, None], sem="relaxed")
+ 
+ 
+@@ -207,6 +222,7 @@ def _router_swapab_kernel(
+     stride_xm, stride_wn, stride_om,
+     K_SLICE: tl.constexpr,
+     BLOCK_W: tl.constexpr, BLOCK_T: tl.constexpr, BLOCK_K: tl.constexpr,
++    PDL: tl.constexpr,
+ ):
+     """out[M, N] (+)= x[M, K] @ (hi + lo)[N, K]^T over this program's K-slice, computed as
+     ((hi + lo) @ x^T)^T (swap-AB), fp32 accumulate.
+@@ -217,6 +233,7 @@ def _router_swapab_kernel(
+     +K_SLICE). hi / lo tiles [BLOCK_W, BLOCK_K] (as stored) are tl.dot's LHS, the x^T tile
+     [BLOCK_K, BLOCK_T] its RHS, so 64 weight rows sit on the MMA M side. The fp32 K-partial is
+     atomically added, transposed, into the zeroed output. K_SLICE is a multiple of BLOCK_K.
++    PDL: as _router_hilo_kernel (one griddepcontrol.wait after the K-loop, before the atomic).
+     """
+     pid_t = tl.program_id(0)
+     pid_w = tl.program_id(1)
+@@ -241,53 +258,149 @@ def _router_swapab_kernel(
+         lo_ptrs += BLOCK_K
+         xt_ptrs += BLOCK_K
+     out_ptrs = out_ptr + offs_t[None, :] * stride_om + offs_w[:, None]
++    if PDL:   # the zero kernel's grid has completed and its stores are visible before any atomic
++        tl.extra.cuda.gdc_wait()
+     tl.atomic_add(out_ptrs, acc, mask=t_mask[None, :], sem="relaxed")
+ 
+ 
+-def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, num_stages: int,
+-                    report: bool = False) -> torch.Tensor:
+-    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
+-    the memset of the zeroed output. Branches only on shapes. report=True (prepare() only)
+-    prints the compiled variant's registers, spills and PTX counts."""
++# --- router zero fill under PDL (hypothesis router-zero-pdl-overlap-m9-m256) ----------------------
++# At m > 8 the router is a zero fill of its fp32 output plus the split-K Triton kernel that atomically adds into it.
++# With a cell's flag on, the fill is _router_zero_pdl_kernel (its first statement triggers the dependent launch) and
++# the router kernel is launched with launch_pdl=True and PDL=True: its whole K-loop (weight stream + MMAs) runs while
++# the fill runs, and one griddepcontrol.wait right before the atomic orders every zero before every atomic. zmode
++# (from the cell's state flag, kernel_fn): 0 master (torch.zeros, PDL off), 1 candidate (zero kernel + PDL),
++# ROUTER_ZMODE_NOPDL = 2 the gate-only third arm (zero kernel, router PDL off, no launch_pdl), set only on prepare()'s
++# gate copies of state. m <= 8 (router_kernel<8,8>, no memset) never maps to a flag.
++ROUTER_PDL_MS = (16, 32, 128, 256)          # one flag per m class: 9..16, 17..32, 33..128, > 128
++ROUTER_PDL_FLAGS = tuple(f"router_pdl_ok_{b}" for b in ROUTER_PDL_MS)
++ROUTER_PDL_CHECK_MS = {16: (9, 16), 32: (32,), 128: (64, 128), 256: (256,)}   # correctness per flag (9: the test)
++ROUTER_PDL_WARM_MS = (9, 16, 32, 64, 128, 256)   # every m > 8 in ROUTER_WARM_MS, plus the m = 9 test
++ROUTER_ZMODE_NOPDL = 2
++ROUTER_ZERO_BLOCK = 4096
++ROUTER_ZERO_WARPS = 4
++ROUTER_PDL_RACE_REPS = 32
++ROUTER_PDL_SPIN_CYCLES = 20000   # stand-in primary: ~10 us of clock64 spin before its zero stores
++ROUTER_PDL_ROUNDS = 2            # read-flush _cell_gate rounds; BOTH must clear the bar (the khalf rule)
++ROUTER_PDL_MIN_RATIO = 1.03      # master / candidate, net, each round
++ROUTER_PDL_MAX_IQR = 1.5         # cand IQR <= this x max(master IQR, ROUTER_PDL_IQR_FLOOR_US), each round
++ROUTER_PDL_IQR_FLOOR_US = 0.5
++
++
++@triton.jit
++def _router_zero_pdl_kernel(out_ptr, numel, BLOCK: tl.constexpr):
++    """out[:numel] = 0 (fp32). First statement: trigger the dependent (router) grid's launch."""
++    tl.extra.cuda.gdc_launch_dependents()
++    pid = tl.program_id(0)
++    offs = pid * BLOCK + tl.arange(0, BLOCK)
++    tl.store(out_ptr + offs, tl.zeros((BLOCK,), dtype=tl.float32), mask=offs < numel)
++
++
++@triton.jit
++def _router_zero_slow_kernel(out_ptr, numel, BLOCK: tl.constexpr, SPIN: tl.constexpr):
++    """prepare()-only race-check stand-in for _router_zero_pdl_kernel: the same trigger at entry, then ~SPIN clock64
++    cycles of spinning before the same zero stores (a slow primary). Never launched by kernel_fn."""
++    tl.extra.cuda.gdc_launch_dependents()
++    t0 = tl.inline_asm_elementwise("mov.u64 $0, %clock64;", "=l", [], dtype=tl.int64, is_pure=False, pack=1)
++    t = t0
++    while t - t0 < SPIN:
++        t = tl.inline_asm_elementwise("mov.u64 $0, %clock64;", "=l", [], dtype=tl.int64, is_pure=False, pack=1)
++    pid = tl.program_id(0)
++    offs = pid * BLOCK + tl.arange(0, BLOCK)
++    tl.store(out_ptr + offs, tl.zeros((BLOCK,), dtype=tl.float32), mask=offs < numel)
++
++
++def _router_zero_launch(out: torch.Tensor):
++    numel = out.numel()
++    return _router_zero_pdl_kernel[(triton.cdiv(numel, ROUTER_ZERO_BLOCK),)](
++        out, numel, BLOCK=ROUTER_ZERO_BLOCK, num_warps=ROUTER_ZERO_WARPS)
++
++
++def _router_out(m: int, n: int, dev, zmode: int) -> torch.Tensor:
++    """The router's fp32 output, zeroed right before the router launch, every call: master's torch.zeros
++    (zmode 0) or torch.empty + _router_zero_pdl_kernel (zmode 1 / 2)."""
++    if not zmode:
++        return torch.zeros((m, n), dtype=torch.float32, device=dev)
++    out = torch.empty((m, n), dtype=torch.float32, device=dev)
++    _router_zero_launch(out)
++    return out
++
++
++def _router_pdl_flag(m: int) -> str:
++    """The R-PDL state flag serving m (shape only): "" at m <= 8 (the cluster path, untouched), else the first class
++    in ROUTER_PDL_MS holding m (m > 256 maps to the 256 class: the same hilo config)."""
++    if m <= ROUTER_CLUSTER_MAX_M:
++        return ""
++    for b in ROUTER_PDL_MS:
++        if m <= b:
++            return f"router_pdl_ok_{b}"
++    return f"router_pdl_ok_{ROUTER_PDL_MS[-1]}"
++
++
++def _router_zmode(m: int, state: dict) -> int:
++    """0 / 1 / ROUTER_ZMODE_NOPDL from the cell's prepare()-set state flag (False / True / gate-only 2)."""
++    flag = _router_pdl_flag(m)
++    return int(state.get(flag, False)) if flag else 0
++
++
++def _router_swapab_launch(x, hi, lo, out, num_stages: int, pdl: bool = False, launch_pdl: bool = False):
++    """One _router_swapab_kernel launch into out (already zeroed / being zeroed by the PDL primary). The routed
++    paths pass pdl == launch_pdl; only prepare()'s no-wait race control passes pdl False with launch_pdl True."""
+     m, k = x.shape
+     n = hi.shape[0]
+     block_t, split_k = _router_config(m)
+-    k_slice = k // split_k
+-    # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+-    out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+     grid = (triton.cdiv(m, block_t), n // ROUTER_BLOCK_W, split_k)
+-    compiled = _router_swapab_kernel[grid](
++    extra = {"launch_pdl": True} if launch_pdl else {}
++    return _router_swapab_kernel[grid](
+         x, hi, lo, out,
+         m,
+         x.stride(0), hi.stride(0), out.stride(0),
+-        K_SLICE=k_slice,
+-        BLOCK_W=ROUTER_BLOCK_W, BLOCK_T=block_t, BLOCK_K=ROUTER_BLOCK_K,
+-        num_warps=ROUTER_NUM_WARPS, num_stages=num_stages,
++        K_SLICE=k // split_k,
++        BLOCK_W=ROUTER_BLOCK_W, BLOCK_T=block_t, BLOCK_K=ROUTER_BLOCK_K, PDL=pdl,
++        num_warps=ROUTER_NUM_WARPS, num_stages=num_stages, **extra,
+     )
+-    if report:
+-        _print_ptx_counts(f"[router] swapab m={m} BLOCK_T={block_t} SPLIT_K={split_k} "
+-                          f"grid={grid} stages={num_stages}", compiled)
+-    return out
+ 
+ 
+-def _router_hilo_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
+-    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
+-    the memset of the zeroed output. Branches only on shapes."""
++def _router_hilo_launch(x, hi, lo, out, pdl: bool = False, launch_pdl: bool = False):
++    """One _router_hilo_kernel launch into out (master's config); pdl / launch_pdl as _router_swapab_launch."""
+     m, k = x.shape
+     n = hi.shape[0]
+     block_m, block_n, split_k = _router_hilo_config(m)
+-    k_slice = k // split_k
+-    # Zeroed right before the launch, every call: the K-partials are atomically added into it.
+-    out = torch.zeros((m, n), dtype=torch.float32, device=x.device)
+     grid = (triton.cdiv(m, block_m), n // block_n, split_k)
+-    _router_hilo_kernel[grid](
++    extra = {"launch_pdl": True} if launch_pdl else {}
++    return _router_hilo_kernel[grid](
+         x, hi, lo, out,
+         m,
+         x.stride(0), hi.stride(0), out.stride(0),
+-        K_SLICE=k_slice,
+-        BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=ROUTER_BLOCK_K,
+-        num_warps=ROUTER_NUM_WARPS, num_stages=ROUTER_NUM_STAGES,
++        K_SLICE=k // split_k,
++        BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=ROUTER_BLOCK_K, PDL=pdl,
++        num_warps=ROUTER_NUM_WARPS, num_stages=ROUTER_NUM_STAGES, **extra,
+     )
++
++
++def _router_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, num_stages: int,
++                    report: bool = False, zmode: int = 0) -> torch.Tensor:
++    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
++    the zero fill of the output (zmode: see _router_out; 1 launches the router with PDL). Branches
++    only on shapes and zmode (a state flag). report=True (prepare() only) prints the compiled
++    variant's registers, spills and PTX counts."""
++    m = x.shape[0]
++    out = _router_out(m, hi.shape[0], x.device, zmode)
++    pdl = zmode == 1
++    compiled = _router_swapab_launch(x, hi, lo, out, num_stages, pdl=pdl, launch_pdl=pdl)
++    if report:
++        block_t, split_k = _router_config(m)
++        grid = (triton.cdiv(m, block_t), hi.shape[0] // ROUTER_BLOCK_W, split_k)
++        _print_ptx_counts(f"[router] swapab m={m} BLOCK_T={block_t} SPLIT_K={split_k} "
++                          f"grid={grid} stages={num_stages}", compiled)
++    return out
++
++
++def _router_hilo_forward(x: torch.Tensor, hi: torch.Tensor, lo: torch.Tensor, zmode: int = 0) -> torch.Tensor:
++    """x bf16 [m, 8192] @ (hi + lo).T with fp32 accumulation -> fp32 [m, 256]. One launch plus
++    the zero fill of the output (zmode as _router_forward). Branches only on shapes and zmode."""
++    out = _router_out(x.shape[0], hi.shape[0], x.device, zmode)
++    pdl = zmode == 1
++    _router_hilo_launch(x, hi, lo, out, pdl=pdl, launch_pdl=pdl)
+     return out
+ 
+ 
+@@ -356,6 +469,295 @@ def _router_prepare(state: dict) -> None:
+             print(f"[router] m={m}: {path}", flush=True)
+ 
+ 
++# --- R-PDL prepare (hypothesis router-zero-pdl-overlap-m9-m256) -------------------------------------
++# _router_pdl_probe (both states, right after _router_prepare, before any capture): feature detection, one synced
++# launch of every new variant with a PTX order check, then the warm-up of every m class the judge can hit with
++# kernel_fn's exact launch kwargs. _router_pdl_prepare (state A, after the router cluster): per flag, correctness,
++# race checks (kernel_fn graph + a slow-primary stand-in), two read-flush gate rounds with a third arm, a profiler
++# kernel-name assertion; one PATH CHOSEN R-PDL decision line per flag.
++_PTX_RED_ATOM = re.compile(r"^\s*(?:@!?%\w+\s+)?(?:red|atom)\.", re.M)
++
++
++def _router_pdl_capability() -> str:
++    """"" if this Triton exposes tl.extra.cuda.gdc_wait / gdc_launch_dependents, else why not. Prints the version
++    and whether CUDAOptions declares launch_pdl (info; the probe launch itself is the test that it is accepted)."""
++    try:
++        import triton.language.extra.cuda as tlc
++    except Exception as e:
++        return f"triton {triton.__version__}: triton.language.extra.cuda unavailable ({type(e).__name__})"
++    missing = [nm for nm in ("gdc_wait", "gdc_launch_dependents") if not hasattr(tlc, nm)]
++    try:
++        from triton.backends.nvidia.compiler import CUDAOptions
++        opt = "launch_pdl" in getattr(CUDAOptions, "__dataclass_fields__", {})
++    except Exception as e:
++        opt = f"unknown ({type(e).__name__})"
++    print(f"[r-pdl] triton {triton.__version__}: tl.extra.cuda gdc_wait/gdc_launch_dependents "
++          f"{'present' if not missing else 'MISSING ' + str(missing)}; CUDAOptions.launch_pdl: {opt}", flush=True)
++    return f"triton {triton.__version__}: tl.extra.cuda lacks {missing}" if missing else ""
++
++
++def _router_pdl_ptx_why(tag: str, compiled, kind: str) -> str:
++    """PTX order check of one compiled variant; "" if it holds, else why. kind "zero": exactly one
++    griddepcontrol.launch_dependents, before the first st.global, and no griddepcontrol.wait. kind "router": exactly
++    one griddepcontrol.wait, after the last wgmma / mma and before the first red / atom (an extra wait, e.g. one
++    auto-inserted at entry for launch_pdl, fails). kind "master": no griddepcontrol at all."""
++    ptx = compiled.asm["ptx"]
++    nw = ptx.count("griddepcontrol.wait")
++    nl = ptx.count("griddepcontrol.launch_dependents")
++    i_w = ptx.find("griddepcontrol.wait")
++    i_mma = max(ptx.rfind("wgmma.mma_async"), ptx.rfind("mma.sync"))
++    ma = _PTX_RED_ATOM.search(ptx)
++    i_atom = ma.start() if ma else -1
++    i_l = ptx.find("griddepcontrol.launch_dependents")
++    i_st = ptx.find("st.global")
++    print(f"[r-pdl] ptx {tag}: griddepcontrol.wait x{nw} @{i_w}, launch_dependents x{nl} @{i_l}, last mma @{i_mma}, "
++          f"first red/atom @{i_atom}, first st.global @{i_st}, wgmma {ptx.count('wgmma.mma_async')}", flush=True)
++    if kind == "zero":
++        if nl != 1 or nw != 0:
++            return f"{tag}: zero kernel has launch_dependents x{nl} (want 1), wait x{nw} (want 0)"
++        if i_st >= 0 and i_l > i_st:
++            return f"{tag}: launch_dependents is not at the zero kernel's entry (after a st.global)"
++        return ""
++    if kind == "master":
++        return "" if nw == 0 and nl == 0 else f"{tag}: PDL=False variant carries griddepcontrol (x{nw} wait, x{nl})"
++    if nw != 1:
++        return f"{tag}: griddepcontrol.wait x{nw} (want exactly 1; an auto-inserted entry wait kills the overlap)"
++    if i_mma < 0 or i_atom < 0:
++        return f"{tag}: no mma ({i_mma}) or no red/atom ({i_atom}) found to order the wait against"
++    if not i_mma < i_w < i_atom:
++        return f"{tag}: wait @{i_w} not between the last mma @{i_mma} and the first red/atom @{i_atom}"
++    return ""
++
++
++def _router_pdl_launch(path: str, x, state: dict, out, pdl: bool, launch_pdl: bool):
++    """One router launch on the path kernel_fn takes for x (prepare()-only callers)."""
++    hi, lo = state["router_hi"], state["router_lo"]
++    if path == "swapab":
++        return _router_swapab_launch(x, hi, lo, out, state["router_stages"][_router_config(x.shape[0])],
++                                     pdl=pdl, launch_pdl=launch_pdl)
++    return _router_hilo_launch(x, hi, lo, out, pdl=pdl, launch_pdl=launch_pdl)
++
++
++def _router_pdl_warm(state: dict, zmodes) -> None:
++    """Run every m in ROUTER_PDL_WARM_MS through the forward kernel_fn calls (exact kwargs) in each zmode, synced, so
++    no timed call or capture ever compiles."""
++    hi, lo = state["router_hi"], state["router_lo"]
++    k = hi.shape[1]
++    for m in ROUTER_PDL_WARM_MS:
++        x = torch.randn((m, k), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++        path = _router_path(x, hi, ROUTER_N, state["router_stages"])
++        for z in zmodes:
++            if path == "swapab":
++                _router_forward(x, hi, lo, state["router_stages"][_router_config(m)], zmode=z)
++            elif path == "hilo":
++                _router_hilo_forward(x, hi, lo, zmode=z)
++    torch.cuda.synchronize()
++
++
++def _router_pdl_probe(state: dict) -> None:
++    """State A, right after _router_prepare: sets state["router_pdl_cap"] ("" = capable). Feature detection; per
++    class m in ROUTER_PDL_MS one announced, synced launch of the zero kernel + the PDL router (launch_pdl=True) and of
++    master's variant, each PTX-checked (_router_pdl_ptx_why); then the warm-up of zmodes 0 / 1 / 2. Never raises."""
++    t0 = time.perf_counter()
++    cap = ""
++    try:
++        cap = _router_pdl_capability()
++        hi = state["router_hi"]
++        if not cap and tuple(hi.shape) != (ROUTER_N, ROUTER_K):
++            cap = f"router weight {tuple(hi.shape)} unexpected"
++        zero_checked = False
++        for m in ROUTER_PDL_MS:
++            if cap:
++                break
++            x = torch.randn((m, hi.shape[1]), device=hi.device, dtype=torch.float32).to(torch.bfloat16)
++            path = _router_path(x, hi, ROUTER_N, state["router_stages"])
++            if path not in ("swapab", "hilo"):
++                cap = f"m={m}: no Triton router path"
++                break
++            out = torch.empty((m, ROUTER_N), dtype=torch.float32, device=hi.device)
++            print(f"[r-pdl] LAUNCH probe m={m}: _router_zero_pdl_kernel + {path} PDL (launch_pdl=True) ...", flush=True)
++            cz = _router_zero_launch(out)
++            cr = _router_pdl_launch(path, x, state, out, pdl=True, launch_pdl=True)
++            cm = _router_pdl_launch(path, x, state, torch.zeros_like(out), pdl=False, launch_pdl=False)
++            torch.cuda.synchronize()
++            print(f"[r-pdl] DONE   probe m={m} (synced)", flush=True)
++            if not zero_checked:
++                cap = _router_pdl_ptx_why("_router_zero_pdl_kernel", cz, "zero")
++                zero_checked = True
++            cap = cap or _router_pdl_ptx_why(f"{path} m={m} PDL", cr, "router")
++            cap = cap or _router_pdl_ptx_why(f"{path} m={m} master", cm, "master")
++        if not cap:
++            _router_pdl_warm(state, (0, 1, ROUTER_ZMODE_NOPDL))
++    except Exception as e:   # any surprise keeps master's router for every m
++        cap = f"probe raised {type(e).__name__}: {str(e)[-200:]}"
++    torch.cuda.synchronize()
++    state["router_pdl_cap"] = cap
++    print(f"[r-pdl] probe + warm-up {time.perf_counter() - t0:.2f}s: " + ("capable" if not cap else f"OFF: {cap}"),
++          flush=True)
++
++
++def _router_pdl_capture(fn):
++    """Graph-capture fn() after 3 eager warm calls; returns (graph, the captured output)."""
++    for _ in range(3):
++        fn()
++    torch.cuda.synchronize()
++    gr = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(gr):
++        out = fn()
++    torch.cuda.synchronize()
++    return gr, out
++
++
++def _router_pdl_rel(a: torch.Tensor, b: torch.Tensor) -> float:
++    a, b = a.double(), b.double()
++    if not bool(torch.isfinite(a).all()):
++        return float("inf")
++    return float((a - b).norm() / b.norm().clamp_min(1e-30))
++
++
++def _router_pdl_race(state: dict, m: int, flag: str):
++    """Race checks at class m; returns (why, info). Graphs on one x buffer, refilled before every round of
++    ROUTER_PDL_RACE_REPS: master (flag off) and the candidate (flag on), both kernel_fn; the slow-primary stand-in
++    (_router_zero_slow_kernel, ~10 us spin, then the PDL router launched the same way, with its wait); and the
++    no-wait control (the stand-in, then master's router body launched with launch_pdl=True: prepare()-only, printed,
++    never routed). Candidate and stand-in must stay within AB_ROUTER_REL_L2 of master on every replay."""
++    hi = state["router_hi"]
++    dev = hi.device
++    cfg = {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}
++    st_on, st_off = dict(state), dict(state)
++    st_on[flag], st_off[flag] = True, False
++    g = torch.Generator(device=dev)
++    g.manual_seed(13579 + m)
++    x = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++    data = {"x": x, "config": cfg}
++    path = _router_path(x, hi, ROUTER_N, state["router_stages"])
++
++    def slow(wait: bool):
++        out = torch.empty((m, ROUTER_N), dtype=torch.float32, device=dev)
++        numel = out.numel()
++        _router_zero_slow_kernel[(triton.cdiv(numel, ROUTER_ZERO_BLOCK),)](
++            out, numel, BLOCK=ROUTER_ZERO_BLOCK, SPIN=ROUTER_PDL_SPIN_CYCLES, num_warps=ROUTER_ZERO_WARPS)
++        _router_pdl_launch(path, x, state, out, pdl=wait, launch_pdl=True)
++        return out
++
++    graphs = {}
++    try:
++        graphs["master"] = _router_pdl_capture(lambda: kernel_fn(data, st_off))
++        graphs["cand"] = _router_pdl_capture(lambda: kernel_fn(data, st_on))
++        for name, wait in (("slow", True), ("nowait", False)):
++            print(f"[r-pdl] LAUNCH race stand-in m={m} {name} (spin {ROUTER_PDL_SPIN_CYCLES} cycles) ...", flush=True)
++            slow(wait)
++            torch.cuda.synchronize()
++            print(f"[r-pdl] DONE   race stand-in m={m} {name} (synced)", flush=True)
++            graphs[name] = _router_pdl_capture(lambda w=wait: slow(w))
++        worst = {"cand": 0.0, "slow": 0.0, "nowait": 0.0}
++        nbad = {"cand": 0, "slow": 0, "nowait": 0}
++        for _ in range(ROUTER_PDL_RACE_REPS):
++            x.copy_(torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16))
++            for name in ("master", "cand", "slow", "nowait"):
++                graphs[name][0].replay()
++            torch.cuda.synchronize()
++            ref = graphs["master"][1]
++            for name in ("cand", "slow", "nowait"):
++                e = _router_pdl_rel(graphs[name][1], ref)
++                worst[name] = max(worst[name], e)
++                nbad[name] += int(not e <= AB_ROUTER_REL_L2)
++    finally:
++        graphs.clear()
++        torch.cuda.synchronize()
++    info = (f"race {ROUTER_PDL_RACE_REPS}x vs master: cand worst {worst['cand']:.1e}, slow-primary worst "
++            f"{worst['slow']:.1e}, no-wait control {nbad['nowait']}/{ROUTER_PDL_RACE_REPS} wrong "
++            f"(worst {worst['nowait']:.1e}" + ("" if nbad["nowait"] else "; race NOT observable: no early launch?")
++            + ")")
++    print(f"[r-pdl] m={m}: {info}", flush=True)
++    if nbad["cand"] or nbad["slow"]:
++        return (f"race: cand {nbad['cand']}/{ROUTER_PDL_RACE_REPS}, slow-primary {nbad['slow']}/"
++                f"{ROUTER_PDL_RACE_REPS} replays beyond {AB_ROUTER_REL_L2:g}"), info
++    return "", info
++
++
++def _router_pdl_names_why(names: list, path: str) -> str:
++    """"" if one candidate call launches exactly [_router_zero_pdl_kernel, the router kernel] (no fill kernel)."""
++    want = "_router_swapab_kernel" if path == "swapab" else "_router_hilo_kernel"
++    if any("vectorized_elementwise" in nm or "fill" in nm.lower() for nm in names):
++        return f"a fill kernel is still launched ({names})"
++    if (len(names) != 2 or sum("_router_zero_pdl_kernel" in nm for nm in names) != 1
++            or sum(want in nm for nm in names) != 1):
++        return f"expected exactly [_router_zero_pdl_kernel, {want}], profiler saw {names}"
++    return ""
++
++
++def _router_pdl_prepare(state: dict) -> None:
++    """State A only, after the router cluster (kernel_fn's router dispatch is complete). Per class m in
++    ROUTER_PDL_MS sets state[router_pdl_ok_<m>] (False unless every step passes): _cell_check through kernel_fn at
++    ROUTER_PDL_CHECK_MS (rel L2 vs fp64 <= AB_ROUTER_REL_L2, power-of-two probe row, repeat within the same
++    tolerance: relaxed fp32 atomics are order-nondeterministic); _router_pdl_race; ROUTER_PDL_ROUNDS read-flush
++    _cell_gate rounds (master/cand >= ROUTER_PDL_MIN_RATIO and the IQR rule in every round) with the third arm
++    (zero kernel, PDL off) printed beside; then the profiler kernel-name assertion. Never raises."""
++    cap = state.get("router_pdl_cap", "not probed")
++    for b in ROUTER_PDL_MS:
++        state[f"router_pdl_ok_{b}"] = False
++    if cap:
++        _decision(f"PATH CHOSEN R-PDL router m in {ROUTER_PDL_MS}: master (torch.zeros + router) for all; {cap}")
++        return
++    for b in ROUTER_PDL_MS:
++        flag = f"router_pdl_ok_{b}"
++        t0 = time.perf_counter()
++        why, race_info, rounds = "", "race not run", []
++        try:
++            st_on = dict(state)
++            st_on[flag] = True
++            for m in ROUTER_PDL_CHECK_MS[b]:
++                cfg = {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}
++                bad = _cell_check(f"r-pdl m={m}", lambda xx, c=cfg: kernel_fn({"x": xx, "config": c}, st_on),
++                                  state["router"], m, ROUTER_N, ROUTER_K, rel_bound=AB_ROUTER_REL_L2,
++                                  repeat_rel=AB_ROUTER_REL_L2)
++                if bad:
++                    why = f"check m={m}: {bad}"
++                    break
++            if not why:
++                why, race_info = _router_pdl_race(state, b, flag)
++            if not why:
++                bar = (f"route if master/cand >= {ROUTER_PDL_MIN_RATIO} in every round and IQR <= "
++                       f"{ROUTER_PDL_MAX_IQR}x master")
++                for rnd in range(ROUTER_PDL_ROUNDS):
++                    st = {}
++                    cand_us, master_us = _cell_gate(f"r-pdl round {rnd + 1}/{ROUTER_PDL_ROUNDS}", "router", b,
++                                                    ROUTER_N, ROUTER_K, flag, state, flush_mode=B12_GATE_FLUSH,
++                                                    stats=st, route_txt=bar, extra={"nopdl": ROUTER_ZMODE_NOPDL})
++                    st["ratio"] = master_us / cand_us
++                    rounds.append(st)
++                if not all(r["ratio"] >= ROUTER_PDL_MIN_RATIO for r in rounds):
++                    why = f"gate: master/cand {[round(r['ratio'], 3) for r in rounds]} not all >= {ROUTER_PDL_MIN_RATIO}"
++                elif not all(r["cand"]["iqr"] <= ROUTER_PDL_MAX_IQR * max(r["master"]["iqr"], ROUTER_PDL_IQR_FLOOR_US)
++                             for r in rounds):
++                    why = f"gate: cand IQR > {ROUTER_PDL_MAX_IQR}x master IQR in some round"
++            if not why:
++                xs = torch.randn((b, ROUTER_K), device=state["router"].device, dtype=torch.float32).to(torch.bfloat16)
++                data = {"x": xs, "config": {"m": b, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}}
++                path = _router_path(xs, state["router_hi"], ROUTER_N, state["router_stages"])
++                try:
++                    names = _cell_kernels(lambda: kernel_fn(data, st_on))
++                    print(f"[r-pdl] m={b}: profiled kernels {names}", flush=True)
++                    why = _router_pdl_names_why(names, path)
++                except Exception as e:   # part of the routing contract: no profile, no route
++                    why = f"profiler unavailable ({type(e).__name__}: {str(e)[-160:]})"
++            if not why:
++                state[flag] = True
++        except Exception as e:   # any surprise keeps master's router for this class
++            why = f"raised {type(e).__name__}: {str(e)[-200:]}"
++            state[flag] = False
++        torch.cuda.synchronize()
++        r_txt = "; ".join(
++            f"r{i + 1} m/c {r['ratio']:.3f} net m/c/nopdl {r['master']['net']:.2f}/{r['cand']['net']:.2f}/"
++            f"{r['nopdl']['net']:.2f} IQR {r['master']['iqr']:.2f}/{r['cand']['iqr']:.2f}/{r['nopdl']['iqr']:.2f}"
++            for i, r in enumerate(rounds)) or "gate not run"
++        print(f"[prepare-time] r-pdl m={b}: {time.perf_counter() - t0:.2f}s", flush=True)
++        _decision(f"PATH CHOSEN R-PDL router m={b} ({flag}): "
++                  + ("zero kernel + PDL router" if state[flag] else "master (torch.zeros + router)")
++                  + f" [{B12_GATE_FLUSH}-flush, us; {r_txt}] [{race_info}]" + ("" if state[flag] else f"; {why}"))
++
++
+ @triton.jit(do_not_specialize=["M"])
+ def _bf16_splitk_kernel(
+     x_ptr, w_ptr, out_ptr, ws_ptr, cnt_ptr,
+@@ -2602,11 +3004,13 @@ def _lt_forward(x: torch.Tensor, w: torch.Tensor, algo_row: torch.Tensor, ws: to
+     return out
+ 
+ 
+-def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None) -> str:
++def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None, rel_bound: float = CELL_REL_L2,
++                repeat_rel=None) -> str:
+     """prepare()-only canary + correctness for one new path fn(x) -> [m, n] bf16. Every launch is
+     announced with a flushed print and followed by a synchronize, the error word (if any) and a
+-    flushed print, so a fault names its kernel. Random x: rel L2 vs fp64 <= CELL_REL_L2, finite,
+-    a second launch bit-identical; probe x (row 0 a single power-of-two entry): that row's rel error
++    flushed print, so a fault names its kernel. Random x: rel L2 vs fp64 <= rel_bound (CELL_REL_L2), finite,
++    a second launch bit-identical (repeat_rel None) or within repeat_rel of the first (R-PDL: relaxed fp32 atomics
++    are order-nondeterministic); probe x (row 0 a single power-of-two entry): that row's rel error
+     vs the weight column <= CELL_PROBE_REL. Returns "" on pass, else why."""
+     dev = w.device
+     g = torch.Generator(device=dev)
+@@ -2630,8 +3034,13 @@ def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None)
+         if code:
+             return f"{label}: error word {code}"
+         outs.append(o)
+-    if not torch.equal(outs[0], outs[1]):
+-        return "second launch differs from the first"
++    if repeat_rel is None:
++        if not torch.equal(outs[0], outs[1]):
++            return "second launch differs from the first"
++    else:
++        rrel = float((outs[1].double() - outs[0].double()).norm() / outs[0].double().norm().clamp_min(1e-30))
++        if not rrel <= repeat_rel:
++            return f"second launch differs from the first by rel L2 {rrel:.3e} > {repeat_rel:g}"
+     for o, label in ((outs[0], "random"), (outs[2], "probe")):
+         if not bool(torch.isfinite(o.float()).all()):
+             return f"{label}: non-finite output"
+@@ -2639,10 +3048,10 @@ def _cell_check(tag: str, fn, w: torch.Tensor, m: int, n: int, k: int, err=None)
+     rel = float((outs[0].double() - ref).norm() / ref.norm().clamp_min(1e-30))
+     pref = wd[:, col] * 0.5
+     prel = float((outs[2][0].double() - pref).norm() / pref.norm().clamp_min(1e-30))
+-    print(f"[cell] check {tag} m={m}: rel L2 {rel:.3e} (<= {CELL_REL_L2:g}), probe row rel {prel:.3e} "
++    print(f"[cell] check {tag} m={m}: rel L2 {rel:.3e} (<= {rel_bound:g}), probe row rel {prel:.3e} "
+           f"(<= {CELL_PROBE_REL:g})", flush=True)
+-    if not rel <= CELL_REL_L2:
+-        return f"rel L2 {rel:.3e} > {CELL_REL_L2:g}"
++    if not rel <= rel_bound:
++        return f"rel L2 {rel:.3e} > {rel_bound:g}"
+     if not prel <= CELL_PROBE_REL:
+         return f"probe row rel {prel:.3e} > {CELL_PROBE_REL:g}"
+     return ""
+@@ -2662,7 +3071,7 @@ def _cell_capture(fn):
+ 
+ 
+ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: dict, flush_mode: str = "write",
+-               stats=None, route_txt=None):
++               stats=None, route_txt=None, extra=None):
+     """Model selector (copied from _ouns_gate): kernel_fn captured with the cell's flag on
+     (candidate) and off (master's path, byte-identical routing otherwise) on shallow copies of
+     state, the same synthetic x; CELL_GATE_REPS interleaved replays (order swapped every rep), a
+@@ -2672,7 +3081,10 @@ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: d
+     full of clean lines instead of ~50 MB of dirty ones that the timed kernel would write back
+     (DISTILL 3.2.1). Returns (candidate_us, master_us), both net. stats (optional dict, pooler K-halves cell) is
+     filled with each side's raw median / IQR and the baseline; route_txt (optional) replaces the printed route rule.
+-    Both default to None, which leaves every earlier caller's behaviour and print unchanged. prepare()-only."""
++    Both default to None, which leaves every earlier caller's behaviour and print unchanged. extra (optional dict
++    {arm name: flag value}, R-PDL's third arm) adds kernel_fn arms with the flag set to that value, interleaved in a
++    rotating order with cand and master; their net us is printed and, with stats, filled in; routing still reads
++    cand vs master only. None keeps the two-arm loop exactly. prepare()-only."""
+     if flush_mode not in CELL_FLUSH_MODES:
+         raise ValueError(f"_cell_gate: flush_mode {flush_mode!r} not in {CELL_FLUSH_MODES}")
+     dev = state["router"].device
+@@ -2704,8 +3116,18 @@ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: d
+     graphs = {"cand": _cell_capture(lambda: kernel_fn(data, st_c)),
+               "master": _cell_capture(lambda: kernel_fn(data, st_i))}
+     times = {"cand": [], "master": []}
++    arms = ["cand", "master"]
++    for name, val in (extra or {}).items():
++        st_x = dict(state)
++        st_x[flag] = val
++        graphs[name] = _cell_capture(lambda s=st_x: kernel_fn(data, s))
++        times[name] = []
++        arms.append(name)
+     for rep in range(CELL_GATE_REPS):
+-        order = ("cand", "master") if rep % 2 == 0 else ("master", "cand")
++        if not extra:
++            order = ("cand", "master") if rep % 2 == 0 else ("master", "cand")
++        else:
++            order = arms[rep % len(arms):] + arms[:rep % len(arms)]
+         for name in order:
+             times[name].append(replay_us(graphs[name]))
+     med = {name: _ouns_median(v) for name, v in times.items()}
+@@ -2715,6 +3137,9 @@ def _cell_gate(tag: str, layer: str, m: int, n: int, k: int, flag: str, state: d
+           f"{med['master']:.2f} us, empty-graph baseline {base:.2f} us -> net {adj['cand']:.2f} vs "
+           f"{adj['master']:.2f} us, cand/master {adj['cand'] / adj['master']:.3f} ("
+           + (route_txt if route_txt is not None else f"route if <= {CELL_MAX_RATIO}") + ")", flush=True)
++    for name in arms[2:]:
++        print(f"[cell] gate {tag} {layer} m={m}: arm {name} median {med[name]:.2f} us -> net {adj[name]:.2f} us "
++              f"(cand {adj['cand']:.2f}, master {adj['master']:.2f})", flush=True)
+     if stats is not None:
+         for name, v in times.items():
+             sv = sorted(v)
+@@ -3889,6 +4314,7 @@ def _khalf_prepare(state: dict, t_start: float) -> None:
+ 
+ 
+ NEW_CELL_FLAGS = NEW_CELL_FLAGS + (KHALF_FLAG,)   # section (11)'s cell joins the A/B check and the FINAL FLAGS line
++NEW_CELL_FLAGS = NEW_CELL_FLAGS + ROUTER_PDL_FLAGS   # R-PDL cells join the A/B check and the FINAL FLAGS line
+ 
+ 
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+@@ -3918,10 +4344,17 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
+     state[KHALF_FLAG] = False    # pooler m == 128 K-halves: off until state A's selector (or B's inherit) says so
++    for name in ROUTER_PDL_FLAGS:   # router m > 8 zero kernel + PDL: off until state A's selector (or B's inherit)
++        state[name] = False
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
+     t = tick("router triton warm-up", t)
++    if flags is None:
++        # R-PDL: feature probe, PTX order checks and the warm-up of every m class in zmodes 0 / 1 / 2 (state A),
++        # before any capture.
++        _router_pdl_probe(state)
++        t = tick("r-pdl probe + warm-up", t)
+     # (1) Pooler split-K scratch (fp32 partials, overwritten every call) and per-N-tile tickets.
+     pooler = state["pooler"]
+     state["pooler_ws"] = torch.empty((POOLER_SPLIT_K, POOLER_MAX_M, POOLER_N),
+@@ -3976,6 +4409,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # (8) Router m <= 8: CUDA cluster + DSMEM split-K (constant state["router_cluster_ok"]).
+         _router_cluster_prepare(state)
+         t = tick("router cluster self-check", t)
++        # (8b) Router 9 <= m: zero kernel + PDL router per m class (own flags), behind check + race + gate + profile.
++        _router_pdl_prepare(state)
++        t = tick("r-pdl cells (check + race + 2 read-flush gates + profile)", t)
+         # (9) m == 1 bulk row-owner cells A / A2 / A3 and qkv_gate m == 128 cuBLASLt plan B, each
+         # behind its own canary, gate and kernel-name assertion (after master's own work).
+         _bulk_prepare(state)
+@@ -3994,6 +4430,10 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         state["nn_ok"] = flags["nn_ok"]
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
+         state[KHALF_FLAG] = bool(flags.get(KHALF_FLAG, False))   # no per-state buffers (pooler_t is per state)
++        for name in ROUTER_PDL_FLAGS:   # no per-state buffers; warm this state's routed kwargs before any capture
++            state[name] = bool(flags.get(name, False))
++        if any(state[name] for name in ROUTER_PDL_FLAGS):
++            _router_pdl_warm(state, (0, 1))
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _b12_prepare(state, flags=flags)
+@@ -4026,6 +4466,8 @@ def _ab_component(layer: str, m: int, st=None) -> str:
+         return LT_FLAG
+     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
+         return "router_cluster_ok"
++    if st is not None and layer == "router" and _router_pdl_flag(m) and st.get(_router_pdl_flag(m)):
++        return _router_pdl_flag(m)   # m > 8 R-PDL cell: a miss turns off only that class's flag
+     if layer == "unpooler" and m <= OUNS_MAX_M:
+         return "ouns_cl"
+     if layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= m <= NN_GATED_MAX_M:
+@@ -4205,9 +4647,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         return _router_cluster_forward(x, state)
+     hi, lo = state["router_hi"], state["router_lo"]
+     path = _router_path(x, hi, cfg["n"], state["router_stages"])
++    zmode = _router_zmode(x.shape[0], state)   # m > 8: the class's R-PDL flag (shape + state only)
+     if path == "swapab":   # m <= 32
+-        return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])])
++        return _router_forward(x, hi, lo, state["router_stages"][_router_config(x.shape[0])], zmode=zmode)
+     if path == "hilo":     # m > 32: master's forward
+-        return _router_hilo_forward(x, hi, lo)
++        return _router_hilo_forward(x, hi, lo, zmode=zmode)
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])
