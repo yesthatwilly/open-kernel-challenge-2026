@@ -62,9 +62,18 @@ kind: primary
 controls_for: null
 prior: "c320-combine-onepass: the same one-pass batched-load online-LSE fold (routed 1.119x on the full decode_1 combine, landed) applied to the stream-K ticket merge inside splitkv_attn_sk_kernel, which still does two dependent runtime-bounded passes; full-decode-sk-s5-deferred-ticket-fault-fix (neutral) moved WHEN the ticket draws (DEFER), not how the winner loads the slots"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T134016Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T134016Z
+base_sha: bb6c492319e7d6ef89caaf609741556209472f17
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/sk-ticket-merge-onepass
+worktree: .worktrees/muse_attention_decode/sk-ticket-merge-onepass
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # sk-ticket-merge-onepass
