@@ -1408,4 +1408,7 @@ with the operator's go-ahead.
   wg hot half already runs at the K4 rate; the gap is fixed costs.
 - The +0.93% headline is a draw on the board's paths. It is borderline under ~1.2%, so a **scored run was sent per
   DAILY-RHYTHM: 8f33e5ee4dbd41da** (same bytes). Archived runs/2157c43bb41f4d43.json.gz.
+- **2225Z: scored run 8f33e5ee4dbd41da: 1.7225**, over 1.7187: a **new moe board** (rank 432). Landed on master
+  (a4d1c81d). BEST.json updated (2ad81d78). The bytes are eb-s1a 826d15fa's: board paths; the S1a engine is present
+  but loses its race.
 
