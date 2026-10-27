@@ -919,3 +919,13 @@ append-only, newest last.
     - stream and events are shared across state copies;
     - the anatomy 'all' row now forks;
     - log labels.
+- 0916Z: W6-E check a76e7cb5: **1.5664** (below the board).
+  - The fork was not tried: T=128 routed MASTER (H-16 x0.982 worst round).
+  - c320t routed under the 1.003 bar (d1f x1.013); PERHEAD d1s x1.035.
+  - **Finding:** the T=128 hybrid is a coin flip. It routed in 3 of 5 runs today, and the v16 rows swing x0.97-x1.06
+    with it.
+  - **W6-F launched** (wf_a619b576-97e, campaign/eb-w6f-forkgate off eb-w6e-fork): H-16f and H-8f race inside the
+    hotcold gate (with W6-B's cells, comb without PDL), the canary is poisoned between replays, and W6-E's post-gate
+    fork decision is folded in.
+  - campaign/expert-bandwidth fast-forwarded to eb-w6e-fork (c320t bar + fork code, both gated).
+  - Decode: 4 checks / 2 scored left.
