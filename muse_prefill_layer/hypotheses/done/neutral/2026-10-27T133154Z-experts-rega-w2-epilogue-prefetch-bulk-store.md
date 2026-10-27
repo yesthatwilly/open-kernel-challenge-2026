@@ -56,10 +56,10 @@ kind: primary
 controls_for: null
 prior: "experts-rega-w13-fast-silu-epilogue: that cut w13's epilogue math (accurate expf + IEEE divide); this leaves w13 alone and removes w2's epilogue latency (post-k-loop gs load, per-chunk sorted_ids loads, synchronous scatter loop), inside the fsilu module whose w2 is already compiled but unused, so it costs no nvcc build"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T133940Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T133940Z
 base_sha: 2750f9d64192321654244084e3a9cf73fd461482
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -78,6 +78,13 @@ attempt_file: 2026-10-27T135242Z-check-experts-rega-w2-epilogue-prefetch-bulk-st
 prepared_at: 2026-10-27T135242Z
 job: 665c32dd8c794c0b
 dispatched_at: 2026-10-27T135256Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.5010344641608273
+speedup_ci: [1.4785189471984148, 1.5235499811232396]
+harvested_at: 2026-10-27T140020Z
+best_at_harvest: 1.488912488847924
+promotion: null
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
@@ -195,3 +202,31 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 `python3 -I -m py_compile muse_prefill_layer/submission.py`: ok (its `__pycache__` deleted).
+
+## Result
+
+- job `665c32dd8c794c0b` (check), status done, passed True, tests 5/5
+- speedup 1.5010x, 95% CI [1.4785, 1.5235], score 258091.27588325107 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.488912488847924, "ci": [1.466578801515205, 1.5112461761806426], "job": "ec3bd01859574bf1"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-epilogue-prefetch-bulk-store.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-epilogue-prefetch-bulk-store.patch`; branch `hyp/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 732.58 | 705.4 | 0.9983 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1120.81 | 1097.94 | 0.9929 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2140.15 | 2090.79 | 1.0208 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3698.88 | 3620.09 | 1.0002 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11731.0 | 11506.38 | 1.0006 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10892.92 | 10630.77 | 1.0051 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15080.4 | 14810.16 | 0.9977 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18110.3 | 17915.81 | 0.9949 | flat |
+
+no shape moved outside noise. Expected hit: 1/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
