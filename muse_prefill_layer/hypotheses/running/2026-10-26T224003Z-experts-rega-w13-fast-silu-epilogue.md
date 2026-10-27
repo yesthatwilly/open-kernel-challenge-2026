@@ -44,7 +44,7 @@ base_sha: c984c14ea32ac08522ee284ee7e6b46826ad0312
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
 branch: hyp/muse_prefill_layer/experts-rega-w13-fast-silu-epilogue
 worktree: .worktrees/muse_prefill_layer/experts-rega-w13-fast-silu-epilogue
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T113829Z
@@ -53,6 +53,8 @@ submission_sha256: 8e25e1bb376f2e439851c673ac5510cd2c6505978501246d3acc98e51b137
 norm_sha256: f8abb0a041d8f65dc728fe11aedb4b127abe982ea5e792ac9bdb826e45e52e45
 submission_blob: 42ded47196d5f0417c17f38574876508f0d822f1
 lint_warnings: 107
+attempt_file: 2026-10-27T113829Z-check-experts-rega-w13-fast-silu-epilogue.md
+prepared_at: 2026-10-27T113829Z
 ---
 
 # experts-rega-w13-fast-silu-epilogue
