@@ -760,3 +760,16 @@ append-only, newest last.
 - 0421Z: bf16 khalf check 670ad7c6: **1.2726** vs 1.2664; b2 routed at x1.044 (pooler m=128 net 22.05 -> 21.12 us). **Scored run bc147c5b87bc465d.**
 - 0421Z: attention scored a76ee9b0 (s2b): **1.6114**, the new board (rank 398). Landed; BEST.json registered.
 - 0432Z: bf16 scored bc147c5b (read-flush gates + khalf b2): **1.2735**, the new board (rank 361, was 371). Landed; BEST.json registered.
+
+## 2026-10-27T0440Z: wave 4 built; decode hit okc's 1 MB size limit; check sent
+
+- Workflow wf_40d4513d-fdc: 7 agents, ~1.84M tokens. The judge's spec is non-FUSED c320 A + the ONEPASS PDL combine at
+  d1f, with TRIG raced, on base 75bb6bf8 (b12p + fix + W3-A). Audit MAJOR fixed: TRIG needs its own x1.01 head to head
+  vs c320. Expected d1f 106.3 -> 101-102.5 us. The score weighting (46 t_s + 16 t_f) makes d1f worth ~+0.2% headline.
+- **The first dispatch was rejected:** "submission is larger than 1000000 bytes" (1,058,130).
+  - Fix: rewrite/build.py strips Python comment tokens when a file exceeds 990 KB, with the AST asserted identical
+    (CUDA strings and preprocessor lines untouched). decode is now 973,261 bytes. moe is unaffected (625 KB).
+  - The fix was cherry-picked onto campaign/expert-bandwidth.
+  - **Headroom is only ~27 KB.** Tomorrow: delete dead code (Engine D's _ED_SRC 25 KB + Python, eaf / W3 diagnostics,
+    the ladder in decode) before adding more.
+- decode check **d08b11fe295f4acf**: W4 c320 at d1f (campaign/eb-w4-c320), also carrying W3-A.
