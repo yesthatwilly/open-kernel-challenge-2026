@@ -65,7 +65,7 @@ base_sha: 2750f9d64192321654244084e3a9cf73fd461482
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
 branch: hyp/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store
 worktree: .worktrees/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T135241Z
@@ -74,6 +74,8 @@ submission_sha256: daa2bbc02b4850406ba341094f588673a2d7092fc8266cbcf730bed462779
 norm_sha256: e316a3c3ba9c9674ed6f0bd08dfe309ec8f25c9efde55cfd02d60f9ec5a3b8ba
 submission_blob: 7666d623fa92fa1ce47af951d22a1931457065c7
 lint_warnings: 112
+attempt_file: 2026-10-27T135242Z-check-experts-rega-w2-epilogue-prefetch-bulk-store.md
+prepared_at: 2026-10-27T135242Z
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
