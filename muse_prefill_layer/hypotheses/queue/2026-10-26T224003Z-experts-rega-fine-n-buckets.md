@@ -51,8 +51,10 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "experts-turn-rega-s4-port-t4096: the port shipped rega with four power-of-two N buckets (16/32/64/128); this adds 48/80/96/112 so an item runs N = 16 * nbk; tile, dequant, ring and epilogue are unchanged"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-27T103810Z
+review_companions: null
 ---
 
 # experts-rega-fine-n-buckets
@@ -70,3 +72,29 @@ Built on master (blob f4751fc0). rega sizes each item's wgmma N (tokens) and its
 ## Risk
 
 The n48 / n80 / n96 / n112 wgmma shapes are standard sm_90a forms but have not run on the judge in this repo; the separate module means a build or canary failure keeps master's rega. Size ~+1-1.7% headline if the judge-like bucket mix holds; read the nbk histogram and the KERNELS lines.
+
+## Adversarial review
+
+Reviewed 2026-10-27T103810Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The mechanism holds up: on padded chunks, a 16*nbk wgmma N plus a matching TMA box cuts MMA columns and, more importantly, L2->SM slab bytes, and slab ingest is rega's limiter (DIAGNOSIS/LESSONS; d00770b6 spans corr 0.93-0.98). The change is bit-exact and gated in prepare against master, so its KERNELS/GATE lines can be read alone. Before building, tighten the low-class precedence and the prepare-budget wording, and loosen the random-routing threshold to 1.01.
+
+### Justification
+master's decode_item uses four power-of-two buckets (16/32/64/128); a 65-112-route chunk moves 41 KB per stage when 21.5-37 KB would do, and a 33-48-route chunk 25.6 KB when 21.5 KB would do. MMA estimate ~4 ns per N row, matching the hypothesis's 3.4 ns/row and d00770b6's low-class figures. Item mix (d00770b6 histograms): low pop has ~45 routes per expert (the 33-48 bin is modal); high pop has many single and tail chunks in nbk 3/5/6/7. turn_1 and turn_4 faster at the claimed sizes (low 4-8%, high 3-5% of the rega pair) is plausible; first_turn should be FLAT (only ~32 of 252 chunks change). Headline ~+1% on two loads, inside the CI: read the prepare KERNELS/GATE lines and the nbk histogram. Weakest link: the 3.4 ns/row slope comes from two different runs/loads, and the judge's turn_1 histogram share at nbk=3 is inferred. Prior experts-turn-rega-s4-port-t4096 set the four buckets; experts-marlin-block-m-48-turn1 is a different engine and mechanism.
+
+### Confounders on the current kernel
+- combo-b-normgather-two-cta-low-regate (master): _rega_lo_phase chooses rega_low_variant per run; rega_lo_kernel has its own 4-bucket switch and does not use the fine module. Apply fine at the low class only when rega_low_variant == 0, gate it against the incumbent actually chosen, and print both.
+- experts-turn-rega-s4-port-t4096 (+ first-turn-n128): source of the bucket set; the fine module is built by asserted string edits of master's _rega_src() (fragile if another rega change lands first; fine on master).
+- combo-a / pre-expert-norm-fused-rega-gather: a smaller box reads a subset of the same slab rows; not a confounder.
+- align-two-phase-all-t-rega: sets the chunk cut; not a confounder.
+
+### Interference and A/B needs
+No companion. Resolve the code-overhead ambiguity in the same prepare: add a third timed pair, the fine module with master's 4-bucket mapping (m.bucket = nbk<=1?0:nbk<=2?1:nbk<=4?3:7) through the 8-case switch: fine-4map vs master isolates overhead, fine vs fine-4map isolates the bucket effect.
+
+### Open questions
+- Low-class precedence when rega_low_variant is 1 or 2 (fine cannot apply).
+- Use random <= 1.01, as the high class used in d00770b6.
+- If the exact compare fails, print max |diff| and the first mismatching (class, routing, nbk), and fall back to master's fp32-reference calibrated bound.
+- first_turn expected flat; record it in the expected list.
+- Check the printed pop:2.2 nbk histogram against the judge's ~42-per-expert turn_1 figure.
+
