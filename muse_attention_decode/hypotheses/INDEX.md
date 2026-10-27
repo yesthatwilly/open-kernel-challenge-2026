@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-27T103501Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-27T120423Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -82,7 +82,7 @@ Regenerated 2026-10-27T103501Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-25T054449Z | full-verify1-sk-two-level-token-group | rewrite | full-layer attention (batch-1 verify, stream-K two-level kernel, token grouping) | done/neutral | neutral | 1.4714 | [1.449,1.494] | 7d23e8776c194344 | check |  | proceed | 1/3 |
 | 2026-10-25T054449Z | sliding-decode-sk-window-route | rewrite | sliding-layer attention (decode, stream-K windowed kernel) | done/neutral | neutral | 1.4973 | [1.475,1.520] | 118c6de9704146f3 | check |  | proceed | 2/4 |
 | 2026-10-25T110636Z | restack-sliding-decode-sk-window-on-cluster-master | primary | sliding-layer attention (decode, stream-K windowed kernel) restack | done/neutral | neutral | 1.5017 | [1.479,1.530] | 252abb7f11ec48c3 | submit | merged | proceed | 5/5 |
-| 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T110716Z | sliding-decode-sk-s3-fused-preattn-rope | rewrite | sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T150036Z | preattention-tiled-every-verify-block | primary | pre-attention norm+rope | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T150036Z | epilogue-gate-l2-prefetch-cuda | primary | output norm-gate (gate operand prefetch in the CUDA epilogues) | done/neutral | neutral | 1.5020 | [1.479,1.525] | 917a9689ba4645bd | submit |  | proceed | 0/6 |
 | 2026-10-25T153027Z | sliding-verify-fa3-num-splits-band-gate | primary | FA3 call (sliding verify split count) | queue | queued |  |  |  |  |  | required |  |
@@ -126,5 +126,6 @@ Regenerated 2026-10-27T103501Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 - sliding-cluster-s3-verify-attn-only-phase-timed: Reviewer: proceed but wait for stack-streamk-ticket-cluster-c16-c4 (195dcc1209b6457b) and build on its branch (raw s2 carries the C=8 band, +5.7% on sliding decode_16). Port setup_one<8>/launch<8> back from stage 1 593859d; mask rows to p-(W-1)<=t<=p; phase timing in prepare only.
 - sliding-verify1-triton-pseudo-decode: adversarial review: HOLD for two reasons. (1) The key range is wrong: seq = seq_lens[b]-7+j treats seq_lens as the post-block length, but seq_lens is the prefix length (positions =
 - full-verify1-sk-pseudo-decode: Reviewer: low priority; dispatch after full-verify-wgmma-s4-multitile-fix (51b0d5c110f3459c) and after sliding-verify-sk-pseudo-decode-s1 harvest; build on s1 PSEUDO code with window=0; if the wgmma fix works, full-verify1-wgmma-s4-batch1-grid-sm owns this row.
+- sliding-decode-sk-s3-fused-preattn-rope: killed 2026-10-27 by the campaign (check 877a6ba5: B=2..16 failed correctness runs, B=17..32 x0.99-1.005)
 - preattention-tiled-every-verify-block: adversarial review: Sixth scored run of the same _pre_attention_tiled_kernel; its parent preattention-tiled-gate-large-tokens is on Do-not-try. The only new part (gate widened to S
 - sliding-verify-wgmma-window-s2-split-combine: superseded 2026-10-27: s2 was checked and killed by the campaign; its successor s2b landed on master (scored a76ee9b0, then sw17 4e386647 1.6340)

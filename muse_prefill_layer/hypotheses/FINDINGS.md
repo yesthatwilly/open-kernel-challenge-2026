@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T111650Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T120423Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4677x [1.4457,1.4898] from job `73b40cd13fdf4bb0` (submit), master commit `aab679312b`, hypothesis combo-b-normgather-two-cta-low-regate
+1.4949x [1.4725,1.5173] from job `21911eb694ce467c` (check), master commit `9fbde72cc9`, hypothesis experts-rega-w13-fast-silu-epilogue
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 756.7µs vs SGLang 1099.7µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 278.1µs 36.2%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 157.8µs 20.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 140.4µs 18.3%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1150.3µs vs SGLang 1505.1µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 424.1µs 34.3%, void (anonymous namespace)::rega_kernel<true, false>((ano... 292.7µs 23.7%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.0µs 12.5%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2197.8µs vs SGLang 3474.2µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 741.2µs 32.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 357.3µs 15.8%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 324.6µs 14.3%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3744.8µs vs SGLang 5019.1µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1648.7µs 42.4%, void (anonymous namespace)::rega_kernel<true, false>((ano... 763.4µs 19.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 370.5µs 9.5%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11889.8µs vs SGLang 18439.5µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3848.2µs 31.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.0µs 21.0%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1890.8µs 15.7%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 11119.7µs vs SGLang 17244.1µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3652.7µs 32.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2534.6µs 22.6%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1851.5µs 16.5%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15073.4µs vs SGLang 21451.9µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4304.5µs 28.0%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3769.2µs 24.5%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2533.7µs 16.5%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18589.7µs vs SGLang 25128.9µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7736.5µs 42.4%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3401.4µs 18.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2526.3µs 13.8%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 732.6µs vs SGLang 1101.8µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 302.0µs 37.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 159.3µs 19.9%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.9µs 19.3%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1120.8µs vs SGLang 1486.6µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 420.4µs 35.5%, void (anonymous namespace)::rega_kernel<true, false>((ano... 256.4µs 21.6%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 12.9%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2140.1µs vs SGLang 3414.0µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 682.9µs 30.9%, void (anonymous namespace)::rega_kernel<false, false>((an... 356.0µs 16.1%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.0µs 14.8%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3698.9µs vs SGLang 4995.7µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1646.3µs 42.7%, void (anonymous namespace)::rega_kernel<true, false>((ano... 716.6µs 18.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 381.6µs 9.9%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11731.0µs vs SGLang 18419.4µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3638.9µs 30.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2570.0µs 21.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1884.8µs 15.9%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10892.9µs vs SGLang 17248.8µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3474.3µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2568.8µs 23.2%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1798.4µs 16.3%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15080.4µs vs SGLang 21946.5µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4268.3µs 28.1%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3610.2µs 23.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2569.8µs 16.9%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18110.3µs vs SGLang 24821.2µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7610.9µs 41.2%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3495.5µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2568.5µs 13.9%
 
 Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -101,6 +101,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### silu-mul (fused into the w13 Triton NVFP4 GEMM epilogue, T > 4096)
 - **experts-triton-w13-fused-silu-epilogue** → neutral (within-ci), 1.0525x — lost on full first_turn. Fuse SGLang's silu_and_mul into the epilogue of the first (w13) Triton NVFP4 GEMM on the T > 4096 path (_experts_triton, first_turn only), built on master. (1) 
+
+### silu-mul (rega w13 epilogue)
+- **experts-rega-w13-fast-silu-epilogue** → gain (gain), 1.4949x — gained on sliding turn_1. Built on master (blob f4751fc0). rega_kernel<true, *> (w13) applies silu(gate) * up to its fp32 accumulators in the epilogue through silu_mul(hg, hu) = hg / (1.
 
 ### silu-mul on the Triton path (T > 4096, first_turn)
 - **silu-mul-sorted-first-turn** → neutral (within-ci), 1.0636x — no shape moved outside noise. Built on silu-mul-triton-local-rows-marlin-turn's implementation commit. In _experts_triton, when state['silu_sorted_ok'], replace silu_and_mul(cache1, cache2, 
@@ -240,9 +243,8 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: experts-rega-low-2cta-fullslab-mc2 [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster] p4 queued
 - queue: experts-rega-mc2-bm256-stack-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked] p3 queued
 - queue: experts-rega-mc4-cluster-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast] p5 hold
-- queue: experts-rega-rotate-finebucket-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module)] p2 queued
-- queue: experts-rega-rotation-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module)] p2 queued
-- queue: experts-rega-w13-fast-silu-epilogue [silu-mul (rega w13 epilogue)] p2 queued
+- queue: experts-rega-rotate-finebucket-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module)] p2 hold
+- queue: experts-rega-rotation-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module)] p2 hold
 - queue: experts-rega-pdl-chain-regate-iqr-slack [launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only)] p3 queued
 - queue: front-qknorm-rope-fp8-store-fusion-restack [pre-attention norm+rope + cache store (five launches -> one Triton kernel)] p2 queued
 - queue: experts-rega-lpt-group-order [w13 + w2 expert GEMMs (rega persistent schedule: expert groups heaviest first)] p4 queued
@@ -250,5 +252,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: experts-rega-stage-anatomy-diag [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] p5 queued
 - queue: front-routing-pdl-launch-diet-stack [launch overhead (front fusion + routing fusion + PDL chain regate, stacked)] p4 queued
 - queue: routing-triton-hilo-sum-topk-localids [routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel)] p3 queued
+- queue: experts-rega-fine-n-high-plus-fast-silu [rega experts kernel (w13/w2 N buckets at the high class + w13 silu epilogue)] p1 hold
 - running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
 - 22 stale holds expired to `done/expired/` (not run)
