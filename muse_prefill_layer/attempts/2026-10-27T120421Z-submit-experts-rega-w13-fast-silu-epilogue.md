@@ -63,4 +63,4 @@ okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_p
 low
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.4889x [1.4666,1.5112], board: {"rank": 175, "team": "yesthatwilly", "speedup": 1.4889, "first": false, "ahead": 174, "to_first": 1.3602}
