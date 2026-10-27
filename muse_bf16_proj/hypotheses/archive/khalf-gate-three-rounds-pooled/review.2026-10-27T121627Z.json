@@ -1,0 +1,42 @@
+{
+ "model": "opus",
+ "verdict": "hold",
+ "summary": "The premise is contradicted by the archived logs: the board run bc147c5b (1.2735) itself did not route khalf, and failed on the IQR rule, not the ratio rule; c65ffcb6 also failed the IQR rule in r1. The proposal keeps the per-round IQR rule and adds a third draw of it, so it fixes neither observed miss and probably lowers the routing rate. A judged check cannot measure a ~0.3% headline gate change. Rewrite so the IQR test runs on pooled samples, and test the rule with a multi-round gate diagnostic.",
+ "justification": "b2 is a real win: across 8 recorded rounds master/cand is 1.025-1.054 (mean ~1.041, SD ~0.009); judged pooler verify_16 21.87 us with khalf vs 23.08 us without. Median-of-3 at 1.03 with a 1.01 floor cuts ratio misses from ~21% to ~4% without loosening the bar. But KHALF_MAX_IQR (cand IQR <= 1.5x max(master IQR, 0.5 us) per round on raw 41-rep samples) is the binding constraint: bc147c5b r2 cand IQR 1.12 vs bar 0.915 (routed master); c65ffcb6 r1 cand IQR 1.15 vs bar 1.11. A 41-sample IQR has ~25-30% relative SE, so a 3-round all-must-pass IQR test lowers the pass rate (~0.56 -> ~0.42); combined routing ~0.44 -> ~0.40. The '~1.8% lost to a gate miss' premise is wrong: the 1.2735 board run is itself khalf-off, and c65ffcb6's decode_1/verify_1/decode_16 loads also fell 1.7-3.6% (drift or its own change). The pooler row is ~0.27% of the headline. The slug says 'pooled' but nothing is pooled.",
+ "confounders": [
+  "8f233e88 (khalf b2 + read-flush gates, hand-landed): the inherited per-round IQR clause, not the median rule, decides the outcome.",
+  "pooler-nn-layout-widen-m256 / restack-three-cell-wins: the gate's master side is NN torch.mm (splitK nvjet + splitKreduce), whose variance feeds the ratio and IQR; background term.",
+  "Earlier read-flush gates in prepare share flush size, reps and clock state; a reason to measure the IQR distribution in situ."
+ ],
+ "interference": "A single primary run is uninterpretable (one Bernoulli draw of the routing decision; headline effect ~0.27%). The right instrument is one prepare-time diagnostic drawing many gate rounds and evaluating old, parent and pooled rules on the same data: given as a control companion that should replace the parent.",
+ "rules_flags": [],
+ "companions": [
+  {
+   "slug": "khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr",
+   "kind": "control",
+   "area": "pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)",
+   "change": "From the parent's branch (master 8f233e88 lineage), change only _khalf_prepare's gate block and _cell_gate's optional stats output; candidate, canary, _cell_check, kernel-name assertion, A/B copy check, deadlines and every other cell stay byte-identical. (1) In _cell_gate, when stats is not None, also store each side's raw per-rep times: stats[name]['times'] = list(v); the return value and the print for other callers do not change. (2) Set KHALF_ROUNDS = 10 (about 1 s of prepare); for each round print its ratio (master/cand net), cand IQR, master IQR and the IQR bar. (3) Evaluate three rules on the same rounds and print one line each with PASS/FAIL and the reason: OLD: rounds 1-2 only, both ratios >= 1.03 and both IQR tests pass. PARENT: rounds 1-3 only, every ratio >= 1.01, median ratio >= 1.03, IQR per round in all 3. POOLED: rounds 1-3 only, every ratio >= 1.01 and the median of the three ratios >= 1.03; pool each side's raw times across the 3 rounds (123 reps) and require pooled cand IQR <= 1.5 x max(pooled master IQR, KHALF_IQR_FLOOR_US). (4) Over rounds 1-10 also print the empirical per-round IQR-fail fraction and ratio < 1.03 fraction, and the OLD / PARENT / POOLED decisions over the 3 disjoint triples 1-3, 4-6, 7-9. (5) Route the flag with POOLED. Put all of this in the PATH CHOSEN K line and keep it in the end-of-prepare re-print (16,000-character log tail).",
+   "expected": [
+    {
+     "shapes": "layer=pooler load=verify_16 m=128",
+     "direction": "faster",
+     "why": "POOLED should route on most runs because the candidate wins about 4% in every round seen (8/8 >= 1.025); when routed, the judged row should match a6424247/670ad7c6 (about 21.9 us vs about 23.1 us). The evidence is the gate lines, not the headline."
+    },
+    {
+     "shapes": "*",
+     "direction": "flat",
+     "why": "gate-only change; the other cells are identical, and the about 0.27% headline effect is inside the CI"
+    }
+   ],
+   "reason": "Shows from one check which clause makes the khalf gate flaky (per-round IQR fail fraction vs ratio < 1.03 fraction) and gives each candidate rule's miss rate on identical data (OLD vs PARENT vs POOLED, 3 triples each). If the IQR fail fraction is ~0.25 per round as the 8 logged rounds suggest, PARENT is refuted and POOLED is the rule to land.",
+   "priority": 1,
+   "risk": "low"
+  }
+ ],
+ "open_questions": [
+  "What does the IQR clause guard against? A pooled IQR or p90/p10 on pooled samples guards bimodality without tripping on 41-rep noise.",
+  "Accept on the gate diagnostic plus a routed PATH CHOSEN K line; a flat headline is not neutral evidence.",
+  "Run 474490c8 (BEST.json's check_job) shows master splitK kernels for pooler verify_16 and no khalf line: is BEST's check_job pre-khalf?",
+  "Re-attribute c65ffcb6's drop (1.2735 -> 1.2507): every load fell 1.7-3.6% (drift or qkv16-s5), not khalf; this matters for how qkv-swapab16-five-stage-ring-m8-m16 was judged."
+ ]
+}
