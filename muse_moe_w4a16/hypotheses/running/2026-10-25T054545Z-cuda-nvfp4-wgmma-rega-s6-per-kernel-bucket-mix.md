@@ -44,9 +44,18 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu and/or Marlin w2 at 128<=T<=512
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T054837Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T212857Z
+base_sha: 57e77548ba31c2145d575df62752f62684b2f6ad
+base_blob: 77f34503659c90a5953f91a93ba6e1a2b02e4613
+branch: hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix
+worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix
