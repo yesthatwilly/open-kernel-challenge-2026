@@ -616,3 +616,18 @@ append-only, newest last.
 - A diagnosis agent is running (fix branch campaign/eb-b12p-fix if one is clear).
 - End-game note: the final standings rerun the board bytes. Consider turning off the prepare-time diagnostics
   (anatomies, ladder) in the final bytes, so a diagnostic can never fail the rerun.
+
+## 2026-10-27T0152Z: 8e3c26d6 diagnosed: a use-after-free in the _ead_anatomy diagnostic, not b12p; fix merged; check sent
+
+- Cause (agent; static analysis):
+  - `_ead_anatomy`'s "zero" iteration rebinds the "judge" inputs, and the graph keeps only raw addresses.
+  - The next capture's empty_cache() can release that segment, so the judge replay reads unmapped memory.
+  - Whether it faults depends on allocator layout, so it is random per prepare. b12p only changed the layout.
+  - b12p is cleared: its final sync was clean in the failing run.
+- **The board / master decode bytes (eacf0722) carry the same latent fault**, and so does the post-close rerun.
+- Fix 7f74c074 (campaign/eb-b12p-fix): `keep` holds the inputs; each anatomy stage is synced and named. kernel_fn is
+  unchanged. Merged into campaign/expert-bandwidth (7cdbcf17). Wave-2 branches (8cfd91ce) must merge it before any
+  scored run.
+- decode check **7844b6c903794ee7** (b12p + fix). If it is clean and beats 1.5275, send a scored run; that also makes
+  the board bytes fault-free.
+- **End game:** the final board bytes must carry this fix, or EAD_ANATOMY = False.
