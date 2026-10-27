@@ -1078,3 +1078,12 @@ append-only, newest last.
 - 1338Z: bf16 DeepGEMM s3 review: **proceed**. Corrections: mc=1 only (hang risk); tile-count variant set (pooler m=256 64x128; unpooler m=128 128x64; qkv m=256 64x64-112); SHAPE_M=0, <= 8 instantiations, a pre-build deadline; DG after khalf in prepare and above the NN/khalf/Lt returns in kernel_fn. Claimed on a **stale base** (stage 2's 0dc50d0a lacks 8f233e88): the implementer merges master first.
 - 1352Z: prefill w2-epilogue check **665c32dd8c794c0b**: arms (a) prefetch + shared sid table and (b) + cp.async.bulk stores in the fsilu module (now 6 instantiations; a build failure would also drop fsilu for this run, so read the build line first). High / ft gated, low print-only.
 - 1353Z: attention sk-ticket-merge-onepass check **ba8c8a6103124f71**: merge_range_onepass<MB> twins 8-11 (explicit variant table), crafted merge canary, four gated cells after _sw_setup. Not compiled locally: read the [sk] compiled-in line first (a template error would drop the sk module for this run).
+- 1401Z: prefill w2-epilogue check 665c32dd: 1.5010 with **nothing routed**.
+  - Arm b (bulk stores) slower everywhere (x1.00-1.05, TMA contention).
+  - Arm a: high x0.991-0.995 / ft x0.997-0.999 (misses); **low x0.971-0.981 in all 8 rounds** (print-only by the review,
+    which had called low HBM-bound and flat).
+  - The pointless confirm is held. Minted experts-rega-w2-early-loads-low-class (arm a routed at low, arm b dropped).
+- 1401Z: bf16 DeepGEMM s3 check **6407497bec88470e**.
+  - Master merged in via merge-file; 8 variants in 3 threaded load_inline modules (threads are allowed; lint forbids
+    only subprocess / multiprocessing / exec / eval); mc=1.
+  - Read the [build-time] and PRE / CELL lines first.
