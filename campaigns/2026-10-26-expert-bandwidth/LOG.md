@@ -899,3 +899,12 @@ append-only, newest last.
 - Size is now the binding constraint on decode. PERHEAD's file is 963,064 bytes. Candidate trims for tomorrow:
   prepare-time anatomy and diagnostic code (EAD_ANATOMY etc.; DISTILL §4.5 already prefers it off at the end), killed
   levers' code still built, and docstrings.
+- 0842Z: W6-D probe 1fc3b489: 1.5839 (W6-B's code plus print-only riders, so a lucky draw). **No scored run** (it
+  would replay the board's code).
+  - **Hot/cold fork at T=128: x0.930** of the serial expert block (286.9 us -> ~267 us, about -20 us), bitwise equal.
+    At T=256, x0.975 (killed). The static SM splits lose by x1.10-1.64.
+  - **Trigger-first boundary: KILL.** The incumbent chain already hides it (inc = trig, plain +1.2..+2.0 us).
+  - **c320t at d1f:** faster in all 6 re-times (x1.009-1.016, about 1.2 us), but the gate's head-to-head bar
+    blocks it. A cheap cell: lower that bar.
+  - **W6-E launched** (wf_79bb4210-f6e, campaign/eb-w6e-fork off 9bf60d67): a routable fork at T=128, composed with
+    W6-B's cells.
