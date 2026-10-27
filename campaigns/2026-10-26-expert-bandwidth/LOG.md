@@ -19,11 +19,14 @@ append-only, newest last.
     (MIXED+PLANNED). Sol has `cuda-13.0.1-gcc-12.1.0` (nvcc 13.0, no install needed); pypi and pytorch.org are reachable
     from gpunode06.
   - **Boards and quota:** unchanged since 1505Z (below).
-  - **In flight (1712Z):** workflows x5-gate0-kernels (headers dfdb5a71 + carrier scaffold 7e0d1a3c on eb-sp; audits
-    running), x5-gate0-calibration (takemyjob 76c7276: escal builds clean with cu130 + cu133; audit running), x5-node-judge
-    (venv-cu130 install on gpunode06 under way), x5-s4-decode-trim (branch campaign/eb-sp-trim, >= 50 KB, identical routing).
-  - **gpunode06 at 1711Z:** still held by the admin's DCGM diag (dcgmi/nvvs 46 min; `ubergemm` holds all 8 GPUs, GPU0 busy
-    at 90 C); a watcher wakes the loop when it is clean.
+  - **Gate 0 done on gpunode06 (1823Z):** calibration passes (consumer-bound 37/37 within 5%, median 0.986 of the
+    judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
+    fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
+    Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **In flight (1830Z):** decode trim check **ced20a71e99b4798** (eb-sp-trim fba4a8fb, 924,048 B, same RNG draws);
+    resumed workflows: moe Gate-0 judge carrier (integrate -> audit -> fix) and the node judge (gpunode06 GPU 7 only).
+  - **Session limit:** the user's tokens ran out at ~1750Z (two agents died); the user said "please resume the
+    interrupted work" after the 1820Z reset. Keep agent use lean.
 - **Earlier today, state at 1505Z (kept for history):**
 - **Today (10-27), phase B** (updated 2026-10-27T1505Z):
   - **Boards** (day start -> now; ranks at 1455Z):
@@ -1191,4 +1194,26 @@ append-only, newest last.
   on gpunode06's CPU took 16 s.
 - Next: the Gate-0 build workflow (es_g0 variants, calibration ports, a moe judge module as the fallback), then node
   runs when gpunode06 is clean, or a moe judge check if no window opens.
+
+## 2026-10-27T1830Z: Gate 0 on gpunode06 (H100 SXM): verdict "< 30" at the edge; decode trim check sent
+
+- gpunode06 clean at 1747Z (the admin's DCGM diag ended). First X5 GPU runs at 1823Z under the guard: es-cal on GPUs 1, 3
+  and es-kstep on GPUs 4-6 (runs 20261027-112303/112308-gpunode06; copies in runs/hopper/20261027-1123-gpunode06/).
+- **Calibration:** the judge's own W3-B / wg / ladder text with the judge's routing draw. Consumer-bound rows 37/37
+  within 5% (median ratio 0.986); memory rows scale with the HBM ring (node 3.05 vs judge 4.45 TB/s). Node clocks
+  transfer for consumer-bound work.
+- **Gate 0** (el/clk/SM, cu130, 424 KV lines all ok, c75xx 0, memcheck clean):
+  - constant-A RS wgmma: 78.7 at N=8/16, then tensor-bound at N/2 clk (32 / 16 / 8 at N=64 / 128 / 256). W3-B's
+    ~93 clk was its loop, not the hardware.
+  - **(e) dq2 + RS: 32.3 / 29.8 / 27.0 / 21.0 at N=8 / 16 / 32 / 64**; M-cell 30.8 / 27.4; Engine A ~27.
+  - (es) streamed: HBM-bound on the H100 (~3.1 TB/s).
+  - ptxas honours setmaxnreg (maxR up to 212 > 168).
+  - synccheck flags divergent barriers in every family (open).
+- **Verdict:** 29.8 sits in the "< 30" band, at its edge. Cold stays on Engine A; X5 = S1a + the T<=8 fixed-cost work.
+  S1b waits on K4/K6 and a judge reading of (es).
+- Session limit hit at ~1750Z (carrier-integrate and node-judge builders died). The user said "resume the
+  interrupted work": both workflows resumed at 1822Z, and the trim fix finished (fba4a8fb: the 3 global-RNG draws of
+  `_dl_time_p` kept).
+- **Decode trim check ced20a71e99b4798** sent at 1827Z: identical routing expected; FINAL PATHS and rows vs c1daf58b
+  decide.
 
