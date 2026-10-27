@@ -33,6 +33,8 @@ append-only, newest last.
   - **H200 (the user, ~1850Z):** expect gpunode26 unavailable near term; the user will push for H200 probe time. Do not
     check it. The H200 jobs sit in takemyjob `queue/held/`. **Node-judge jobs go into the queue when that harness
     lands** (the user's ask).
+  - **The user, ~1855Z:** "dispatch the gate-0 moe check when the carrier lands. dispatch any use of h100s when it is
+    possible".
   - **Session limit:** the user's tokens ran out at ~1750Z (two agents died); the user said "please resume the
     interrupted work" after the 1820Z reset. Keep agent use lean.
 - **Earlier today, state at 1505Z (kept for history):**
