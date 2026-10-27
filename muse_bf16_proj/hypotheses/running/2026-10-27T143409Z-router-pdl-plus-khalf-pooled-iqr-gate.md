@@ -37,9 +37,18 @@ kind: primary
 controls_for: null
 prior: "router-zero-pdl-overlap-m9-m256: same router code, which routed everywhere but lost the headline to a khalf gate miss in the same run; the khalf part is the pooled-IQR rule the khalf-gate-three-rounds-pooled adversary prescribed (that parent was held because its rule kept the per-round IQR test)"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T143812Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T143812Z
+base_sha: 15558ffa690a1e3aa20c39c6efdd22a6ec73a644
+base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
+branch: hyp/muse_bf16_proj/router-pdl-plus-khalf-pooled-iqr-gate
+worktree: .worktrees/muse_bf16_proj/router-pdl-plus-khalf-pooled-iqr-gate
+mode: null
+restack_of: router-zero-pdl-overlap-m9-m256
+stale_base: null
 ---
 
 # router-pdl-plus-khalf-pooled-iqr-gate
