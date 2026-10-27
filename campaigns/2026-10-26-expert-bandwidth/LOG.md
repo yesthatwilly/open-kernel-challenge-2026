@@ -703,3 +703,9 @@ append-only, newest last.
 
 - Scored run bbf762ed52934bde: **1.5902** [1.566, 1.614], the new attention board (rank 407, was 451). sk-full-line-gather
   + v3chain is landed on master; attention BEST.json was re-registered by hand (it was stale).
+
+## 2026-10-27T0312Z: attention c320 pair checked
+
+- attention check **508cfca7650848ec**: c320-combine-onepass + c320-pdl-early-trigger (hyp/attn-c320 0453ca70, base
+  0d421faf at 1.5902). Each change has its own canary and an in-run A/B gate (head to head >= 1.01). Read the V3 / V4
+  readouts and the 'compiled in' line (a build overrun drops FD1 to V0). attn-s2 is still building.
