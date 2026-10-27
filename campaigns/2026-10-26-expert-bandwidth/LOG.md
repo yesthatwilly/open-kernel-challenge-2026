@@ -1104,3 +1104,9 @@ append-only, newest last.
 - 1410Z: bf16 router-zero-pdl-overlap reviewed (**proceed**: exactly one griddepcontrol.wait, a slow-primary race
   stand-in, a third arm with no PDL, exact-kwarg warm-up, tolerance exactness). Claimed; implementer running.
 - 1411Z: prefill o-proj-triton-gemm-turn-gated reviewed (**proceed**: o at turn_1 is one serial nvjet 112x128 call, 39.7 / 38.9 us vs a 12.8 us floor; run the phase LAST (it could push fsilu past its 200 s start); candidates 128x256 / 256x128 / 128x128; do_not_specialize M; realistic -10 to -15 us per turn_1 shape). Claimed; implementer running.
+- 1417Z: prefill w2-early-loads-low-class check 59eb665f: **1.4986** (vs 1.4889). **Arm a routed at LOW**:
+  - pop:1 / random x0.975 (max x0.978);
+  - the rega-lo guard routing x0.966-0.968 (190.3 -> 184.2 us cold);
+  - high x0.990 and ft x0.998 missed; fsilu ON; build 32.2 s; prepare 182.6 s.
+  - Churn: unproven-vs-best (below the 1.24% margin); a confirm rerun is queued, which is meaningful because the
+    change routed.
