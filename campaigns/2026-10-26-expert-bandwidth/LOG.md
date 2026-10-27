@@ -23,6 +23,9 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **Gate 0 confirmed on the judge (moe check 5a641040, 1910Z):** es16 streamed 27.5 el/clk/SM at 3.60 TB/s (x1.02
+    over Engine A); consumer el/clk equals the node's to the decimal; all 20 `.text` hashes equal the node's cu130
+    builds (the bridge holds). Verdict: S1a + T<=8. Not scored (timed path = board, 1.7199 vs 1.7187 is noise).
   - **Decode trim (S4 prerequisite) done:** check ced20a71 passed at 1.5758 (board 1.5920). The routing deltas are race
     flips (the T=128 W6-G race went to master: (16,8) rows +15..19 us). Decode is 924,048 B on `campaign/eb-sp-trim`
     fba4a8fb. Not scored.
@@ -1243,4 +1246,16 @@ append-only, newest last.
     cold dequant (S3u/S4/D2), P2 the hot K4 pipeline at N=64-256 with streamed weights, P3 K6 mixing, P4 K7 ingest,
     P5 K1 details, with synccheck-clean named barriers.
   - Its full sweeps go into the queue once audited.
+
+## 2026-10-27T1910Z: Gate-0 judge check 5a64104026ab4f91: the bridge holds; verdict confirmed
+
+- Sent on the user's steer ("dispatch the gate-0 moe check when the carrier lands") at 1902Z from eb-sp 7997607e. The
+  carrier's host path had been proven first on one H100 (run 20261027-115801-gpunode06).
+- **Passed, 1.7199.** The board is 1.7187, but the timed path is the board's, so this is noise: no scored run.
+- 20/20 kernel `.text` hashes on the judge equal the node's cuda-13.0.1 builds. torch 2.14.1+cu130, CUDA 13.0, judge SM
+  1769 MHz.
+- Consumer el/clk/SM is identical to the node: e16 29.8, f16 27.4, a16 77.9, a64 31.9.
+- Streamed es16.4.2: 27.5 el/clk/SM at 3.60 TB/s. es16.1.2 22.7, es64 17.9.
+- **Verdict confirmed:** cold stays on Engine A / the M-cell; X5 = S1a + the T<=8 fixed-cost work. The ladder's P1
+  (3-4 consumer WGs) is the only route back to a cold Engine S. research/kstep-schedule-2026-10-27.md §5.
 

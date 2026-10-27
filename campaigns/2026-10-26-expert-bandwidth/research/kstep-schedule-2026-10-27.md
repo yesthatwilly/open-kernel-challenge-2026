@@ -88,3 +88,46 @@ For reference, Engine A's compute-only C-R4 runs at ~27 el/clk/SM on the judge.
 2. S1a: an Engine S hot-unit kernel (stream-K over hot items, N<=256 in one pass, separate weight and B rings),
    raced as a new H code in both hybrids.
 3. The decode trim (`campaign/eb-sp-trim`), then the decode cash-in.
+
+## 5. Judge confirmation: moe check 5a64104026ab4f91 (2026-10-27 19:02Z; passed 1.7199, the board's timed path)
+
+The carrier is `campaign/eb-sp` 7997607e: 20 symbols in prepare(), 22.6 s, with prepare ending at 147 s.
+`runs/5a64104026ab4f91.json.gz` keeps 112 `[es-g0]` lines.
+
+**The bridge holds.**
+- R0: torch 2.14.1+cu130, CUDA 13.0, H200 with 132 SMs.
+- All 20 kernels' `.text` sha256 values on the judge equal the node's cuda-13.0.1 builds (node run 20261027-115801-gpunode06).
+- So SASS and life-range readings from the node are readings of the judge's binaries.
+- The `cuda-13.0.1-gcc-12.1.0` module is the judge's compiler for our purposes.
+
+The judge's SM clock under this load reads 1769 MHz (clock64 / globaltimer), against the node's 1830.
+
+**Consumer-bound el/clk/SM matches the node to the decimal.**
+
+| kernel | judge | node |
+|---|---|---|
+| e16.4.2 | 29.8 | 29.8 |
+| e16.2.2 | 29.7 | 29.7 |
+| e8.1.2 | 28.5 | 28.5 |
+| f16 | 27.4 | 27.4 |
+| a16 / b8_16 / c16 | 77.9 / 77.9 / 78.0 | 78.7 |
+| a64 / b8_64 | 31.9 | 32.0 |
+
+**The streamed (es) form at the judge's HBM** (dev, el/clk/SM, TB/s of 0.5 B/el):
+
+| kernel | el/clk/SM | TB/s |
+|---|---|---|
+| es16.4.2 | **27.5** | 3.60 |
+| es16.2.2 | 25.8 | 3.37 |
+| es16.1.2 | 22.7 | 2.93 |
+| es8.1.2 | 22.1 | 2.87 |
+| es32.1.2 | 20.5 | 2.65 |
+| es64.1.2 | 17.9 | 2.30 |
+
+- es16.4.2 is 92% of its resident ceiling and x1.02 over Engine A's ~27.
+- (es) is bitwise equal to (e) on every symbol.
+
+**Verdict, confirmed on the judge:** cold stays on Engine A / the M-cell; X5 = S1a + the T<=8 fixed costs.
+- The only route back to a cold Engine S is the ladder's P1: 3-4 consumer WGs (S3u / S4 / D2) lifting the dequant
+  rate.
+- No scored run: the timed path is the board's, so 1.7199 vs 1.7187 is noise, and the bytes carry diagnostics.
