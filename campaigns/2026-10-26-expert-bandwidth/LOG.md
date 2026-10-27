@@ -777,3 +777,4 @@ append-only, newest last.
 - 0455Z: decode check d08b11fe (W4 c320 + W3-A): **1.5484**. c320 routed at d1f (layer x1.022). TRIG lost its
   head to head (x1.005), despite a -1.22 us readout. Rows vs ba57a64f: d1f **x1.038**, d32f **x1.095**, the rest noise.
   W4 merged into campaign/expert-bandwidth (3a106786, same bytes 91f6e23b...). **Scored run 7ceab934eea24099.**
+- 0507Z: attention s3 check 877a6ba5: 1.6209 (noise; nothing routed). B=2..16 failed its correctness runs (never routed); B=17..32 x0.99-1.005. **s3 killed.** Attention remaining today: the B=17..32 s2b bar at 1.03 (phase C), c320-attn-full-line-gather.
