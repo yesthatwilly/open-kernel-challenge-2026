@@ -55,8 +55,10 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "experts-rega-w13-fast-silu-epilogue: that cut w13's epilogue math (accurate expf + IEEE divide); this leaves w13 alone and removes w2's epilogue latency (post-k-loop gs load, per-chunk sorted_ids loads, synchronous scatter loop), inside the fsilu module whose w2 is already compiled but unused, so it costs no nvcc build"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-27T133940Z
+review_companions: null
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
@@ -74,3 +76,29 @@ Built on master (blob 42ded471, experts-rega-w13-fast-silu-epilogue landed). NO 
 ## Risk
 
 Headline +0.3-1.0% if the w2 rows move as expected: likely below the 1.2% judge margin alone, so it is sized to stack with another epilogue gain (experts-rega-epilogue-wg-local-bulk-store or experts-rega-epilogue-overlap-next-stage); read the scored rega_kernel<false,*> rows against ec3bd018, not only the gate (LESSONS 2026-10-27: cold-L2 gates can show gains the warm judged graph does not). Risks: async-proxy ordering (missing fence.proxy.async gives stale rows; the torch.equal check catches it), and the fsilu attrs rule (today a bad w2 row would turn fsilu OFF; the split in (attrs) prevents that). If nvcc already unrolls the scatter loop and hoists its loads, expect the low end.
+
+## Adversarial review
+
+Reviewed 2026-10-27T133940Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** The mechanism is real for the consumer-bound classes (high, ft): the w2 epilogue has a gs load after the last wgmma_wait plus a scatter loop doing an L1-missing sorted_ids __ldg each pass, while the tensor core is idle. Low is at the HBM byte floor and should be flat. Headline ~0.15-0.6%, far below readability: the only readable evidence is the in-prepare interleaved warm+cold gate. This is the w2 subset of the queued experts-rega-epilogue-wg-local-bulk-store and does not stack with it; comparing scored rows to ec3bd018 is not readable.
+
+### Justification
+gsc = __ldg(gs + m.e) sits after wgmma_wait<0>/fence_acc; the scatter loop loads sorted_ids per 16-B chunk, each a new L1 line. Both consumer warpgroups run in lockstep, so exposed epilogue cycles are lost tensor time (fast silu's w13 x0.91-0.94 supports exposure). ft: w2 item ~30K clk; gs + 2-8 scatter round trips is 5-15% of it; x0.94-0.985 plausible. high: 6-8 scatter passes, plausible. low: w2 weights 604 MB in 136.4 us = 4.43 TB/s (92% of spec), HBM-bound, 1-3 passes, hidden by the 4-stage ring: expect flat. Headline ~0.15-0.6%. Weakest link: whether ptxas already unrolls/batches the scatter loads, and TMA contention of 128 one-row bulk stores with the producer's loads at ft. Prior (fast-silu) fair. Sibling experts-rega-epilogue-wg-local-bulk-store contains this change's w2 content: re-baseline, do not add. Same-code jobs 21911eb6 vs ec3bd018 differ by 1.4-14% on w2 rows, so judge on the same-process interleaved gate (warm-L2 and judge-like pop first; cold-only is not evidence).
+
+### Confounders on the current kernel
+- experts-rega-w13-fast-silu-epilogue: the new w2 compiles into and dispatches from the fsilu module; compare fsilu's PATH CHOSEN lines with ec3bd018 before attributing; w2st is unavailable when fsilu ext is None.
+- experts-turn-rega-s4-*: the 4-stage ring hides part of the epilogue (low flat by construction) and the producer shares the TMA unit with the bulk stores; a reading caveat.
+- align-two-phase-all-t-rega + combo-a normgather set nbk/nvalid (scatter passes) and keep sorted_ids L2-hot.
+- stack-tonight-five-prefill (zero_nonlocal_w2): keep the sid < 0 / >= num_routes skip predicate exactly.
+
+### Interference and A/B needs
+No companion run. Fold the control into the gate: compile w2 with a template bool STORE_BULK in the same build; false = only the early gs/sid load (write sid into a 128-int __shared__ table before the staging named_bar and have master's 16-B st.global scatter loop read s_sid[t]). Time it alongside master and the full change in the same 2 x 11 alternations, cold and warm, both routings.
+
+### Open questions
+- Does ptxas already unroll and batch the scatter loop's sorted_ids loads (cuobjdump -sass)?
+- Do 128 separate 256-B cp.async.bulk stores per item delay the producer at ft? The STORE_BULK=false arm answers it.
+- Skip the low class (print only) to save prepare time.
+- Confirm what 'r' counts in the gate lines before trusting epilogue-fraction estimates.
+- Run this before the siblings; if it lands, the sibling's w2 half must gate against this w2.
+
