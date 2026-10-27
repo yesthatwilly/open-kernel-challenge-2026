@@ -757,3 +757,4 @@ append-only, newest last.
   (x1.077) is real. Not re-rolled; W3-A rides wave 4's decode build, and the next decode scored run should stack W3-A +
   c320 (+ N64 if it lands).
 - 0411Z: bf16 check **670ad7c6b0da41ec**: pooler khalf m=128, b2 only (fp32 partials via bmm out_dtype=float32 + Triton add-cast; hyp/bf16-khalf 83e65c27 on the read-flush branch). Read-flush gate >= 1.03 in both rounds; judge it on the verify_16 pooler row (22.91 us).
+- 0421Z: bf16 khalf check 670ad7c6: **1.2726** vs 1.2664; b2 routed at x1.044 (pooler m=128 net 22.05 -> 21.12 us). **Scored run bc147c5b87bc465d.**
