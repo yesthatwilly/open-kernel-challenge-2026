@@ -19,6 +19,11 @@ append-only, newest last.
     (MIXED+PLANNED). Sol has `cuda-13.0.1-gcc-12.1.0` (nvcc 13.0, no install needed); pypi and pytorch.org are reachable
     from gpunode06.
   - **Boards and quota:** unchanged since 1505Z (below).
+  - **In flight (1712Z):** workflows x5-gate0-kernels (headers dfdb5a71 + carrier scaffold 7e0d1a3c on eb-sp; audits
+    running), x5-gate0-calibration (takemyjob 76c7276: escal builds clean with cu130 + cu133; audit running), x5-node-judge
+    (venv-cu130 install on gpunode06 under way), x5-s4-decode-trim (branch campaign/eb-sp-trim, >= 50 KB, identical routing).
+  - **gpunode06 at 1711Z:** still held by the admin's DCGM diag (dcgmi/nvvs 46 min; `ubergemm` holds all 8 GPUs, GPU0 busy
+    at 90 C); a watcher wakes the loop when it is clean.
 - **Earlier today, state at 1505Z (kept for history):**
 - **Today (10-27), phase B** (updated 2026-10-27T1505Z):
   - **Boards** (day start -> now; ranks at 1455Z):
