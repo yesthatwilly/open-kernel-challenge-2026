@@ -928,4 +928,4 @@ append-only, newest last.
     hotcold gate (with W6-B's cells, comb without PDL), the canary is poisoned between replays, and W6-E's post-gate
     fork decision is folded in.
   - campaign/expert-bandwidth fast-forwarded to eb-w6e-fork (c320t bar + fork code, both gated).
-  - Decode: 4 checks / 2 scored left.
+  - Decode: 6 checks / 2 scored left (okc problems).
