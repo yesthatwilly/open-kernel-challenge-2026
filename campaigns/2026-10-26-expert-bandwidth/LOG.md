@@ -828,16 +828,24 @@ append-only, newest last.
 - 0708Z: W6-C built and audited (wf_c84e0a3b-a04: 0 blockers / 0 majors; the fix pass added the BN128 rider safety and the skw zero). The layer margin was set to 1.003 per the spec (0d089807; it was 1.01, so the d1s cell could not route). Decode 989,990 bytes. Decode check **71741a4f2cdc4cc5**: BN128 cell plus the no-op riders (the ceilings for R, the boundaries and combine).
 - 0715Z: W6-A built and audited (wf_5182d3fd-041: 0 blockers / 0 majors, rules ok, no fix pass). G1 folds the FFN boundary into dl_unpool<1,8,1024,BND> (two tickets, every write after the wait); G2 runs R's T=1 tail as b12p's last CTA. Decode 989,527 bytes. Audit minors (fix if it routes): G1 reads s1 before the wait (safe while every predecessor triggers after its wait); no regs/spill readout for the BND instantiation; G2's canary uses b12p's inst, not inst 4 (false negative only); copy check d1s only. Decode check **ea65cba7152841ca**, running alongside W6-C (its kill rules stand alone).
 - 0716Z: W6-B built and audited (wf_ab1eb282-a20: 0 blockers / 0 majors; the fix pass split the canary, Q1 and rider lines to under 200 chars so FINAL PATHS keeps them). Orchestrator fix ae002ec8: the p90 gate input now comes from draws 1..3 (it could equal the judge-like draw, which gates on one input). Cells: R norm-only, ea_combine with PDL, khalf / NN pooler, hilo router, NN unpooler. Decode 989,993 bytes. Decode check **27a008fa0a90435f**. Open minors: a rider exception turns off cells that were already decided; hilo's relaxed-atomic split-K can fail the exact copy check on a near-tie (false negative).
-- 0745Z: W6-C check 71741a4f: **1.5499** (noise). BN128 killed: attention side x1.012 in one round (bar 1.02), though
+- 0722Z: W6-C check 71741a4f: **1.5499** (noise). BN128 killed: attention side x1.012 in one round (bar 1.02), though
   the layer was x1.006-1.011 in all four (a ~1 us d1s gain; it may come back in phase C with an attention bar of 1.01).
   **Answers:** d1s attention on the critical path is 13.6-13.9 us, so PERHEAD gets built (tomorrow, or phase C if the
   size allows). T=1 no-op R 3.4-3.7 us (G2 alive), combine 2.0. At T=8 every fold clears its bar (R 2.7-3.0,
   boundaries 4.0-4.4 each / 8.4 both, combine 2.9-3.6), so the **T=2..8 folds** go into tomorrow's phase-A list.
-- 0750Z: PERHEAD build launched (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87): the attention board's sliding_cluster PERHEAD kernel ported to d1s; gate attention side >= 1.03 vs the best Triton variant, layer >= 1.003; generated file < 975,000 bytes (comment strip allowed).
-- 0800Z: W6-A check ea65cba7: **1.5484** (noise). G1 and G2 are exact (G2 bit-exact) and **slower**.
+- 0722Z: PERHEAD build launched (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87): the attention board's sliding_cluster PERHEAD kernel ported to d1s; gate attention side >= 1.03 vs the best Triton variant, layer >= 1.003; generated file < 975,000 bytes (comment strip allowed).
+- 0728Z: W6-A check ea65cba7: **1.5484** (noise). G1 and G2 are exact (G2 bit-exact) and **slower**.
   - G1 x0.974: +2.2 us vs off. The no-op ceiling is 3.65 us at d1s and 3.95 at d1f.
   - G2 x0.981: +1.65 / +1.14 us. The ceiling is 4.8 us.
   - **W6-A killed.** The last-arriver tail (one CTA running the next kernel's work after a ticket) costs about
     2x the launch it saves at T=1.
   - **Lesson for the T=2..8 folds:** no single-CTA tails. A fold must keep the work spread over CTAs, e.g. by
     trigger-first PDL on the existing kernels (the panel's "trigger-first boundary probe") rather than merging.
+- 0733Z: W6-B check 27a008fa: **1.5554**, above the 1.5507 board.
+  - T=128 routed norm + pool + hilo + unpool, layer x1.044 (376 -> 360 us).
+  - T=256 routed norm + pool + hilo, x1.027 (469 -> 457 us). comb dropped (x1.03 < 1.15).
+  - Rows (rowcmp2 vs 7ceab934): v16s **x1.061**, v16f x1.043, v32s x1.018, v32f x1.011; the other rows are noise.
+  - After the cells the main chain binds by ~6.7 us at T=128 (main 24.2 / side 17.5 us), so P3-L2 is now relevant.
+  - campaign/expert-bandwidth fast-forwarded to W6-B. **Scored run 4a7a49d0ae82440f.**
+  - (Stamp fix: the 0745 / 0750 / 0800Z entries above were estimates; corrected to 0722 / 0722 / 0728Z from the
+    commit times.)
