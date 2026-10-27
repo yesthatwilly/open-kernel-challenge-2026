@@ -737,3 +737,4 @@ append-only, newest last.
   decode_1 at 17.0 us against two-level's 23.8 us, so the port is worth ~6 us on the d1f row (~+0.5% headline).
 - Workflow wf_40d4513d-fdc (base 7cdbcf17): 2 designs plus a judge at effort max, then build, 2 audits and fix at
   effort high (the user's new per-role effort). Branch campaign/eb-w4-c320.
+- 0345Z: attention check **af08448e82c04fdf**: s2b fast merge (hyp/attn-s2b 9f428796 on c320 0453ca70). It races a PDL combine against an in-kernel ticket merge per band, at >= 1.05x in both rounds; the merge cost is printed per grid.
