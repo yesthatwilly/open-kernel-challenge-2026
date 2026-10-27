@@ -34,7 +34,8 @@ kind: control
 controls_for: khalf-gate-three-rounds-pooled
 prior: null
 review: required
-status: queued
+status: hold
+hold_reason: folded into router-pdl-plus-khalf-pooled-iqr-gate (its 10-round diagnostic and OLD/PARENT/POOLED readout run there), per that hypothesis's adversarial review 2026-10-27
 ---
 
 # khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr
