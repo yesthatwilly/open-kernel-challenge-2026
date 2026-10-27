@@ -1138,3 +1138,11 @@ append-only, newest last.
   - All 4 router_pdl flags ON.
   - Just under the 1.2735 board, which was a khalf-OFF draw. bf16 drift is 1.7-3.6%.
   - **Hand scored run 254c83ae55834807** (a borderline call, the same reasoning as the moe one that paid off).
+- 1452Z: **bf16 scored 254c83ae (router PDL + pooled khalf gate): 1.2740**, a new board by a hair (was 1.2735; rank 388).
+  - khalf ON; router_pdl 16 / 128 / 256 ON, 32 OFF.
+  - Landed on master by hand; BEST.json updated.
+- 1452Z: attention sk-onepass-verify1-timing-fix (bfb0457c, 1.6219). **The timing fix works** (incumbent rel L2
+  1.64e-03).
+  - **Onepass routed at sliding verify B=1:** x1.026 / x1.024, 14.9 -> 14.6 us; MB-4 x1.026-1.033.
+  - sliding decode B=32: x1.010 / x1.005, not routed.
+  - The headline is noise.
