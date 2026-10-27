@@ -711,3 +711,16 @@ append-only, newest last.
   readouts and the 'compiled in' line (a build overrun drops FD1 to V0). attn-s2 is still building.
 - 0313Z: attention check **becb6967be9940bf**: sliding-verify s2 split-combine (hyp/attn-s2 7cc48bef, base
   0d421faf). The bands B=2..16 / 17..32 route only at >= 1.05x in both rounds plus a replay check; B=1 is unchanged.
+
+## 2026-10-27T0322Z: wave 3 built and checked
+
+- Workflow wf_03f049d9-24a: 8 agents, ~1.2M tokens. No BLOCKER. W3-B has one MAJOR (no ptxas serialization report;
+  diagnostic only).
+- decode check **cc7d142af3fb4308**: W3-A, SK_FULLLINE in decode (campaign/eb-w3a-skfull, submission 4a9b6c2b...).
+  Before dispatch I fixed two audit MINORs: the ticket guard now reads before zeroing, and the canary can no longer
+  pass on a stale half-line buffer. Kill rule: judged d32f sk above ~205 us, or a d32f layer gate below 1.03.
+- moe check **8263c7bca04a406a**: W3-B, the wg hot-consumer DIAG rungs (nothing routes). Build variant B only if it
+  reaches >= x1.15 and is bit-exact.
+- moe check **e775df93c6d64491**: W3-C, the x-copy rungs (nothing routes). Kill if x-static < x1.04 and x-cp.async
+  < x1.03 vs C-R4 tok8.
+- Attention checks 508cfca7 (c320) and becb6967 (s2) are in flight.
