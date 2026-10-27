@@ -1123,3 +1123,5 @@ append-only, newest last.
     1.4889, so **hand scored run 99767cf374bb4688**.
   - **bf16 router-zero-PDL (a20f8048, 1.2715): ROUTED in all 4 classes** (x1.031-1.101; the nopdl arm equals master).
     The headline was pulled down by khalf missing again. Phase C: stack router-PDL + the khalf gate fix.
+- 1433Z: **prefill scored 99767cf3 (w2 early loads at low): 1.4897**, a new board by a hair (was 1.4889; rank 176).
+  Landed on master by hand; BEST.json updated.

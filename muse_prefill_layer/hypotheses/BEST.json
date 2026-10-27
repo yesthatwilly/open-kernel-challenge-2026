@@ -1,17 +1,18 @@
 {
  "problem": "muse_prefill_layer",
- "job": "ec3bd01859574bf1",
+ "job": "99767cf374bb4688",
  "check_job": "21911eb694ce467c",
  "mode": "submit",
- "speedup": 1.488912488847924,
+ "speedup": 1.4897491154674667,
  "ci": [
-  1.466578801515205,
-  1.5112461761806426
+  1.4674028787354547,
+  1.5120953521994784
  ],
- "score_us": 260192.52501519522,
- "commit": "9fbde72cc980ca534c8db9600bf6f101c82d5a29",
- "submission_blob": "42ded47196d5f0417c17f38574876508f0d822f1",
- "slug": "experts-rega-w13-fast-silu-epilogue",
+ "score_us": 260046.40377211233,
+ "commit": "52169f17",
+ "submission_blob": "11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d",
+ "slug": "experts-rega-w2-early-loads-low-class",
  "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json",
- "updated_at": "2026-10-27T121139Z"
+ "updated_at": "2026-10-27T143300Z",
+ "note": "landed by hand 2026-10-27 (orchestrator): scored 99767cf3 of hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class impl 52169f17 (arm a early gs/sid loads in the rega w2 epilogue at the LOW class, on top of fast silu); churn had pooled checks 59eb665f 1.4986 + 8716d98c 1.4994 as unproven-vs-best."
 }
