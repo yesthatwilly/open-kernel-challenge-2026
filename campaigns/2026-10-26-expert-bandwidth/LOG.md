@@ -968,3 +968,9 @@ append-only, newest last.
   - bf16 b12-unpooler-slice: the review corrected 5 out-of-date details against master.
   - prefill experts-rega-round-rotated-schedule: high-class gate at random <= 1.01; rot only when
     rega_low_variant == 0; placed last in prepare; expected +0.3-0.7%.
+- 1006Z: phase B checks dispatched through churn:
+  - bf16 b12-unpooler-slice: check **a642424734f54365** (the U12s bulk12 cell at m=1 vs ouns; all 9 review corrections).
+  - prefill experts-rega-round-rotated-schedule: check **d00770b6caef4445**.
+    - A new rega_rot module (master's kernel untouched); shifts 67 / 37; per-class gates high / low / ft, placed last
+      in prepare.
+    - Prepare-only clock64 span diagnostics (DIAG instantiations) answer whether the ingest cap is per SM or shared L2.
