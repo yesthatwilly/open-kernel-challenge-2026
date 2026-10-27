@@ -1019,3 +1019,4 @@ append-only, newest last.
 - 1211Z: **prefill scored ec3bd018: 1.4889** (CI 1.467-1.511), the new board (was 1.4677; rank 175); churn landed it.
 - 1211Z: moe fsilu-eb check c91cfb6a: **1.7153**, neutral (rows x0.99-1.01). moe T=128 runs Marlin; M=256 hybrid
   race -1%. campaign/expert-bandwidth fast-forwarded to eb-fsilu; the change rides decode's next check.
+- 1213Z: minted bf16 khalf-gate-three-rounds-pooled (3 rounds, every round >= 1.01, median >= 1.03): c65ffcb6 lost khalf on r1 1.025 (r2 1.054), costing bf16 ~1.8% in that run. Review running. Prefill has no other accurate-math epilogue (Triton elsewhere).
