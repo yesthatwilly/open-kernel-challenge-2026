@@ -930,3 +930,9 @@ append-only, newest last.
   - campaign/expert-bandwidth fast-forwarded to eb-w6e-fork (c320t bar + fork code, both gated).
   - Decode: 6 checks / 2 scored left (okc problems).
 - 0917Z: **W6-M launched** (wf_f2bd4b32-1ad, campaign/eb-w6m-fork off campaign/expert-bandwidth): the fork in moe's hybrid race at M=128 / 256. moe's T=128 hybrid is a near tie (H-16 x0.97-1.06), so the fork's ~7% should tip it. Decode stays byte-identical; moe has 14 checks / 9 scored today.
+- 0937Z: W6-F built (wf_a619b576-97e). The audits found 1 blocker and 1 major, and the fix pass resolved both:
+  - **Blocker:** the T=256 race turned T=128's fork flag off. Now only the T=128 class sets it.
+  - **Major:** the race timed candidates without W6-B's cells. Now a `_hcf_confirm` re-race after _t128_setup times
+    master, the serial H and the forked H with the routed cells. It can only demote, and falls back to master + cells.
+  - 976,954 bytes. Decode check **ee9142eb7dd64f8a**.
+  - Q1 asks for the worst round of H-16 / H-16f / H-8 / H-8f vs master, cells off; Q1c the same with the cells.
