@@ -7,35 +7,26 @@ append-only, newest last.
 
 - **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a); the ~23:00Z STOP is
   retired.
-- updated: 2026-10-27T0013Z (date -u); phase A; /loop /3to1 running
+- updated: 2026-10-27T0145Z (date -u); phase A; /loop /3to1 running
 - **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`, `/loop /3to1`):
   - 00:00Z until decode's reasonable checks are spent: phase A, the biggest decode rewrites on Opus 5.5 ultracode
     workflows (moe as testbed), built and checked;
   - then until 18:00Z: phase B, the other problems' minor gains (moe > bf16 > attention > prefill);
   - 18:00Z-24:00Z: phase C, use up every remaining check; `/hypothesize`; write tomorrow's phase-A plan by ~23:00Z;
   - always: a scored submit whenever a check beats a board; never re-roll identical bytes.
-- **Today (10-27), phase A plan:**
-  1. Harvest the three in-flight jobs (below) per DISTILL §4.1; land decode if 2bd373c9 beats 1.4956.
-  2. Ultracode workflow, launched right after the harvest, on the top levers of DISTILL §3.3:
-     - **v4k, the k-slice B-fragment-reuse consumer:** a ladder rung first (one moe check, kill < 1.05x over
-       C-R4), then the engine raced in every gate, audited; moe check, then decode check.
-     - **bulk12 P at T=1 in decode** (DISTILL §4.2), built against the read-flush gate (bf16's
-       `b12-qkv-m1-r32-one-cta-per-sm-readflush-gate` runs in phase B or alongside as its calibration).
-     - **X3 glue at T <= 8** only if 0b085ef4's anatomy shows no-route launches of 10 us or more at T=1, or 40% or
-       more of the block; otherwise the dq layout, if VERDICT-dq passed.
-  3. Phase B: bf16 `b12-qkv-m1-r32-...-readflush-gate`, attention `sk-full-line-gather`, then DISTILL §4.4's order.
-  4. Phase C from 18:00Z: fill every problem's remaining checks.
-- In flight: phase-A ultracode workflow wf_59d9138b-356 (v4k k-slice rung → moe check; bulk12 P@T=1 → decode check;
-  worktrees .worktrees/v4k-rung, .worktrees/b12p-t1 off fe240969). Also (DISTILL §1.3 steps 1-3, dispatched 00:02-00:03Z): decode scored 2bd373c9e23c4667 (27ef83df bytes);
-  moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb (eacf0722 bytes).
-- Boards at 23:46Z:
-  - decode 1.4956 (rank 365 of 754);
-  - moe 1.6851 (400 of 871);
-  - bf16 1.2664 (370 of 1102);
-  - attention 1.5347 (451 of 828);
-  - prefill 1.4677 (179 of 486);
-  - overall 370 of 1265.
-- Quota: 20 checks / 10 scored per problem per UTC day from 10-27; the 10-26 leftovers expired unused.
+- **Today (10-27), phase A** (updated 2026-10-27T0145Z):
+  - Boards: decode **1.5275** (rank 343; was 1.4956 / 365), moe **1.7076** (384), bf16 1.2664, attention 1.5347,
+    prefill 1.4677.
+  - Killed today: dq3 / dq4, H=-8, the k-slice consumer (lever #1), wg2 (the big-T hot-half re-split). Kept: v4c and
+    b12p (P at T=1, layer x1.040).
+  - **HOLD:** no decode scored run that carries b12p until the intermittent illegal address of 8e3c26d6 is
+    diagnosed (agent running; fix branch campaign/eb-b12p-fix).
+  - In flight: workflow wf_9ffcb970-fa3 (eat18 = T <= 8 expert-block streaming; dchain-pdl = qkv / o PDL weight
+    prefetch), both on 8cfd91ce (b12p included).
+  - Next: dispatch wave-2 checks when they land (one new cell per GEMM per check); the fault fix decides what can
+    be scored. Phase B (bf16 readflush-gate, attention sk-full-line-gather) starts once decode's reasonable checks
+    are spent. Phase C from 18:00Z.
+  - Quota 01:45Z: decode 17 checks / 7 scored; moe 17 / 9; bf16, attention and prefill 20 / 10.
 
 ## 2026-10-26T15:35Z: campaign opened
 
