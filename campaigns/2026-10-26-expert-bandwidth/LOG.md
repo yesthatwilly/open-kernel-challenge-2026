@@ -25,6 +25,9 @@ append-only, newest last.
     Write-up: `research/kstep-schedule-2026-10-27.md`.
   - **In flight (1830Z):** decode trim check **ced20a71e99b4798** (eb-sp-trim fba4a8fb, 924,048 B, same RNG draws);
     resumed workflows: moe Gate-0 judge carrier (integrate -> audit -> fix) and the node judge (gpunode06 GPU 7 only).
+  - **GPU queue (1835Z, the user: "set up the queue and runner now"):** takemyjob eb403fa `bin/hopper-queue`, running
+    detached (pid 1258023). Queued: H200 es-cal / es-kstep. Next: node-judge jobs once that harness lands. The stage-0
+    ladder build waits for the user's budget.
   - **Session limit:** the user's tokens ran out at ~1750Z (two agents died); the user said "please resume the
     interrupted work" after the 1820Z reset. Keep agent use lean.
 - **Earlier today, state at 1505Z (kept for history):**
