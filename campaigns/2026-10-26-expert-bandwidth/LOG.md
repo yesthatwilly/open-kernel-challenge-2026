@@ -730,3 +730,10 @@ append-only, newest last.
 - 0334Z: attention s2 check becb6967: 1.5906, correct, but no band routed (B=16 x1.017 / x1.007 vs the 1.05
   bar; B=32 x0.978). The window kernel alone is 14.8 us against master's 24.4 us step, but the combine costs 7.5-10 us.
   s2 killed; the queued s2b fast-merge is built next (phase B).
+
+## 2026-10-27T0335Z: wave 4 launched (c320 decode port at d1f)
+
+- Decode has no c320 path. Its d1f still uses two-level attention. On the attention board, c320 V4 + ONEPASS runs
+  decode_1 at 17.0 us against two-level's 23.8 us, so the port is worth ~6 us on the d1f row (~+0.5% headline).
+- Workflow wf_40d4513d-fdc (base 7cdbcf17): 2 designs plus a judge at effort max, then build, 2 audits and fix at
+  effort high (the user's new per-role effort). Branch campaign/eb-w4-c320.
