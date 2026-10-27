@@ -724,3 +724,6 @@ append-only, newest last.
 - moe check **e775df93c6d64491**: W3-C, the x-copy rungs (nothing routes). Kill if x-static < x1.04 and x-cp.async
   < x1.03 vs C-R4 tok8.
 - Attention checks 508cfca7 (c320) and becb6967 (s2) are in flight.
+- 0327Z: attention c320 check 508cfca7: **1.6279** [1.604, 1.658] vs board 1.5902. ONEPASS combine routed
+  (V4 19.20 -> 17.02 us, x1.128); the early trigger was not (readout x0.996). **Scored run 276ff0cda0404ef2.** This is
+  the d1f decode port candidate: decode's c320 chain at T=1.
