@@ -67,6 +67,9 @@ harvested_at: 2026-10-27T141743Z
 best_at_harvest: 1.488912488847924
 promotion: null
 confirm_queued: experts-rega-w2-early-loads-low-class-cf
+confirm_job: 8716d98c405f417d
+confirm_outcome: neutral
+pooled_speedup: 1.499021779478406
 ---
 
 # experts-rega-w2-early-loads-low-class

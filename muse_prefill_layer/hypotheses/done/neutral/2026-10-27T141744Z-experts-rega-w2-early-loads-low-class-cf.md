@@ -14,8 +14,8 @@ controls_for: experts-rega-w2-early-loads-low-class
 confirm_of: experts-rega-w2-early-loads-low-class
 confirm_of_job: 59eb665f162a4ac9
 review: proceed
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-27T141759Z
 base_sha: 52169f1783ec72c5ee8b2e97b0648a0e91426c87
 base_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
@@ -34,6 +34,13 @@ attempt_file: 2026-10-27T141814Z-check-experts-rega-w2-early-loads-low-class-cf.
 prepared_at: 2026-10-27T141815Z
 job: 8716d98c405f417d
 dispatched_at: 2026-10-27T141829Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4994277745198583
+speedup_ci: [1.4769363579020605, 1.521919191137656]
+harvested_at: 2026-10-27T142520Z
+best_at_harvest: 1.488912488847924
+promotion: null
 ---
 
 # experts-rega-w2-early-loads-low-class-cf
@@ -80,4 +87,33 @@ OK with warnings: muse_prefill_layer/submission.py
 `python3 -I -m py_compile` OK; `__pycache__` removed.
 
 Copied from `experts-rega-w2-early-loads-low-class`, whose code this is; the only change is a comment.
+
+## Result
+
+- job `8716d98c405f417d` (check), status done, passed True, tests 5/5
+- speedup 1.4994x, 95% CI [1.4769, 1.5219], score 258367.82977029568 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.488912488847924, "ci": [1.466578801515205, 1.5112461761806426], "job": "ec3bd01859574bf1"}; base result: muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-early-loads-low-class.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-early-loads-low-class-cf.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-early-loads-low-class-cf.patch`; branch `hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class-cf`
+- confirm of `experts-rega-w2-early-loads-low-class`: pooled 1.4986x (job 59eb665f162a4ac9) and 1.4994x (job 8716d98c405f417d) → 1.4990x; best 1.4889x, two-run margin 1.07% → neutral (unproven-vs-best)
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 730.62 | 727.27 | 1.0022 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1114.09 | 1134.44 | 0.9962 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2088.47 | 2099.71 | 1.0188 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3626.99 | 3631.09 | 0.9994 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11506.74 | 11076.19 | 0.9877 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10748.23 | 10875.2 | 0.9897 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14529.77 | 14256.76 | 0.9902 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18001.25 | 18014.49 | 0.988 | flat |
+
+no shape moved outside noise. Noise ±1.5%.
+
+## Follow-ups
+
+- pooled verdict for `experts-rega-w2-early-loads-low-class`: neutral (unproven-vs-best); this file is the record of the rerun only.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
 

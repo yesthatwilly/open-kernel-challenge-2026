@@ -497,5 +497,24 @@
   ],
   "summary": "no shape moved outside noise",
   "expected_hit": "2/3"
+ },
+ "pooled": {
+  "jobs": [
+   "59eb665f162a4ac9",
+   "8716d98c405f417d"
+  ],
+  "speedups": [
+   1.4986157844369536,
+   1.4994277745198583
+  ],
+  "speedup": 1.499021779478406,
+  "ci": [
+   1.4831222519140241,
+   1.5149213070427878
+  ],
+  "outcome": "neutral",
+  "detail": "unproven-vs-best",
+  "best": 1.488912488847924,
+  "at": "2026-10-27T142520Z"
  }
 }
