@@ -991,3 +991,4 @@ append-only, newest last.
     179 s in d00770b6); random <= 1.01; a fine-4map overhead control in the same prepare; ft expected flat.
   - Both claimed; implementers running (2 agents).
 - 1043Z: bf16 qkv-swapab16-five-stage-ring check **c65ffcb6d9ab4f95** (5-stage ring for qkv at m=2..16; smem cap, bitwise canary, strict four-of-four 1.03 read gate).
+- 1050Z: prefill experts-rega-fine-n-buckets check **c951d9168cd546bb**: 8 N buckets (16*(b+1)) in a muse_prefill_rega_fine module; three timed pairs (master / fine-4map / fine); a 200 s pre-build skip; low class only at rega_low_variant 0; ft expected flat.
