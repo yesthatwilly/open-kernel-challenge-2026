@@ -608,3 +608,9 @@ append-only, newest last.
   - **eat18**: T=1 / 2..8 expert-block streaming, from 2.55 / 2.67 TB/s net toward >= 3.3;
   - **dchain-pdl**: PDL static-weight prefetch for qkv_gate / o in the T <= 32 chain.
 - Quota 01:30Z: decode 17 checks / 7 scored; moe 17 / 9; bf16, attention and prefill full.
+
+## 2026-10-27T0136Z: wg2 killed on decode too
+
+- decode check 74201da03ab64f40: 1.5176, below the 1.5275 board. H-17 (wg2) x0.920 at T=128 and x1.017 at T=256, against
+  H-16 x1.050 / x1.156 and H-8 x1.052 / x1.161. The gate chose H-8 by a hair: an H-8 / H-16 near tie, flipping between
+  runs. **wg2 is killed in this form.** The big-T hot half needs a different idea, not a re-split.
