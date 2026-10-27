@@ -44,7 +44,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T103831Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T103831Z
 base_sha: 8f8cca6a58905f50bf7dd6d8b3836520f7443c83
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -61,6 +61,8 @@ submission_blob: 40dfcaff4e765715b1b80982f24edcbd7e246f3c
 lint_warnings: 49
 attempt_file: 2026-10-27T104308Z-check-qkv-swapab16-five-stage-ring-m8-m16.md
 prepared_at: 2026-10-27T104308Z
+job: c65ffcb6d9ab4f95
+dispatched_at: 2026-10-27T104319Z
 ---
 
 # qkv-swapab16-five-stage-ring-m8-m16
