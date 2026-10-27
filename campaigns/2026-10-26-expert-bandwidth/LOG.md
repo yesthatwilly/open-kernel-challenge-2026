@@ -982,3 +982,11 @@ append-only, newest last.
   - LESSONS.md updated (also with the fork result).
   - Held attention s2-split-combine (superseded by s2b).
   - Next picks: bf16 b12-qkv-m1-r32-one-cta-per-sm-readflush-gate and prefill experts-rega-fine-n-buckets (reviews).
+- 1039Z: phase B reviews:
+  - bf16 b12-qkv-m1-r32: **hold** (already on master via 8f233e88; R=32 lost its read gate in a3dcd4cb and a6424247).
+  - bf16 combo-verify retired (per DISTILL 4.4).
+  - bf16 qkv-swapab16-five-stage-ring-m8-m16: **proceed** (one num_stages knob, 4 -> 5, at m=2..16; canary bitwise;
+    smem <= 113 KB; expect 0-0.8 us).
+  - prefill experts-rega-fine-n-buckets: **proceed**. Low-class precedence; a budget check before nvcc (prepare reached
+    179 s in d00770b6); random <= 1.01; a fine-4map overhead control in the same prepare; ft expected flat.
+  - Both claimed; implementers running (2 agents).
