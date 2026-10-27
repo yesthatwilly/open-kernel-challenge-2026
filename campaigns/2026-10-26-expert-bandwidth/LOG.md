@@ -875,3 +875,9 @@ append-only, newest last.
   - The canary, alternation, layer and copy checks are all ok.
   - **Scored run ca44d5c0feba416c.**
   - One minor to watch: 32 B of local memory in the kernel, likely a small spill.
+- 0820Z: decode scored ca44d5c0 (PERHEAD on W6-B): **1.5695**, a tie with the 1.5697 board, which stays.
+  - The d1s gain is real across two runs (x1.028, x1.036; about -2 us). This draw lost it on d32f x0.957 and v1f x0.975,
+    rows PERHEAD does not touch.
+  - campaign/expert-bandwidth fast-forwarded to campaign/eb-w6pb-perhead; the next scored run carries PERHEAD plus
+    whatever else routes.
+  - Decode quota: 6 checks / 2 scored.
