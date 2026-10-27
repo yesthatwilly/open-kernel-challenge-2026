@@ -49,7 +49,7 @@ base_sha: c59f4fea68a3a426326191184157123641faca72
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
 branch: hyp/muse_bf16_proj/b12-unpooler-slice-m1-r16-rowowner
 worktree: .worktrees/muse_bf16_proj/b12-unpooler-slice-m1-r16-rowowner
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T095656Z
@@ -58,6 +58,8 @@ submission_sha256: 78bba9d11ceb48cb8afcb1cf3378ae592168d20fdf9c7eb90377c9699f1e3
 norm_sha256: 00782f3ccf0ac5c7b8470d5d2aa945eadfddd02feff3c8fd929a1d9f76a2194e
 submission_blob: 5141523a4c58a84f31a3beef1c28a663e34ea225
 lint_warnings: 45
+attempt_file: 2026-10-27T095656Z-check-b12-unpooler-slice-m1-r16-rowowner.md
+prepared_at: 2026-10-27T095656Z
 ---
 
 # b12-unpooler-slice-m1-r16-rowowner
