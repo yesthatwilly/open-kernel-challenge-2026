@@ -44,7 +44,7 @@ controls_for: null
 rewrite_stage: 6
 replaces: Marlin w13+silu and/or Marlin w2 at 128<=T<=512
 review: proceed
-status: running
+status: hold
 review_at: 2026-10-25T054837Z
 review_companions: null
 stage: claimed
@@ -56,6 +56,7 @@ worktree: .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-m
 mode: null
 restack_of: null
 stale_base: true
+hold_reason: "superseded (phase C 2026-10-27 2215Z): implemented, but its data-derived table routes B128 -> master and B256 -> wgmma for both GEMMs, exactly the s5 bucket-gate twin (4e4a0e26 / 7be125e9, 1.3744x); paths (b)/(c) are never selected, and the base is the stale s5 commit (master 1.7187), so a check answers no new question. Implementation left unstaged in worktree .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix (never built by nvcc)."
 ---
 
 # cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix
