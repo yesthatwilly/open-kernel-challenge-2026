@@ -55,7 +55,7 @@ base_sha: 15558ffa690a1e3aa20c39c6efdd22a6ec73a644
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
 branch: hyp/muse_bf16_proj/router-pdl-plus-khalf-pooled-iqr-gate
 worktree: .worktrees/muse_bf16_proj/router-pdl-plus-khalf-pooled-iqr-gate
-mode: null
+mode: check
 restack_of: router-zero-pdl-overlap-m9-m256
 stale_base: null
 implemented_at: 2026-10-27T144321Z
@@ -64,6 +64,8 @@ submission_sha256: 6339277e6610988dbddc6a41e89e5613779a671e4ac82e84c22d1d35138e6
 norm_sha256: 0f9b16f298a27e49e7feaea77fe2a8176c9bd51dd7aef5669cf3c0d69818c843
 submission_blob: ada0503dc81049c9bfc984ad24101c09d992438f
 lint_warnings: 54
+attempt_file: 2026-10-27T144321Z-check-router-pdl-plus-khalf-pooled-iqr-gate.md
+prepared_at: 2026-10-27T144321Z
 ---
 
 # router-pdl-plus-khalf-pooled-iqr-gate
