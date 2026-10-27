@@ -858,3 +858,14 @@ append-only, newest last.
     (x1.022-1.025), so the d1f "regression" is that draw. Phase-C question: c320t's head-to-head bar.
   - submission sha256 60776cbb07209794...
 - 0752Z: W6-D probe build launched (wf_6c3fde55-e50, campaign/eb-w6d-probe off 3645514e). Print-only riders for tomorrow's levers (hot/cold fork, trigger-first boundary, c320t re-time) plus one cell: BN128 at an attention bar of 1.01.
+- 0805Z: PERHEAD built and audited (wf_e31c91af-897: 0 blockers / 0 majors).
+  - The kernel is a verbatim port of attention master's PH: a named namespace, no f16 branch, inside the SKW TU.
+    The audit fix makes Q2 re-print SKW's build seconds and the nvcc error digest.
+  - Merged onto W6-B as campaign/eb-w6pb-perhead. The one conflict, the setup calls, is resolved with both kept.
+    963,064 bytes stripped.
+  - Decode check **fff7d3e7250042f1**.
+  - Open minors:
+    - a PERHEAD compile failure takes SKW's routes down with it (rows regress, no crash);
+    - no window-edge key in the canary;
+    - the canary does not assert that the PH route ran (read the 'vs BN64' figure, which must be non-zero);
+    - master's host bounds check was not ported (today's inputs are in range).
