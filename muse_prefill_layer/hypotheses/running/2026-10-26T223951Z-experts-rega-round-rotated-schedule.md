@@ -53,9 +53,18 @@ kind: primary
 controls_for: null
 prior: "experts-triton-persistent-grid-first-turn: that changed the old Triton engine's grid size at T > 4096; this keeps rega's 132-CTA persistent grid and only rotates the item->CTA map so CTAs stop aliasing onto chunk (b % k) of k=2/4 experts and onto one expert-group parity"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T095330Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T095330Z
+base_sha: bb27243410f70166648b1b7ac353fa74b08cb1ad
+base_blob: f4751fc054335a94d1b401af272e98a2d4760363
+branch: hyp/muse_prefill_layer/experts-rega-round-rotated-schedule
+worktree: .worktrees/muse_prefill_layer/experts-rega-round-rotated-schedule
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-round-rotated-schedule
