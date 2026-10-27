@@ -693,3 +693,8 @@ append-only, newest last.
   - **W3-B** w3b-wgdiag, a moe diagnostic;
   - **W3-C** w3c-xcopy, a moe ladder diagnostic.
 - d1s cluster port, norm fold, P T-scaling and the no-route fixed cost are held for tomorrow's phase A.
+
+## 2026-10-27T0253Z: decode 1.5441 (b12p + anatomy fix) lands
+
+- Scored run ba57a64f66864219: **1.5441** [1.521, 1.567], the new board (rank 331, was 343). master now holds 7f74c074's
+  bytes (sha256 32c323be...), so the board bytes no longer carry the _ead_anatomy fault.
