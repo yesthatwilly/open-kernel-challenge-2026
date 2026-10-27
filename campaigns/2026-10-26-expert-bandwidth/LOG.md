@@ -833,3 +833,4 @@ append-only, newest last.
   **Answers:** d1s attention on the critical path is 13.6-13.9 us, so PERHEAD gets built (tomorrow, or phase C if the
   size allows). T=1 no-op R 3.4-3.7 us (G2 alive), combine 2.0. At T=8 every fold clears its bar (R 2.7-3.0,
   boundaries 4.0-4.4 each / 8.4 both, combine 2.9-3.6), so the **T=2..8 folds** go into tomorrow's phase-A list.
+- 0750Z: PERHEAD build launched (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87): the attention board's sliding_cluster PERHEAD kernel ported to d1s; gate attention side >= 1.03 vs the best Triton variant, layer >= 1.003; generated file < 975,000 bytes (comment strip allowed).
