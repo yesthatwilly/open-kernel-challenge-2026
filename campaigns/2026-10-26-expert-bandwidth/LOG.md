@@ -1103,3 +1103,4 @@ append-only, newest last.
   - Low also needs the rega-lo guard routing <= 1.00. Read the PATH CHOSEN lines (the kernel name equals master's).
 - 1410Z: bf16 router-zero-pdl-overlap reviewed (**proceed**: exactly one griddepcontrol.wait, a slow-primary race
   stand-in, a third arm with no PDL, exact-kwarg warm-up, tolerance exactness). Claimed; implementer running.
+- 1411Z: prefill o-proj-triton-gemm-turn-gated reviewed (**proceed**: o at turn_1 is one serial nvjet 112x128 call, 39.7 / 38.9 us vs a 12.8 us floor; run the phase LAST (it could push fsilu past its 200 s start); candidates 128x256 / 256x128 / 128x128; do_not_specialize M; realistic -10 to -15 us per turn_1 shape). Claimed; implementer running.
