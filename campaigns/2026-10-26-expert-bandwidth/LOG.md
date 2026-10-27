@@ -631,3 +631,10 @@ append-only, newest last.
 - decode check **7844b6c903794ee7** (b12p + fix). If it is clean and beats 1.5275, send a scored run; that also makes
   the board bytes fault-free.
 - **End game:** the final board bytes must carry this fix, or EAD_ANATOMY = False.
+
+## 2026-10-27T0207Z: the anatomy fix runs clean on the judge
+
+- decode check 7844b6c903794ee7 (7f74c074, b12p + fix): **1.5276** [1.505, 1.550], 13/13. Both anatomy stages printed
+  "synced"; b12p routed (layer x1.038). The headline ties the board, so no scored run.
+- The b12p HOLD is lifted for bytes that carry 7f74c074. The next decode scored run should come from a wave-2 build with
+  the fix merged.
