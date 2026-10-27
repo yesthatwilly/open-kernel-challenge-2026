@@ -8790,6 +8790,7 @@ _SW_SPECS = ("2b", "4b", "8b", "sm", "2sm")   # grid = 2B / 4B / 8B CTAs, one pe
 _SW_MERGES = MappingProxyType({"pdl": 2, "tk": 3})
 _SW_MERGE_TXT = MappingProxyType({"pdl": "kernel<SPLIT> + PDL sw_combine_kernel", "tk": "kernel<TICKET> (in-kernel merge)"})
 _SW_GATE = 1.05          # master / candidate needed in BOTH interleaved rounds
+_SW_GATE_BAND = MappingProxyType({"B=17..32": 1.03})  # per-band override: af08448e measured x1.050 / x1.047 here
 _SW_IQR = 1.5            # candidate IQR <= this x master's IQR in both rounds
 _SW_REL = 3e-2           # candidate vs master output rel L2
 # Seconds on the import clock (_IMPORT_T0, set at the top of the file) after which a phase is not started; every
@@ -9272,9 +9273,10 @@ def _sw_gate_band(band: int, batch: int, gen, flush, sms: int, fams):
         torch.cuda.synchronize()
         cerr, cfin = _rel_l2(out, master_out.float())
         word, clear = _sw_err(dev), _sw_tickets_clear(dev)
-        good = min(ratios) >= _SW_GATE and iqr_ok and cfin and cerr < _SW_REL and word == 0 and clear
+        bar = _SW_GATE_BAND.get(name, _SW_GATE)
+        good = min(ratios) >= bar and iqr_ok and cfin and cerr < _SW_REL and word == 0 and clear
         _say(f"[sw-gate] {name}: {fam} grid {g} ({spec}): rounds {ratios[0]:.3f}x / {ratios[1]:.3f}x (need both >= "
-             f"{_SW_GATE}), IQR bound {'met' if iqr_ok else 'MISSED'}, vs master rel L2 {cerr:.2e} (< {_SW_REL}), error "
+             f"{bar}), IQR bound {'met' if iqr_ok else 'MISSED'}, vs master rel L2 {cerr:.2e} (< {_SW_REL}), error "
              f"word {word}, tickets clear {clear} -> {'ROUTE' if good else 'no'}")
         finals_txt.append(f"{fam} grid {g} {ratios[0]:.3f}x/{ratios[1]:.3f}x{'' if iqr_ok else ' IQR missed'}")
         if good and (best is None or min(ratios) > best[0]):

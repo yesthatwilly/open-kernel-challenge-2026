@@ -3,12 +3,12 @@
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
 - **Today (10-27), phase A** (updated 2026-10-27T0612Z):
-  - Boards: decode **1.5507** (rank 331; day start 1.4956), moe **1.7076** (384), attention **1.6114** (scored
-    4e386647 pending, check 1.6129), bf16 **1.2735**, prefill 1.4677.
+  - Boards: decode **1.5507** (rank 331; day start 1.4956), moe **1.7076** (384), attention **1.6340** (rank 389,
+    scored 4e386647), bf16 **1.2735**, prefill 1.4677.
   - Killed today: dq3 / dq4, H=-8, k-slice, wg2, eat18, o_pdl, x-copy, variant B, W5 wgx / exact-N; attention s2, s3.
-  - In flight: attention scored run 4e386647 (sw17 bar 1.03); panel 2 wf_b09b62b9-df5 (the sliding-weighted
+  - In flight: panel 2 wf_b09b62b9-df5 (the sliding-weighted
     re-rank, max effort) is in its verify-loads agent, then the judge.
-  - Next: harvest 4e386647 (land on master if it beats 1.6114); when panel 2 returns, save its verdict to
+  - Next: when panel 2 returns, save its verdict to
     research/ and launch wave 6 (design/judge max, build/audit/fix high) on campaign/expert-bandwidth 40391ed0
     (dl-slim, 941 KB; its bytes ride wave 6's first decode check).
   - Quota 06:10Z: decode 12 checks / 4 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
@@ -812,3 +812,4 @@ append-only, newest last.
 - 0524Z: **re-rank by score weighting.** The wave-4 judge found the headline = geomean over 6 loads of (46 t_sliding + 16 t_full), so sliding rows weigh ~2.9x full rows, and today's decode wins hit mostly full rows. Panel 2 (wf_b09b62b9-df5, max effort, read-only) re-ranks decode levers on that weighting and specs wave 6.
 - 0539Z: attention check **4e695fa0**: s2b's B=17..32 gate bar lowered to 1.03 (IQR bound kept; B=2..16 stays 1.05), on master ea24b53c. Judge it on the verify_32 sliding row.
 - 0555Z: attention sw17 check 4e695fa0: 1.6129; B=17..32 routed at the 1.03 bar (x1.032 / x1.037). **Scored run 4e386647edd845f7.**
+- 0620Z: attention scored 4e386647 (sw17, s2b B=17..32 bar 1.03): **1.6340** (CI 1.609-1.658), the new board (rank 389; was 1.6114 / 398). Landed on master.

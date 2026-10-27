@@ -1,19 +1,19 @@
 {
  "problem": "muse_attention_decode",
- "job": "a76ee9b03a9f4db4",
+ "job": "4e386647edd845f7",
  "mode": "submit",
- "speedup": 1.611396417767595,
+ "speedup": 1.6339575246416982,
  "ci": [
-  1.5872254715010812,
-  1.6355673640341089
+  1.6094481617720726,
+  1.6584668875113235
  ],
- "score_us": 2337.289544938779,
- "commit": "ea24b53c7a365228225c66f1bef3994d73309ac1",
- "submission_blob": "376da16663bf84fe6a1720d607f349485662d1de",
- "slug": "sliding-verify-wgmma-window-s2b-fast-merge",
+ "score_us": 2305.01707859627,
+ "commit": "26498226d86d00463a052d170384d55fbb91659f",
+ "submission_blob": "2eb03f76ceefa9bf81e28616ced3b33be3a70443",
+ "slug": "sliding-verify-s2b-b17-32-bar103",
  "result": null,
- "updated_at": "2026-10-27T042151Z",
- "master_slug": "sliding-verify-wgmma-window-s2b-fast-merge",
- "master_job": "a76ee9b03a9f4db4",
- "note": "registered by hand 2026-10-27: s2b PDL merge (B=2..16) on c320 onepass + sk-full-line + v3chain; branch hyp/attn-s2b 9f428796; landed on master. Check af08448e 1.6247."
+ "updated_at": "2026-10-27T062000Z",
+ "master_slug": "sliding-verify-s2b-b17-32-bar103",
+ "master_job": "4e386647edd845f7",
+ "note": "registered by hand 2026-10-27: s2b with the B=17..32 gate bar lowered to 1.03 (B=2..16 stays 1.05); branch hyp/attn-sw17-bar103; check 4e695fa0 1.6129; landed on master."
 }
