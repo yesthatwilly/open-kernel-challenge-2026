@@ -41,14 +41,14 @@ change: >
   (prepare ~216 -> ~224 s); a step deadline of 270 s leaves master's w2.
 expected:
   - shapes: "*load=turn_1*"
-    direction: faster
-    why: "w2 row rega_kernel<false,false> 136.4 us (sliding) / 144.7 us (full) in ec3bd018: removing 1-2 serialized L2 round trips (unrolled) or up to 8 (not unrolled) plus the synchronous store loop per item is ~0.8-4K clk of a ~19-54K clk item: w2 x0.94-0.985, -2 to -8 us per shape"
+    direction: flat
+    why: "low class (T=753) is HBM-bound (w2 604 MB in 136.4 us = 4.43 TB/s, 92% of the byte floor; 1-3 scatter passes hidden by the 4-stage ring): print-only in the w2st gate, never routed, so master's w2 runs (review 2026-10-27T133940Z)"
   - shapes: "*load=turn_4*"
     direction: faster
-    why: w2 row 327.3 / 336.1 us -> ~310-322 us
+    why: "high class (T=3012): w2 row x0.94-0.985 when the gate routes an arm (327.3 / 336.1 us -> ~310-322 us); readable only from the in-prepare gate"
   - shapes: "*load=first_turn*"
     direction: faster
-    why: w2 row rega_kernel<false,true> 1576-1858 us -> x0.94-0.985, -25 to -100 us at sliding first_turn (weight 138)
+    why: "ft class (T=16384): w2 row rega_kernel<false,true> 1576-1858 us x0.94-0.985, -25 to -100 us at sliding first_turn (weight 138); headline ~0.15-0.6%, below the judge margin, readable only from the gate"
 risk: low
 depends_on: null
 priority: 1
@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T133940Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-27T133940Z
 base_sha: 2750f9d64192321654244084e3a9cf73fd461482
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -68,6 +68,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-s
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-27T135241Z
+impl_commit: 1f1f74edd899b3edf61b517904e57d665ccfb412
+submission_sha256: daa2bbc02b4850406ba341094f588673a2d7092fc8266cbcf730bed462779196
+norm_sha256: e316a3c3ba9c9674ed6f0bd08dfe309ec8f25c9efde55cfd02d60f9ec5a3b8ba
+submission_blob: 7666d623fa92fa1ce47af951d22a1931457065c7
+lint_warnings: 112
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
@@ -78,9 +84,13 @@ Built on master (blob 42ded471, experts-rega-w13-fast-silu-epilogue landed). NO 
 
 ## Expected
 
-- `*load=turn_1*` faster: w2 row rega_kernel<false,false> 136.4 us (sliding) / 144.7 us (full) in ec3bd018: removing 1-2 serialized L2 round trips (unrolled) or up to 8 (not unrolled) plus the synchronous store loop per item is ~0.8-4K clk of a ~19-54K clk item: w2 x0.94-0.985, -2 to -8 us per shape
-- `*load=turn_4*` faster: w2 row 327.3 / 336.1 us -> ~310-322 us
-- `*load=first_turn*` faster: w2 row rega_kernel<false,true> 1576-1858 us -> x0.94-0.985, -25 to -100 us at sliding first_turn (weight 138)
+(Corrected per the adversarial review, 2026-10-27T135059Z.)
+
+- `*load=turn_1*` flat: the low class (T=753) is HBM-bound (w2 at 92% of the byte floor; 1-3 scatter passes hidden by the 4-stage ring). The gate times it print-only and never routes it, so master's w2 runs.
+- `*load=turn_4*` faster: the high class (T=3012) w2 row x0.94-0.985 when an arm clears the gate (327.3 / 336.1 us -> ~310-322 us).
+- `*load=first_turn*` faster: the ft class (T=16384) w2 row rega_kernel<false,true> 1576-1858 us x0.94-0.985, -25 to -100 us at sliding first_turn (weight 138).
+- Headline ~0.15-0.6%, far below the judge's +-1.5% interval: readable only from the in-prepare interleaved gate (`[rega-w2st] ... TIME` / `GATE` lines, warm-L2 and judge-like pop first), not from scored rows against ec3bd018 (same-code jobs differ 1.4-14% on w2 rows).
+- Sibling note: experts-rega-epilogue-wg-local-bulk-store contains this change's w2 content. If this lands, that sibling's w2 half must be re-baselined and gated against THIS w2 (the routed w2st arm), not master's; do not add the two.
 
 ## Risk
 
@@ -111,3 +121,73 @@ No companion run. Fold the control into the gate: compile w2 with a template boo
 - Confirm what 'r' counts in the gate lines before trusting epilogue-fraction estimates.
 - Run this before the siblings; if it lands, the sibling's w2 half must gate against this w2.
 
+
+## Implementation notes
+
+Implemented 2026-10-27T135059Z in the worktree's `muse_prefill_layer/submission.py` only (uncommitted; `git diff --stat`: 1 file, +518 / -25).
+
+What changed:
+- **CUDA, fsilu module only** (`REGA_W2ST_EDITS`, 15 asserted (old, new) edits that `_rega_fsilu_src()` applies after the silu edit; any target not occurring exactly once means no source, so no build). Master's `_REGA_HEAD` / `_REGA_BODY`, `muse_prefill_rega_v2`, `REGA_V2_SHA256` and the v1 fallback are untouched. I checked offline that the derivation applies by extracting the strings via `ast` and diffing master's source against the derived one (36347 -> 38841 chars).
+  - `consume_item<NB, G, SB = false>` and `rega_kernel<G, BIG, SB = false>`. Every kernel-side change sits inside `if constexpr (!G ...)`. The w13 path changes text only: `float gsc; if constexpr (G) gsc = __ldg(gs + m.e);` is the same computation as before.
+  - Both w2 arms (the early loads): before the k loop, `gsc_w2 = __ldg(gs + m.e)` and `sid_r = ctid < nbk*16 ? __ldg(sorted_ids + slot0 + ctid) : -1`.
+  - Arm (a), SB=false, `rega_gemm(which=1)` of this module. After the first epilogue `named_bar` and before the staging barrier, rows ctid < nvalid write `sid_r` into a 128-int shared table. Master's 16-B st.global scatter loop then reads `sid` from that table instead of `__ldg(sorted_ids + slot0 + t)`. The skip predicate `sid >= 0 && sid < num_routes` is unchanged.
+  - Arm (b), SB=true, `which=2`:
+    - `fence.proxy.async.shared::cta` after the stmatrix staging, before the existing staging `named_bar`.
+    - Then each thread with ctid < nvalid and `0 <= sid_r < num_routes` issues one 256-B `cp.async.bulk.global.shared::cta.bulk_group` from `ep + ctid*PITCH2` to `out + sid_r*out_ld + j*128`, then `commit_group`.
+    - `cp.async.bulk.wait_group.read 0` runs before the next epilogue's first `named_bar`.
+    - `cp.async.bulk.wait_group 0` runs after the consumer's item loop.
+  - Host side:
+    - `rega_init` reports 6 rows: master's 4, then `<w2, s1/ft, SB>` with flag +4.
+    - `rega_gemm` accepts `which` 0..2, and `WG_LAUNCH(G_, B_, S_)` dispatches 2 to `rega_kernel<false, big, true>`.
+  - The module is renamed `muse_prefill_rega_fsilu_w2st`.
+- **Python**:
+  - `_rega_fsilu_attrs` handles 6 rows. fsilu's ON criteria now read only the two w13 rows. The w2 rows (master's criteria plus local 0) come back as `{(which, big): ok}` and gate only w2st. A row count other than 6 turns everything OFF.
+  - `_rega_fsilu_phase` / `_rega_fsilu_class` take an optional prepare-local `info` dict and record the build seconds, the w2 attrs and each class's calibrated alpha in it. No behaviour change for fsilu otherwise.
+  - New section `_rega_w2st_*` sits before `kernel_fn`. `_rega_w2st_phase` runs in `prepare()` right after the fsilu phase, and its lines print after fsilu's summary, with PATH CHOSEN last.
+  - `_experts_rega` launches w2 from `state['rega_fsilu_ext'].rega_gemm(state['rega_w2st_which'][cls], ...)` when `state['rega_w2st_ok'][cls]` is set (variant 0 and fsilu ext present). Otherwise it uses master's `rega_ext`. Only the shape class and prepare-time plain bools/ints are read.
+- **Gate (per review)**: the control is folded into the same gate.
+  - Class order is high, ft, then low (low is print-only, never routed, and skipped when `rega_low_variant != 0`).
+  - The judge-like pop routing reuses fsilu's calibrated alpha for the class, or calibrates via `_rega_fsilu_calibrate` if fsilu never reached that step.
+  - Exactness: on random, skewed, one and pop, hs comes from the w13 the class dispatches. Master's w2, arm (a) and arm (b) each write a y prefilled with the same sentinel (-3.0, so unwritten rows are compared too). Each launch must leave error word 0 and the w2 marker, and each arm's y must be `torch.equal` to master's. An arm that misses is dropped and its reason is printed.
+  - Timing: one-launch w2-alone graphs `w2:m` / `w2:a` / `w2:b` plus an empty graph, all in the same `_rega_fsilu_bench`: 2 rounds x 11 alternations, cold-L2 (256 MB read flush) and warm-L2, pop and random. Each line prints the round-mean us for master and both arms, plus every per-round ratio.
+  - Pass: arm/master <= 0.99 in every round, mode and routing (8 ratios).
+  - The passing arm with the lower geomean is routed for high/ft after `_rega_replay_check` passes with it ON (plan `REGA_FSILU_REPLAY_PLAN[cls]`, keys `REGA_W2ST_STATE_KEYS`). Otherwise master's w2 runs.
+  - State: `state['rega_w2st_ok'][cls]` (bool) and `state['rega_w2st_which'][cls]` (0/1/2).
+  - If `rega_fsilu_ext` is None, the phase prints `[rega-w2st] OFF: rega_fsilu_ext is None ...`.
+  - Every `[rega-w2st] PATH CHOSEN <cls>` line carries `fsilu=ON/OFF` for that class.
+  - Step deadline: `REGA_W2ST_STEP_DEADLINE_S` = fsilu's 265 s. Summary lines are capped at 600 chars.
+
+Deviations / judgement calls:
+- **The fsilu module is rebuilt (said explicitly, per review item 5).** Its source changes, so the existing fsilu build now compiles 6 `rega_kernel` instantiations instead of 4. There is no additional nvcc module and no second build. Expect the fsilu build to grow from ~40 s to maybe ~55-60 s; this is an estimate, untested. The build seconds are printed in `[rega-fsilu] phase ... (build Xs ...)` and again in the first `[rega-w2st]` line. fsilu's 200 s start deadline and 265 s step deadline are unchanged. On ec3bd018 timings the build starts at ~168 s, so fsilu's ft step should still start well before 265 s. Projected prepare ~245-255 s, which leaves less headroom than the md's "~224 s".
+- The arm-(a) "128-int __shared__ table" is the w2 staging tile's unused 16-B pad column (bytes 256..271 of each 272-B row; stmatrix writes only bytes 0..255) rather than a new `__shared__` array. This means no static-smem change for either w13 or w2, and no new kernel parameter. The cost is a one-time ~8-way bank conflict on the 128 int writes per item.
+- Arm (b) uses a single `cp.async.bulk.wait_group 0` at consumer exit, which subsumes the md's extra `.read` wait after the item loop.
+- `rega_w2st_ok` is a per-class bool as the md says. The routed arm goes in the separate per-class int `rega_w2st_which`.
+
+Uncertainties: nothing could be compiled or run here (no GPU / nvcc / torch on this node).
+- PTX syntax and ptxas acceptance of the `cp.async.bulk` S2G / `wait_group` / `fence.proxy.async` asm are unverified. A build failure turns fsilu OFF as well (one module), losing the landed fsilu gain for that run.
+- The build-time growth is unmeasured.
+- The log tail will still lose the earliest fsilu live lines; the summaries survive.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-rega-w2-epilogue-prefetch-bulk-store diff`:
+
+- [x] CUDA-graph capturable: `kernel_fn`'s path (`_experts_rega`) gains only a dict lookup on the shape class and a plain-int `which` read from prepare-time state, then one extension launch. There is no `.item()`, `.cpu()`, sync or allocation on values. All syncs, `.tolist()` and `torch.equal` are in prepare-only `_rega_w2st_*` and fsilu functions (lint: outside kernel_fn's call graph).
+- [x] Nothing derived from `data` is cached across calls. The new state keys are `rega_w2st_ok` (bools) and `rega_w2st_which` (ints), set in `prepare()` from synthetic gate cases. `fsilu_info` is prepare-local and deleted.
+- [x] Weights: untouched. The same `bank["q2"]` / `bank["gs2"]` NVFP4 bank feeds master's and the new w2. No repack and no precision change.
+- [x] Activations BF16 where SGLang keeps BF16: y is the same bf16 values (the gate asserts bit-identical to master's). KV cache and queries are untouched.
+- [x] Attention sees every key: n/a, attention is untouched (experts w2 epilogue only).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. The only build is the existing `load_inline` of the fsilu module (renamed). The printed text contains no tensor values.
+- [x] All work happens inside the timed call; no output caching or replay. The w2 GEMM still runs every call; only its epilogue's load placement and store instruction change.
+- [x] First-line marker `# okc: problem=muse_prefill_layer` kept. No `triton.autotune` added.
+- [x] Lint and py_compile pass (output below); `__pycache__` was removed from the worktree.
+
+okc_lint output (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`), rc 0. 107 host-sync warnings (master at 2750f9d6 has 102; the 5 new ones are `torch.cuda.synchronize()` in the prepare-only `_rega_w2st_*` functions) and the 5 dtype warnings master already has; none is in kernel_fn's call graph:
+
+```
+warn  host-sync    (107 lines: torch.cuda.synchronize() / .cpu() / .tolist() / .item(), all "outside kernel_fn's call graph; fine in prepare()")
+warn  dtype        L3470, L3471, L3761, L4308, L6889: torch.empty(..., dtype=torch.uint8)  (allowed only where SGLang does the same; unchanged master lines)
+OK with warnings: muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile muse_prefill_layer/submission.py`: ok (its `__pycache__` deleted).
