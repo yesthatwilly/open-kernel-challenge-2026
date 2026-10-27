@@ -638,3 +638,14 @@ append-only, newest last.
   "synced"; b12p routed (layer x1.038). The headline ties the board, so no scored run.
 - The b12p HOLD is lifted for bytes that carry 7f74c074. The next decode scored run should come from a wave-2 build with
   the fix merged.
+
+## 2026-10-27T0211Z: wave 2 built and checked (eat18, dchain-pdl)
+
+- Workflow wf_9ffcb970-fa3: 10 agents, ~1.49M tokens. Both branches merged the anatomy fix 7cdbcf17. All audit
+  findings were fixed.
+- decode check **5b4e5b8f49d642c8**: eat18 (campaign/eb-eat18 86d64015), a new T <= 8 expert engine "eaf" raced in the
+  per-T gates. The canary now covers the PDL overlap with a resident predecessor stand-in, and a final whole-layer
+  check falls back to the incumbent at T=1 only on a miss.
+- decode check **655304067cd74dfe**: dchain-pdl (campaign/eb-dchain-pdl eb690a25 bytes), o_pdl cells keyed by
+  (predecessor path, batch, q_len). Only sliding T=1 can route in this check. Audit: the real headline gain is about
+  half the builder's +0.6-0.8%.
