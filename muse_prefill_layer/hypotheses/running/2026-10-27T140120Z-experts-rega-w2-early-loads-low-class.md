@@ -40,7 +40,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T140421Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T140421Z
 base_sha: 564d44539536723987b824306ca1ce595bbe50dd
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -57,6 +57,8 @@ submission_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
 lint_warnings: 112
 attempt_file: 2026-10-27T141037Z-check-experts-rega-w2-early-loads-low-class.md
 prepared_at: 2026-10-27T141037Z
+job: 59eb665f162a4ac9
+dispatched_at: 2026-10-27T141053Z
 ---
 
 # experts-rega-w2-early-loads-low-class
