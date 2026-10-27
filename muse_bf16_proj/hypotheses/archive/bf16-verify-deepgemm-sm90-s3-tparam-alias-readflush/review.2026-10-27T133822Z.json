@@ -1,0 +1,30 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "A real stage 3: stage 2's log (566a79e4 line 19) shows the run was VOID at 'unknown template parameter BLOCK_K_', so the alias plus a measured pre-screen is the right next step, and the rules are clean. Two spec errors: its variant set cannot reach the qkv m=256 and unpooler m=128 targets it names, and it reintroduces TMA multicast, which the stage-1 audit removed as an unbounded-hang source. Fix both in the build; no companion.",
+ "justification": "No DG kernel has ever been built or timed. This kernel has no split-K, so tile count decides everything. pooler m=256 is the strongest cell: 64x128 gives 128 tiles in one wave (~21-25 us realistic vs incumbent NN ~29.0 us; needs <= 28.1). 128x128 gives 64 tiles and can only lose. qkv m=256 (n=2304): every 128-row variant gives 32-42 tiles (>= 31 us vs 19.6 us); a win needs BLOCK_M 64 with BLOCK_N 64/80/96/112 (64x112 is marginal). unpooler m=128: only 128x64 (128 tiles, W read once, ~16-17.5 us) matches the stated mechanism; BLOCK_N 64 is not in the set. unpooler m=256 flat; qkv m=128 dead on arrival (18-36 tiles vs Lt 15.7 us). Ceiling ~+1-1.5% headline, at the readability line; judge on pre-screen net-us lines, the two gate rounds and profile rows naming sm90_bf16_gemm_impl. 15 instantiations contradicts the risk section's <= 8: use SHAPE_M=0 (runtime M supported) to share m=128/256 builds. Multicast: a box/expect-tx mismatch is an unbounded mbarrier hang in DeepGEMM's header that would cost the whole run; the 'tile count even' legality rule is also wrong (it needs ceil(n/BLOCK_N) % 2 == 0, an even grid and a cluster launch attribute). Make this stage mc=1 only.",
+ "confounders": [
+  "pooler-nn-layout-widen-m256 (nn_p256_ok) is the pooler m=256 incumbent: the DG branch must sit above that block (and above _khalf_route_ok), else the gate reads ~1.0; print which incumbent the gate actually ran.",
+  "restack-three-cell-wins (nn_ok, pooler/unpooler 65..128): _ab_component maps unpooler 65..128 to nn_ok; map dg_unpooler_128_ok first (as KHALF_FLAG is), else a DG miss turns nn_ok off.",
+  "combo-rowowner-reduce-free (Lt cell B) is the qkv m=128 incumbent; it makes that cell hopeless.",
+  "sglang-gemm-dispatch-parity: the fallback is the qkv/unpooler m=256 incumbent; a direct DG vs nvjet comparison.",
+  "master 8f233e88: KHALF_START_DEADLINE_S=170 s; the DG section must run AFTER _khalf_prepare, or a long nvcc build skips khalf and regresses pooler m=128.",
+  "m<=32 / router items: no shared traffic; do not credit or blame untouched rows."
+ ],
+ "interference": "No companion: each target cell attributes itself (pre-screen net us per variant, the two-round gate, profile rows naming sm90_bf16_gemm_impl). Drop mc=2 rather than spend a control on it. The real risks are non-results (a multicast hang, no viable tile count, DG placed below the NN/khalf/Lt returns, a build overrun): fix them in the build. Queued lt-config-sweep, pooler-khalf-lt-batched-plan and lt-nn-layout-cells compete for the same cells; a later restack picks per cell by the printed gate numbers.",
+ "rules_flags": [
+  "No rule problem: BF16 in/out, fp32 accumulate, weights stay BF16, nothing cached across calls.",
+  "Re-encode x/out TMA descriptors every call (no memo keyed by data_ptr).",
+  "Weight descriptors and workspaces per state, never module-global.",
+  "Route only the exact gated (layer, m) pairs at m == 128/256; other m stay master.",
+  "Keep kNumTMAMulticast=1 (unbounded mbarrier waits)."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Replace the fixed grid with a tile-count pre-filter (>= ~0.7 x 132 tiles): pooler m=256 64x128; unpooler m=128 128x64 and 64x128; qkv m=256 64x{64,80,96,112} if static_asserts allow; drop qkv m=128?",
+  "SHAPE_M=0 to share m=128/256 builds (<= 8 instantiations); split the TU for parallel ninja; a pre-build deadline (start only if prepare < ~120 s); print [build-time].",
+  "Self-check: also print the incumbent's own rel L2 and require DG <= 1.5x of it.",
+  "Keep pre-screen and gate lines compact; repeat the per-cell summary as the last prepare lines.",
+  "Reject any variant with local-memory spill > 0 or regs > 168 before the canary."
+ ]
+}
