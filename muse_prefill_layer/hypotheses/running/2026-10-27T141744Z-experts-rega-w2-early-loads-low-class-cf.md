@@ -14,7 +14,16 @@ controls_for: experts-rega-w2-early-loads-low-class
 confirm_of: experts-rega-w2-early-loads-low-class
 confirm_of_job: 59eb665f162a4ac9
 review: proceed
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-27T141759Z
+base_sha: 52169f1783ec72c5ee8b2e97b0648a0e91426c87
+base_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
+branch: hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class-cf
+worktree: .worktrees/muse_prefill_layer/experts-rega-w2-early-loads-low-class-cf
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-w2-early-loads-low-class-cf
