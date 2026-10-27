@@ -56,7 +56,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T095330Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-27T095330Z
 base_sha: bb27243410f70166648b1b7ac353fa74b08cb1ad
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
@@ -65,6 +65,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-round-rotated-schedule
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-27T100624Z
+impl_commit: 2afa5f06c097ab4bec808546012418dfef871045
+submission_sha256: eec14c3fa4814dcbfe9670626fd4bee922c1328f58617b278f8689d2b8794f81
+norm_sha256: c66260217c69fc4bfe58a65278fe9fe6f3028a825eaecd25a9fa50180bafcdd3
+submission_blob: 7625a6d5a0b9ae4ddfb8f79af713ae09d20385f5
+lint_warnings: 107
 ---
 
 # experts-rega-round-rotated-schedule
@@ -107,3 +113,43 @@ No companion: bit-exact and self-gated per class with in-process interleaved mas
 - If rotation shows only ~2%, should experts-rega-dynamic-item-scheduler or lpt-group-order move ahead of the rotation combos?
 - Should ft use the judge-like pop routing only?
 
+
+## Implementation notes
+
+Worktree `.worktrees/muse_prefill_layer/experts-rega-round-rotated-schedule`, file `muse_prefill_layer/submission.py` only (+699 / -1). Master's `_REGA_HEAD` / `_REGA_BODY` / `_REGA_CPP`, module `muse_prefill_rega_v2`, its v1 fallback and their sha256 checks are untouched (the rot phase requires `_rega_lo_identity()[0]`, i.e. master's v2 text still hashes to `REGA_V2_SHA256`; checked offline: True).
+
+- **New module `muse_prefill_rega_rot`** (`_rega_rot_src`): derived from master's head + wgmma wrappers + body by exact-once asserted edits (`_REGA_ROT_EDITS`; any miss -> no build, class OFF). Kernel renamed `rega_kernel_rot<G, BIG, DIAG>`, two new kernel params `int rot_shift, long long* spans`. BOTH loop headers (asserted exactly two) `for (int it = blockIdx.x; it < total; it += gridDim.x) {` become `for (int rnd = 0;; ++rnd) { const int it = rot_item(rnd, rot_shift); if (it >= total) break;` with ONE shared `__device__ rot_item(rnd, shift) = rnd * G + (blockIdx.x + rnd * shift) % G`, so producer and consumers use the identical expression by construction (review fix 3). The loop bodies (decode_item, the stage counter n advancing KS per item, consume_item, epilogue), master's bounded `mbar_wait` (error word 1 on timeout, `dead` flag) and all error words are untouched, so a mismatch would end in error word 1 -> class OFF, never a hang. `break` is correct: if round rnd's item is past total, every later round's is too (pos < G). Host: `rega_gemm` -> `rega_gemm_rot_impl(..., rot_shift, spans)` with its own launch block (asserts 0 <= shift < grid), exported entries `rega_init_rot` (attributes + dynamic-smem attribute for all 6 instantiations), `rega_gemm_rot` (timed; DIAG = false only) and `rega_gemm_rot_diag` (prepare-only). Offline: derived source audits clean (`_rega_audit_cpp`), `diff` vs master's source shows only the edits above. Not compiled here (no nvcc / GPU on this node).
+- **Bit-identical by construction:** each round still covers items [rnd*G, rnd*G+G) (bijection inside the round), every item is computed by master's unchanged per-item code into the same output rows; only which CTA computes it and when changes. No cross-item reduction exists (each item owns a disjoint output tile), so the result cannot depend on order. Verified at prepare time anyway (step 2 below).
+- **SHIFT (review item 4):** `REGA_ROT_SHIFT_PREF = (67, 37)` (w13, w2), passed per launch as prepare-time ints `state['rega_rot_shift']`; `_rega_rot_shift` bumps to the next value coprime to the actual grid (132 on H100 -> 67 / 37 unchanged). Deviation from the md's `n_tiles + 1` (65 / 33): 33 divides 132 so w2 CTAs would cycle through only 4 positions; used the review's suggested coprime values for both. Both are odd, so for k = 2 / 4 experts the chunk index b+rnd*s mod k still changes every round as the md intends. Shifts are printed in the GATE and PATH CHOSEN lines.
+- **Dispatch (`_experts_rega`):** `rot = (not variant) and state['rega_rot_ext'] is not None and state['rega_rot_ok'][_rega_class(T)]`; branch order `variant` (rega_gemm_lo) -> `rot` -> master's `rega_gemm`, for both w13 and w2 (review fix 2: the rot path only when rega_low_variant == 0). Shapes + prepare-time bools / ints only; no syncs or allocation changes in the timed path.
+- **Prepare placement (review fix 2):** `_rega_rot_phase` runs after `_rega_lo_phase` (so after `_rega_setup`, `_fa3c_setup`, `_norm_gather_setup` too), last in `prepare()`; its summary lines are printed after the align2 / fa3c / rega-lo summaries, so they are the last prepare lines (review item 5). Own deadlines: start (build) 200 s, class start high/low 262 s, ft 248 s, replay check 276 s, span diag 280 s. Earlier phases' deadlines are unaffected. The last lines print `phase took Xs; prepare total Ys` and the flags (incl. rega_low_variant).
+- **Gate per class (`_rega_rot_class`, order high T=3012, low T=753, ft T=16384; deviation: the md lists low first, I gate the class with the largest expected effect first so a deadline squeeze costs ft, not high):** pop routing alpha calibrated per T with `_rega_pop_counts` / `_rega_pop_pick` to 1.83x the uniform local routes (alpha ~2.2 as `_rega_lo_phase`). 1) eager traced canary of the whole `_experts_rega` call with rot ON (norm-gather prenorm as kernel_fn), error word / markers / finite. 2) Exact: per routing random, skewed, one, pop: one align2 + gather, master w13/w2 and rot w13/w2 (rot w2 fed master's hs) into zeroed buffers: `torch.equal` on hs and y, error words 0, both rot launch markers. Prints experts by k (1, 2, 3, 4, >4), total chunks, max k per routing. 3) Timing (`_rega_rot_time`): graphs pair:master, pair:rot (w13 then w2), w13 alone, w2 alone (each module), empty; 2 rounds x 11 alternations, order rotated and flipped, 256 MB flush before every replay, empty-graph baseline subtracted; on the pop routing and the random routing. KERNELS lines: master/rot us and rot/master ratio for pair, w13, w2 per round and pooled, per routing. 4) Only if the timing passes and before 276 s: `_rega_replay_check` (A / deepcopy B / tensor-clone C states, refilled inputs, fp32 reference bound, launch markers) with rot ON for this class, keys `REGA_ROT_STATE_KEYS`.
+- **Gate rule (review fix 1):** ON iff pop pair ratio <= 0.98 in BOTH rounds AND random pair ratio (median over both rounds' 22 samples per side) <= 1.01 at high (random T=3012 is k=1 everywhere: a no-regression guard), <= 1.00 at ft (strict; random k~5-8 where rotation is expected to be worse) and <= 1.00 at low (the md's rule; the review's relaxation names only high). Any exception stops later classes (their verdicts OFF); any miss keeps master's kernel for that class. If no class is ON, `state['rega_rot_ext']` is None.
+- **Span diagnostic (review open question, item 6):** done WITHOUT touching any timed kernel: master's module is untouched, and the rot module's timed instantiations are `DIAG = false` where all clock code sits behind `if constexpr (DIAG)` (only two extra unused kernel params remain). Two prepare-only `DIAG = true` instantiations (stage-1 tables: w13, w2) record per CTA the clock64 span of the consumer item loop, stages and bytes (weights + activation slabs). Run print-only after every verdict, on the high and low pop routings, with shift 0 (= master's item order exactly) and with the rot shift, eager, warm-up + 256 MB flush. SPANS lines: kcycles min/med/max, cycles max/mean, bytes max/mean, corr(cycles, bytes), stages max/min. Reading: per-SM ingest cap -> cycles max/mean ~ bytes max/mean and corr ~ 1; shared L2 cap -> cycles flatter than bytes. Costs two extra instantiations in the build (estimate +10-15 s nvcc on top of the ~33 s the pdl module took).
+- **Log tail:** summary lines truncated to 900 chars; estimated ~6-8 KB for three classes + spans + PATH CHOSEN, printed last.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-rega-round-rotated-schedule diff`:
+
+- [x] CUDA-graph capturable: the only timed-path change is in `_experts_rega` (an `elif rot:` branch calling `rot_ext.rega_gemm_rot` with the same tensors and two prepare-time ints); no `.item()` / `.cpu()` / `synchronize()` / prints there; the branch is on shapes (`_rega_class(T)`) and prepare-time flags, never input values. All new syncs / `.cpu()` / `.tolist()` are in prepare-only functions (`_rega_rot_*`).
+- [x] Nothing derived from `data` is cached across calls: state gains `rega_rot_ext` (module), `rega_rot_ok` (bools), `rega_rot_shift` (ints) only; per-call buffers are allocated per call as in master.
+- [x] Weights: unchanged; the rot kernel reads master's same `rega_bank` (NVFP4 codes + e4m3 scales, lossless retile from master's prepare); no new weight storage.
+- [x] Activations BF16 where SGLang keeps BF16: per-item math is master's (bf16 xs / hs / y, fp32 accumulate); output bit-identical to master's rega kernel (asserted at prepare time). KV cache / queries untouched.
+- [x] Attention sees every key: attention code untouched (n/a to this change beyond that).
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocesses or network: load_inline of one more extension in prepare() as master already does for rega / ssdq / rega_lo; no harness access.
+- [x] All work happens inside the timed call; no output caching or replay: prepare only builds / gates; kernel_fn recomputes everything per call.
+- [x] First line `# okc: problem=muse_prefill_layer` kept; no triton.autotune added.
+
+Lint (`okc_lint.py ... --problem muse_prefill_layer`): `OK with warnings`, 0 errors. 107 warnings (master: 93); the 14 new ones are all `host-sync ... (outside kernel_fn's call graph; fine in prepare())` in the new `_rega_rot_*` prepare functions, e.g.:
+
+```
+warn  host-sync    L6100: used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L6101: be = block_experts[:used].cpu().long()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L6131: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L6333: sp = spans.view(grid, 3).cpu().double()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L6338: srt = sorted(cyc.tolist())  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile` OK; no `__pycache__` left in the worktree.
