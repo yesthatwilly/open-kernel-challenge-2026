@@ -999,7 +999,10 @@ append-only, newest last.
   - **Watch:** khalf's gate is flaky on bf16, a risk for any future bf16 scored run.
   - **prefill experts-rega-fine-n-buckets** (c951d916, 1.4573, neutral): **fine=ON at the high class**. In-prepare
     pop 0.961/0.969, random 0.920 (-41 / -60 us), bit-exact; fine-4map overhead control 1.01-1.02. Low and ft OFF.
-    Judged turn_4 rows unreadable (SGLang -5% the same run).
+    Judged turn_4 rows unreadable (SGLang -5% the same run). **Correction (later):** the scored profile shows the
+    fine kernels at 1096.6 us vs master 1098.5 at sliding turn_4, so the gate gain did not transfer to the judge's
+    warm-L2 run.
   - Held as dead or superseded: the prefill rotation combos (x2) and attention s3.
   - Minted prefill **experts-rega-fine-n-high-plus-fast-silu** (restacks fine-N at high only, plus fast-silu
     gated per class, no rotation). Its Opus review is running.
+- 1120Z: prefill fine-N-high + fast-silu **held** by its review: no gain in the parent's scored profile at turn_4 (1096.6 vs 1098.5 us), and prepare (166.9 s before the phase, 200 s build deadline) fits only one ~42 s build. Next: experts-rega-w13-fast-silu-epilogue alone (review running).
