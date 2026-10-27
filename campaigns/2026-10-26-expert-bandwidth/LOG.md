@@ -30,6 +30,9 @@ append-only, newest last.
   - **GPU queue (1835Z, the user: "set up the queue and runner now"):** takemyjob eb403fa `bin/hopper-queue`, running
     detached (pid 1258023). Queued: H200 es-cal / es-kstep. Next: node-judge jobs once that harness lands. The stage-0
     ladder build waits for the user's budget.
+  - **H200 (the user, ~1850Z):** expect gpunode26 unavailable near term; the user will push for H200 probe time. Do not
+    check it. The H200 jobs sit in takemyjob `queue/held/`. **Node-judge jobs go into the queue when that harness
+    lands** (the user's ask).
   - **Session limit:** the user's tokens ran out at ~1750Z (two agents died); the user said "please resume the
     interrupted work" after the 1820Z reset. Keep agent use lean.
 - **Earlier today, state at 1505Z (kept for history):**
