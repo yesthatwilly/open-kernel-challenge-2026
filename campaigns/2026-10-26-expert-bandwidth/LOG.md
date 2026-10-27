@@ -929,3 +929,4 @@ append-only, newest last.
     fork decision is folded in.
   - campaign/expert-bandwidth fast-forwarded to eb-w6e-fork (c320t bar + fork code, both gated).
   - Decode: 6 checks / 2 scored left (okc problems).
+- 0917Z: **W6-M launched** (wf_f2bd4b32-1ad, campaign/eb-w6m-fork off campaign/expert-bandwidth): the fork in moe's hybrid race at M=128 / 256. moe's T=128 hybrid is a near tie (H-16 x0.97-1.06), so the fork's ~7% should tip it. Decode stays byte-identical; moe has 14 checks / 9 scored today.
