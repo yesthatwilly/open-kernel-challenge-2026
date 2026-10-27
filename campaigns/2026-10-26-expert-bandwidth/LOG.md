@@ -680,3 +680,16 @@ append-only, newest last.
 - bf16 check a3dcd4cb46a84648: 1.2625, below 1.2664, so no submit. Read-flush vs write-flush gates at m=1: pooler
   0.833 / 0.828, qkv R16 **0.953** / 0.884, o 0.929 / 0.873. qkv R=32 fails (1.016). The write gate overstated qkv by
   7 points. A bulk12 qkv port to decode at T=1 is worth about 0.45 us (~0.05% headline): not worth a decode check alone.
+
+## 2026-10-27T0252Z: design panel re-ranked decode levers; wave 3 launched
+
+- Panel wf_1e5a2d61-92a (4 agents, ~0.62M tokens); verdict in research/wave3-panel-2026-10-27.md. Ranking (gain x p / h):
+  1. SK_FULLLINE decode port (+0.7-1.0%, p 0.75; judged d32f sk 228 -> 190 us on attention);
+  2. a wg hot-consumer diagnostic, then variant B (+1.1-2% if the hot half reaches x1.15+, p 0.25);
+  3. x-copy rungs (+0.4-0.7%, p 0.35).
+  Dropped: an eaf expert-major T=8 port. Parked: the hot / cold SM partition and SS warp specialization (too big today).
+- Workflow wf_03f049d9-24a (base 7cdbcf17):
+  - **W3-A** w3a-skfull, a decode check;
+  - **W3-B** w3b-wgdiag, a moe diagnostic;
+  - **W3-C** w3c-xcopy, a moe ladder diagnostic.
+- d1s cluster port, norm fold, P T-scaling and the no-route fixed cost are held for tomorrow's phase A.
