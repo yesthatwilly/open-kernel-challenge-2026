@@ -34,9 +34,18 @@ kind: primary
 controls_for: null
 prior: "sk-ticket-merge-onepass: the same twins; its verify B=1 and sliding decode cells were never timed because the incumbent failed the timing-data check (a harness bug in the [op] phase's timing inputs), so the mechanism there is untested"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T143715Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T143715Z
+base_sha: 6c6219d272efce7c7cfb16581e6a5b87ab96f188
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/sk-onepass-verify1-timing-fix
+worktree: .worktrees/muse_attention_decode/sk-onepass-verify1-timing-fix
+mode: null
+restack_of: sk-ticket-merge-onepass
+stale_base: null
 ---
 
 # sk-onepass-verify1-timing-fix
