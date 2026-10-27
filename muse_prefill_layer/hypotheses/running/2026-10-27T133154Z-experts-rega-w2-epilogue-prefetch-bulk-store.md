@@ -59,7 +59,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T133940Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T133940Z
 base_sha: 2750f9d64192321654244084e3a9cf73fd461482
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -76,6 +76,8 @@ submission_blob: 7666d623fa92fa1ce47af951d22a1931457065c7
 lint_warnings: 112
 attempt_file: 2026-10-27T135242Z-check-experts-rega-w2-epilogue-prefetch-bulk-store.md
 prepared_at: 2026-10-27T135242Z
+job: 665c32dd8c794c0b
+dispatched_at: 2026-10-27T135256Z
 ---
 
 # experts-rega-w2-epilogue-prefetch-bulk-store
