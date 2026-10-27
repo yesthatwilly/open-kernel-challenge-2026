@@ -1,0 +1,336 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 42ded471..ffa750b4 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -22,6 +22,8 @@ Everything else is SGLang's pipeline as baseline.py composes it:
+   flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
+   FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
+   o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
++                                   (at 200 < T <= 4096 a Triton GEMM when prepare()'s gate picks
++                                   one: hypothesis o-proj-triton-gemm-turn-gated)
+   FusedPostNormResidualPreNorm     post-attention norm + residual gate + pre-FFN norm (JIT)
+   router                           two BF16 GEMMs on a hi/lo split of the weight
+                                    (MuseSpark1xRouter above 8 tokens); on a side stream,
+@@ -649,9 +651,15 @@ def prepare(weights):
+     # The low-class candidates' summary ('[rega-lo] PATH CHOSEN low: ...').
+     for line in lo_lines:
+         print(line[:1200], flush=True)
+-    # The fast-silu phase's compact summary; its PATH CHOSEN lines are the last prepare() lines (16 KB log tail).
++    # The fast-silu phase's compact summary; only the o-proj phase's lines follow it (16 KB log tail).
+     for line in fsilu_lines:
+         print(line[:700], flush=True)
++    # o-proj-triton-gemm-turn-gated: LAST (after _rega_fsilu_phase, so it cannot push fsilu past its deadlines), with
++    # its own start / step deadlines; its PATH CHOSEN line (with the fsilu / rega-lo state beside it) is the last.
++    o_proj_lines = _o_proj_phase(state, device, t_prepare0)
++    torch.cuda.synchronize()
++    for line in o_proj_lines:
++        print(line[:900], flush=True)
+     return state
+ 
+ 
+@@ -6353,6 +6361,296 @@ def _rega_fsilu_phase(state, weights, device, t_start):
+     return lines
+ 
+ 
++# o-proj-triton-gemm-turn-gated: the o projection [T, 1024] x [8192, 1024]^T at REGA_MIN_TOKENS < T <= 4096 as a
++# Triton bf16 GEMM (fp32 accumulation, one bf16 rounding at the store) when prepare()'s per-class gate picks a
++# config; T <= 200 and T > 4096 keep master's _gemm (cuBLAS). Classes as rega's: low T <= REGA_LOW_MAX, high above.
++O_PROJ_TAG = "[o-proj]"
++O_PROJ_N = HIDDEN                       # output columns (rows of the o weight)
++O_PROJ_K = 1024                         # hq * head_dim
++O_PROJ_MIN_TOKENS = REGA_MIN_TOKENS     # the path serves O_PROJ_MIN_TOKENS < T <= O_PROJ_MAX_TOKENS
++O_PROJ_MAX_TOKENS = MARLIN_MAX_TOKENS
++O_PROJ_GROUP_M = 8                      # grouped tile order: GROUP_M m-tiles share each W column block in L2
++# (BLOCK_M, BLOCK_N, BLOCK_K, num_stages, num_warps). 128x256 / 256x128 at 3 stages: 3 x 48 KB = 147 KB smem.
++O_PROJ_CONFIGS = ((128, 128, 64, 4, 8), (128, 256, 64, 3, 8), (256, 128, 64, 3, 8))
++O_PROJ_CLASSES = ("low", "high")
++O_PROJ_TOKENS = {"low": 753, "high": 3012}          # the gate's T per class (turn_1, turn_4)
++O_PROJ_TEST_TOKENS = (300, 600, 753, 1506, 4096)    # the judge's test T inside the path's range
++O_PROJ_WARM_TOKENS = (201, 300, 600, 753, 1024, 1025, 1506, 3012, 4096)  # every config the dispatch uses, pre-capture
++O_PROJ_RATIO = 0.97                    # ON only when cand / cuBLAS <= this in EVERY round (cold-L2 graph replays)
++O_PROJ_ROUNDS = 2
++O_PROJ_ALTERNATIONS = 21
++O_PROJ_REF_MULT = 1.05                 # rel L2 vs the fp64 reference, x cuBLAS's own
++O_PROJ_ROW_MULT = 2.0                  # worst row vs the fp64 reference, x cuBLAS's own
++O_PROJ_REF_STRIDE = 4                  # fp64 reference on every 4th row plus the last 8 (the masked M edge)
++O_PROJ_GUARD_ROWS = 256                # rows past M in the output buffer that must stay untouched
++O_PROJ_SENTINEL = 7.0
++O_PROJ_START_DEADLINE_S = 245.0        # the whole phase is skipped once prepare() has used this many seconds
++O_PROJ_STEP_DEADLINE_S = 270.0         # no compile / class gate step after this
++
++
++@triton.jit(do_not_specialize=["M"])
++def _o_proj_kernel(a_ptr, w_ptr, c_ptr, M, N: tl.constexpr, K: tl.constexpr, BLOCK_M: tl.constexpr,
++                   BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr, GROUP_M: tl.constexpr):
++    """C[M, N] = A[M, K] @ W[N, K]^T, all row-major contiguous bf16; fp32 accumulation, one bf16 rounding at the
++    store. Unmasked K loop (K % BLOCK_K == 0); M edge rows wrap (% M) on load and are masked on store."""
++    pid = tl.program_id(0)
++    num_pid_m = tl.cdiv(M, BLOCK_M)
++    num_pid_n = N // BLOCK_N
++    num_pid_in_group = GROUP_M * num_pid_n
++    group_id = pid // num_pid_in_group
++    first_pid_m = group_id * GROUP_M
++    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
++    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
++    pid_n = (pid % num_pid_in_group) // group_size_m
++    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
++    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
++    offs_k = tl.arange(0, BLOCK_K)
++    rows = offs_m % M
++    a_ptrs = a_ptr + rows[:, None] * K + offs_k[None, :]
++    w_ptrs = w_ptr + offs_n[None, :] * K + offs_k[:, None]     # [BLOCK_K, BLOCK_N] view of W^T
++    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
++    for _ in range(0, K // BLOCK_K):
++        a = tl.load(a_ptrs)
++        b = tl.load(w_ptrs)
++        acc = tl.dot(a, b, acc=acc)
++        a_ptrs += BLOCK_K
++        w_ptrs += BLOCK_K
++    c_ptrs = c_ptr + offs_m[:, None] * N + offs_n[None, :]
++    tl.store(c_ptrs, acc.to(tl.bfloat16), mask=(offs_m < M)[:, None])
++
++
++def _o_proj_name(cfg):
++    return f"{cfg[0]}x{cfg[1]}"
++
++
++def _o_proj_class(tokens):
++    return "low" if tokens <= REGA_LOW_MAX else "high"
++
++
++def _o_proj_gemm(a, w, cfg, out=None):
++    """a [M, O_PROJ_K] bf16 contiguous, w [O_PROJ_N, O_PROJ_K] bf16 contiguous -> [M, O_PROJ_N] bf16 contiguous."""
++    bm, bn, bk, stages, warps = cfg
++    m = a.shape[0]
++    if out is None:
++        out = torch.empty((m, O_PROJ_N), dtype=torch.bfloat16, device=a.device)
++    _o_proj_kernel[(triton.cdiv(m, bm) * (O_PROJ_N // bn),)](
++        a, w, out, m, N=O_PROJ_N, K=O_PROJ_K, BLOCK_M=bm, BLOCK_N=bn, BLOCK_K=bk, GROUP_M=O_PROJ_GROUP_M,
++        num_warps=warps, num_stages=stages)
++    return out
++
++
++def _o_projection(o, w, state, tokens):
++    """kernel_fn's o projection. Shape-only dispatch: prepare()'s config for the T's class at
++    O_PROJ_MIN_TOKENS < T <= O_PROJ_MAX_TOKENS, else (or for any layout the kernel does not assume) master's _gemm."""
++    cfg = None
++    if O_PROJ_MIN_TOKENS < tokens <= O_PROJ_MAX_TOKENS:
++        cfg = state.get("o_proj_cfg", {}).get(_o_proj_class(tokens))
++    if (cfg is None or o.dtype != torch.bfloat16 or tuple(o.shape) != (tokens, O_PROJ_K) or not o.is_contiguous()
++            or tuple(w.shape) != (O_PROJ_N, O_PROJ_K) or not w.is_contiguous()):
++        return _gemm(o, w)
++    return _o_proj_gemm(o, w, cfg)
++
++
++def _o_proj_real_a(state, tokens, gen, device):
++    """An o_norm_gate output as kernel_fn builds it (attention rows, the gate a strided view of a qkv-shaped tensor)."""
++    qkv = torch.randn((tokens, 2304), generator=gen, device=device).to(torch.bfloat16)
++    attn = torch.randn((tokens, O_PROJ_K), generator=gen, device=device).to(torch.bfloat16)
++    return state["o_norm_gate"](attn, qkv[:, 1280:])
++
++
++def _o_proj_kernels(fn):
++    """The CUDA kernel names one call of fn launches (torch.profiler); raises if the profiler fails."""
++    from torch.profiler import ProfilerActivity, profile
++    fn()
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CUDA]) as prof:
++        fn()
++        torch.cuda.synchronize()
++    return [e.name for e in prof.events() if "CUDA" in str(getattr(e, "device_type", ""))
++            and not e.name.startswith(("Activity Buffer Request", "Buffer Flush"))]
++
++
++def _o_proj_class_gate(state, device, cls, built, gen):
++    """prepare() only. Correctness of every compiled config at T = O_PROJ_TOKENS[cls] on a random A and a real
++    o_norm_gate A: finite; rel L2 / worst row vs an fp64 reference (sampled rows) <= O_PROJ_REF_MULT /
++    O_PROJ_ROW_MULT x cuBLAS's own; vs cuBLAS's output within E2E_CHECK_TOL (rows E2E_ROW_FACTOR x); rows past M
++    untouched. Then one-GEMM CUDA graphs (cuBLAS, each passing config, empty) timed cold-L2 interleaved
++    (_rega_fsilu_bench). Returns (cfg or None, why, line)."""
++    tokens = O_PROJ_TOKENS[cls]
++    w = state["dense"]["o"]
++    w64 = w.double()
++    a_rand = torch.randn((tokens, O_PROJ_K), generator=gen, device=device).to(torch.bfloat16)
++    a_real = _o_proj_real_a(state, tokens, gen, device)
++    rows = torch.cat((torch.arange(0, tokens, O_PROJ_REF_STRIDE, device=device),
++                      torch.arange(tokens - 8, tokens, device=device))).unique()
++    acc = {"cublas": [0.0, 0.0]}
++    fail = {}
++    for a in (a_rand, a_real):
++        ref = a[rows].double() @ w64.t()
++        cub = _gemm(a, w)
++        e_cub, r_cub = _ssdq_metrics(cub[rows], ref)
++        acc["cublas"] = [max(acc["cublas"][0], e_cub), max(acc["cublas"][1], r_cub)]
++        for cfg in built:
++            name = _o_proj_name(cfg)
++            big = torch.full((tokens + O_PROJ_GUARD_ROWS, O_PROJ_N), O_PROJ_SENTINEL, dtype=torch.bfloat16,
++                             device=device)
++            out = _o_proj_gemm(a, w, cfg, out=big[:tokens])
++            torch.cuda.synchronize()
++            e, r = _ssdq_metrics(out[rows], ref)
++            e_vs, r_vs = _ssdq_metrics(out, cub)
++            prev = acc.get(name, [0.0, 0.0])
++            acc[name] = [max(prev[0], e), max(prev[1], r)]
++            if not bool((big[tokens:] == O_PROJ_SENTINEL).all()):
++                fail.setdefault(name, "wrote rows past M")
++            elif not (e <= O_PROJ_REF_MULT * e_cub and r <= O_PROJ_ROW_MULT * r_cub):
++                fail.setdefault(name, f"vs fp64 rel {e:.2e} row {r:.2e} > cuBLAS's {e_cub:.2e} / {r_cub:.2e} x mult")
++            elif not (e_vs <= E2E_CHECK_TOL and r_vs <= E2E_ROW_FACTOR * E2E_CHECK_TOL):
++                fail.setdefault(name, f"vs cuBLAS rel {e_vs:.2e} row {r_vs:.2e}")
++            del big, out
++        del ref, cub
++    del w64
++    passing = [cfg for cfg in built if _o_proj_name(cfg) not in fail]
++    res = []
++    if passing:
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        graphs = {"cublas": _ssdq_graph_time(lambda: _gemm(a_real, w), device)}
++        for cfg in passing:
++            graphs[_o_proj_name(cfg)] = _ssdq_graph_time(lambda cfg=cfg: _o_proj_gemm(a_real, w, cfg), device)
++        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++        res = _rega_fsilu_bench(graphs, device, ("cold",), O_PROJ_ROUNDS, O_PROJ_ALTERNATIONS)["cold"]
++        del graphs
++    torch.cuda.synchronize()
++    torch.cuda.empty_cache()
++
++    def us(name):
++        return "/".join(f"{r[name]:.1f}" for r in res)
++
++    parts = [f"cuBLAS {us('cublas') if res else '-'} us rel {acc['cublas'][0]:.2e} row {acc['cublas'][1]:.2e}"]
++    for cfg in built:
++        name = _o_proj_name(cfg)
++        err = f"rel {acc[name][0]:.2e} row {acc[name][1]:.2e}" if name in acc else ""
++        if name in fail:
++            parts.append(f"{name} FAIL ({fail[name][:90]}) {err}")
++        else:
++            ratios = "/".join(f"{r[name] / max(r['cublas'], 1e-9):.3f}" for r in res)
++            parts.append(f"{name} {us(name)} us ({ratios}) {err}")
++    line = f"{O_PROJ_TAG} {cls} T={tokens}: " + "; ".join(parts)
++    if not passing:
++        return None, "no config passed correctness", line
++    mean = {_o_proj_name(c): sum(r[_o_proj_name(c)] for r in res) / len(res) for c in passing}
++    best = min(passing, key=lambda c: mean[_o_proj_name(c)])
++    worst = max(r[_o_proj_name(best)] / max(r["cublas"], 1e-9) for r in res)
++    if worst > O_PROJ_RATIO:
++        return None, f"fastest {_o_proj_name(best)} worst-round ratio {worst:.3f} > {O_PROJ_RATIO}", line
++    return best, f"{_o_proj_name(best)} worst-round ratio {worst:.3f} <= {O_PROJ_RATIO}", line
++
++
++def _o_proj_phase(state, device, t_start):
++    """prepare() only, LAST (after _rega_fsilu_phase), with its own start / step deadlines. Compiles every config
++    (one compile each: M is do_not_specialize), gates each class (_o_proj_class_gate), asserts by torch.profiler
++    that an ON class launches exactly one _o_proj_kernel, then warms the chosen configs at every O_PROJ_WARM_TOKENS
++    T of an ON class (checked against cuBLAS) before any capture. Sets state['o_proj_cfg'][class] = config tuple
++    or None. Never raises; any miss keeps cuBLAS. Returns the compact summary lines; PATH CHOSEN is last."""
++    t0 = time.perf_counter()
++    state["o_proj_cfg"] = {c: None for c in O_PROJ_CLASSES}
++    lines, off, secs, verdict, notes = [], None, {}, {}, []
++    try:
++        used = time.perf_counter() - t_start
++        w = state["dense"]["o"]
++        if used > O_PROJ_START_DEADLINE_S:
++            off = f"SKIPPED: prepare already used {used:.0f}s > {O_PROJ_START_DEADLINE_S:.0f}s start deadline"
++        elif tuple(w.shape) != (O_PROJ_N, O_PROJ_K) or not w.is_contiguous() or w.dtype != torch.bfloat16:
++            off = f"o weight {tuple(w.shape)} {w.dtype} is not the contiguous bf16 [{O_PROJ_N}, {O_PROJ_K}] assumed"
++        else:
++            gen = torch.Generator(device=device)
++            gen.manual_seed(0x0B0B)
++            a_max = torch.randn((O_PROJ_MAX_TOKENS, O_PROJ_K), generator=gen, device=device).to(torch.bfloat16)
++            tc = time.perf_counter()
++            built = []
++            for cfg in O_PROJ_CONFIGS:
++                if time.perf_counter() - t_start > O_PROJ_STEP_DEADLINE_S:
++                    notes.append(f"{_o_proj_name(cfg)} not compiled (step deadline)")
++                    continue
++                try:
++                    _o_proj_gemm(a_max[:O_PROJ_TOKENS["low"]], w, cfg)
++                    torch.cuda.synchronize()
++                    built.append(cfg)
++                except Exception as e:  # a compile / launch-resource failure drops only this config
++                    notes.append(f"{_o_proj_name(cfg)} compile/launch failed: {e!r:.160}")
++            secs["compile"] = time.perf_counter() - tc
++            for cls in O_PROJ_CLASSES:
++                tc = time.perf_counter()
++                used = tc - t_start
++                if not built:
++                    verdict[cls] = "no config compiled"
++                elif used > O_PROJ_STEP_DEADLINE_S:
++                    verdict[cls] = f"SKIPPED: deadline (prepare {used:.0f}s > {O_PROJ_STEP_DEADLINE_S:.0f}s)"
++                else:
++                    try:
++                        cfg, why, line = _o_proj_class_gate(state, device, cls, built, gen)
++                        lines.append(line)
++                        print(line[:900], flush=True)
++                    except Exception as e:
++                        cfg, why = None, f"gate raised {e!r}"[:200]
++                    verdict[cls] = why
++                    if cfg is not None:
++                        state["o_proj_cfg"][cls] = cfg
++                        a = a_max[:O_PROJ_TOKENS[cls]]
++                        try:
++                            names = _o_proj_kernels(lambda: _o_projection(a, w, state, a.shape[0]))
++                            if not names:
++                                notes.append(f"{cls}: profiler returned no CUDA kernel events; route kept "
++                                             f"(_o_projection launches _o_proj_kernel directly)")
++                            elif not (len(names) == 1 and "_o_proj_kernel" in names[0]):
++                                state["o_proj_cfg"][cls] = None
++                                verdict[cls] = f"profiled kernels {[n[:60] for n in names[:3]]}: not one _o_proj_kernel"
++                            else:
++                                notes.append(f"{cls}: profiler ok ({names[0][:40]} x1)")
++                        except Exception as e:  # direct Triton launch: keep the route, say so
++                            notes.append(f"{cls}: profiler unavailable ({type(e).__name__}); route kept")
++                secs[cls] = time.perf_counter() - tc
++            # Warm every config the dispatch can use, at every routed T it covers, before any capture (M is
++            # do_not_specialize, so this launches what is already compiled), each checked against cuBLAS.
++            for t in O_PROJ_WARM_TOKENS:
++                cls = _o_proj_class(t)
++                if state["o_proj_cfg"][cls] is None:
++                    continue
++                a = a_max[:t]
++                out = _o_projection(a, w, state, t)
++                e_vs, r_vs = _ssdq_metrics(out, _gemm(a, w))
++                torch.cuda.synchronize()
++                if not (e_vs <= E2E_CHECK_TOL and r_vs <= E2E_ROW_FACTOR * E2E_CHECK_TOL):
++                    state["o_proj_cfg"][cls] = None
++                    verdict[cls] = f"warm T={t} vs cuBLAS rel {e_vs:.2e} row {r_vs:.2e}"
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps cuBLAS
++        off = f"phase raised {e!r}"[:300]
++        state["o_proj_cfg"] = {c: None for c in O_PROJ_CLASSES}
++    finally:
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        if off:
++            lines.append(f"{O_PROJ_TAG} OFF: {off}")
++            print(lines[-1], flush=True)
++        if notes:
++            lines.append(f"{O_PROJ_TAG} notes: " + "; ".join(notes))
++            print(lines[-1][:900], flush=True)
++        lines.append(f"{O_PROJ_TAG} phase {time.perf_counter() - t0:.1f}s ("
++                     + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
++                     + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s")
++        inherit = ", ".join(f"T={t}:{_o_proj_class(t)}->"
++                            + (_o_proj_name(state['o_proj_cfg'][_o_proj_class(t)])
++                               if state["o_proj_cfg"][_o_proj_class(t)] else "cuBLAS") for t in O_PROJ_TEST_TOKENS)
++        lines.append(f"{O_PROJ_TAG} tests inherit: {inherit}; T <= {O_PROJ_MIN_TOKENS} and T > {O_PROJ_MAX_TOKENS}: "
++                     f"cuBLAS; confounders: fsilu {state.get('rega_fsilu_ok')}, rega_low_variant "
++                     f"{state.get('rega_low_variant', 0)}")
++        lines.append(f"{O_PROJ_TAG} PATH CHOSEN: " + "; ".join(
++            f"{cls} (T in {'(200, 1024]' if cls == 'low' else '(1024, 4096]'}) "
++            + (f"triton {_o_proj_name(state['o_proj_cfg'][cls])} {state['o_proj_cfg'][cls]}"
++               if state["o_proj_cfg"][cls] else "cuBLAS")
++            + f" [{(verdict.get(cls) or off or 'not gated')[:110]}]" for cls in O_PROJ_CLASSES))
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
+@@ -6415,7 +6713,7 @@ def kernel_fn(data, state):
+     if isinstance(out, tuple):
+         out = out[0]
+     o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
+-    attn_output = _gemm(o, dense["o"])  # all-reduce: identity
++    attn_output = _o_projection(o, dense["o"], state, tokens)  # all-reduce: identity
+ 
+     # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
+     ffn_input, stream, _ = state["attn_boundary"](

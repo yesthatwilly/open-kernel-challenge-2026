@@ -45,10 +45,10 @@ kind: primary
 controls_for: null
 prior: "dense-gemm-cublaslt-algo-pick-prefill-t: that (expired, never run) picked cuBLASLt algos for all dense GEMMs, and bf16's in-prepare algo pick did not carry to the judge (LESSONS: qkv m=256 6.8% faster in prepare, 14% slower judged); this replaces only the 3x-off-floor o projection at T <= 4096 with a Triton kernel behind an interleaved cold-L2 graph selector with a 3% margin and a launched-kernel-name assert"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T141128Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T141128Z
 base_sha: ecc37b57fc4eacd04877ee607dd9f99db59250e8
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -67,6 +67,13 @@ attempt_file: 2026-10-27T141758Z-check-o-proj-triton-gemm-turn-gated.md
 prepared_at: 2026-10-27T141758Z
 job: af3b0d0d84834ee9
 dispatched_at: 2026-10-27T141813Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4862831633279883
+speedup_ci: [1.4639889158780683, 1.508577410777908]
+harvested_at: 2026-10-27T142519Z
+best_at_harvest: 1.488912488847924
+promotion: null
 ---
 
 # o-proj-triton-gemm-turn-gated
@@ -262,3 +269,31 @@ warn  host-sync    L6629: torch.cuda.synchronize()  (outside kernel_fn's call gr
 warn  dtype        L6694: k_buf, v_buf = (torch.empty((batch, width, 2, 64), dtype=torch.uint8, device=q8.device)  (allowed only where SGLang does the same)
 OK with warnings: /home/user/git/musespark/.worktrees/muse_prefill_layer/o-proj-triton-gemm-turn-gated/muse_prefill_layer/submission.py
 ```
+
+## Result
+
+- job `af3b0d0d84834ee9` (check), status done, passed True, tests 5/5
+- speedup 1.4863x, 95% CI [1.4640, 1.5086], score 260652.82145331614 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.488912488847924, "ci": [1.466578801515205, 1.5112461761806426], "job": "ec3bd01859574bf1"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/o-proj-triton-gemm-turn-gated.result.json`, `muse_prefill_layer/hypotheses/done/neutral/o-proj-triton-gemm-turn-gated.patch`; branch `hyp/muse_prefill_layer/o-proj-triton-gemm-turn-gated`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 732.58 | 729.78 | 1.012 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1120.81 | 1092.59 | 0.9981 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2140.15 | 2084.49 | 1.002 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3698.88 | 3644.29 | 0.9926 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11731.0 | 11048.1 | 0.9601 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10892.92 | 10929.11 | 0.978 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15080.4 | 14670.44 | 0.9739 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18110.3 | 17765.45 | 0.9769 | flat |
+
+lost on full first_turn. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: o-proj-triton-gemm-turn-gated`) that adds a further change in the same area is the only way to learn more.
+
