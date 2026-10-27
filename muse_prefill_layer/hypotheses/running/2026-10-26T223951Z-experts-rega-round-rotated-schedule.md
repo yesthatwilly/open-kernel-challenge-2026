@@ -62,7 +62,7 @@ base_sha: bb27243410f70166648b1b7ac353fa74b08cb1ad
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
 branch: hyp/muse_prefill_layer/experts-rega-round-rotated-schedule
 worktree: .worktrees/muse_prefill_layer/experts-rega-round-rotated-schedule
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T100624Z
@@ -71,6 +71,8 @@ submission_sha256: eec14c3fa4814dcbfe9670626fd4bee922c1328f58617b278f8689d2b8794
 norm_sha256: c66260217c69fc4bfe58a65278fe9fe6f3028a825eaecd25a9fa50180bafcdd3
 submission_blob: 7625a6d5a0b9ae4ddfb8f79af713ae09d20385f5
 lint_warnings: 107
+attempt_file: 2026-10-27T100624Z-check-experts-rega-round-rotated-schedule.md
+prepared_at: 2026-10-27T100624Z
 ---
 
 # experts-rega-round-rotated-schedule
