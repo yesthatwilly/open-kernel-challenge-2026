@@ -671,3 +671,12 @@ append-only, newest last.
   Above 1.5275, it also makes the board bytes fault-free.
 - Phase A status: 4 of 6 levers killed today (k-slice, wg2, eaf, o_pdl); b12p landed. Next: a design panel re-ranks
   decode levers on today's evidence before any more builds.
+
+## 2026-10-27T0244Z: attention +3.9% (full-line gather), scored run sent; bf16 read-flush calibration
+
+- attention check 00acb91008824b1e: **1.5952** [1.571, 1.626] vs board 1.5347. The full-line gather routed (canary and
+  self-check pass), on the v3chain base (b4b20425 1.5360). **Scored run bbf762ed52934bde.** decode_layer runs the same
+  splitkv_attn_sk_kernel at decode_16 / 32, so this is a decode port candidate (wave 3).
+- bf16 check a3dcd4cb46a84648: 1.2625, below 1.2664, so no submit. Read-flush vs write-flush gates at m=1: pooler
+  0.833 / 0.828, qkv R16 **0.953** / 0.884, o 0.929 / 0.873. qkv R=32 fails (1.016). The write gate overstated qkv by
+  7 points. A bulk12 qkv port to decode at T=1 is worth about 0.45 us (~0.05% headline): not worth a decode check alone.
