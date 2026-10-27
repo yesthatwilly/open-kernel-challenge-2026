@@ -1,0 +1,24 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "The aliasing mechanism is real: decode_item gives CTA b chunk (b mod k) of every k=2/4 expert and a simple model says rotation removes about half the imbalance at turn_4. The size claims are optimistic for first_turn and turn_1, and the 'random <= 1.00' gate rule will turn the high class OFF about half the time on noise alone. Proceed with the gate fixed and the low-class precedence made explicit; no companions.",
+ "justification": "Mechanism: decode_item uses c = f + local % k; grid 132 and f*T a multiple of 32, so for k in {2,4} CTA b always gets chunk b mod k and tails pile onto the same CTAs. rega is L2->SM ingest-capped (5.8-6.4 TB/s), so tail items are cheaper. A read-only max/mean model (bytes per stage, independent CTAs): turn_4 pop w13 1.129 -> 1.074, w2 1.147 -> 1.115 (upper bound ~5%/3%); turn_4 random flat (k=1); turn_1 pop modest; ft pop ~1%; ft random rotation WORSE. Weakest link: if the ingest cap is a shared L2 limit, imbalance costs less than max/mean. Expect ~1-3% on turn_4 rega, roughly +0.3-0.7% headline, inside the CI; read the KERNELS lines. Prior (experts-triton-persistent-grid-first-turn) differs. Run before the rotation combos.",
+ "confounders": [
+  "combo-b-normgather-two-cta-low-regate (on master): rega_low_variant 0/1/2 is chosen per prepare and _experts_rega launches rega_lo_ext when variant != 0; rot replaces only master's rega_gemm, so the low-class rot result is real only when variant 0 is chosen, and _rega_lo_phase gates against master's rega_gemm. Required: use rot only when variant == 0, run the rot phase after _rega_lo_phase, print rega_low_variant beside the rot low verdict.",
+  "combo-b prepare budget: the ~35 s rot build plus gating must run last in prepare so _rega_lo_phase / _fa3c_setup deadlines are unaffected; log total prepare seconds.",
+  "experts-turn-rega-s4-* / align-two-phase-all-t-rega define the permuted item space (base, not confounders).",
+  "combo-a / fa3-full-contiguous-kv: no interaction."
+ ],
+ "interference": "No companion: bit-exact and self-gated per class with in-process interleaved master-vs-rot KERNELS timings. Two fixes inside the parent: (1) GATE: at the high class random routing gives k=1 for every expert and zero effect, so use random <= 1.01 (or the gate's IQR slack) as a no-regression guard; at ft keep the strict rule. (2) SHIFT (optional): n_tiles+1 = 33 divides 132 for w2; shifts coprime to 132 (e.g. 37 for w2, 67 for w13) model slightly better; report the shift used.",
+ "rules_flags": [
+  "None blocking: output bit-identical; prepare-time per-class bool chosen by T; no host syncs or new allocations in kernel_fn; nothing data-derived cached.",
+  "Producer and consumer loops must use the identical rotated expression (a mismatch would deadlock the mbarrier ring); keep master's err/timeout path so a bug becomes a gated-OFF class, not a hang."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Is the ingest cap per-SM or shared L2? Per-CTA clock64 spans (min/median/max) from the gate's master run would answer it.",
+  "Which rega_low_variant does master pick on the judge? If V64/V32 the low-class half cannot act.",
+  "If rotation shows only ~2%, should experts-rega-dynamic-item-scheduler or lpt-group-order move ahead of the rotation combos?",
+  "Should ft use the judge-like pop routing only?"
+ ]
+}
