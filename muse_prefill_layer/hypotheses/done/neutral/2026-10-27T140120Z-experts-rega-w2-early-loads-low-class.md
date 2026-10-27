@@ -66,6 +66,7 @@ speedup_ci: [1.4761365476703994, 1.5210950212035077]
 harvested_at: 2026-10-27T141743Z
 best_at_harvest: 1.488912488847924
 promotion: null
+confirm_queued: experts-rega-w2-early-loads-low-class-cf
 ---
 
 # experts-rega-w2-early-loads-low-class
