@@ -43,7 +43,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T095240Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T095240Z
 base_sha: c59f4fea68a3a426326191184157123641faca72
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -60,6 +60,8 @@ submission_blob: 5141523a4c58a84f31a3beef1c28a663e34ea225
 lint_warnings: 45
 attempt_file: 2026-10-27T095656Z-check-b12-unpooler-slice-m1-r16-rowowner.md
 prepared_at: 2026-10-27T095656Z
+job: a642424734f54365
+dispatched_at: 2026-10-27T095706Z
 ---
 
 # b12-unpooler-slice-m1-r16-rowowner
