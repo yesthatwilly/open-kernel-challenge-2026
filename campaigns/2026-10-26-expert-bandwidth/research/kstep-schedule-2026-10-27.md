@@ -131,3 +131,50 @@ The judge's SM clock under this load reads 1769 MHz (clock64 / globaltimer), aga
 - The only route back to a cold Engine S is the ladder's P1: 3-4 consumer WGs (S3u / S4 / D2) lifting the dequant
   rate.
 - No scored run: the timed path is the board's, so 1.7199 vs 1.7187 is noise, and the bytes carry diagnostics.
+
+## 6. Stage-0 ladder on gpunode06 (probes/esl; musespark eb-sp 9b11171b, takemyjob 357ff8c; validation runs 20261027-1323..1329-gpunode06)
+
+All 1,072 KV lines are ok. memcheck and synccheck are clean (named barriers). 170 symbols with 0 C75xx, 0 spills and
+0 local memory. Values are el/clk/SM on tc130.
+
+**P1, cold with more consumer WGs** (resident ceiling, best tiles; dev):
+
+| N | S2 (2 WGs) | S3u (3) | S4 (4) | D2 |
+|---|---|---|---|---|
+| 8 | 32.9 | 33.9 | 33.0 | 32.7 |
+| 16 | 29.6 | 29.8 | **30.4** | 29.2 |
+| 32 | 25.9 | 27.2 | 27.3 | 26.1 |
+
+- More consumer WGs add at most +3% at N=16. The cold path stays capped at ~30 against Engine A's ~27, below the 34
+  that S1b / S2 need. **Cold stays on Engine A.**
+- K2's dequant-only ceiling at 4 WGs is 34.7-35.4 (the fold4 sink had understated it by 7-14%), but the combined K-step
+  does not reach it.
+
+**P2, the hot K4 pipeline** (streamed weights, separate B ring, the §4.1 schedule):
+
+| N | best | target / tensor | read |
+|---|---|---|---|
+| 256 (S2 r2) | 7.92 | tensor 8 | eta 1.00: **go**, tensor-bound |
+| 128 (S2 r4) | 12.64 | target 12.8 | at target |
+| 64 (S4) | 18.2 cta / 17.9 dev | target 25.6 | **missed** |
+| 64 (S2 r2) | 14.1 | | |
+| 64 (D2) | 17.0 dev | | |
+| 64 (S3h) | 9.2 | | |
+
+- Weight-ring depth (SW 8 / 12 / 16) does not matter.
+- At N=64 the overhead sits per unit: c1 = 1.34x K1 (ring-free), c2 = 1.54x K2. Stamps put a per-unit barrier, the
+  next-unit LDS and the release step at ~2x a normal step.
+- **S1a input:** hot units at N >= 128 run at or near the tensor rate. Units around N=64 (most hot experts carry 17-80
+  routes) need longer units or more WGs (S4) to amortize per-unit costs.
+
+**Other rungs:**
+- K6 mixing (S3h): no go. The hot role runs x1.57-1.82 slower when mixed, so keep the halves separate.
+- K7: B ingest ~47.8 clk per k16, flat for N <= 64, once the producer threads are split.
+
+## 7. Proving on the node (moe board, master bytes)
+
+- **Held-out sweep** (nodejudge moe-sweep, run 20261027-125905): **37/37 tests pass**, the judge's 5 plus bs 2..255
+  and 5 skewed.
+- **Soaks** (moe-soak x2, 1000 reps per shape, every replay checked vs the fp32 reference, fresh inputs): **12,000
+  checked replays, 0 faults, 0 miscompares**. Headlines x1.3900 / x1.3862.
+- **Flip rates:** 4 cold-prepare runs routed every moe race identically; headlines 1.3893-1.3929.

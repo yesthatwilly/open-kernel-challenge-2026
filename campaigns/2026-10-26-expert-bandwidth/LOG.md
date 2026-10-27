@@ -23,6 +23,13 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **Ladder + proving (2040Z):**
+    - Cold with more consumer WGs: (e) N=16 best 30.4 (S4), so cold stays on Engine A.
+    - Hot K4: N=256 at the tensor rate (7.92, go); N=128 12.64 (at target); N=64 best 18.2 (target 25.6 missed: per-unit
+      bookkeeping).
+    - K6 mixing: no go.
+    - moe board proven: 37/37 held-out tests; 12,000 checked replays with 0 faults.
+    - Write-up: research/kstep-schedule-2026-10-27.md §6-7. Ladder replicates are queued (8 jobs).
   - **Decode race lottery (2010Z):** pin128 8e3b9874 passed at 1.5722 (not over the board; no scored run).
     - The T=128 pin worked: (16,8) rows 333.8 / 475.8 us, the best of three runs.
     - T=256 flipped to H-8 and lost ~20 us per (32,8) row.
