@@ -908,3 +908,14 @@ append-only, newest last.
     blocks it. A cheap cell: lower that bar.
   - **W6-E launched** (wf_79bb4210-f6e, campaign/eb-w6e-fork off 9bf60d67): a routable fork at T=128, composed with
     W6-B's cells.
+- 0903Z: W6-E built and audited (wf_79bb4210-f6e: 0 blockers / 0 majors, no fix pass).
+  - The fork: hot half on a prepare-made side stream (e0 -> hot -> e1), cold on main, join before comb. Comb is
+    launched without PDL under the fork.
+  - It routes only when a wgmma hybrid (H-16 / H-8) routes at T=128 (that is 2 of the last 3 runs).
+  - Merged with the c320t bar (1.003) as a second cell on a different GEMM.
+  - 971,464 bytes. Decode check **a76e7cb53a444078**.
+  - Audit minors (for the scored build, if it routes):
+    - the canary does not poison between replays (the copy check is the real race guard);
+    - stream and events are shared across state copies;
+    - the anatomy 'all' row now forks;
+    - log labels.
