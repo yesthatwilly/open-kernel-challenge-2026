@@ -34,8 +34,10 @@ priority: 2
 kind: primary
 controls_for: null
 prior: "experts-triton-w13-fused-silu-epilogue: that added silu to the old Triton engine's w13 epilogue (more epilogue work; lost 1-3% at first_turn); rega already fuses silu, and this only swaps the accurate expf and IEEE division for __expf and __frcp_rn"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-27T112554Z
+review_companions: null
 ---
 
 # experts-rega-w13-fast-silu-epilogue
@@ -51,3 +53,29 @@ Built on master (blob f4751fc0). rega_kernel<true, *> (w13) applies silu(gate) *
 ## Risk
 
 Not bit-exact (rare 1-ulp bf16 differences in hs), bounded by the gate against master and the fp64 reference. Size ~+0.5-0.8% headline: below the judge margin alone, so it lands through experts-rega-rotate-finebucket-fastsilu-combo or experts-rega-rotation-fastsilu-combo.
+
+## Adversarial review
+
+Reviewed 2026-10-27T112554Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed with sharp notes. The mechanism is plausible and rule-clean, and the predecessor's review asked for this run first and alone. Its size is overstated ~3-10x: per-item arithmetic gives at most ~1% of w13 (~0.1-0.3% of a shape), so a pair gate at <= 0.99 will very likely keep every class OFF. Gate on w13 alone, use a genuinely approximate divide, and read the result as 'does the silu epilogue cost anything at all'.
+
+### Justification
+silu_mul runs in the serialized consumer epilogue of rega_kernel<true,*> (NB/4 silus per thread per item, no fast math). An item is ~130K clk at ft (64 stages); the accurate silu costs ~1.2-1.8K issue slots per item (~1-1.4%), and both forms have 2 MUFU ops (EX2, RCP), so the fast form saves only FFMA/branch overhead: ~0.3-0.8% of w13 at ft, less at turn_1. Expected scored deltas: ft ~-10 to -30 us, turn_4 ~-2 to -6 us, turn_1 ~-1 to -2 us. __frcp_rn is not a fast reciprocal (rcp.rn.f32); use __fdividef(hg, 1.f + __expf(-hg)) * hu or rcp.approx.ftz. Closer unlisted prior: experts-rega-producer-scale-expand-all-t (6be2a8d3), a consumer-instruction diet that gated OFF everywhere; per-shape rows cannot read a <=1% effect. Landing route via the rotation combos and fine-N-high-plus-fast-silu is gone (held/dead).
+
+### Confounders on the current kernel
+- combo-b low class: muse_prefill_rega_lo has its own silu_mul copy; fsilu must be OFF at low unless rega_low_variant == 0, the variant printed, and the gate must time the kernel that would be dispatched.
+- combo-a normgather: gate and replay-check on the same prenorm dispatch as the judge path.
+- experts-turn-rega-s4-*: silu_mul lives in _REGA_HEAD, hashed by REGA_V2_SHA256; edit only a derived copy; assert the target occurs exactly once in _rega_src().
+- align-two-phase-all-t-rega: part of the ~143-167 s of prepare before this phase.
+
+### Interference and A/B needs
+No companion. Make the single result mean something: (a) gate on w13 ALONE (one-launch graphs): w13 <= 0.99 in both rounds and the pair <= 1.00; (b) per LESSONS 2026-10-27, time each class on both cold-L2 and warm-L2 back-to-back replays and on a judge-like routing whose master w13 time brackets the judged row (turn_1 ~255-293 us, turn_4 ~707-763 us, ft ~3400-3850 us), choosing the pop alpha per class or requiring both pop and random; ON only if every condition passes; (c) read the scored rega_kernel<true,*> rows and the w13/w2 ratio vs 73b40cd1 and d00770b6; a near-1.00 gate everywhere is the expected null and closes the silu line.
+
+### Open questions
+- Use __fdividef or rcp.approx.ftz, not __frcp_rn.
+- If the build stays under ~45 s, add a print-only ceiling variant (silu_mul returns hg*hu, never dispatched) to bound any silu speedup.
+- Canary the fast vs accurate form on a synthetic hg sweep {-100, -88.7, -87, -20, 0, 20, 100}.
+- Landing route if it gates ON: its own result or a re-mint.
+- Reconcile FINDINGS' queued rotation+fastsilu combos (held).
+
