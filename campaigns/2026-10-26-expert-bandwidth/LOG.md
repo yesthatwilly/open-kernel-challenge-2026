@@ -23,6 +23,14 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **The user, ~1945Z (PRIMARY FOCUS NOW):** "brainstorm and queue up as much h100 work as you can do; i want these
+    findings in place as right now's primary focus ... much quicker and surgically applicable than the check process
+    ... use any number of checks where it is the better choice ... what matters is good rigorous methodology"; and
+    "submit a scored run if pin128 beats the board". Workflow **x5-h100-program**: 3 brainstorms + a judge (max),
+    enablers E1 arm overrides / E2 decode shim / E3 profiling (high, audited), then pre-registered experiments queued
+    with the ledger `research/h100-findings.md`. Two moe soak runs are queued (1000 reps, every replay checked);
+    gpunode06 GPU 7 is reserved for agents. At 1944Z the admin ran dcgmproftester (900 s) on all gpunode06 GPUs, so the
+    runner backed off.
   - **The user, ~1940Z:** "dispatch any h100 uses. dispatch any checks you see fit."
   - **1950Z:** the 4 node board runs agree: every moe race picked the same path, headlines 1.3893-1.3929 (0.26% spread),
     so the node is a precise moe A/B instrument. Queued a held-out-shape correctness sweep (37 tests, bs 2..257 +
