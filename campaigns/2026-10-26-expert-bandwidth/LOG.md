@@ -878,6 +878,8 @@ append-only, newest last.
 - 0820Z: decode scored ca44d5c0 (PERHEAD on W6-B): **1.5695**, a tie with the 1.5697 board, which stays.
   - The d1s gain is real across two runs (x1.028, x1.036; about -2 us). This draw lost it on d32f x0.957 and v1f x0.975,
     rows PERHEAD does not touch.
-  - campaign/expert-bandwidth fast-forwarded to campaign/eb-w6pb-perhead; the next scored run carries PERHEAD plus
-    whatever else routes.
-  - Decode quota: 6 checks / 2 scored.
+  - campaign/eb-w6pb-perhead merged into campaign/expert-bandwidth (9bf60d67; same submission bytes, sha256
+    0b00c4e2...). The next scored run carries PERHEAD plus whatever else routes.
+  - Decode quota: 8 checks / 2 scored.
+  - W6-D (in build, off 3645514e) carries a BN128 d1s cell that PERHEAD now dominates (x1.10 vs x1.02). Turn it off
+    when merging W6-D onto 9bf60d67, and keep W6-D's riders.
