@@ -2,22 +2,28 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **Today (10-27), phase B** (updated 2026-10-27T1315Z):
-  - **Boards** (day start -> now):
-    - decode 1.4956 -> **1.5920** (rank 323);
-    - moe 1.6851 -> **1.7187** (406);
-    - attention 1.5347 -> **1.6340** (389);
-    - bf16 1.2664 -> **1.2735**;
-    - prefill 1.4677 -> **1.4889** (175).
+- **Today (10-27), phase B** (updated 2026-10-27T1505Z):
+  - **Boards** (day start -> now; ranks at 1455Z):
+    - decode 1.4956 -> **1.5920** (327 / 794);
+    - moe 1.6851 -> **1.7187** (426 / 914);
+    - attention 1.5347 -> **1.6340** (417 / 868); the onepass scored run aa9fc860 drew 1.6183, not landed;
+    - bf16 1.2664 -> **1.2740** (388 / 1152);
+    - prefill 1.4677 -> **1.4897** (177 / 516).
   - **Decode stack on master:** W6-B T>=128 diet + PERHEAD d1s + c320t bar + fast silu + W6-G T=128 confirm race
     (promote-only).
   - **Killed today:** W6-A glue fold, W6-C BN128, the decode fork (W6-E/F), trigger-first boundary, bf16 U12s / S5 /
     qkv R=32, prefill rotation / fine-N (no scored transfer).
-  - **In flight:** three /hypothesize subagents (attention, prefill, bf16), 4 each, to deepen the queues for
-    phase C.
-  - **Phase C (18:00Z):** spend every check. Quota 1315Z: decode 3 / 0 scored; moe 12 / 8; attention 14 / 6; bf16 16 / 9;
-    prefill 17 / 9. The khalf gate-stats control (bf16) is ready to claim.
-  - **By ~23:00Z:** tomorrow's phase-A plan:
+  - **In flight:** nothing on okc.
+  - **Phase C (18:00Z):** spend every check. Quota 1505Z: decode 3 / 0 scored; moe 12 / 8; attention 12 / 5;
+    bf16 13 / 8; prefill 13 / 8.
+  - **Structural-gap read (1455Z, for the user's question "tiny gains x50 or one massive change?"):** top-25 teams
+    used a median 10-17 scored runs (we used 21-37); several top-10 rows took 1 run; the decode board is a smooth
+    continuum (2.40 #1, 2.06 #50, 1.92 #100, 1.63 #300). Gains under ~1.2% are unreadable on one run, and our own
+    all-levers ceiling is ~2.0 against a 2.40 leader. Read: leaders made a few structural changes, chiefly the expert
+    block (53% of decode) done in one weight pass per expert at HBM rate, not stacked gates.
+  - **By ~23:00Z:** tomorrow's phase-A plan, headed by a **single-pass expert-block rewrite** (each expert's weights
+    read once per call, warp-specialized producer / consumer, activations staged once, >=3 CTAs or persistent),
+    with the gate-scale items behind it:
     - a decode size trim (963-975 KB now);
     - T=2..8 folds spread over CTAs (W6-A's last-arriver tail lost);
     - s2b at v16s for decode;
@@ -1147,3 +1153,6 @@ append-only, newest last.
   - sliding decode B=32: x1.010 / x1.005, not routed.
   - The headline is noise.
 - 1453Z: **hand scored run aa9fc86078f543fb** of the attention onepass (verify B=1 routed) bytes: a borderline call, since the check (1.6219) was under the 1.6340 high-draw board.
+- 1503Z: attention scored run **aa9fc86078f543fb: 1.6183** [1.594, 1.643], passed; under the 1.6340 board, not landed.
+  With check 1.6219 the onepass bytes average ~1.620, inside today's attention spread; the verify B=1 row gain
+  (14.9 -> 14.6 us) is real but too small for the headline. Kept on its branch for stacking. Worktree removed.
