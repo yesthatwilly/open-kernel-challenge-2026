@@ -23,6 +23,12 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **Node judge landed (1930Z; takemyjob fbe5a4a, bdbb9f7):** moe runs on an H100 judge-like (cold prepare 147.8 s vs
+    the judge's 163.8 s; tests and checks as the judge). **Decode is blocked:** its reference needs SGLang's judge-only
+    muse_spark_v12 modules. Use `moe-iso` (one process per submission) for A/B claims: in-process, the board's own
+    races pick differently per copy. **K9 answered:** the T=1 / T=8 bimodality is the routing draw (2 vs 3 distinct
+    local experts, ~10 us per extra expert on the judge = ~2.75 TB/s marginal), not noise. 4 board runs (race flip
+    rates) are queued.
   - **S1a build started (1918Z, the user: "start the S1a hot kernel build now"):** workflow x5-s1a-hot-kernel
     (design x2 + judge at max, build / 2 audits / fix at high) on `campaign/eb-s1a` from eb-sp 2d5938d7, moe first, with
     a node test package. Kill rule: < x1.10 on the hot half after 2 judge checks.
@@ -1261,4 +1267,25 @@ append-only, newest last.
 - Streamed es16.4.2: 27.5 el/clk/SM at 3.60 TB/s. es16.1.2 22.7, es64 17.9.
 - **Verdict confirmed:** cold stays on Engine A / the M-cell; X5 = S1a + the T<=8 fixed-cost work. The ladder's P1
   (3-4 consumer WGs) is the only route back to a cold Engine S. research/kstep-schedule-2026-10-27.md §5.
+
+## 2026-10-27T1930Z: node judge landed; K9 answered; flip-rate runs queued
+
+- takemyjob fbe5a4a / bdbb9f7: guarded setup/clean hooks, an env ownership check, cold judge-like builds, balanced
+  A/B with intervals, an isolate mode. Env /tmp/USER-hopper/venv-cu130 (12.5 GB) on gpunode06. Configs in
+  probes/nodejudge/configs/.
+- **Fidelity:**
+  - Cold board prepare 147.8 s (judge 163.8 s); replay fixed cost 3.49 us on the H100.
+  - A same-bytes null in one process reads x0.9974 because the two copies' races chose different Engine A versions.
+    The isolated null reads x1.0010 [0.996, 1.006]. **Use moe-iso and compare PATH CHOSEN lines.**
+  - The board vs SGLang reads x1.39 on the H100 (judge x1.72 on the H200): compare submissions to each other only.
+- **Decode is blocked** (reference.py needs sglang muse_spark_v12 Fused* and muse_spark_layers from the judge's
+  SGLang commit a55ab7d5). It is not shimmed, so decode A/B and the trim's routing study wait.
+- **K9 answered:**
+  - moe decode-1 replays split by distinct local experts: 2 -> 37.2 us, 3 -> 50.3, 4 -> 57.7 on the H100 (judge:
+    ~10.3 us per expert, ~2.75 TB/s marginal). verify-1 shows the same staircase.
+  - The "bimodal slow mode" is the input, not noise. **S3's lever is the per-expert streaming rate at T<=8.**
+- memcheck: the board's whole prepare() and its 5 tests are clean on an H100. The timed part cannot be sanitized on
+  80 GB (it OOMs under memcheck).
+- Queued (hopper-queue, nodes=h100, 1 GPU each): 4x nodejudge-moe-board, to measure the race flip rates of the moe
+  board.
 
