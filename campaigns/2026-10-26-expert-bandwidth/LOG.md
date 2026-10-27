@@ -23,6 +23,11 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **The user, ~1940Z:** "dispatch any h100 uses. dispatch any checks you see fit."
+  - **1950Z:** the 4 node board runs agree: every moe race picked the same path, headlines 1.3893-1.3929 (0.26% spread),
+    so the node is a precise moe A/B instrument. Queued a held-out-shape correctness sweep (37 tests, bs 2..257 +
+    skewed). **Decode check 8e3b9874d56e4657 (pin128):** H-16 pinned at T=128 on the trim; it asks whether the judged
+    (16,8) rows follow H-16 (board 339/482 us with H vs trim 358/498 with master).
   - **Node judge landed (1930Z; takemyjob fbe5a4a, bdbb9f7):** moe runs on an H100 judge-like (cold prepare 147.8 s vs
     the judge's 163.8 s; tests and checks as the judge). **Decode is blocked:** its reference needs SGLang's judge-only
     muse_spark_v12 modules. Use `moe-iso` (one process per submission) for A/B claims: in-process, the board's own
