@@ -539,3 +539,18 @@ append-only, newest last.
   The moe T=128 gate kept master (H-16 x0.916, H-8 x0.867).
 - The per-question harvest (VERDICT-dq, H=-8, v4c, anatomy) is with a harvest agent; its branch choice goes in the
   next entry.
+
+## 2026-10-27T0035Z: reset harvest answers (agent, campaign 0ecf440e); DISTILL §4.1 branches chosen
+
+- VERDICT-dq **fails**: best is dq3 x1.015 at C-R4 tok16 (dq4 x0.86-0.89). dq_exact clean (0 / 121,856; rotation counters
+  0 / 0). Dequant stays dq2.
+- H=-8 **dropped**: decode T=128 x0.982 vs H-16 x1.064, T=256 x1.157 vs x1.190; moe T=128 master, T=256 H-16. The
+  threshold sweep is exhausted.
+- v4c **kept**: decode big T +2% (T=128 1.093 -> 1.116, T=256 1.100 -> 1.123), ties at T=16 / 32, v4 kept at T=8. The
+  moe per-class lines fell outside the 16 KB tail (ea4 at T=128 went 299 -> 251 us).
+- Anatomy, T=1 / 8 / 16 / 32: block 27.4 / 61.8 / 135.7 / 152.4 us; no-route 5.2 / 8.8 / 9.3 / 9.4 us (19 / 14 / 7 / 6%).
+  -> **consumer work before X3 glue.** T=1 / 8 under-stream at 2.1-2.7 TB/s (look at CTAs per expert).
+- Anatomy, big T (H=-16): T=128 hot 86.9 us at 1.30 TB/s, cold 130.8 us at 2.81 (59%); T=256 hot 151.8 us at 1.31 TB/s,
+  cold 134.2 (46%). -> **the wgmma hot path is the big-T lever**: phase-A build 3, launched now.
+- Engine D off: rows within noise of f59cb301. Tooling: archive.py misses the profile glob of kept-file submits;
+  rowcmp2 keys moe rows by batch.
