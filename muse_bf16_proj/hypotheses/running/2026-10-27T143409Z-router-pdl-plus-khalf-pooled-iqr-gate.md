@@ -49,7 +49,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T143812Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T143812Z
 base_sha: 15558ffa690a1e3aa20c39c6efdd22a6ec73a644
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -66,6 +66,8 @@ submission_blob: ada0503dc81049c9bfc984ad24101c09d992438f
 lint_warnings: 54
 attempt_file: 2026-10-27T144321Z-check-router-pdl-plus-khalf-pooled-iqr-gate.md
 prepared_at: 2026-10-27T144321Z
+job: 023f4260e86e423e
+dispatched_at: 2026-10-27T144336Z
 ---
 
 # router-pdl-plus-khalf-pooled-iqr-gate
