@@ -38,7 +38,7 @@ review: proceed
 status: hold
 review_at: 2026-10-26T215633Z
 review_companions: null
-hold_reason: "sprint 2026-10-26 21:58Z: after the adversary's narrowing only pooler K-halves kind (a) can route, and kind (a) rounds each K-half's fp32 partial to bf16 before the final add (lower precision than SGLang's fp32 split-K; fails our fp32-accumulation rules gate); kind (b) fp32 partials never passed a gate. Not run."
+hold_reason: "retired per DISTILL 4.4 (2026-10-27): built on the pre-bulk12 base, its qkv cells never routed, superseded by khalf (b2) landed in 8f233e88"
 ---
 
 # combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16
