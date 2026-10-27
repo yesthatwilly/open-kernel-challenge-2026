@@ -1110,3 +1110,8 @@ append-only, newest last.
   - high x0.990 and ft x0.998 missed; fsilu ON; build 32.2 s; prepare 182.6 s.
   - Churn: unproven-vs-best (below the 1.24% margin); a confirm rerun is queued, which is meaningful because the
     change routed.
+- 1418Z: prefill o-proj-triton-gemm-turn-gated check **af3b0d0d84834ee9**.
+  - _o_proj_kernel (do_not_specialize M); configs 128x128 / 128x256 / 256x128; phase runs last (245 / 270 s
+    deadlines).
+  - Read the scored turn_1 profile row (nvjet 112x128 -> _o_proj_kernel).
+- 1418Z: prefill low-class confirm **8716d98c405f417d** (churn's -cf; pooled with 59eb665f).
