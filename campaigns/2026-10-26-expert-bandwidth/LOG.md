@@ -759,3 +759,4 @@ append-only, newest last.
 - 0411Z: bf16 check **670ad7c6b0da41ec**: pooler khalf m=128, b2 only (fp32 partials via bmm out_dtype=float32 + Triton add-cast; hyp/bf16-khalf 83e65c27 on the read-flush branch). Read-flush gate >= 1.03 in both rounds; judge it on the verify_16 pooler row (22.91 us).
 - 0421Z: bf16 khalf check 670ad7c6: **1.2726** vs 1.2664; b2 routed at x1.044 (pooler m=128 net 22.05 -> 21.12 us). **Scored run bc147c5b87bc465d.**
 - 0421Z: attention scored a76ee9b0 (s2b): **1.6114**, the new board (rank 398). Landed; BEST.json registered.
+- 0432Z: bf16 scored bc147c5b (read-flush gates + khalf b2): **1.2735**, the new board (rank 361, was 371). Landed; BEST.json registered.

@@ -1,17 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "3834ceeca7c0410d",
+ "job": "bc147c5b87bc465d",
  "check_job": "474490c8258d4521",
  "mode": "submit",
- "speedup": 1.266355805796172,
+ "speedup": 1.273478298751914,
  "ci": [
-  1.2473604687092292,
-  1.2853511428831144
+  1.2543761242706353,
+  1.2925804732331925
  ],
- "score_us": 3814.7,
- "commit": "5325ea40",
- "submission_blob": "2bcfe7d40e5d58ddc0305221301ee1fce58d5578",
- "slug": "campaign-bulk12-lossless-12bit-m1",
+ "score_us": 3793.390122732737,
+ "commit": "8f233e88d43445c370f991e2211947a00e98ccc8",
+ "submission_blob": "d51c745a0e43d20ebf2cbb3d582f3f8ead72f039",
+ "slug": "pooler-khalf-m128-fp32-partials-triton-castadd",
  "result": null,
- "updated_at": "2026-10-26T215711Z"
+ "updated_at": "2026-10-27T043201Z",
+ "master_slug": "pooler-khalf-m128-fp32-partials-triton-castadd",
+ "master_job": "bc147c5b87bc465d",
+ "note": "registered by hand 2026-10-27: b2 (fp32 partials) on the read-flush gate branch (hyp/bf16-readflush); branch hyp/bf16-khalf 83e65c27; landed on master. Check 670ad7c6 1.2726."
 }
