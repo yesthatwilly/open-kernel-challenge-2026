@@ -749,3 +749,4 @@ append-only, newest last.
 - **W3-B** 8263c7bc: variant B x0.80, but ptxas serialized it (C7512 register shortage), so the overlap question is
   open. The ring does not bind. **VERDICT-N (forced N, INEXACT): hot T=128 102.5 -> 69.7 us at N64, T=256 160.1 -> 135.1
   us**, so N=64 hot tiles may be the big-T lever (exact-N buckets, panel P1 L3). This is a wave-5 candidate.
+- 0347Z: wave 5 launched: workflow wf_df13b9f4-24c, exact N=64 / exact-N-bucket wgmma hot tiles for both hybrids (base 75bb6bf8, campaign/eb-w5-n64). Design and judge at max, build and audit at high. The judge may downgrade it to a diagnostic if N64 is not reachable exactly.
