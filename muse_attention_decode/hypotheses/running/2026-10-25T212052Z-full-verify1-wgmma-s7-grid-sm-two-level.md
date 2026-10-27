@@ -58,9 +58,18 @@ prior: "full-verify1-wgmma-s4-batch1-grid-sm: same idea, held because its s3 bas
 rewrite_stage: 7
 replaces: "full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + rms_norm_gate"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212855Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T212857Z
+base_sha: d708cbde0daeb3705686792cd6d030c115406b9b
+base_blob: 3cd54814f4dcbb30997660d9de6dfacd05908e07
+branch: hyp/muse_attention_decode/full-verify1-wgmma-s7-grid-sm-two-level
+worktree: .worktrees/muse_attention_decode/full-verify1-wgmma-s7-grid-sm-two-level
+mode: null
+restack_of: null
+stale_base: true
 ---
 
 # full-verify1-wgmma-s7-grid-sm-two-level
