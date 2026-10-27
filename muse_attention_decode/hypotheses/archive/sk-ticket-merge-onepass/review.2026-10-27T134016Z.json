@@ -1,0 +1,26 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "A real, untested mechanism: the ticket winner loads its slots in one batched pass instead of two dependent runtime-bounded passes. Neither prior covers it (c320 ONEPASS was a standalone combine kernel; DEFER only moved the ticket draw). Its in-prepare interleaved A/B makes one run readable without companions; judge it on the PATH CHOSEN ratios and the splitkv_attn_sk_kernel rows, not the headline (+0.5..1.0% expected, below the ~1.2% margin).",
+ "justification": "merge_range runs pass 1 (an __ldcg of m per slot to find M) then pass 2 (m, l and float4 acc per slot), both runtime-bounded: ~2*ceil(n/4) dependent L2 round trips on the winner CTA. The batched form routed c320-combine-onepass at 1.119x (18.94 -> 16.93 us) and moved the stage-1 combine row 8.2 -> 6.0 us. It applies to full decode B=2..64 (v2 <4,ticket>, grid 2xSM), sliding verify_1 (PSEUDO, grid p8) and sliding decode B=17..32 (PSEUDO TOK=1, grid p4). %/us coefficients checked: 0.68 (sl verify_1), 0.112 (fd16), 0.074 (fd32), 0.21 (sl decode_32). The strongest case is sliding verify_1 (latency-bound tail). Weakest link: how much of the ticket gap is merge loads vs fence/atomic/finalize is unmeasured, and the 'nvcc unrolls ~4x' premise is unverified. The prior omits splitkv-combine-wide-mlp (do-not-try; same idea on a different kernel; not a duplicate, and its kernel row supports this).",
+ "confounders": [
+  "full-decode1-streamk-s3-two-level-ticket: the host of the change; slot count n set by its grid choice.",
+  "restack-sk-pseudo-cluster-plus-v3-fused-preattn: FUSED_PRE re-gates every run (~0.99-1.01x); the twin-8 gate must run after _skf_setup and skip any band in _FUSED_ROUTE.",
+  "restack-sliding-decode-sk-window-on-cluster-master: the sd grid was picked with the two-pass merge; gating twin 10 only at p4 underestimates it.",
+  "sk-full-line-gather: the live sk module is SK_FULLLINE when its canary passes, else the half-line rebuild; twins compile into whichever is live."
+ ],
+ "interference": "No companion; the in-run A/B (incumbent vs ONEPASS twin, interleaved cold-L2, 2 rounds x 21 reps, 1.01x both rounds, IQR guard) attributes it. Optionally print an MB=4 twin readout in the same gate to separate pass fusion from batch depth.",
+ "rules_flags": [
+  "No rule problem: fp32 LSE merge, KV FP8, q E4M3, every key attended, nothing cached, routing by config/batch band frozen at import.",
+  "Correctness: sc = ex2(M - Mn) is NaN when both are -inf; copy c320 ONEPASS's guards exactly (alpha = M == -inf ? 0 : ex2(M - Mnu), Mnu = Mn == -inf ? 0 : Mn, w = m_u == -inf ? 0 : ex2(m_u - Mnu)); prefer the per-batch form.",
+  "Trap: sk_attn infers pseudo = variant >= 4 and tok = variant >= 6 ? 1 : 8, sk_smem v >= 4, SK_MAX_VARIANT 7/3: variants 8/9/10 need an explicit (pseudo, tok, two, smem) table; twin 8 must exist in the non-PSEUDO fallback build; _full_decode_sk's `if _SK_VARIANT == 1` branch must keep working with a per-band table."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Is merge_range unrolled/load-batched in SASS?",
+  "Register count / local bytes at launch_bounds(256,2) with MB=8; instantiate MB=4 twins up front if the compile budget allows, or pick MB from compile-time attrs.",
+  "Compile/prepare budget: master's import clock ends ~295 s; print [sk] compiled-in time vs master; keep the gate behind the clock guard.",
+  "Print (do not route) twin-10 / twin-9 readouts one grid step up.",
+  "Run the whole phase after _sw_setup (after _ps_setup, _skf_setup and _sd_setup)."
+ ]
+}

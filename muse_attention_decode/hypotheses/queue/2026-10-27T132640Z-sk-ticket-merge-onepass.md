@@ -61,8 +61,10 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "c320-combine-onepass: the same one-pass batched-load online-LSE fold (routed 1.119x on the full decode_1 combine, landed) applied to the stream-K ticket merge inside splitkv_attn_sk_kernel, which still does two dependent runtime-bounded passes; full-decode-sk-s5-deferred-ticket-fault-fix (neutral) moved WHEN the ticket draws (DEFER), not how the winner loads the slots"
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-27T134016Z
+review_companions: null
 ---
 
 # sk-ticket-merge-onepass
@@ -82,3 +84,29 @@ Built on master 2eb03f76 (no depends_on). ONE mechanism, the load structure of t
 ## Risk
 
 Weighted effect ~+0.5..1.0%: below the ~1.2% one-run margin, so on its own it lands only if sliding verify_1 reaches the top of its range; otherwise it lands stacked (combo-tail-onepass-push-fastepi). Judge it on the PATH CHOSEN ratios and the splitkv_attn_sk_kernel rows (verify_1 sliding 9.9 us, decode_16 full 104.1 us, decode_32 full 191.0 us, decode_32 sliding 13.0 us). Risks: register pressure at the merge site under launch_bounds(256, 2) (the 8-slot batch holds 48 live regs of loads; MB = 4 fallback); three extra big instantiations add compile time (print the [sk] compiled-in line vs master, keep the new gate phases behind the import-clock guard, deadline 430 s). Composes with the queued sliding-verify1-pseudo-fused-preattn-rope (prologue) and sk-full-line-5stage-select (same per-band variant table: whichever lands second re-keys it).
+
+## Adversarial review
+
+Reviewed 2026-10-27T134016Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** A real, untested mechanism: the ticket winner loads its slots in one batched pass instead of two dependent runtime-bounded passes. Neither prior covers it (c320 ONEPASS was a standalone combine kernel; DEFER only moved the ticket draw). Its in-prepare interleaved A/B makes one run readable without companions; judge it on the PATH CHOSEN ratios and the splitkv_attn_sk_kernel rows, not the headline (+0.5..1.0% expected, below the ~1.2% margin).
+
+### Justification
+merge_range runs pass 1 (an __ldcg of m per slot to find M) then pass 2 (m, l and float4 acc per slot), both runtime-bounded: ~2*ceil(n/4) dependent L2 round trips on the winner CTA. The batched form routed c320-combine-onepass at 1.119x (18.94 -> 16.93 us) and moved the stage-1 combine row 8.2 -> 6.0 us. It applies to full decode B=2..64 (v2 <4,ticket>, grid 2xSM), sliding verify_1 (PSEUDO, grid p8) and sliding decode B=17..32 (PSEUDO TOK=1, grid p4). %/us coefficients checked: 0.68 (sl verify_1), 0.112 (fd16), 0.074 (fd32), 0.21 (sl decode_32). The strongest case is sliding verify_1 (latency-bound tail). Weakest link: how much of the ticket gap is merge loads vs fence/atomic/finalize is unmeasured, and the 'nvcc unrolls ~4x' premise is unverified. The prior omits splitkv-combine-wide-mlp (do-not-try; same idea on a different kernel; not a duplicate, and its kernel row supports this).
+
+### Confounders on the current kernel
+- full-decode1-streamk-s3-two-level-ticket: the host of the change; slot count n set by its grid choice.
+- restack-sk-pseudo-cluster-plus-v3-fused-preattn: FUSED_PRE re-gates every run (~0.99-1.01x); the twin-8 gate must run after _skf_setup and skip any band in _FUSED_ROUTE.
+- restack-sliding-decode-sk-window-on-cluster-master: the sd grid was picked with the two-pass merge; gating twin 10 only at p4 underestimates it.
+- sk-full-line-gather: the live sk module is SK_FULLLINE when its canary passes, else the half-line rebuild; twins compile into whichever is live.
+
+### Interference and A/B needs
+No companion; the in-run A/B (incumbent vs ONEPASS twin, interleaved cold-L2, 2 rounds x 21 reps, 1.01x both rounds, IQR guard) attributes it. Optionally print an MB=4 twin readout in the same gate to separate pass fusion from batch depth.
+
+### Open questions
+- Is merge_range unrolled/load-batched in SASS?
+- Register count / local bytes at launch_bounds(256,2) with MB=8; instantiate MB=4 twins up front if the compile budget allows, or pick MB from compile-time attrs.
+- Compile/prepare budget: master's import clock ends ~295 s; print [sk] compiled-in time vs master; keep the gate behind the clock guard.
+- Print (do not route) twin-10 / twin-9 readouts one grid step up.
+- Run the whole phase after _sw_setup (after _ps_setup, _skf_setup and _sd_setup).
+
