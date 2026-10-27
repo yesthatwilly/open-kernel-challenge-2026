@@ -793,3 +793,4 @@ append-only, newest last.
   Engine D is left out of decode's build (stubs), so decode is 958 KB. Expected moe +0.3-0.5%, decode +0.2-0.3%.
 - moe check **489191841c364d3d**. decode follows once the moe canary is clean (spec order).
 - The dl-slim agent is told to leave Engine D alone (W5 already removed it).
+- 0513Z: decode scored 7ceab934 (b12p + fix + W3-A full-line + W4 c320): **1.5507**, the new board (rank 331). Landed on master (sha256 91f6e23b..., 973 KB).
