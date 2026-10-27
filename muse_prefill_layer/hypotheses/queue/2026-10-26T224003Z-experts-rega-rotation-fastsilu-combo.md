@@ -40,7 +40,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-rotate-finebucket-fastsilu-combo: the same stack without the fine N buckets (no new wgmma shapes, half the compile), as the low-risk combination"
 review: required
-status: queued
+status: hold
+hold_reason: "rotation was neutral on its own 2026-10-27 (d00770b6: pop x0.991-1.004, all classes OFF); a combo built on it would carry dead code. Re-mint fine-N (high class) + fast-silu without rotation via /hypothesize."
 ---
 
 # experts-rega-rotation-fastsilu-combo
