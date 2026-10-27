@@ -45,9 +45,18 @@ kind: primary
 controls_for: null
 prior: "dense-gemm-cublaslt-algo-pick-prefill-t: that (expired, never run) picked cuBLASLt algos for all dense GEMMs, and bf16's in-prepare algo pick did not carry to the judge (LESSONS: qkv m=256 6.8% faster in prepare, 14% slower judged); this replaces only the 3x-off-floor o projection at T <= 4096 with a Triton kernel behind an interleaved cold-L2 graph selector with a 3% margin and a launched-kernel-name assert"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T141128Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T141128Z
+base_sha: ecc37b57fc4eacd04877ee607dd9f99db59250e8
+base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
+branch: hyp/muse_prefill_layer/o-proj-triton-gemm-turn-gated
+worktree: .worktrees/muse_prefill_layer/o-proj-triton-gemm-turn-gated
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # o-proj-triton-gemm-turn-gated
