@@ -43,7 +43,7 @@ base_sha: 6c6219d272efce7c7cfb16581e6a5b87ab96f188
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 branch: hyp/muse_attention_decode/sk-onepass-verify1-timing-fix
 worktree: .worktrees/muse_attention_decode/sk-onepass-verify1-timing-fix
-mode: null
+mode: check
 restack_of: sk-ticket-merge-onepass
 stale_base: null
 implemented_at: 2026-10-27T143946Z
@@ -52,6 +52,8 @@ submission_sha256: 3b29647036aa1a23f49c3f95549f1d3c219497fa1b3a2c0ca5442e32b1ea5
 norm_sha256: 8441e7f05b907f63dc88657fd55557af77ed067b4d7af91390e85f4f5c2ddc9b
 submission_blob: 21166a140086e6d4431a5dd0a219311831020632
 lint_warnings: 103
+attempt_file: 2026-10-27T143947Z-check-sk-onepass-verify1-timing-fix.md
+prepared_at: 2026-10-27T143947Z
 ---
 
 # sk-onepass-verify1-timing-fix
