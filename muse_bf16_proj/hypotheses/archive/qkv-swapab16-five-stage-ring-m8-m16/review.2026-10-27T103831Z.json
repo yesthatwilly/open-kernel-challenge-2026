@@ -1,0 +1,25 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "A single Triton num_stages knob (4 to 5) on the qkv_gate swap-AB m<=16 path, behind a flag, gated per m, numerically identical, attributable from its own PATH CHOSEN line and qkv rows; no companion. One part of the brief is already on master: _cell_gate has flush_mode='read' (CELL_FLUSH_MODES, B12_GATE_FLUSH='read' since 8f233e88). Build only the stage flag, warm-up, gate and AB cases; judge on the qkv verify_1 and decode_16 rows plus the gate log.",
+ "justification": "qkv_gate at m=2..16 runs _swapab16_forward (2304, 8192, SPLIT_K 4, BLOCK_K 128, 4 stages): grid 144 CTAs, 48 regs. m=1 is taken by b12 and m=17..32 by _swapab, so only verify_1 m=8 and decode_16 m=16 are affected. Rows in a6424247: 12.71 / 13.12 us vs floors 7.90 / 7.93 (2.87-2.97 TB/s cold), below the pooler on the same kernel (3.46 TB/s) and below the 3.4-3.95 TB/s cap DIAGNOSIS settles for m<=32 streams, so this is not the do-not-try 'retune streams already at the cap'. 5 stages is ~100 KB smem, still 2 CTAs/SM (essential: 12 SMs host a second CTA). Prior qkv-swapab-m32-splitk8-stages3 changed split at m=17..32; genuinely different. Weakest link: Little's law says ~6.9 MB in flight is already near enough for 4.8 TB/s, and warm-L2 profile times (~3.7 TB/s) suggest fixed costs dominate; expect 0-0.8 us, more likely the low half. The strict gate may keep 4 stages; that is still a readable answer.",
+ "confounders": [
+  "8f233e88 (pooler khalf b2 + read-flush gates): khalf is pooler m=128 only; reuse master's flush_mode='read' (B12_GATE_FLUSH) rather than re-adding it.",
+  "bulk12 m=1 (5325ea40) routes qkv m=1 ahead of swapab16: m=1 untouched structurally.",
+  "bf16-restack-m16-swapab-router-swapab-m32 / bf16-m32-swapab-wgmma-triton: the base path, not a confounder.",
+  "combo-rowowner-reduce-free-m1-qkv-o-plus-naive: m=1 only, no shared launch."
+ ],
+ "interference": "No companion: the flag changes only num_stages on the qkv_gate swapab16 launch at m=2..16; accumulation order unchanged so outputs should be bit-identical. Print the write-flush ratio beside the read one, as the b12 gates do.",
+ "rules_flags": [
+  "No rule issue; the 5-stage variant must be compiled and warmed for every m in 1..16 before any capture (no JIT inside graph capture), in BOTH states A and B."
+ ],
+ "companions": [],
+ "open_questions": [
+  "Re-anchor expected numbers to master d51c745a rows (12.71 / 13.12 us in a6424247).",
+  "Drop the 'add flush_mode=read' sub-change; call _cell_gate(..., flush_mode=B12_GATE_FLUSH).",
+  "The read flush is justified by the dirty-line write-back bias (DISTILL 3.2.1), not L2 fit.",
+  "If the gate refuses at the strict 1.03 four-of-four rule, accept it rather than loosening.",
+  "Add a canary: torch.equal of 5-stage vs 4-stage output at m=8 and m=16; any difference switches the flag off.",
+  "Print compiled.metadata.shared and n_regs; above ~113 KB the flag must stay off."
+ ]
+}
