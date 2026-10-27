@@ -15,7 +15,7 @@ confirm_of: experts-rega-w2-early-loads-low-class
 confirm_of_job: 59eb665f162a4ac9
 review: proceed
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-27T141759Z
 base_sha: 52169f1783ec72c5ee8b2e97b0648a0e91426c87
 base_blob: 11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d
@@ -24,6 +24,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-w2-early-loads-low-class-cf
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-27T141814Z
+impl_commit: 3905a2f8da54c88e19af1e5e76857428ff1ef83b
+submission_sha256: 703bd19c2ff0f8eea3d9dbc9e4e6f4df5df824620a8a23963ce73d7790f68031
+norm_sha256: 43002eb32fb0b8a658dfbb49423583e797b09ba45f2c3b0b918629233dc73da4
+submission_blob: 50b7846d13be612454d82662a08fd3c6842b48af
+lint_warnings: 112
 ---
 
 # experts-rega-w2-early-loads-low-class-cf
