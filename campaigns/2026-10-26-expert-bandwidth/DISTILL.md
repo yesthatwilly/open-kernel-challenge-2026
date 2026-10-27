@@ -448,6 +448,9 @@ After reset steps 1-3:
   - run the full rules checklist on each final file;
   - check that `okc_lint` is clean (via `rewrite/build.py`) and that the rules version is still 2026-10-22.1;
   - run the nearby-shape sweep: T=129..255 must map cleanly onto the 128 / 256 classes.
+  - **(added 10-27)** the final decode bytes must carry the `_ead_anatomy` use-after-free fix (7f74c074) or run with
+    `EAD_ANATOMY = False`. Before 7f74c074, eacf0722-era bytes can fail prepare at random (8e3c26d6). Prefer turning
+    off every prepare-time diagnostic (anatomies, ladder) in the final bytes.
 
 ## 5. Operating lessons for the next loop
 
