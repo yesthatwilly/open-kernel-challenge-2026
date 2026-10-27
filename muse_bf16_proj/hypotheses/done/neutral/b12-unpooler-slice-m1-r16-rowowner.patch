@@ -1,0 +1,142 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index d51c745a..5141523a 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -2977,7 +2977,7 @@ def _lt_prepare(state: dict, flags=None) -> None:
+ # b12-qkv-m1-r32-one-cta-per-sm-readflush-gate every bulk12 gate routes on a READ flush (the judge reads a buffer
+ # larger than L2 before each replay; the write flush flattered bulk12) with the write flush printed beside it, the
+ # threshold is 0.95 at m >= 8, and qkv_gate also tries the pooler's R=32 instances (72 CTAs, 1 CTA/SM) as challengers.
+-B12_EXT_NAME = "muse_bf16_bulk12_m1_v1"
++B12_EXT_NAME = "muse_bf16_bulk12_m1_v2"
+ B12_ESC_BYTES = 2048          # per-CTA escape block: uint16 row offsets [R + 1] in its first 256 B, then entries
+ B12_ESC_CAP = (B12_ESC_BYTES - 256) // 8   # 224 entries of (row << 16 | k, true bf16 bits) per CTA
+ B12_M = 1
+@@ -2992,8 +2992,13 @@ B12_CELLS = {
+     "qkv_gate": ("A2_12", 2304, 8192, 16, ((2, 6, 2, 4, 16), (3, 6, 2, 8, 16), (0, 8, 1, 8, 32), (1, 8, 1, 4, 32)),
+                  "b12_qkv_ok"),
+     "o":        ("A3_12", 8192, 1024, 64, ((4, 8, 1, 8, 64), (5, 8, 1, 4, 64)), "b12_o_ok"),
++    # hypothesis b12-unpooler-slice-m1-r16-rowowner: the unpooler's m <= 8 slice (its first 1024 rows, see
++    # _b12_weight) at m == 1, grid 1024 / 16 = 64 CTAs, whole K = 4096 per CTA (8 chunks of 12 KB, all in flight).
++    # The incumbent its gate times against is today's route, the ouns cluster / DSMEM split-K kernel.
++    "unpooler": ("U12s", 1024, 4096, 16, ((6, 8, 1, 4, 16), (7, 8, 1, 8, 16)), "b12_unpool_ok"),
+ }
+-B12_INST_R = {0: 32, 1: 32, 2: 16, 3: 16, 4: 64, 5: 64}   # the R of each B12Inst (the CUDA template's first argument)
++# the R of each B12Inst (the CUDA template's first argument)
++B12_INST_R = {0: 32, 1: 32, 2: 16, 3: 16, 4: 64, 5: 64, 6: 16, 7: 16}
+ for _layer, _spec in B12_CELLS.items():
+     for _v in _spec[4]:
+         assert B12_INST_R[_v[0]] == _v[4], f"B12_CELLS {_layer}: instance {_v[0]} is R={B12_INST_R[_v[0]]}, not {_v[4]}"
+@@ -3300,6 +3305,8 @@ using B12Qkv4 = B12Inst<16, 8192, 6, 2, 4>;      // inst 2: qkv_gate m=1, grid 1
+ using B12Qkv8 = B12Inst<16, 8192, 6, 2, 8>;      // inst 3: qkv_gate m=1, grid 144, 2 CTAs/SM x 9 warps
+ using B12O8 = B12Inst<64, 1024, 8, 1, 8>;        // inst 4: o        m=1, grid 128, 9 warps
+ using B12O4 = B12Inst<64, 1024, 8, 1, 4>;        // inst 5: o        m=1, grid 128, 5 warps
++using B12Unp4 = B12Inst<16, 4096, 8, 1, 4>;      // inst 6: unpooler slice m=1, grid 64, 5 warps
++using B12Unp8 = B12Inst<16, 4096, 8, 1, 8>;      // inst 7: unpooler slice m=1, grid 64, 9 warps
+ 
+ static void b12_check(const torch::Tensor& wc, const torch::Tensor& esc, const torch::Tensor& x,
+                       const torch::Tensor& out, const torch::Tensor& err) {
+@@ -3326,6 +3333,8 @@ void b12_run(torch::Tensor wc, torch::Tensor esc, torch::Tensor x, torch::Tensor
+     case 3: B12Qkv8::launch(wc, esc, x, out, err, b); break;
+     case 4: B12O8::launch(wc, esc, x, out, err, b); break;
+     case 5: B12O4::launch(wc, esc, x, out, err, b); break;
++    case 6: B12Unp4::launch(wc, esc, x, out, err, b); break;
++    case 7: B12Unp8::launch(wc, esc, x, out, err, b); break;
+     default: TORCH_CHECK(false, "b12_run: unknown instance");
+   }
+ }
+@@ -3338,6 +3347,7 @@ void b12_unpack(torch::Tensor wc, torch::Tensor out, int64_t inst, int64_t base)
+   if (inst == 0 || inst == 1) B12Pooler8::unpack(wc, out, b);
+   else if (inst == 2 || inst == 3) B12Qkv4::unpack(wc, out, b);
+   else if (inst == 4 || inst == 5) B12O8::unpack(wc, out, b);
++  else if (inst == 6 || inst == 7) B12Unp4::unpack(wc, out, b);
+   else TORCH_CHECK(false, "b12_unpack: unknown instance");
+ }
+ 
+@@ -3349,6 +3359,8 @@ std::vector<int64_t> b12_setup(int64_t inst) {
+     case 3: return B12Qkv8::setup();
+     case 4: return B12O8::setup();
+     case 5: return B12O4::setup();
++    case 6: return B12Unp4::setup();
++    case 7: return B12Unp8::setup();
+     default: TORCH_CHECK(false, "b12_setup: unknown instance");
+   }
+   return {};
+@@ -3512,16 +3524,26 @@ def _b12_encode_into(state: dict, layer: str, w: torch.Tensor, inst: int, verbos
+     _b12_load(state, layer, _b12_encode_checked(layer, w, B12_INST_R[inst], inst, verbose), inst)
+ 
+ 
++def _b12_weight(state: dict, layer: str) -> torch.Tensor:
++    """The bf16 weight a bulk12 cell encodes: the layer's weight, except the unpooler, whose cell is its m <= 8 slice,
++    the first B12_CELLS n (1024) rows as a contiguous view (b12_run checks wc against out's n)."""
++    w = state[layer]
++    if layer == "unpooler":
++        w = w[: B12_CELLS[layer][1]]
++    return w
++
++
+ def _b12_prepare(state: dict, flags=None) -> None:
+-    """A12 / A2_12 / A3_12. Sets state[flag] (False unless every step passes) and, per routed cell, the state's own
+-    encoded weight; one per-state error word. flags None (the judge's state): per cell and instance query attributes
+-    + occupancy (needs MINB CTAs/SM), encode once per distinct R + host / device round trips, the variant's buffers
+-    loaded into state, canary + correctness, model-selector gates against kernel_fn with the flag off (today's route,
+-    the raw bulk cell included) under a READ flush (routing) and a write flush (diagnostic; a challenger-R variant
+-    must pass both); _b12_pick chooses, the winner routes at read ratio <= _b12_max_ratio(m) after a torch.profiler
+-    kernel-name assertion and only its buffers stay; one compact gate line per variant and one PATH CHOSEN line per
+-    cell (both re-printed at the end of prepare). flags a dict (the A/B check's second state): inherit each flag and
+-    instance, encode at that instance's R (B12_INST_R) only for cells that are on."""
++    """A12 / A2_12 / A3_12 / U12s (the unpooler's n = 1024 slice, _b12_weight). Sets state[flag] (False unless every
++    step passes) and, per routed cell, the state's own encoded weight; one per-state error word. flags None (the
++    judge's state): per cell and instance query attributes + occupancy (needs MINB CTAs/SM), encode once per
++    distinct R + host / device round trips, the variant's buffers loaded into state, canary + correctness,
++    model-selector gates against kernel_fn with the flag off (today's route, the raw bulk cell included) under a
++    READ flush (routing) and a write flush (diagnostic; a challenger-R variant must pass both); _b12_pick chooses,
++    the winner routes at read ratio <= _b12_max_ratio(m) after a torch.profiler kernel-name assertion and only its
++    buffers stay; one compact gate line per variant and one PATH CHOSEN line per cell (both re-printed at the end of
++    prepare). flags a dict (the A/B check's second state): inherit each flag and instance, encode at that instance's
++    R (B12_INST_R) only for cells that are on."""
+     for spec in B12_CELLS.values():
+         state[spec[5]] = False
+     if _B12_EXT is None:
+@@ -3537,7 +3559,7 @@ def _b12_prepare(state: dict, flags=None) -> None:
+         for layer, spec in B12_CELLS.items():
+             if flags.get(spec[5]) and insts.get(layer) is not None:
+                 try:   # a failure here turns off only this cell in this state, never the whole A/B
+-                    _b12_encode_into(state, layer, state[layer], insts[layer], verbose=False)
++                    _b12_encode_into(state, layer, _b12_weight(state, layer), insts[layer], verbose=False)
+                     state[spec[5]] = True
+                 except Exception as e:
+                     print(f"[b12] second state: {spec[0]} {layer} encode raised {type(e).__name__}: {e}; "
+@@ -3551,7 +3573,7 @@ def _b12_prepare(state: dict, flags=None) -> None:
+         choice = None
+         why = ""
+         try:
+-            w = state[layer]
++            w = _b12_weight(state, layer)
+             if not (w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16 and w.is_contiguous()):
+                 why = f"weight {tuple(w.shape)} {w.dtype} unexpected"
+             else:
+@@ -3980,9 +4002,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # behind its own canary, gate and kernel-name assertion (after master's own work).
+         _bulk_prepare(state)
+         t = tick("bulk cells A/A2/A3 (setup + repack + canary + gate + profile)", t)
+-        # (10) m == 1 bulk12 cells A12 / A2_12 / A3_12 (12-bit weights), gated against today's route.
++        # (10) m == 1 bulk12 cells A12 / A2_12 / A3_12 / U12s (12-bit weights), gated against today's route.
+         _b12_prepare(state)
+-        t = tick("bulk12 cells A12/A2_12/A3_12 (setup + encode + round trips + canary + gate + profile)", t)
++        t = tick("bulk12 cells A12/A2_12/A3_12/U12s (setup + encode + round trips + canary + gate + profile)", t)
+         _lt_prepare(state)
+         t = tick("lt cell B (heuristic + canary + gate + profile)", t)
+         # (11) pooler m == 128 K-halves, fp32 partials + Triton add-cast (own flag), after every other cell.
+@@ -4164,10 +4186,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     layer = cfg["layer"]
+     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values). Every
+     # dispatch flag (ouns_cl, router_cluster_ok, nn_ok) is read from `state`.
++    if _b12_route_ok(layer, x, cfg, state):    # pooler / qkv_gate / o / unpooler slice at m == 1 on 12-bit weights
++        return _b12_forward(layer, x, state)
+     if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
+         return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
+-    if _b12_route_ok(layer, x, cfg, state):    # pooler / qkv_gate / o at m == 1 on 12-bit weights
+-        return _b12_forward(layer, x, state)
+     if _bulk_route_ok(layer, x, cfg, state):   # pooler / qkv_gate / o at m == 1, per-cell flag
+         return _bulk_forward(layer, x, state)
+     key16 = _swapab16_key(layer, cfg)
