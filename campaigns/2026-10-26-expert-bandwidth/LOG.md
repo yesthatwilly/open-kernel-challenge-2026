@@ -1116,3 +1116,10 @@ append-only, newest last.
   - Read the scored turn_1 profile row (nvjet 112x128 -> _o_proj_kernel).
 - 1418Z: prefill low-class confirm **8716d98c405f417d** (churn's -cf; pooled with 59eb665f).
 - 1421Z: bf16 router-zero-pdl-overlap check **a20f80486c5b4bc1** (a PTX probe for exactly one wait; a slow-stand-in race check; a no-wait control; nopdl arm; tolerance exactness).
+- 1426Z: harvests:
+  - prefill o-proj-triton (af3b0d0d, 1.4863): **killed**. cuBLAS o is 20 us in isolation (the layer profile shows
+    39.7: the in-layer slowdown is not the kernel choice); every Triton tile is slower (x1.15-1.45).
+  - prefill low-class confirm (8716d98c, 1.4994): arm a routed again; pooled unproven (+0.68%). Both checks beat
+    1.4889, so **hand scored run 99767cf374bb4688**.
+  - **bf16 router-zero-PDL (a20f8048, 1.2715): ROUTED in all 4 classes** (x1.031-1.101; the nopdl arm equals master).
+    The headline was pulled down by khalf missing again. Phase C: stack router-PDL + the khalf gate fix.
