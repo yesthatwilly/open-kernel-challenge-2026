@@ -1,10 +1,10 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T120423Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T121143Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4949x [1.4725,1.5173] from job `21911eb694ce467c` (check), master commit `9fbde72cc9`, hypothesis experts-rega-w13-fast-silu-epilogue
+1.4889x [1.4666,1.5112] from job `ec3bd01859574bf1` (submit), master commit `9fbde72cc9`, hypothesis experts-rega-w13-fast-silu-epilogue
 
 Where the time goes (per scored shape, top kernels):
 

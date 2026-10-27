@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-27T120423Z. Best: 1.4949x [1.4725,1.5173] job `21911eb694ce467c` (check)
+Regenerated 2026-10-27T121143Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -91,7 +91,7 @@ Regenerated 2026-10-27T120423Z. Best: 1.4949x [1.4725,1.5173] job `21911eb694ce4
 | 2026-10-26T223951Z | experts-rega-round-rotated-schedule | primary | w13 + w2 expert GEMMs (rega persistent item->CTA schedule) | done/neutral | neutral | 1.4664 | [1.444,1.488] | d00770b6caef4445 | check |  | proceed | 0/3 |
 | 2026-10-26T224003Z | experts-rega-rotate-finebucket-fastsilu-combo | primary | w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T224003Z | experts-rega-rotation-fastsilu-combo | primary | w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module) | queue | hold |  |  |  |  |  | required |  |
-| 2026-10-26T224003Z | experts-rega-w13-fast-silu-epilogue | primary | silu-mul (rega w13 epilogue) | done/gain | gain | 1.4949 | [1.472,1.517] | 21911eb694ce467c | check | merged | proceed | 1/1 |
+| 2026-10-26T224003Z | experts-rega-w13-fast-silu-epilogue | primary | silu-mul (rega w13 epilogue) | done/gain | gain | 1.4949 | [1.472,1.517] | 21911eb694ce467c | check | done | proceed | 1/1 |
 | 2026-10-26T224003Z | experts-rega-fine-n-buckets | primary | w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity) | done/neutral | neutral | 1.4573 | [1.435,1.479] | c951d9168cd546bb | check |  | proceed | 1/3 |
 | 2026-10-26T224004Z | experts-rega-pdl-chain-regate-iqr-slack | primary | launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T224004Z | front-qknorm-rope-fp8-store-fusion-restack | primary | pre-attention norm+rope + cache store (five launches -> one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
