@@ -1132,3 +1132,9 @@ append-only, newest last.
   companion is held, folded); routing is POOLED with a 2.0x pooled IQR bar (orchestrator decision: the candidate's
   true IQR is ~1.42x master's). Implementer running.
 - 1443Z: bf16 router-pdl-plus-khalf-pooled-iqr-gate check **023f4260e86e423e** (router PDL as a20f8048 + the khalf POOLED rule over rounds 1-3 with 10 diagnostic rounds and a K-DIAG line). A scored run if it beats 1.2735 with pooler_khalf128_ok and the router_pdl flags ON in FINAL FLAGS.
+- 1448Z: bf16 stack check 023f4260: **1.2723**, with everything routed.
+  - khalf ON via POOLED. The 10-round K-DIAG settles the flake: per-round IQR fail 0/10, ratio < 1.03 in 1/10; OLD
+    misses triple 1-3 on r2 1.027.
+  - All 4 router_pdl flags ON.
+  - Just under the 1.2735 board, which was a khalf-OFF draw. bf16 drift is 1.7-3.6%.
+  - **Hand scored run 254c83ae55834807** (a borderline call, the same reasoning as the moe one that paid off).
