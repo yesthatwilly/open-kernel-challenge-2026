@@ -1,0 +1,634 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index f4751fc0..42ded471 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -635,14 +635,23 @@ def prepare(weights):
+     # its checks and its gate on the norm-gather-ON block. Never raises; any failure keeps master's low class.
+     lo_lines = _rega_lo_phase(state, weights, device, t_prepare0)
+     torch.cuda.synchronize()
++    # experts-rega-w13-fast-silu-epilogue: LAST of all setup (after _rega_lo_phase, whose rega_low_variant it needs,
++    # and after norm-gather's setup, whose prenorm dispatch it gates on): the separate muse_prefill_rega_fsilu module,
++    # its own start / step deadlines, accuracy canaries and w13-alone timing gates. Never raises; any miss keeps
++    # master's w13 launch.
++    fsilu_lines = _rega_fsilu_phase(state, weights, device, t_prepare0)
++    torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+     for line in align2_lines:
+         print(line, flush=True)
+     for line in fa3c_lines:
+         print(line, flush=True)
+-    # The low-class candidates' summary; its '[rega-lo] PATH CHOSEN low: ...' line is the last prepare() line.
++    # The low-class candidates' summary ('[rega-lo] PATH CHOSEN low: ...').
+     for line in lo_lines:
+         print(line[:1200], flush=True)
++    # The fast-silu phase's compact summary; its PATH CHOSEN lines are the last prepare() lines (16 KB log tail).
++    for line in fsilu_lines:
++        print(line[:700], flush=True)
+     return state
+ 
+ 
+@@ -3539,6 +3548,13 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # shape (the token count) and two prepare-time ints of this state decide; never a tensor value or a pointer.
+     variant = state.get("rega_low_variant", 0) if num_tokens <= REGA_LOW_MAX else 0
+     grid_lo = state.get("rega_low_grid", grid)
++    # experts-rega-w13-fast-silu-epilogue: a per-class prepare-time bool selects the w13 launch of the separate
++    # muse_prefill_rega_fsilu module (master's source with silu_mul's one line swapped for __fdividef / __expf).
++    # Never on the rega_gemm_lo path (variant != 0); w2 and everything else stay master's. Shape + prepare-time
++    # values only.
++    fsilu_ext = state.get("rega_fsilu_ext")
++    fsilu = (not variant and fsilu_ext is not None
++             and bool(state.get("rega_fsilu_ok", {}).get(_rega_class(num_tokens), False)))
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+         tracer("before", "align")
+@@ -3563,6 +3579,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
+                                           n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
++    elif fsilu:
++        fsilu_ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                            D_EXPERT // 64, size_k, hs, grid, err)
+     else:
+         ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                       D_EXPERT // 64, size_k, hs, grid, err)
+@@ -5760,6 +5779,580 @@ def _rega_lo_run(state, weights, device, t_start, sm, lines):
+     return None, chosen
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-w13-fast-silu-epilogue: rega_kernel<true, *> (w13) applies silu(gate) * up to its fp32 accumulators
++# through silu_mul = hg / (1.f + expf(-hg)) * hu, built without fast math (a full-accuracy expf and an IEEE divide per
++# element in the consumer epilogue). A SEPARATE extension muse_prefill_rega_fsilu, built LAST in prepare(), is
++# master's _rega_src() through ONE asserted text edit (the target must occur exactly once, else no build): silu_mul
++# returns __fdividef(hg, 1.f + __expf(-hg)) * hu (div.approx / ex2.approx; fp32 throughout; the same single bf16
++# rounding in pack_bf16). Same cpp declarations, flags and function names as master's module, its own module name;
++# master's strings, module, REGA_V2_SHA256 and v1 fallback are untouched. Only its w13 launch is ever dispatched.
++# Per class (low T=753 only with rega_low_variant == 0, high T=3012, ft T=16384), on the prenorm (norm-gather)
++# dispatch the judge path uses: a canary through _experts_rega; a judge-like pop routing whose master w13-alone
++# (warm-L2) time lands in the judged row's band (alpha chosen per class); accuracy on random, skewed and that pop
++# routing (fsilu hs vs master's: finite, rel L2 <= 2e-3, not bit-identical overall; the routed output's error vs an
++# fp64 reference <= 1.05x master's); then 2 rounds x 11 alternations of w13 alone (one-launch graphs) and the w13 + w2
++# pair, master vs fsilu, cold-L2 (a 256 MB READ flush before each replay, as the judge) and warm-L2 (back-to-back
++# replays), on the judge-like and the random routings. ON only when w13 f/m <= 0.99 in both rounds AND pair f/m <= 1.00
++# in both rounds, in both L2 modes, on both routings, the phase-level hg sweep canary passed, and the two-state replay
++# check passed. state['rega_fsilu_ok'][class] is a plain bool, state['rega_fsilu_ext'] the module (None when all OFF).
++# ---------------------------------------------------------------------------------------------------------------
++REGA_FSILU_TAG = "[rega-fsilu]"
++REGA_FSILU_EXT_NAME = "muse_prefill_rega_fsilu"
++REGA_FSILU_OLD = "hg / (1.f + expf(-hg)) * hu"          # master's silu_mul body; must occur exactly once
++REGA_FSILU_NEW = "__fdividef(hg, 1.f + __expf(-hg)) * hu"
++REGA_FSILU_CLASSES = ("low", "high", "ft")              # gate order; ft (the costliest) last
++REGA_FSILU_TOKENS = {"low": 753, "high": 3012, "ft": 16384}
++REGA_FSILU_BAND_US = {"low": (255.0, 293.0), "high": (707.0, 763.0), "ft": (3400.0, 3850.0)}  # judged w13 rows
++REGA_FSILU_POP_MULT = 1.83                  # first calibration probe: this x the uniform local routes
++REGA_FSILU_PROBES = 4                       # master w13-alone probes per class to land in the band
++REGA_FSILU_W13_RATIO = 0.99                 # w13 alone, fsilu / master, every round, both L2 modes, both routings
++REGA_FSILU_PAIR_RATIO = 1.00                # w13 + w2 pair, same
++REGA_FSILU_ROUNDS = 2
++REGA_FSILU_ALTERNATIONS = 11
++REGA_FSILU_WARM_REPS = 3                    # back-to-back replays per warm-L2 sample (after one unmeasured replay)
++REGA_FSILU_HS_REL = 2e-3                    # fsilu hs vs master hs, rel L2
++REGA_FSILU_REF_MULT = 1.05                  # routed output error vs the fp64 reference, x master's
++REGA_FSILU_START_DEADLINE_S = 200.0         # no nvcc build once prepare() has used this many seconds (300 s limit)
++REGA_FSILU_STEP_DEADLINE_S = 265.0          # no class step (canary, calibration, accuracy, timing, replay) after this
++REGA_FSILU_SWEEP_HG = (-100.0, -88.7, -87.0, -20.0, 0.0, 20.0, 100.0)
++REGA_FSILU_SWEEP_HU = (1.0, -2.5)
++REGA_FSILU_TIME_NAMES = ("w13:m", "w13:f", "pair:m", "pair:f")
++REGA_FSILU_STATE_KEYS = REGA_STATE_KEYS + ("rega_fsilu_ext", "rega_fsilu_ok")
++REGA_FSILU_REPLAY_PLAN = {"low": ((753, ("random", "skewed", "one")),), "high": ((3012, ("random", "skewed")),),
++                          "ft": ((16384, ("random", "local")),)}
++# prepare-only elementwise sweep of the fast vs the accurate form (NVRTC via jiterator; no nvcc, no extra module)
++_REGA_FSILU_SWEEP_SRC = (
++    "template <typename T> T rega_fsilu_sweep(T hg, T hu, T fast) {\n"
++    "  return fast != T(0) ? __fdividef(hg, T(1) + __expf(-hg)) * hu : hg / (T(1) + expf(-hg)) * hu;\n"
++    "}\n")
++
++
++def _rega_fsilu_src():
++    """muse_prefill_rega_fsilu's CUDA source: master's _rega_src() with REGA_FSILU_OLD -> REGA_FSILU_NEW, or None
++    when the target does not occur exactly once (or the result is not as expected). Master's strings are read,
++    never edited."""
++    src = _rega_src()
++    if src.count(REGA_FSILU_OLD) != 1 or REGA_FSILU_NEW in src:
++        return None
++    out = src.replace(REGA_FSILU_OLD, REGA_FSILU_NEW)
++    if out.count(REGA_FSILU_NEW) != 1 or REGA_FSILU_OLD in out or len(out) != len(src) + len(REGA_FSILU_NEW) - len(
++            REGA_FSILU_OLD):
++        return None
++    return out
++
++
++def _rega_fsilu_audit(src):
++    """Pre-build audit of the derived module: no templated Tensor accessor, no mutable file-scope / static / device
++    globals. Returns the findings."""
++    bad = []
++    for name, text in (("cpp", _REGA_CPP), ("cuda", src)):
++        for n, line in enumerate(text.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
++                bad.append(f"{name} line {n}: {line.strip()[:100]}")
++    return bad + _rega_audit_cpp(_REGA_CPP + "\n" + src)
++
++
++def _rega_fsilu_attrs(ext):
++    """Attributes of the four instantiations BEFORE any launch (rega_init sets each one's dynamic smem attribute;
++    setmaxnreg.inc hangs on a short register pool): master's criteria. Returns ({big: ok}, compact text)."""
++    info = ext.rega_init()
++    ok = {False: True, True: True}
++    seen, parts = 0, []
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, _ = info[i:i + 10]
++        gated, big = bool(flag & 1), bool(flag & 2)
++        seen += 1
++        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        ok[big] = ok[big] and good
++        parts.append(f"<{'w13' if gated else 'w2'},{'ft' if big else 's1'}> regs {regs} local {local_bytes} smem "
++                     f"{static_smem}+{dyn_smem} occ {occ} bin {bin_v} rc {e1}{'' if good else ' OFF'}")
++    if seen != 4:
++        ok = {False: False, True: False}
++    return ok, "; ".join(parts)
++
++
++def _rega_fsilu_sweep(device):
++    """prepare() only: the fast and the accurate silu*up elementwise on hg in REGA_FSILU_SWEEP_HG x hu in
++    REGA_FSILU_SWEEP_HU (one tiny NVRTC kernel through torch's jiterator; the module itself is not touched).
++    Both finite; where the accurate result is tiny (|a| <= 1e-30: hg <= ~-87) the fast one must be too, and an
++    exact zero must match in sign (the -0 of hg / inf); elsewhere rel diff <= 1e-5. Returns (True / False / None
++    when the sweep could not run, compact line)."""
++    try:
++        from torch.cuda import jiterator
++        fn = jiterator._create_jit_fn(_REGA_FSILU_SWEEP_SRC)
++        hg = torch.tensor([h for _ in REGA_FSILU_SWEEP_HU for h in REGA_FSILU_SWEEP_HG], dtype=torch.float32,
++                          device=device)
++        hu = torch.tensor([u for u in REGA_FSILU_SWEEP_HU for _ in REGA_FSILU_SWEEP_HG], dtype=torch.float32,
++                          device=device)
++        fast = fn(hg, hu, torch.ones_like(hg))
++        acc = fn(hg, hu, torch.zeros_like(hg))
++        ref = hg.double() / (1.0 + torch.exp(-hg.double())) * hu.double()
++        torch.cuda.synchronize()
++        f, a, r, hgl = fast.cpu().tolist(), acc.cpu().tolist(), ref.cpu().tolist(), hg.cpu().tolist()
++        fs, as_ = torch.signbit(fast).cpu().tolist(), torch.signbit(acc).cpu().tolist()
++    except Exception as e:
++        return None, f"{REGA_FSILU_TAG} hg sweep: could not run ({e!r:.200}): no class may turn ON"
++    ok, worst, cells = True, 0.0, []
++    for i in range(len(f)):
++        fi, ai = f[i], a[i]
++        good = all(v == v and abs(v) != float("inf") for v in (fi, ai))
++        if good and ai == 0.0:
++            good = fi == 0.0 and fs[i] == as_[i]
++        elif good and abs(ai) <= 1e-30:
++            good = abs(fi) <= 1e-30
++        elif good:
++            rel = abs(fi - ai) / abs(ai)
++            worst = max(worst, abs(fi - r[i]) / max(abs(r[i]), 1e-300))
++            good = rel <= 1e-5
++        ok = ok and good
++        if i < len(REGA_FSILU_SWEEP_HG) or not good:  # the hu = 1 row, plus any miss
++            cells.append(f"{hgl[i]:g}:{fi:.3g}/{ai:.3g}{'' if good else '!'}")
++    return ok, (f"{REGA_FSILU_TAG} hg sweep fast/acc (hu {REGA_FSILU_SWEEP_HU[0]:g}) " + " ".join(cells)
++                + f"; worst fast rel vs fp64 {worst:.1e} (normal range); {'pass' if ok else 'MISS'}")
++
++
++def _rega_fsilu_tables(state, x, lids, prenorm, cls):
++    """prepare() only: the align kernel_fn runs (_align_dispatch) and the gather the judge path uses (the fused
++    norm-gather on the raw x when prenorm, else master's module norm then rega_gather) into a zeroed xs:
++    ((sorted_ids, block_experts, n_padded, num_slots), xs)."""
++    num_slots = x.shape[0] * TOP_K
++    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
++    xs = torch.zeros((block_experts.shape[0] * REGA_BSM, D_EXPERT), device=x.device, dtype=torch.bfloat16)
++    if prenorm:
++        nw, nprog, rnd = state["norm_gather_cfg"][cls]
++        _norm_gather(x.contiguous(), state["pre_expert_w"], sorted_ids, block_experts, n_padded, num_slots, xs,
++                     nw, nprog, rnd)
++    else:
++        state["rega_ext"].rega_gather(state["pre_expert_norm"](x).contiguous(), sorted_ids, block_experts, n_padded,
++                                      num_slots, LOCAL_EXPERTS, xs)
++    return (sorted_ids, block_experts, n_padded, num_slots), xs
++
++
++def _rega_fsilu_gemm(state, ext, which, src, dst, tabs):
++    """One rega GEMM launch of `ext` (master's module or the fsilu one) with the arguments _experts_rega passes.
++    w13 (which 0): xs -> hs; w2 (which 1): hs -> y."""
++    bank, err, grid = state["rega_bank"], state["rega_err"], state["rega_grid"]
++    sorted_ids, block_experts, n_padded, num_slots = tabs
++    if which == 0:
++        ext.rega_gemm(0, src, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                      D_EXPERT // 64, D_EXPERT, dst, grid, err)
++    else:
++        ext.rega_gemm(1, src, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                      D_EXPERT // 128, D_EXPERT, dst, grid, err)
++
++
++def _rega_fsilu_reference_out(xin, tw, lids, state, weights, cache):
++    """fp64 reference of the routed expert block: master's _rega_reference_y (dequantized original-order weights,
++    silu*up rounded to bf16 once, y bf16, zeros for remote routes) with the matmuls and silu in float64, then
++    master's post-expert norm weighted sum. cache: master's per-expert fp32 dequant cache."""
++    tokens = xin.shape[0]
++    flat = lids.view(-1)
++    y = torch.zeros((tokens * TOP_K, D_EXPERT), dtype=torch.bfloat16, device=xin.device)
++    for e in range(LOCAL_EXPERTS):
++        idx = (flat == e).nonzero().flatten()
++        if idx.numel() == 0:
++            continue
++        if e not in cache:
++            cache[e] = (nvfp4.dequantize(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]),
++                        nvfp4.dequantize(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]))
++        w13, w2 = cache[e]
++        h = xin[idx // TOP_K].double() @ w13.double().t()
++        g, u = h[:, :D_EXPERT], h[:, D_EXPERT:]
++        a = (g / (1.0 + torch.exp(-g)) * u).to(torch.bfloat16).double()
++        y[idx] = (a @ w2.double().t()).to(torch.bfloat16)
++        del h, g, u, a
++    return fused_post_expert_norm_weighted_sum(
++        y.view(tokens, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
++        weight_first=True, slot_expert_ids=lids)
++
++
++def _rega_fsilu_accuracy(state, trial, device, cls, tokens, kind, prenorm, gen, weights, cache):
++    """prepare() only, one routing: master's and fsilu's w13 alone on the same xs into zeroed hs (error word 0 and
++    the w13 marker each), fsilu hs finite and within REGA_FSILU_HS_REL rel L2 of master's; then the whole routed
++    _experts_rega output with fsilu ON for this class (trial) and with master's (state), on the prenorm dispatch the
++    judge path uses, against the fp64 reference: fsilu's error <= REGA_FSILU_REF_MULT x master's. Returns (None or
++    why, elements of hs that differ, compact text)."""
++    err = state["rega_err"]
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++    hs = {}
++    for lab, ext in (("m", state["rega_ext"]), ("f", state["rega_fsilu_ext"])):
++        hs[lab] = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        err.zero_()
++        _rega_fsilu_gemm(state, ext, 0, xs, hs[lab], tabs)
++        torch.cuda.synchronize()
++        word, m13, _ = _rega_marks(err)
++        if word != 0 or m13 != REGA_MAGIC:
++            return f"{kind}: {lab} w13 alone left error word {word} marker {m13:#x}", 0, ""
++    finite = bool(torch.isfinite(hs["f"].float()).all())
++    d = hs["f"].float() - hs["m"].float()
++    rel = float(d.norm() / hs["m"].float().norm().clamp_min(1e-30))
++    mx = float(d.abs().max()) if d.numel() else 0.0
++    ndiff = int((hs["f"] != hs["m"]).sum())
++    del d, hs, xs
++    xin = state["pre_expert_norm"](x)
++    xa = x if prenorm else xin
++    ref = _rega_fsilu_reference_out(xin, tw, lids, state, weights, cache)
++    err.zero_()
++    out_f = _experts_rega(xa, tw, lids, trial, prenorm=prenorm)
++    torch.cuda.synchronize()
++    word, m13, m2 = _rega_marks(err)
++    out_m = _experts_rega(xa, tw, lids, state, prenorm=prenorm)
++    torch.cuda.synchronize()
++    e_f, w_f = _ssdq_metrics(out_f, ref)
++    e_m, _ = _ssdq_metrics(out_m, ref)
++    text = (f"{kind} {int((lids >= 0).sum())}r hs rel {rel:.1e} max|d| {mx:.1e} ndiff {ndiff}; out err f/m "
++            f"{e_f:.3e}/{e_m:.3e} x{e_f / max(e_m, 1e-30):.3f}")
++    ok = (finite and rel <= REGA_FSILU_HS_REL and word == 0 and _rega_launched(m13, m2) and e_f < float("inf")
++          and e_f <= REGA_FSILU_REF_MULT * e_m and w_f < float("inf"))
++    del x, tw, lids, xin, xa, ref, out_f, out_m
++    if not ok:
++        return (f"accuracy {text}; finite {finite}, word {word}, markers {m13:#x}/{m2:#x} (bounds rel "
++                f"{REGA_FSILU_HS_REL:g}, err x{REGA_FSILU_REF_MULT:g})"), ndiff, text
++    return None, ndiff, text
++
++
++def _rega_fsilu_bench(graphs, device, modes, rounds, alts):
++    """prepare() only: interleaved replays of the captured graphs (an 'empty' graph included, its median subtracted
++    per round). cold: a 256 MB READ of a flush buffer (> the 50 MB L2, no dirty lines left, as the judge's flush)
++    before each timed replay; warm: one unmeasured replay, then REGA_FSILU_WARM_REPS back-to-back replays timed
++    together. Order rotated per alternation and flipped every other one. Returns {mode: [per-round {name: us}]}."""
++    flush = torch.zeros(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
++    acc = torch.zeros((), dtype=torch.float32, device=device)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def cold(g):
++        torch.sum(flush, dim=0, out=acc)
++        ev[0].record()
++        g.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0
++
++    def warm(g):
++        g.replay()
++        ev[0].record()
++        for _ in range(REGA_FSILU_WARM_REPS):
++            g.replay()
++        ev[1].record()
++        torch.cuda.synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1000.0 / REGA_FSILU_WARM_REPS
++
++    names = list(graphs)
++    for name in names:
++        graphs[name].replay()  # warm-up replay
++    torch.cuda.synchronize()
++    out = {mode: [] for mode in modes}
++    try:
++        for r in range(rounds):
++            for mode in modes:
++                fn = cold if mode == "cold" else warm
++                samples = {name: [] for name in names}
++                for i in range(alts):
++                    k = (i + r) % len(names)
++                    order = names[k:] + names[:k]
++                    if i % 2:
++                        order = order[::-1]
++                    for name in order:
++                        samples[name].append(fn(graphs[name]))
++                base = _rega_fsilu_med(samples["empty"])
++                out[mode].append({n: max(_rega_fsilu_med(v) - base, 0.0) for n, v in samples.items() if n != "empty"})
++    finally:
++        del flush, acc
++    return out
++
++
++def _rega_fsilu_med(v):
++    s = sorted(v)
++    return s[len(s) // 2]
++
++
++def _rega_fsilu_time(state, device, cls, tokens, kind, prenorm, gen, names, modes, rounds, alts):
++    """prepare() only: one routing's tables and xs (the judge path's gather), one CUDA graph per name (w13:m / w13:f
++    = master's / fsilu's w13 alone; pair:m / pair:f = that w13 then master's w2), plus an empty graph, timed by
++    _rega_fsilu_bench. Returns ({mode: [per-round {name: us}]}, local routes)."""
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    local = int((lids >= 0).sum())
++    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++    ms, fs, err = state["rega_ext"], state.get("rega_fsilu_ext"), state["rega_err"]
++    hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++    y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++    err.zero_()
++
++    def pair(ext):
++        _rega_fsilu_gemm(state, ext, 0, xs, hs, tabs)
++        _rega_fsilu_gemm(state, ms, 1, hs, y, tabs)
++
++    fns = {"w13:m": lambda: _rega_fsilu_gemm(state, ms, 0, xs, hs, tabs),
++           "w13:f": lambda: _rega_fsilu_gemm(state, fs, 0, xs, hs, tabs),
++           "pair:m": lambda: pair(ms), "pair:f": lambda: pair(fs)}
++    graphs = {}
++    try:
++        graphs = {name: _ssdq_graph_time(fns[name], device) for name in names}
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
++        res = _rega_fsilu_bench(graphs, device, modes, rounds, alts)
++        word = _rega_marks(err)[0]
++        if word != 0:
++            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
++        return res, local
++    finally:
++        del graphs, fns, xs, hs, y, x, tw, lids
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen):
++    """prepare() only: the judge-like routing for this class. Bisects the pop alpha grid (_rega_pop_counts; master
++    w13 time rises with alpha) from the alpha nearest REGA_FSILU_POP_MULT x the uniform local routes, timing master's
++    w13 alone (warm-L2, the judged in-graph condition: inputs just written, weights not resident), at most
++    REGA_FSILU_PROBES probes, stopping inside REGA_FSILU_BAND_US[cls]. Returns (alpha nearest the band, {alpha:
++    (master w13 us, local routes)}, uniform local routes)."""
++    lo_b, hi_b = REGA_FSILU_BAND_US[cls]
++    n_rnd, counts = _rega_pop_counts(tokens, device)
++    alphas = sorted(counts)
++    i = alphas.index(_rega_pop_pick(counts, REGA_FSILU_POP_MULT * n_rnd)[0])
++    lo, hi, probes = 0, len(alphas) - 1, {}
++    for _ in range(REGA_FSILU_PROBES):
++        a = alphas[i]
++        if a in probes:
++            break
++        res, local = _rega_fsilu_time(state, device, cls, tokens, f"pop:{a:g}", prenorm, gen, ("w13:m",), ("warm",),
++                                      1, 3)
++        us = res["warm"][0]["w13:m"]
++        probes[a] = (us, local)
++        if lo_b <= us <= hi_b:
++            break
++        if us > hi_b:
++            hi = i - 1
++        else:
++            lo = i + 1
++        if lo > hi:
++            break
++        i = (lo + hi) // 2
++
++    def dist(a):
++        us = probes[a][0]
++        return (0.0 if lo_b <= us <= hi_b else min(abs(us - lo_b), abs(us - hi_b)), abs(us - 0.5 * (lo_b + hi_b)))
++
++    return min(probes, key=dist), probes, n_rnd
++
++
++def _rega_fsilu_verdict(res):
++    """{mode: [per-round {name: us}]} -> (every round of every mode: w13 f/m <= REGA_FSILU_W13_RATIO and pair f/m
++    <= REGA_FSILU_PAIR_RATIO, compact text)."""
++    ok, parts = True, []
++    for mode, rds in res.items():
++        w = [rd["w13:f"] / max(rd["w13:m"], 1e-9) for rd in rds]
++        p = [rd["pair:f"] / max(rd["pair:m"], 1e-9) for rd in rds]
++        good = all(v <= REGA_FSILU_W13_RATIO for v in w) and all(v <= REGA_FSILU_PAIR_RATIO for v in p)
++        ok = ok and good
++        n = max(len(rds), 1)
++        m13, f13 = sum(rd["w13:m"] for rd in rds) / n, sum(rd["w13:f"] for rd in rds) / n
++        mp, fp = sum(rd["pair:m"] for rd in rds) / n, sum(rd["pair:f"] for rd in rds) / n
++        parts.append(f"{mode} w13 {m13:.1f}->{f13:.1f} x{'/'.join(f'{v:.3f}' for v in w)} pair {mp:.1f}->{fp:.1f} "
++                     f"x{'/'.join(f'{v:.3f}' for v in p)} (w2~{mp - m13:.0f}){'' if good else ' MISS'}")
++    return ok, "; ".join(parts)
++
++
++def _rega_fsilu_class(state, device, cls, weights, lines, t_start, sweep_ok):
++    """prepare() only: one class's checks and gate; (on, reason). 1. an eager traced canary of the whole
++    _experts_rega call with fsilu ON for this class on the prenorm dispatch kernel_fn uses; 2. the judge-like pop
++    alpha (_rega_fsilu_calibrate); 3. accuracy on random, skewed and that routing (_rega_fsilu_accuracy), and fsilu
++    must differ from master somewhere (else the fast form did not run); 4. timing (_rega_fsilu_time, cold + warm,
++    judge-like + random); 5. when it all passes and the hg sweep passed, the two-state replay check with fsilu ON.
++    No step starts after REGA_FSILU_STEP_DEADLINE_S."""
++    tokens = REGA_FSILU_TOKENS[cls]
++    tag = f"{REGA_FSILU_TAG} {cls} T={tokens}"
++    err = state["rega_err"]
++    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++    trial = dict(state)
++    trial["rega_fsilu_ok"] = {c: c == cls for c in REGA_FSILU_CLASSES}
++    gen = torch.Generator(device=device).manual_seed(20261103)
++
++    def late(step):
++        used = time.perf_counter() - t_start
++        if used > REGA_FSILU_STEP_DEADLINE_S:
++            return f"SKIPPED: {step} not started (prepare {used:.0f}s > {REGA_FSILU_STEP_DEADLINE_S:.0f}s)"
++        return None
++
++    # 1. canary
++    x0, tw0, l0 = _rega_case(tokens, "random", gen, device)
++    if not prenorm:
++        x0 = state["pre_expert_norm"](x0)
++    err.zero_()
++    out = _experts_rega(x0, tw0, l0, trial, tracer=_RegaTracer(f"fsilu canary {cls}"), prenorm=prenorm)
++    torch.cuda.synchronize()
++    word, m13, m2 = _rega_marks(err)
++    finite = bool(torch.isfinite(out.float()).all())
++    del out, x0, tw0, l0
++    if word != 0 or not _rega_launched(m13, m2) or not finite:
++        return False, f"canary failed (error word {word}, markers {m13:#x}/{m2:#x}, finite {finite})"
++    # 2. the judge-like routing
++    why = late("alpha calibration")
++    if why:
++        return False, why
++    alpha, probes, n_rnd = _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen)
++    pop_kind = f"pop:{alpha:g}"
++    lo_b, hi_b = REGA_FSILU_BAND_US[cls]
++    us, local = probes[alpha]
++    lines.append(f"{tag} judge-like {pop_kind}: master w13 warm {us:.1f} us, {local}r = {local / max(n_rnd, 1.0):.2f}x "
++                 f"uniform; band {lo_b:.0f}-{hi_b:.0f} {'in' if lo_b <= us <= hi_b else 'OUT (nearest)'}; probes "
++                 + " ".join(f"{a:g}:{u:.0f}" for a, (u, _) in probes.items()) + f"; prenorm {prenorm}")
++    print(lines[-1], flush=True)
++    # 3. accuracy
++    cache, ndiff, parts = {}, 0, []
++    try:
++        for kind in ("random", "skewed", pop_kind):
++            why = late(f"accuracy {kind}")
++            if why:
++                return False, why
++            why, nd, text = _rega_fsilu_accuracy(state, trial, device, cls, tokens, kind, prenorm, gen, weights, cache)
++            ndiff += nd
++            if why:
++                lines.append(f"{tag} {why}"[:700])
++                print(lines[-1], flush=True)
++                return False, why
++            parts.append(text)
++    finally:
++        cache.clear()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    lines.append(f"{tag} accuracy: " + "; ".join(parts))
++    print(lines[-1], flush=True)
++    if ndiff == 0:
++        return False, "fsilu hs bit-identical to master's on every routing: the fast form did not run"
++    # 4. timing: w13 alone and the pair, cold + warm, judge-like then random
++    res = {}
++    for kind in (pop_kind, "random"):
++        why = late(f"timing {kind}")
++        if why:
++            return False, why
++        r, local = _rega_fsilu_time(state, device, cls, tokens, kind, prenorm, gen, REGA_FSILU_TIME_NAMES,
++                                    ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
++        res[kind], text = _rega_fsilu_verdict(r)
++        lines.append(f"{tag} TIME {kind} {local}r: {text}")
++        print(lines[-1], flush=True)
++    timing_on = all(res.values())
++    low_v = f"; rega_low_variant {int(state.get('rega_low_variant', 0))}" if cls == "low" else ""
++    lines.append(f"{tag} GATE w13 f/m <= {REGA_FSILU_W13_RATIO} and pair <= {REGA_FSILU_PAIR_RATIO} every round, "
++                 f"cold+warm, {pop_kind}+random: {'pass' if timing_on else 'MISS'}; hg sweep {sweep_ok}{low_v}")
++    print(lines[-1], flush=True)
++    if not timing_on:
++        return False, "timing gate missed (" + ", ".join(f"{k} {'ok' if v else 'MISS'}" for k, v in res.items()) + ")"
++    if sweep_ok is not True:
++        return False, f"hg sweep canary {'did not run' if sweep_ok is None else 'missed'}"
++    # 5. two-state replay check with fsilu ON for this class
++    why = late("replay check")
++    if why:
++        return False, why
++    cache = {}
++    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FSILU_REPLAY_PLAN[cls],
++                                   keys=REGA_FSILU_STATE_KEYS)
++    cache.clear()
++    torch.cuda.empty_cache()
++    if why:
++        return False, f"two-state replay check failed: {why}"
++    print(f"{tag} two-state replay check (fsilu ON): {line}", flush=True)
++    return True, ""
++
++
++def _rega_fsilu_phase(state, weights, device, t_start):
++    """prepare() only, LAST (after _rega_lo_phase, _fa3c_setup and _norm_gather_setup). Skips itself (OFF line) when
++    prepare() has used more than REGA_FSILU_START_DEADLINE_S before the nvcc build. Derives and builds the separate
++    muse_prefill_rega_fsilu module (one asserted edit of master's source), checks its attributes before any launch,
++    runs the hg sweep canary once, then per routed class (state['rega_ok']) _rega_fsilu_class; the low class only
++    when rega_low_variant == 0 (rega_gemm_lo has its own silu). The print-only silu ceiling variant is skipped: it
++    would need a second nvcc build (or a second edit). Sets state['rega_fsilu_ok'][class] (plain bools) and
++    state['rega_fsilu_ext']. Never raises; every miss leaves master's w13. Returns the compact summary lines; the
++    PATH CHOSEN lines are last."""
++    t0 = time.perf_counter()
++    state["rega_fsilu_ext"], state["rega_fsilu_ok"] = None, {c: False for c in REGA_FSILU_CLASSES}
++    lines, verdict, off, secs = [], {}, None, {}
++    v = int(state.get("rega_low_variant", 0))
++    try:
++        used = time.perf_counter() - t_start
++        routed = [c for c in REGA_FSILU_CLASSES if state.get("rega_ok", {}).get(c, False)]
++        if not routed:
++            off = "no class is on rega (master's gates): no w13 epilogue to change"
++        elif used > REGA_FSILU_START_DEADLINE_S:
++            off = (f"SKIPPED: prepare already used {used:.0f}s > {REGA_FSILU_START_DEADLINE_S:.0f}s before the nvcc "
++                   f"build")
++        elif not _rega_lo_identity()[0]:
++            off = "master's v2 rega source does not hash to master's (the fsilu module derives from it)"
++        else:
++            src = _rega_fsilu_src()
++            bad = ["the silu_mul target did not occur exactly once in master's source"] if src is None else \
++                _rega_fsilu_audit(src)
++            if bad:
++                off = f"source derivation / audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_FSILU_TAG} derived source sha256 "
++                      f"{hashlib.sha256((_REGA_CPP + src).encode()).hexdigest()[:16]} ({len(src)} chars), 1 edit "
++                      f"'{REGA_FSILU_OLD}' -> '{REGA_FSILU_NEW}'; audit ok; prepare at {used:.1f}s", flush=True)
++                tb = time.perf_counter()
++                ext, _ = _rega_build(REGA_FSILU_EXT_NAME, src)
++                secs["build"] = time.perf_counter() - tb
++                if ext is None:
++                    off = "build failed"
++                else:
++                    attrs_ok, attrs = _rega_fsilu_attrs(ext)
++                    lines.append(f"{REGA_FSILU_TAG} attrs {attrs}")
++                    print(lines[-1], flush=True)
++                    state["rega_fsilu_ext"] = ext
++                    sweep_ok, line = _rega_fsilu_sweep(device)
++                    lines.append(line)
++                    print(lines[-1], flush=True)
++                    lines.append(f"{REGA_FSILU_TAG} ceiling (silu_mul -> hg*hu): skipped (a second nvcc build, "
++                                 f"~40 s; build took {secs['build']:.0f}s)")
++                    stop = None
++                    for cls in routed:
++                        tc = time.perf_counter()
++                        used = tc - t_start
++                        if stop:
++                            verdict[cls] = (False, stop)
++                        elif not attrs_ok[cls == "ft"]:
++                            verdict[cls] = (False, "attribute / register-pool check failed for this class's kernels")
++                        elif cls == "low" and v:
++                            verdict[cls] = (False, f"low runs rega_gemm_lo (rega_low_variant {v}, its own silu)")
++                        elif used > REGA_FSILU_STEP_DEADLINE_S:
++                            verdict[cls] = (False, f"SKIPPED: deadline (prepare {used:.0f}s > "
++                                                   f"{REGA_FSILU_STEP_DEADLINE_S:.0f}s)")
++                        else:
++                            try:
++                                on, why = _rega_fsilu_class(state, device, cls, weights, lines, t_start, sweep_ok)
++                            except Exception as e:  # stop here: anything after a fault would be unreliable
++                                on, why = False, f"raised {e!r}"[:300]
++                                stop = f"an earlier class raised ({why[:80]})"
++                            state["rega_fsilu_ok"][cls] = bool(on)
++                            verdict[cls] = (bool(on), why)
++                        state["rega_err"].zero_()
++                        secs[cls] = time.perf_counter() - tc
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
++        off = f"fsilu phase raised {e!r}"[:400]
++        state["rega_fsilu_ok"] = {c: False for c in REGA_FSILU_CLASSES}
++    finally:
++        if not any(state["rega_fsilu_ok"].values()):
++            state["rega_fsilu_ext"] = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++        if off:
++            lines.append(f"{REGA_FSILU_TAG} OFF: {off}")
++            print(lines[-1], flush=True)
++        lines.append(f"{REGA_FSILU_TAG} phase {time.perf_counter() - t0:.1f}s ("
++                     + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
++                     + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s; rega_ok {state.get('rega_ok')}")
++        for cls in REGA_FSILU_CLASSES:
++            on, why = verdict.get(cls, (False, off or "class not on rega"))
++            lines.append(f"{REGA_FSILU_TAG} PATH CHOSEN {cls}: fsilu={'ON' if on else 'OFF'}"
++                         + ("" if on else f" ({why[:160]})") + (f"; rega_low_variant {v}" if cls == "low" else ""))
++        lines.append(f"{REGA_FSILU_TAG} PATH CHOSEN: rega_fsilu_ok {state['rega_fsilu_ok']} (ON = w13 silu_mul "
++                     f"__fdividef/__expf; OFF = master's w13)")
++    return lines
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
