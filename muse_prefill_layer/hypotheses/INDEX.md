@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-27T140341Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
+Regenerated 2026-10-27T140557Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -106,7 +106,7 @@ Regenerated 2026-10-27T140341Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574
 | 2026-10-27T133236Z | o-proj-triton-gemm-turn-gated | primary | o GEMM (attention output projection at 200 < T <= 4096) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T133257Z | experts-rega-epilogue-overlap-next-stage | primary | w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T140020Z | experts-rega-w2-epilogue-prefetch-bulk-store-cf | confirm→experts-rega-w2-epilogue-prefetch-bulk-store | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

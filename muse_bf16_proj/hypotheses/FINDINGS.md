@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T140023Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T140557Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -47,6 +47,7 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 ### bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)
 - **bf16-verify-deepgemm-sm90-kernel-asserted-rewrite** → neutral (unproven-vs-best), 1.2221x — gained on unpooler verify_1; router verify_1; lost on router decode_16, verify_16; o decode_32. Built on master. bf16-verify-deepgemm-bf16-gemm-nt-route (2d522d47) printed PATH CHOSEN deepgemm for all 16 (layer, m) pairs, every self-check at 0.0 s (no JIT 
 - **bf16-verify-deepgemm-sm90-explicit-instantiation-stage2** → neutral (unproven-vs-best), 1.2606x — gained on qkv_gate decode_1, decode_32, verify_16; pooler decode_1, verify_16; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32; o decode_32; lost on o verify_16, verify_32. DIAGNOSIS Action 5. Built on master 36c26199, porting stage 1's [dg] scaffold (patch done/neutral/bf16-verify-deepgemm-sm90-kernel-asserted-rewrite.patch: TORCH
+- **bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush** → neutral (unproven-vs-best), 1.2741x — gained on pooler decode_1, verify_16; qkv_gate verify_16; o verify_16; router verify_16, verify_32; lost on unpooler decode_1; router decode_1; o decode_16, decode_32; pooler decode_16. Stage 2 (job 566a79e4) measured NOTHING: its generator filled DeepGEMM's sm90_bf16_gemm_impl template by parameter NAME and stopped at 'unknown template paramet
 
 ### bf16 GEMM dispatch (m=65..256, swap-AB wgmma + cluster DSMEM split-K)
 - **bf16-verify-swapab-wgmma-cluster-dsmem-rewrite** → neutral (within-ci), 1.2155x — gained on router decode_32, verify_32; lost on o decode_1, decode_16, decode_32. Built on master (blob a8bb42a). WHY: the m=128/256 rows are the last ones on cuBLAS and the furthest from their floors in absolute us (master profile 1602a4e947
@@ -182,6 +183,7 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 - bf16-verify16-cutlass-m128-onetile-splitk-rewrite: rewrite stage 1 of `cuBLAS at m=65..128 (verify_16): qkv_gate nvjet 96x64 splitK 12.7 + cublasLt splitKreduce 3.1 us, o nvjet 128x64 TNT 5.5 us, pooler NN nvjet 128x64 splitK 20.2 + splitKreduce 3.0 us, unpooler NN nvjet
 - router-m128-m256-wgmma-swapab-tall-cluster-stage2: rewrite stage 2 of `_router_hilo_kernel + torch.zeros memset at router m=65..256 (hilo 5.0 + 0.8 us at m=128, 7.0 + 0.7 us at m=256)`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbe
 - bf16-verify-deepgemm-sm90-explicit-instantiation-stage2: rewrite stage 2 of `cuBLAS nvjet (+splitKreduce) for qkv_gate, pooler, unpooler at m=128/256`: read the replaced kernels' own us per shape (profile top_kernels) against the incumbent and the floor, and check which Milest
+- bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush: rewrite stage 3 of `cuBLAS nvjet at m=128/256 for qkv_gate (Lt 40x64 15.7 us at m=128; 96x64 2x4 TNN 19.6 us at m=256), pooler m=256 (NN 128x64 29.0 us) and unpooler (NN 128x64 19.1 us at m=128; 128x128 TNT 24.7 us at m=
 
 ## Do not try (regressions, flat results, rejected)
 
@@ -232,5 +234,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: router-zero-pdl-overlap-m9-m256 [router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL)] p1 queued
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 queued
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 queued
-- running: bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush [bf16 GEMM dispatch (m=65..256, DeepGEMM sm90 BF16 kernel)] p2 running
 - 8 stale holds expired to `done/expired/` (not run)

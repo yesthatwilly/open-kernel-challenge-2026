@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T140341Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T140557Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -260,6 +260,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: o-proj-triton-gemm-turn-gated [o GEMM (attention output projection at 200 < T <= 4096)] p2 queued
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 queued
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- queue: experts-rega-w2-early-loads-low-class [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] p1 queued
 - running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
+- running: experts-rega-w2-early-loads-low-class [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] p1 running
 - 22 stale holds expired to `done/expired/` (not run)
