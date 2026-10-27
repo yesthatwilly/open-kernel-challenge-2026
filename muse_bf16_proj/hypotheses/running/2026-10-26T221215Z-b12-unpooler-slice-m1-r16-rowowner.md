@@ -40,9 +40,18 @@ kind: primary
 controls_for: null
 prior: "restack-unpooler-slice-cluster-dsmem-m8: that cluster/DSMEM split-K kernel (ouns) is today's m<=8 slice route; this replaces only its m=1 cell with the judge-proven bulk12 row-owner on 12-bit weights (6.3 MB instead of 8.4 MB, whole K per CTA, no DSMEM reduce), gated under a judge-like read flush"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T095240Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T095240Z
+base_sha: c59f4fea68a3a426326191184157123641faca72
+base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
+branch: hyp/muse_bf16_proj/b12-unpooler-slice-m1-r16-rowowner
+worktree: .worktrees/muse_bf16_proj/b12-unpooler-slice-m1-r16-rowowner
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # b12-unpooler-slice-m1-r16-rowowner
