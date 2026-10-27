@@ -1016,3 +1016,6 @@ append-only, newest last.
   - **Portable lead:** the same accurate-silu epilogue may exist in prefill's rega_lo, moe's and decode's Engine A
     silu, and moe's Marlin/wg paths. grep for 'expf(' in epilogues without fast math; a phase-C / tomorrow item.
 - 1205Z: **portable fast silu**: campaign/eb-fsilu (off campaign/expert-bandwidth) swaps silu_mul to __fdividef/__expf in ea_kernels.cuh, eb_kernels.cuh and wg_core.py (decode + moe; no hash pins). moe check **c91cfb6a3ad94878** (moe 641,707 bytes). If moe gains, decode follows (5 checks / 2 scored left).
+- 1211Z: **prefill scored ec3bd018: 1.4889** (CI 1.467-1.511), the new board (was 1.4677; rank 175); churn landed it.
+- 1211Z: moe fsilu-eb check c91cfb6a: **1.7153**, neutral (rows x0.99-1.01). moe T=128 runs Marlin; M=256 hybrid
+  race -1%. campaign/expert-bandwidth fast-forwarded to eb-fsilu; the change rides decode's next check.
