@@ -45,8 +45,11 @@ priority: 1
 kind: primary
 controls_for: null
 prior: "combo-rowowner-reduce-free-m1-qkv-o-plus-naive: that run fixed qkv m=1's row-owner shape (A2: R=16, 144 CTAs, 2 CTAs/SM), which the landed bulk12 cell copied and which judged flat on 12-bit weights; this tries R=32 at 72 CTAs and 1 CTA/SM on the same 12-bit weights, routed only under a judge-like read-flush gate"
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-27T103440Z
+review_companions: null
+hold_reason: "adversarial review: Every part of this hypothesis, (a) to (e), is already on master: it came in through d7bf1c76 (hyp/bf16-readflush, which names this slug) and landed in 8f233e88 "
 ---
 
 # b12-qkv-m1-r32-one-cta-per-sm-readflush-gate
@@ -64,3 +67,24 @@ Built on master blob 2bcfe7d4 (section (10) bulk12). Python only, no CUDA change
 ## Risk
 
 Medium. Pure Python on instances that have run in every bulk12 check, so no new fault surface; the risk is a wrong route. The write-flush gate flattered bulk12 on qkv and o (predicted 0.88 / 0.87, judged 1.00 / 0.97) but not on the pooler (0.82 vs 0.84): flush.zero_() leaves ~50 MB of dirty lines in L2 and a byte-light kernel evicts fewer of them, which only matters for weights that fit in L2 (qkv 37.7 MB, o 16.8 MB). Hence the read-flush requirement; the pooler / o diagnostics test that explanation against rows already judged, which also tells the 00:00Z decode port whether bulk12 qkv / o at T=1 is worth carrying. 72 CTAs leave 60 SMs idle: R=32 wins only if one SM can pull ~50 GB/s (the pooler cell pulls ~29 GB/s per SM under full load). Sizing: decode_1 is 0.40 %/us, so -1 to -2 us is +0.4-0.8%, below the 1.24% one-run margin alone.
+
+## Adversarial review
+
+Reviewed 2026-10-27T103440Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Every part of this hypothesis, (a) to (e), is already on master: it came in through d7bf1c76 (hyp/bf16-readflush, which names this slug) and landed in 8f233e88 (scored bc147c5b, 1.2735). Its one real question, whether R=32 at 72 CTAs beats R=16 for qkv m=1 under a read flush, has been answered no in two checks (a3dcd4cb: R=32 read 1.016; a6424247: 1.029 / 1.043). Running it again would rebuild master and measure nothing new; move it to done as superseded / landed-and-killed.
+
+### Justification
+Master's B12_CELLS['qkv_gate'] already lists the R=32 challengers (0,8,1,8,32) and (1,8,1,4,32); B12_INST_R, the per-R encode, CELL_FLUSH_MODES / flush_mode='read' in _cell_gate, B12_GATE_FLUSH='read', B12_CHALLENGER_MARGIN=0.03, _b12_pick and the re-printed gate lines are all there (submission.py ~2976-2988 names this slug). In a6424247, R=16 inst 2 read 0.950 (10.34 / 10.88 us); R=32 inst 0 read 1.029, inst 1 1.043: both fail the read gate. a3dcd4cb gave R=32 at 1.016. The write-flush flattery the hypothesis predicted was confirmed (qkv 0.953 read vs 0.884 write) and that fix has landed. The sizing was marginal from the start (-1 to -2 us, below the 1.24% one-run margin).
+
+### Confounders on the current kernel
+- 8f233e88 (read-flush gates + pooler khalf b2) contains the hypothesis's whole change: a rebuild would be an empty diff.
+- combo-rowowner-reduce-free-m1-qkv-o-plus-naive is the source of the R=16 row-owner shape; on master the bulk12 R=16 cell (5325ea40) beats the raw bulk cell under the read gate, a stronger incumbent than assumed.
+
+### Interference and A/B needs
+No companions; nothing new would be measured. Keeping R=32 alive needs a different shape (R=32 at 2 CTAs/SM with a smaller ring, or a split-K pair so 144 CTAs carry R=32 tiles): a new hypothesis.
+
+### Open questions
+- Retire this queue file to done/ (landed via d7bf1c76/8f233e88; R=32 killed by gate in a3dcd4cb and a6424247).
+- Gate noise in the incumbent column is ~1 us between variants of the same cell; should _cell_gate share one incumbent measurement across a cell's variants?
+
