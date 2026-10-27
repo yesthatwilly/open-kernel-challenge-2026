@@ -61,7 +61,7 @@ base_sha: ec7851655c2c3f1ab2abfe571da8dc10d63062ea
 base_blob: f4751fc054335a94d1b401af272e98a2d4760363
 branch: hyp/muse_prefill_layer/experts-rega-fine-n-buckets
 worktree: .worktrees/muse_prefill_layer/experts-rega-fine-n-buckets
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T105011Z
@@ -70,6 +70,8 @@ submission_sha256: 256547bdf626582aa2431e958e5cbb6e4b18db379a0209a3dafe47483b177
 norm_sha256: 2d60da6f73e97d89366afb0e9a591ff387546d1fcc0aa3409395d24374041c06
 submission_blob: 33168720bd67d9a79723f8b955a61b0d42988b46
 lint_warnings: 105
+attempt_file: 2026-10-27T105011Z-check-experts-rega-fine-n-buckets.md
+prepared_at: 2026-10-27T105011Z
 ---
 
 # experts-rega-fine-n-buckets
