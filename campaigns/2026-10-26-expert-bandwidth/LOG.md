@@ -1043,3 +1043,9 @@ append-only, newest last.
   - Open minors: the hilo atomics can fail the promotion's exact top-8 check on a near-tie (safe fallback); comb's
     layer gate under a promoted H is only the race; FINAL PATHS grows ~1 KB (Engine A head lines drop from the tail).
   - Decode: 3 checks / 1 scored left after this.
+- 1303Z: **W6-G check 41975d1c: 1.5749** (> 1.5697).
+  - **The confirm promoted H-16+comb at T=128** where the cells-off race said master (x1.023 vs master+cells; layer
+    350.5 -> 336.3 us). The v16 rows now match the board's hybrid draw.
+  - PERHEAD d1s x1.036, c320t d1f x1.038.
+  - **Scored run c1daf58bf192471e** (decode's last scored run today; 3 checks left).
+  - d32f reads x0.955-0.969 in every run vs 4a7a49d0 (that run's d32f was a lucky x1.037 vs 7ceab934).
