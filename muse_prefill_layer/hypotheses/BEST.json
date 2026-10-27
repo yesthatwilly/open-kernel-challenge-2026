@@ -1,16 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "73b40cd13fdf4bb0",
- "mode": "submit",
- "speedup": 1.4677493909229,
+ "job": "21911eb694ce467c",
+ "check_job": "21911eb694ce467c",
+ "mode": "check",
+ "speedup": 1.4949064012876574,
  "ci": [
-  1.4457331500590564,
-  1.4897656317867434
+  1.4724828052683425,
+  1.517329997306972
  ],
- "score_us": 263944.1735733959,
- "commit": "aab679312bea4f6d582b7edf39069ec495ff24f6",
- "submission_blob": "f4751fc054335a94d1b401af272e98a2d4760363",
- "slug": "combo-b-normgather-two-cta-low-regate",
- "result": "muse_prefill_layer/hypotheses/done/neutral/combo-b-normgather-two-cta-low-regate.result.json",
- "updated_at": "2026-10-25T185633Z"
+ "score_us": 259149.26825271774,
+ "commit": "9fbde72cc980ca534c8db9600bf6f101c82d5a29",
+ "submission_blob": "42ded47196d5f0417c17f38574876508f0d822f1",
+ "slug": "experts-rega-w13-fast-silu-epilogue",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json",
+ "updated_at": "2026-10-27T120421Z"
 }
