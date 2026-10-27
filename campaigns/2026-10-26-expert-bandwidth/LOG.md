@@ -1097,3 +1097,9 @@ append-only, newest last.
   - Every cell lost or tied cuBLAS under the read flush: pooler m=256 30.2 vs 28.7 us; qkv m=256 x0.47-0.77; unpooler
     m=128 x0.95; unpooler m=256 x1.00.
   - Threaded load_inline works on the judge (23.8 s for 3 modules), a usable idiom for faster prepare builds.
+- 1410Z: prefill experts-rega-w2-early-loads-low-class check **59eb665f162a4ac9**.
+  - Arm a only (module muse_prefill_rega_fsilu_w2a, 4 instantiations), routable at low / high / ft, class order
+    low -> high -> ft.
+  - Low also needs the rega-lo guard routing <= 1.00. Read the PATH CHOSEN lines (the kernel name equals master's).
+- 1410Z: bf16 router-zero-pdl-overlap reviewed (**proceed**: exactly one griddepcontrol.wait, a slow-primary race
+  stand-in, a third arm with no PDL, exact-kwarg warm-up, tolerance exactness). Claimed; implementer running.
