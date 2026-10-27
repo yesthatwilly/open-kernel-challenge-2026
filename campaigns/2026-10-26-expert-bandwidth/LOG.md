@@ -1093,3 +1093,7 @@ append-only, newest last.
   - The target cells (sliding verify B=1, sliding decode B=17..32) were **not timed**: the incumbent itself failed the
     gate's timing-data check (rel L2 9.6e-2 / 3.7e-2), a harness bug.
   - A follow-up for phase C: rerun only the verify B=1 cell with the timing inputs fixed (reuse the correctness inputs).
+- 1405Z: bf16 DeepGEMM s3 check 6407497b: 1.2741 (neutral). **The DeepGEMM line is closed.**
+  - Every cell lost or tied cuBLAS under the read flush: pooler m=256 30.2 vs 28.7 us; qkv m=256 x0.47-0.77; unpooler
+    m=128 x0.95; unpooler m=256 x1.00.
+  - Threaded load_inline works on the judge (23.8 s for 3 modules), a usable idiom for faster prepare builds.
