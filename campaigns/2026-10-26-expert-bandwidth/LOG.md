@@ -23,6 +23,13 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **Decode race lottery (2010Z):** pin128 8e3b9874 passed at 1.5722 (not over the board; no scored run).
+    - The T=128 pin worked: (16,8) rows 333.8 / 475.8 us, the best of three runs.
+    - T=256 flipped to H-8 and lost ~20 us per (32,8) row.
+    - Across three judged runs, H-16 beats master at T=128 and H-8 at T=256 by ~20 us per row. The board's 1.5920 drew
+      H-16 at both.
+    - **Pin-both check 5a33db7194c24282** (eb-pin128: `HC_PIN {128: -16, 256: -16}`) was the last decode check of the
+      day. A scored run tomorrow if it holds.
   - **The user, ~1945Z (PRIMARY FOCUS NOW):** "brainstorm and queue up as much h100 work as you can do; i want these
     findings in place as right now's primary focus ... much quicker and surgically applicable than the check process
     ... use any number of checks where it is the better choice ... what matters is good rigorous methodology"; and
@@ -1301,4 +1308,17 @@ append-only, newest last.
   80 GB (it OOMs under memcheck).
 - Queued (hopper-queue, nodes=h100, 1 GPU each): 4x nodejudge-moe-board, to measure the race flip rates of the moe
   board.
+
+## 2026-10-27T2010Z: pin128 result (1.5722): the decode headline is a race lottery; pin-both check sent
+
+- 8e3b9874d56e4657 (eb-pin128: `HCG_PIN -16` on the trim) passed at 1.5722. It does not beat the board; decode has 0
+  scored runs left today anyway.
+- **T=128:** H-16+comb pinned (confirm Q1 H-16 x1.002 -> PINNED). (16,8) rows 333.8 / 475.8 us against board H
+  339.0 / 482.2 and trim master 358.3 / 497.5.
+- **T=256:** the class race flipped to H-8 (board and trim drew H-16). (32,8) rows 465.0 / 727.7 against 441.0 / 710.6
+  and 439.9 / 714.5.
+- **Finding:** each hybrid race decides ~20 us per row, and its prepare-time margins (x0.96-1.00) do not track the
+  judged rows. Decode's run-to-run spread is mostly race draws, not timing noise.
+- **Pin-both check 5a33db7194c24282:** `HC_PIN = {128: -16, 256: -16}` in `_hc_setup`'s class race (layer checks still
+  guard it) plus the W6-G backstop; 924,352 B.
 
