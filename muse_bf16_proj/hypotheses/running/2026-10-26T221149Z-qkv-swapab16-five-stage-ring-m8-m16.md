@@ -50,7 +50,7 @@ base_sha: 8f8cca6a58905f50bf7dd6d8b3836520f7443c83
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
 branch: hyp/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16
 worktree: .worktrees/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T104307Z
@@ -59,6 +59,8 @@ submission_sha256: 5ed652d5043bc9c4ad4f0917e3182640e339dd6e7e0631bbc04902b9a26ea
 norm_sha256: 5b0b5e16e78b5ca10d84f3ade1f6b224640564d29894f8e9e20e819962ad30bc
 submission_blob: 40dfcaff4e765715b1b80982f24edcbd7e246f3c
 lint_warnings: 49
+attempt_file: 2026-10-27T104308Z-check-qkv-swapab16-five-stage-ring-m8-m16.md
+prepared_at: 2026-10-27T104308Z
 ---
 
 # qkv-swapab16-five-stage-ring-m8-m16
