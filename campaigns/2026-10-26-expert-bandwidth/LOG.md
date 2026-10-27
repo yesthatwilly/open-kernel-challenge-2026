@@ -709,3 +709,5 @@ append-only, newest last.
 - attention check **508cfca7650848ec**: c320-combine-onepass + c320-pdl-early-trigger (hyp/attn-c320 0453ca70, base
   0d421faf at 1.5902). Each change has its own canary and an in-run A/B gate (head to head >= 1.01). Read the V3 / V4
   readouts and the 'compiled in' line (a build overrun drops FD1 to V0). attn-s2 is still building.
+- 0313Z: attention check **becb6967be9940bf**: sliding-verify s2 split-combine (hyp/attn-s2 7cc48bef, base
+  0d421faf). The bands B=2..16 / 17..32 route only at >= 1.05x in both rounds plus a replay check; B=1 is unchanged.
