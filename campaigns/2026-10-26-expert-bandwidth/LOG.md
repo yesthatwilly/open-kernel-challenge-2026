@@ -883,3 +883,19 @@ append-only, newest last.
   - Decode quota: 8 checks / 2 scored.
   - W6-D (in build, off 3645514e) carries a BN128 d1s cell that PERHEAD now dominates (x1.10 vs x1.02). Turn it off
     when merging W6-D onto 9bf60d67, and keep W6-D's riders.
+- 0828Z: W6-D built and audited (wf_6c3fde55-e50: 0 blockers / 0 majors; the fix pass kept the SUMMARY inside the
+  judge's 16 KB tail).
+  - Decode check **1fc3b48974874a17** on the original W6-D bytes (eb-w6d-probe 98cf1a59, on W6-B, 950,275 bytes):
+    the hot/cold fork / split rider, the trigger-first boundary -> P probe, the c320t re-time, and BN128 at bar 1.01.
+  - Not scorable: no PERHEAD.
+  - Merged onto PERHEAD (eb-w6dp-probe 7059b16d, WIP), it comes to **1,005,469 bytes, over okc's 1 MB cap**. Any
+    stack with PERHEAD plus more code needs a size trim first.
+  - Audit minors:
+    - dl_boundary now sits in the routed _DL TU (a GPU nvcc failure would drop pieces A/B/C for this check);
+    - the 'split' placement is a grid shrink, not an SM partition;
+    - hc's serial reference is the expert block alone;
+    - at T=1, inc vs trig also differs in b12p's pdl.
+  - The safety classifier timed out on one audit agent's review. I checked: it left no changes outside its worktree.
+- Size is now the binding constraint on decode. PERHEAD's file is 963,064 bytes. Candidate trims for tomorrow:
+  prepare-time anatomy and diagnostic code (EAD_ANATOMY etc.; DISTILL §4.5 already prefers it off at the end), killed
+  levers' code still built, and docstrings.
