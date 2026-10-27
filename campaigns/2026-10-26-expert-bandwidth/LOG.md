@@ -13,7 +13,7 @@ append-only, newest last.
     (promote-only).
   - **Killed today:** W6-A glue fold, W6-C BN128, the decode fork (W6-E/F), trigger-first boundary, bf16 U12s / S5 /
     qkv R=32, prefill rotation / fine-N (no scored transfer).
-  - **In flight:** nothing on okc.
+  - **In flight:** nothing. **/loop /3to1 STOPPED by the user at 2026-10-27T1505Z** ("lets stop whatever is in flight"); no ticks until restarted by hand.
   - **Phase C (18:00Z):** spend every check. Quota 1505Z: decode 3 / 0 scored; moe 12 / 8; attention 12 / 5;
     bf16 13 / 8; prefill 13 / 8.
   - **Structural-gap read (1455Z, for the user's question "tiny gains x50 or one massive change?"):** top-25 teams
