@@ -68,7 +68,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T133822Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T133822Z
 base_sha: 0dc50d0a5d027659c02f0e6a45778fa2662139e4
 base_blob: ff4b91b7ccf2b0111c4ed8a900c2f48cfed8d73b
@@ -85,6 +85,8 @@ submission_blob: 73b304b6996a68f9ae633659e65f1be5e31247ac
 lint_warnings: 50
 attempt_file: 2026-10-27T140051Z-check-bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush.md
 prepared_at: 2026-10-27T140051Z
+job: 6407497bec88470e
+dispatched_at: 2026-10-27T140119Z
 ---
 
 # bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush
