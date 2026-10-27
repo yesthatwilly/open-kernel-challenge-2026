@@ -960,3 +960,11 @@ append-only, newest last.
   - The campaign HEAD's bytes (PERHEAD + c320t) average ~1.568 over 4 checks, the same as the board's lucky 1.5697.
     Hold the 2 decode scored runs for a real gain or the end of phase C.
 - 0949Z: **Phase B started** via /churnsubs: picks bf16 b12-unpooler-slice-m1-r16-rowowner and prefill experts-rega-round-rotated-schedule. Their Opus adversarial reviews are running (2 agents). Held the superseded bf16 pooler-khalf-m128 (landed as khalf b2). Skipped the tick's 5 diagnoses (phase-B agent cap). moe scored run 2a7b5d20 in flight.
+- 0954Z: moe scored 2a7b5d20 (W6-M fork): **1.7187** (CI 1.693-1.745), the new board (rank 406; was 1.7076 / 415).
+  - M=256 ran H-16f; verify 32 x1.023, verify 16 x1.016.
+  - Landed on master; moe BEST.json registered (it was stale at 1.4021).
+  - The borderline scored call (check 1.6978 < board) paid off: one-row gains need scored draws to show.
+- 0954Z: churn picks reviewed (both **proceed**, no companions) and claimed. Implementers are running (2 agents):
+  - bf16 b12-unpooler-slice: the review corrected 5 out-of-date details against master.
+  - prefill experts-rega-round-rotated-schedule: high-class gate at random <= 1.01; rot only when
+    rega_low_variant == 0; placed last in prepare; expected +0.3-0.7%.

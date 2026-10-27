@@ -1,19 +1,18 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "31c27e4b8fc84bd2",
+ "job": "2a7b5d2030894c4a",
  "mode": "submit",
- "speedup": 1.4020871870995952,
+ "speedup": 1.7187457730844933,
  "ci": [
-  1.3810558792931014,
-  1.423118494906089
+  1.692964586488226,
+  1.7445269596807604
  ],
- "score_us": 9591.77155581888,
- "commit": "64f18b03974a1a85ca81cac2e0f7e45d5d8bfbbc",
- "submission_blob": "35b8a851e4ef5fa8fd66b12d09caac88b7ea7615",
- "slug": "combo-wg-occ2-v64-hot-interleave-align2",
- "result": "muse_moe_w4a16/hypotheses/done/neutral/combo-wg-occ2-v64-hot-interleave-align2.result.json",
- "updated_at": "2026-10-25T192100Z",
- "master_slug": "combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2",
- "master_job": "b395f5b6097348c7",
- "note": "board entry is branch code hyp/muse_moe_w4a16/combo-wg-occ2-v64-hot-interleave-align2 (not on master; built on an older master); master is combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2"
+ "commit": "a865d15eccfc9bc79053def2add74a0f7ffa5024",
+ "submission_blob": "87098ccc556d71b3e71e79654963d058441f673e",
+ "slug": "campaign-eb-w6m-fork",
+ "result": null,
+ "updated_at": "2026-10-27T095400Z",
+ "master_slug": "campaign-eb-w6m-fork",
+ "master_job": "2a7b5d2030894c4a",
+ "note": "registered by hand 2026-10-27: campaign expert-bandwidth W6-M (the hot/cold fork raced inside moe's hybrid race; routed H-16f at M=256), branch campaign/eb-w6m-fork; check a80dda1a 1.6978; landed on master. The previous campaign board cf937dd3 (eacf0722 bytes, 1.7076) was never registered here."
 }
