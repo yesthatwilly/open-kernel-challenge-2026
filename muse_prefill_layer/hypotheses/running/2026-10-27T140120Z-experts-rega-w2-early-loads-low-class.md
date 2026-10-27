@@ -37,9 +37,18 @@ kind: primary
 controls_for: null
 prior: "experts-rega-w2-epilogue-prefetch-bulk-store: same arm a code; that run kept the low class print-only on the review's HBM-bound argument, but measured arm a at x0.971-0.981 there in every round; this run routes it at low and drops arm b, which lost everywhere"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T140421Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T140421Z
+base_sha: 564d44539536723987b824306ca1ce595bbe50dd
+base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
+branch: hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class
+worktree: .worktrees/muse_prefill_layer/experts-rega-w2-early-loads-low-class
+mode: null
+restack_of: experts-rega-w2-epilogue-prefetch-bulk-store
+stale_base: null
 ---
 
 # experts-rega-w2-early-loads-low-class
