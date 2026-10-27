@@ -23,8 +23,10 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
-  - **In flight (1830Z):** decode trim check **ced20a71e99b4798** (eb-sp-trim fba4a8fb, 924,048 B, same RNG draws);
-    resumed workflows: moe Gate-0 judge carrier (integrate -> audit -> fix) and the node judge (gpunode06 GPU 7 only).
+  - **Decode trim (S4 prerequisite) done:** check ced20a71 passed at 1.5758 (board 1.5920). The routing deltas are race
+    flips (the T=128 W6-G race went to master: (16,8) rows +15..19 us). Decode is 924,048 B on `campaign/eb-sp-trim`
+    fba4a8fb. Not scored.
+  - **In flight (1845Z):** the stage-0 ladder build (x5-stage0-ladder; the user: "queue the ladder build too"); resumed workflows: moe Gate-0 judge carrier (integrate -> audit -> fix) and the node judge (gpunode06 GPU 7 only).
   - **GPU queue (1835Z, the user: "set up the queue and runner now"):** takemyjob eb403fa `bin/hopper-queue`, running
     detached (pid 1258023). Queued: H200 es-cal / es-kstep. Next: node-judge jobs once that harness lands. The stage-0
     ladder build waits for the user's budget.
@@ -1219,4 +1221,21 @@ append-only, newest last.
   `_dl_time_p` kept).
 - **Decode trim check ced20a71e99b4798** sent at 1827Z: identical routing expected; FINAL PATHS and rows vs c1daf58b
   decide.
+
+## 2026-10-27T1845Z: decode trim check: passed 1.5758; ladder build started
+
+- **ced20a71e99b4798** (eb-sp-trim fba4a8fb, 924,048 B) passed at 1.5758 against the board's 1.5920 (-1.0%).
+  - CUDA text and RNG stream are identical. Four races drew differently: T=128 W6-G picked master (H-16 x0.960
+    worst), where the board picked H-16+comb; the W6-B cells followed; T=256 cells took +pool; T=17..32 qkv went
+    SWAP-AB.
+  - The (16,8) rows lost 15-19 us (the T=128 hybrid not routing). The (32,8) rows gained 2-3%.
+  - The trim is good for S4 (51 KB freed). The T=128 race is a coin flip for S1a to settle. Archived as
+    runs/ced20a71e99b4798.json.gz.
+- The user approved the GPU queue ("set up the queue and runner now") and the ladder build ("queue the ladder build
+  too"):
+  - `bin/hopper-queue` (takemyjob eb403fa) is running detached.
+  - Workflow x5-stage0-ladder (one build, one audit, one fix) builds probes/esl in priority order: P1 multi-consumer
+    cold dequant (S3u/S4/D2), P2 the hot K4 pipeline at N=64-256 with streamed weights, P3 K6 mixing, P4 K7 ingest,
+    P5 K1 details, with synccheck-clean named barriers.
+  - Its full sweeps go into the queue once audited.
 
