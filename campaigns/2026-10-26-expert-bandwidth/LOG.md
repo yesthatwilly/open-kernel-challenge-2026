@@ -2,17 +2,27 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **Today (10-27), phase A** (updated 2026-10-27T0752Z):
-  - Boards: decode **1.5697** (rank 323; day start 1.4956), moe **1.7076** (384), attention **1.6340** (389),
-    bf16 **1.2735**, prefill 1.4677.
-  - Wave 6 results: W6-B (the T>=128 diet) landed (scored 4a7a49d0); W6-C BN128 missed (attention x1.012 in one
-    round), but its riders measured the ceilings; W6-A (the T=1 glue fold) was killed (the last-arriver tail is slower).
-  - In flight: PERHEAD (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87, i.e. without W6-B); W6-D probe
-    check (wf_6c3fde55-e50, off W6-B 3645514e: hot/cold concurrency rider, trigger-first boundary probe, c320t
-    re-time, BN128 at an attention bar of 1.01).
-  - Next: dispatch PERHEAD and W6-D checks when they land. Merge PERHEAD onto W6-B before any stack check or scored run.
-    Phase B (moe > bf16 > attention > prefill) once decode's reasonable checks are spent; phase C from 18:00Z.
-  - Quota 0752Z: decode 8 checks / 3 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
+- **Today (10-27), phase B** (updated 2026-10-27T1315Z):
+  - **Boards** (day start -> now):
+    - decode 1.4956 -> **1.5920** (rank 323);
+    - moe 1.6851 -> **1.7187** (406);
+    - attention 1.5347 -> **1.6340** (389);
+    - bf16 1.2664 -> **1.2735**;
+    - prefill 1.4677 -> **1.4889** (175).
+  - **Decode stack on master:** W6-B T>=128 diet + PERHEAD d1s + c320t bar + fast silu + W6-G T=128 confirm race
+    (promote-only).
+  - **Killed today:** W6-A glue fold, W6-C BN128, the decode fork (W6-E/F), trigger-first boundary, bf16 U12s / S5 /
+    qkv R=32, prefill rotation / fine-N (no scored transfer).
+  - **In flight:** three /hypothesize subagents (attention, prefill, bf16), 4 each, to deepen the queues for
+    phase C.
+  - **Phase C (18:00Z):** spend every check. Quota 1315Z: decode 3 / 0 scored; moe 12 / 8; attention 14 / 6; bf16 16 / 9;
+    prefill 17 / 9. The khalf gate-stats control (bf16) is ready to claim.
+  - **By ~23:00Z:** tomorrow's phase-A plan:
+    - a decode size trim (963-975 KB now);
+    - T=2..8 folds spread over CTAs (W6-A's last-arriver tail lost);
+    - s2b at v16s for decode;
+    - SKW full-line + b16;
+    - the T=128 hybrid's other H candidates.
 
 ## Now
 
