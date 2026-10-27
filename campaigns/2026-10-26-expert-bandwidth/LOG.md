@@ -1049,3 +1049,9 @@ append-only, newest last.
   - PERHEAD d1s x1.036, c320t d1f x1.038.
   - **Scored run c1daf58bf192471e** (decode's last scored run today; 3 checks left).
   - d32f reads x0.955-0.969 in every run vs 4a7a49d0 (that run's d32f was a lucky x1.037 vs 7ceab934).
+- 1312Z: **decode scored c1daf58b (W6-G stack): 1.5920** (CI 1.568-1.616), the new board (was 1.5697; day start 1.4956;
+  rank 323).
+  - Landed on master; BEST.json registered.
+  - The stack: W6-B + PERHEAD + c320t + fast silu + the W6-G T=128 confirm race.
+  - Decode quota: 3 checks, 0 scored left today.
+  - submission sha256 d6e5d459b808a9e5...
