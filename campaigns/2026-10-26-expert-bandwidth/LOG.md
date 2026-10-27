@@ -23,6 +23,13 @@ append-only, newest last.
     judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
     fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
     Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **More H100 work (2115Z, the user: "design more use for the h100s ... especially when we are awaiting"):** queued
+    without new enablers:
+    - moe-k9 x2: T=1/8/16 replay time vs distinct local experts, 2000 reps (the S3 per-expert target);
+    - moe-bigt x2: T=128/256 time vs routing features (the worst draws S1a must beat);
+    - moe-san-{ea4, ea_w, wg, ea_combine}: memcheck limited to one kernel family each;
+    - FILLER at priority 90, repeat 10: moe-fuzz-odd (53 odd/prime bs) and moe-fuzz-skew (22 skewed bs), a fresh seed
+      per run, so idle GPUs keep proving correctness while workflows run.
   - **Ladder + proving (2040Z):**
     - Cold with more consumer WGs: (e) N=16 best 30.4 (S4), so cold stays on Engine A.
     - Hot K4: N=256 at the tensor rate (7.92, go); N=128 12.64 (at target); N=64 best 18.2 (target 25.6 missed: per-unit
