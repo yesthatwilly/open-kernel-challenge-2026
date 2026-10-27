@@ -1015,3 +1015,4 @@ append-only, newest last.
   - The review's <= 1% estimate was 5-10x low (LESSONS line added).
   - **Portable lead:** the same accurate-silu epilogue may exist in prefill's rega_lo, moe's and decode's Engine A
     silu, and moe's Marlin/wg paths. grep for 'expf(' in epilogues without fast math; a phase-C / tomorrow item.
+- 1205Z: **portable fast silu**: campaign/eb-fsilu (off campaign/expert-bandwidth) swaps silu_mul to __fdividef/__expf in ea_kernels.cuh, eb_kernels.cuh and wg_core.py (decode + moe; no hash pins). moe check **c91cfb6a3ad94878** (moe 641,707 bytes). If moe gains, decode follows (5 checks / 2 scored left).
