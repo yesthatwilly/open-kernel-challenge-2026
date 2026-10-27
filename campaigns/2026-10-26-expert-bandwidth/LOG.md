@@ -795,3 +795,7 @@ append-only, newest last.
 - The dl-slim agent is told to leave Engine D alone (W5 already removed it).
 - 0513Z: decode scored 7ceab934 (b12p + fix + W3-A full-line + W4 c320): **1.5507**, the new board (rank 331). Landed on master (sha256 91f6e23b..., 973 KB).
 - 0516Z: dl-slim merged into campaign/expert-bandwidth (40391ed0): ea5 kernels omitted from decode (EA_BUILD_V5=False), C320_FUSED blocks removed (preprocessed CUDA identical), one unused const. decode 973 -> **941 KB** (~59 KB headroom); moe byte-identical. Its bytes ride W5's decode check before any scored run.
+- 0523Z: **W5 wgx killed** (moe 48919184, 1.6905). It is exact and clean, but auto vs wg at T=256 is
+  x0.957-0.979, below the x1.04 rule; H-20 vs H-16 x0.975; exact-N (force 8) <= x1.006, so dropped. Cut-4 helps only a
+  single big T=128 expert (x1.10-1.15), and T=128 routes master. Decode W5 check skipped. The hot-half line is
+  exhausted for today: re-split, wg2, variant B and N tiles all failed.
