@@ -45,7 +45,8 @@ kind: primary
 controls_for: null
 prior: "pooler-k-halves-fp32-partials-restack-m128-m256-cf: pooled 1.2636 neutral, yet pooler m=128 won its row in both runs (22.85 -> 21.36 / 21.81) with bf16 partials; now rebased on the bulk12 master, m=128 only (m=256 flipped in the judge), and the fp32 form gets a vectorized Triton add-cast in place of torch's unrolled cast-add that made it lose (0.991)"
 review: required
-status: queued
+status: hold
+hold_reason: "superseded: khalf (b2) landed on master by the campaign 2026-10-27 (commit 8f233e88, branch hyp/bf16-khalf), board 1.2735"
 ---
 
 # pooler-khalf-m128-fp32-partials-triton-castadd
