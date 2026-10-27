@@ -778,3 +778,18 @@ append-only, newest last.
   head to head (x1.005), despite a -1.22 us readout. Rows vs ba57a64f: d1f **x1.038**, d32f **x1.095**, the rest noise.
   W4 merged into campaign/expert-bandwidth (3a106786, same bytes 91f6e23b...). **Scored run 7ceab934eea24099.**
 - 0507Z: attention s3 check 877a6ba5: 1.6209 (noise; nothing routed). B=2..16 failed its correctness runs (never routed); B=17..32 x0.99-1.005. **s3 killed.** Attention remaining today: the B=17..32 s2b bar at 1.03 (phase C), c320-attn-full-line-gather.
+
+## 2026-10-27T0513Z: wave 5 built (wgx, H=-20); moe check sent
+
+- Workflow wf_df13b9f4-24c: 7 agents, ~1.9M tokens. **Judge correction:** VERDICT-N's "natural" column was the
+  ptxas-serialized variant B, not the incumbent (D0 82.2 / 127.3 us). The forced-N64 gain at T=128 was **load balance**
+  (one 92-row chunk on one CTA while 36-72 CTAs idled), not tile size.
+- Build: **wgx (H=-20)** on campaign/eb-w5-n64 be585bc2 (it already merges 3a106786, i.e. W4 + W3-A):
+  - cut long hot runs at 4 blocks onto idle CTAs, chosen per input by a makespan cost model with a 0.97 margin;
+  - exact N80 / 96 / 112 tiles;
+  - raced in both hybrids, plus a >= 1.01 head to head vs H-16;
+  - a ptxas -v gate (no spill, regs 168);
+  - moe CAMPAIGN_LADDER = False (~40 s prepare freed).
+  Engine D is left out of decode's build (stubs), so decode is 958 KB. Expected moe +0.3-0.5%, decode +0.2-0.3%.
+- moe check **489191841c364d3d**. decode follows once the moe canary is clean (spec order).
+- The dl-slim agent is told to leave Engine D alone (W5 already removed it).
