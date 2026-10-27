@@ -774,3 +774,6 @@ append-only, newest last.
     the ladder in decode) before adding more.
 - decode check **d08b11fe295f4acf**: W4 c320 at d1f (campaign/eb-w4-c320), also carrying W3-A.
 - 0452Z: attention check **877a6ba556e142d4**: sliding-decode s3 fused pre-attn + RoPE (hyp/attn-s3 8a31112b on ea24b53c, both review fixes, 17 edge-key cases). Routes at >= 1.05x in both rounds per band.
+- 0455Z: decode check d08b11fe (W4 c320 + W3-A): **1.5484**. c320 routed at d1f (layer x1.022). TRIG lost its
+  head to head (x1.005), despite a -1.22 us readout. Rows vs ba57a64f: d1f **x1.038**, d32f **x1.095**, the rest noise.
+  W4 merged into campaign/expert-bandwidth (3a106786, same bytes 91f6e23b...). **Scored run 7ceab934eea24099.**
