@@ -7,7 +7,7 @@ append-only, newest last.
 
 - **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a); the ~23:00Z STOP is
   retired.
-- updated: 2026-10-27T0011Z (date -u); phase A
+- updated: 2026-10-27T0013Z (date -u); phase A; /loop /3to1 running
 - **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`, `/loop /3to1`):
   - 00:00Z until decode's reasonable checks are spent: phase A, the biggest decode rewrites on Opus 5.5 ultracode
     workflows (moe as testbed), built and checked;
@@ -25,7 +25,8 @@ append-only, newest last.
        more of the block; otherwise the dq layout, if VERDICT-dq passed.
   3. Phase B: bf16 `b12-qkv-m1-r32-...-readflush-gate`, attention `sk-full-line-gather`, then DISTILL §4.4's order.
   4. Phase C from 18:00Z: fill every problem's remaining checks.
-- In flight (DISTILL §1.3 steps 1-3, dispatched 00:02-00:03Z): decode scored 2bd373c9e23c4667 (27ef83df bytes);
+- In flight: phase-A ultracode workflow wf_59d9138b-356 (v4k k-slice rung → moe check; bulk12 P@T=1 → decode check;
+  worktrees .worktrees/v4k-rung, .worktrees/b12p-t1 off fe240969). Also (DISTILL §1.3 steps 1-3, dispatched 00:02-00:03Z): decode scored 2bd373c9e23c4667 (27ef83df bytes);
   moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb (eacf0722 bytes).
 - Boards at 23:46Z:
   - decode 1.4956 (rank 365 of 754);
@@ -521,3 +522,10 @@ append-only, newest last.
   `/loop /3to1` for an autonomous loop.
 - The STOP banners in INDEX / PLAN / CLAUDE.md are replaced, and the 19:05Z quota steer is marked superseded.
 - Today's phase-A plan is in the Now block.
+
+## 2026-10-27T0013Z: day start 10-27 (phase A); /loop /3to1 started
+
+- Boards 00:12Z: decode 1.4956 (367), moe 1.6851 (402), bf16 1.2664 (371), attention 1.5347 (451), prefill 1.4677 (179).
+- Ultracode workflow wf_59d9138b-356 launched: the v4k rung (lever #1, rung first) and bulk12 P@T=1 (lever #5).
+  Each is designed, built, audited twice and fixed if needed; the main thread dispatches the checks.
+- X3 glue vs the dq layout waits on the harvest of 0b085ef4 / 9f8a518e.
