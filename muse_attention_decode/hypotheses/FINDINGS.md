@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T120423Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-27T133339Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -242,16 +242,20 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
 - queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 queued
 - queue: sliding-verify1-pseudo-fused-preattn-rope [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] p1 queued
-- queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 queued
+- queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 hold
 - queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 hold
-- queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 queued
-- queue: c320-pdl-early-trigger [launch overhead (full decode_1 c320 kernel A -> combine PDL)] p2 queued
+- queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 hold
+- queue: c320-pdl-early-trigger [launch overhead (full decode_1 c320 kernel A -> combine PDL)] p2 hold
 - queue: combo-sk-full-line-c320-tail [combination (full decode B>=2 gather mapping + full decode_1 combine tail)] p2 queued
 - queue: sliding-verify-wgmma-window-s2b-fast-merge [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p3 queued
 - queue: c320-attn-full-line-gather [full-layer attention (batch-1 decode, c320 kernel A K/V gather mapping)] p3 queued
-- queue: sliding-verify-wgmma-split-combine-on-v3chain [sliding-layer attention (verify B=2..32, wgmma window kernel merge) on the v3chain base] p3 queued
+- queue: sliding-verify-wgmma-split-combine-on-v3chain [sliding-layer attention (verify B=2..32, wgmma window kernel merge) on the v3chain base] p3 hold
 - queue: sliding-decode1-perkvhead-launch-select [sliding-layer attention (batch-1 decode, cluster kernel launch configuration)] p4 queued
 - queue: sk-full-line-5stage-select [full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap)] p4 queued
 - queue: sliding-decode-band2-sk-gate [sliding-layer attention (decode B=2..16, stream-K window route gate)] p4 queued
 - queue: full-verify-wgmma-s7-split-combine [full-layer attention (verify B=2..64, wgmma stream-K kernel merge)] p4 queued
+- queue: sk-ticket-merge-onepass [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] p1 queued
+- queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
+- queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
+- queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
 - 17 stale holds expired to `done/expired/` (not run)

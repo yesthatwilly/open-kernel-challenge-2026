@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-27T121143Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
+Regenerated 2026-10-27T133340Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574bf1` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -101,6 +101,10 @@ Regenerated 2026-10-27T121143Z. Best: 1.4889x [1.4666,1.5112] job `ec3bd01859574
 | 2026-10-26T224009Z | front-routing-pdl-launch-diet-stack | primary | launch overhead (front fusion + routing fusion + PDL chain regate, stacked) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T224009Z | routing-triton-hilo-sum-topk-localids | primary | routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T111744Z | experts-rega-fine-n-high-plus-fast-silu | primary | rega experts kernel (w13/w2 N buckets at the high class + w13 silu epilogue) | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-27T133154Z | experts-rega-w2-epilogue-prefetch-bulk-store | primary | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T133216Z | experts-rega-epilogue-wg-local-bulk-store | primary | w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T133236Z | o-proj-triton-gemm-turn-gated | primary | o GEMM (attention output projection at 200 < T <= 4096) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T133257Z | experts-rega-epilogue-overlap-next-stage | primary | w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

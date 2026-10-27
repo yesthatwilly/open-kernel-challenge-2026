@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-27T094830Z. Best: 1.5697x [1.5461,1.5932] job `4a7a49d0ae82440f` (submit)
+Regenerated 2026-10-27T133339Z. Best: 1.5920x [1.5681,1.6159] job `c1daf58bf192471e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

@@ -1,10 +1,10 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-27T094830Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-27T133339Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Current best
 
-1.5697x [1.5461,1.5932] from job `4a7a49d0ae82440f` (submit), master commit `c978371759`, hypothesis campaign-eb-w6b-t128diet
+1.5920x [1.5681,1.6159] from job `c1daf58bf192471e` (submit), master commit `4c0f02534d`, hypothesis campaign-eb-w6g-hcgate
 
 Today's clean-context diagnosis: `muse_decode_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
