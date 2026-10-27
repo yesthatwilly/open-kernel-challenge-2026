@@ -1131,3 +1131,4 @@ append-only, newest last.
 - 1440Z: bf16 router-pdl-plus-khalf-pooled-iqr-gate claimed. It folds the 10-round khalf diagnostic in (the control
   companion is held, folded); routing is POOLED with a 2.0x pooled IQR bar (orchestrator decision: the candidate's
   true IQR is ~1.42x master's). Implementer running.
+- 1443Z: bf16 router-pdl-plus-khalf-pooled-iqr-gate check **023f4260e86e423e** (router PDL as a20f8048 + the khalf POOLED rule over rounds 1-3 with 10 diagnostic rounds and a K-DIAG line). A scored run if it beats 1.2735 with pooler_khalf128_ok and the router_pdl flags ON in FINAL FLAGS.
