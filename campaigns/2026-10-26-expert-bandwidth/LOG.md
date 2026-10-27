@@ -727,3 +727,6 @@ append-only, newest last.
 - 0327Z: attention c320 check 508cfca7: **1.6279** [1.604, 1.658] vs board 1.5902. ONEPASS combine routed
   (V4 19.20 -> 17.02 us, x1.128); the early trigger was not (readout x0.996). **Scored run 276ff0cda0404ef2.** This is
   the d1f decode port candidate: decode's c320 chain at T=1.
+- 0334Z: attention s2 check becb6967: 1.5906, correct, but no band routed (B=16 x1.017 / x1.007 vs the 1.05
+  bar; B=32 x0.978). The window kernel alone is 14.8 us against master's 24.4 us step, but the combine costs 7.5-10 us.
+  s2 killed; the queued s2b fast-merge is built next (phase B).
