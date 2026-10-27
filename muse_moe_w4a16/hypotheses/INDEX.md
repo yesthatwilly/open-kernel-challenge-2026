@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-26T044456Z. Best: 1.4021x [1.3811,1.4231] job `31c27e4b8fc84bd2` (submit)
+Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894c4a` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

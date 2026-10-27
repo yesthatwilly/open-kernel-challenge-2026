@@ -1,19 +1,10 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-26T044456Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-27T103236Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.4021x [1.3811,1.4231] from job `31c27e4b8fc84bd2` (submit), master commit `64f18b0397`, hypothesis combo-wg-occ2-v64-hot-interleave-align2
-
-Where the time goes (per scored shape, top kernels):
-
-- bs=1 load=decode_1 sharding=ep8: yours 46.4µs vs SGLang 80.0µs (SoL 11.4µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 35.4µs 85.8%, _post_norm_combine_kernel 2.9µs 7.1%, _align_small_kernel 1.5µs 3.6%
-- bs=16 load=decode_16 sharding=ep8: yours 150.9µs vs SGLang 192.4µs (SoL 52.5µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 156.4µs 94.9%, _post_norm_combine_kernel 3.5µs 2.1%, _align_small_kernel 2.7µs 1.6%
-- bs=32 load=decode_32 sharding=ep8: yours 199.1µs vs SGLang 205.2µs (SoL 70.8µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 176.8µs 94.4%, _align_small_kernel 4.5µs 2.4%, _post_expert_norm_weighted_sum_kernel 3.5µs 1.8%
-- bs=8 load=verify_1 sharding=ep8: yours 104.5µs vs SGLang 142.4µs (SoL 37.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 113.0µs 93.4%, _post_norm_combine_kernel 3.2µs 2.7%, _align_small_kernel 2.6µs 2.1%
-- bs=128 load=verify_16 sharding=ep8: yours 323.2µs vs SGLang 469.0µs (SoL 101.3µs) · void sglang::device::marlin_moe::Marlin<__nv_bfloat16, 56... 260.6µs 95.6%, _post_expert_norm_weighted_sum_kernel 4.3µs 1.6%, _align_parallel_kernel 3.9µs 1.4%
-- bs=256 load=verify_32 sharding=ep8: yours 358.1µs vs SGLang 606.9µs (SoL 108.9µs) · void (anonymous namespace)::wg2_kernel<true, 64, 3, 2, 0>... 225.3µs 59.3%, void (anonymous namespace)::wg2_kernel<false, 64, 3, 2, 0... 141.5µs 37.2%, _post_expert_norm_weighted_sum_kernel 5.2µs 1.4%
+1.7187x [1.6930,1.7445] from job `2a7b5d2030894c4a` (submit), master commit `a865d15ecc`, hypothesis campaign-eb-w6m-fork
 
 Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 

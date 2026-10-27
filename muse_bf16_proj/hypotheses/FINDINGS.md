@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T094927Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T103236Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -165,6 +165,9 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 ### unpooler GEMM (sliced n=1024, m<=8)
 - **restack-unpooler-slice-cluster-dsmem-m8** → neutral (unproven-vs-best), 1.2260x — gained on unpooler decode_1, verify_1; router verify_1; lost on o verify_16; router verify_16. Built on master (b99b1dd, the landed restack). Port ONLY the unpooler-slice half of the oun kernel from branch hyp/muse_bf16_proj/o-unpooler-slice-cuda-cluster-
 
+### unpooler GEMM (sliced n=1024, m=1, bulk12 12-bit row-owner)
+- **b12-unpooler-slice-m1-r16-rowowner** → neutral (unproven-vs-best), 1.2737x — gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Built on master blob 2bcfe7d4. Add the unpooler slice at m=1 (n=1024, k=4096: the first 1024 rows of the unpooler weight, 8.4 MB) as a fourth bulk12 m=1 cell. C
+
 ## Open follow-ups
 
 - bf16-lossless-exp4-occupancy-dequant-once-stage2: rewrite stage 2 of `Triton swap-AB m<=32 kernels (bf16-m32-swapab-wgmma-triton) on pooler m 1-32, unpooler-full m 16/32, qkv_gate m 1-32`: read the replaced kernels' own us per shape (profile top_kernels) against the inc
@@ -219,7 +222,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: pooler-khalf-m128-fp32-partials-triton-castadd [pooler GEMM (m=128, K-split as a 2-batch cuBLAS GEMM)] p1 hold
 - queue: b12-qkv-m1-r32-one-cta-per-sm-readflush-gate [qkv GEMM (m=1, bulk12 12-bit row-owner CTA shape)] p1 queued
 - queue: qkv-swapab16-five-stage-ring-m8-m16 [qkv GEMM (m<=16, swap-AB Triton)] p2 queued
-- queue: b12-unpooler-slice-m1-r16-rowowner [unpooler GEMM (sliced n=1024, m=1, bulk12 12-bit row-owner)] p2 queued
 - queue: lt-nn-layout-cells-o-m128-qkv-m128 [o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy)] p2 queued
 - queue: lt-config-sweep-m256-beyond-heuristic [bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic)] p3 queued
 - 8 stale holds expired to `done/expired/` (not run)
