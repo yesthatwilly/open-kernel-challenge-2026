@@ -37,10 +37,10 @@ kind: primary
 controls_for: null
 prior: "experts-rega-w2-epilogue-prefetch-bulk-store: same arm a code; that run kept the low class print-only on the review's HBM-bound argument, but measured arm a at x0.971-0.981 there in every round; this run routes it at low and drops arm b, which lost everywhere"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T140421Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T140421Z
 base_sha: 564d44539536723987b824306ca1ce595bbe50dd
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -59,6 +59,13 @@ attempt_file: 2026-10-27T141037Z-check-experts-rega-w2-early-loads-low-class.md
 prepared_at: 2026-10-27T141037Z
 job: 59eb665f162a4ac9
 dispatched_at: 2026-10-27T141053Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.4986157844369536
+speedup_ci: [1.4761365476703994, 1.5210950212035077]
+harvested_at: 2026-10-27T141743Z
+best_at_harvest: 1.488912488847924
+promotion: null
 ---
 
 # experts-rega-w2-early-loads-low-class
@@ -175,3 +182,31 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 `python3 -I -m py_compile` OK; `__pycache__` removed.
+
+## Result
+
+- job `59eb665f162a4ac9` (check), status done, passed True, tests 5/5
+- speedup 1.4986x, 95% CI [1.4761, 1.5211], score 258507.82036541268 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.488912488847924, "ci": [1.466578801515205, 1.5112461761806426], "job": "ec3bd01859574bf1"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-early-loads-low-class.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-w2-early-loads-low-class.patch`; branch `hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 732.58 | 730.62 | 1.0031 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1120.81 | 1114.09 | 0.9931 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2140.15 | 2088.47 | 0.9974 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3698.88 | 3626.99 | 0.9989 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11731.0 | 11506.74 | 1.0042 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10892.92 | 10748.23 | 1.013 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 15080.4 | 14529.77 | 0.9943 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18110.3 | 18001.25 | 1.0076 | flat |
+
+no shape moved outside noise. Expected hit: 2/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
