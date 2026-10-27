@@ -1146,3 +1146,4 @@ append-only, newest last.
   - **Onepass routed at sliding verify B=1:** x1.026 / x1.024, 14.9 -> 14.6 us; MB-4 x1.026-1.033.
   - sliding decode B=32: x1.010 / x1.005, not routed.
   - The headline is noise.
+- 1453Z: **hand scored run aa9fc86078f543fb** of the attention onepass (verify B=1 routed) bytes: a borderline call, since the check (1.6219) was under the 1.6340 high-draw board.
