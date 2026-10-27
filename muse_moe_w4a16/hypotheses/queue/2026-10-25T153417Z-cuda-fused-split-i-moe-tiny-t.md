@@ -105,8 +105,11 @@ kind: rewrite
 controls_for: null
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 (moe_wna16_marlin_gemm x2 + silu_and_mul) and the post-norm combine at 1 <= num_tokens <= 8
-review: required
-status: queued
+review: hold
+status: hold
+review_at: 2026-10-27T214442Z
+review_companions: null
+hold_reason: "adversarial review: Hold. The file is written against a master that no longer exists at T<=8. Today's master (86e4a4d9) runs Engine A v1/v4 there, with decode_1 at 35.0 us and veri"
 ---
 
 # cuda-fused-split-i-moe-tiny-t
@@ -136,3 +139,30 @@ shape (profile top_kernels) against the incumbent and the speed-of-light floor, 
 2. at or below the incumbent kernels' time on the target shapes;
 3. within ~1.5x of the floor on the target shapes, and the headline CI clears 1.0 (promotable).
 The next stage is minted with `--kind rewrite --depends-on <this slug> --stage N+1`.
+
+## Adversarial review
+
+Reviewed 2026-10-27T214442Z by an adversarial subagent (model opus).
+
+**Verdict: hold.** Hold. The file is written against a master that no longer exists at T<=8. Today's master (86e4a4d9) runs Engine A v1/v4 there, with decode_1 at 35.0 us and verify_1 at 92.8 us, not Marlin at ~45/~107 us. Its own sibling fsi midt (job 6fe2a63f) already measured this mechanism on this consumer: fsi kernel 1.53-1.88 TB/s, gate x0.58-0.81, and the decode-first campaign closed that line as do-not-try. On the wg register-A consumer, with indivisible 442-884 KB units, the design cannot reach the incumbent at decode_1 or verify_1, let alone 1.5x of the floor.
+
+### Justification
+STALE INCUMBENT: written on 40e2e860 when T<=8 ran Marlin; master 86e4a4d9 (W6-M fork, board 1.7187, job 2a7b5d20) routes T=1..32 to Engine A (decode_1 35.03 us = ea_w13 15.6 + ea_w2 14.0 + ea_combine 3.0; verify_1 92.75 us = eak4 48.3 + 30.3 + 2.8), so M2 (fsi+combine <= 36 / <= 85 us) is at or above the incumbent. BYTES understated: mean distinct local experts 2.57 at bs=1 and 8.46 at bs=8 (replica of reference.generate_input), ~73 / ~240 MB per call. CONSUMER: the wg register-A consumer runs ~1150-1200 clk per 9216 B stage per SM (~2.05 TB/s ceiling); the sibling cuda-fused-split-i-moe-midt-cluster-reduce measured fsi kernel-only 1.53-1.88 TB/s and gated x0.58-0.81 (6fe2a63f); KC128 ran 17-19% slower than KC256. REACHABILITY: tying Engine A needs ~2.7 TB/s-eq at T=1 E=2 and ~3.7 TB/s-eq at T=1 E=3 and T=8, 1.3-1.8x the consumer's ceiling. PRIOR: fsi midt closed in campaigns/2026-10-26-decode-first-rewrite FINDINGS 7 / PLAN 1.6; cuda-nvfp4-wgmma-rega-tiny-m-bucket16 lost its gate; DIAGNOSIS.md holds this file until the consumer's TB/s rises. GATE as written times against Marlin with a 256 MB write flush on one routing, which could ship a T<=8 regression against Engine A.
+
+### Confounders on the current kernel
+- Campaign Engine A v1/v4 is the T<=8 incumbent (kernel sums 32.6 us decode_1, 81.3 us verify_1 in 2a7b5d20); a gate timed against _moe_marlin measures a path the judge never runs at T<=8.
+- w2-marlin-atomic-add-small-m and combo-toprow's F1 w13 atomic shape only the Marlin fallback at T<=8.
+- post-expert-norm-triton-small-m: at T<=8 the incumbent combine is Engine A's ea_combine (2.8-3.0 us); a ~1 us combine swap rides in the rows.
+- triton-map-align-on-block-m-restack: BSM-16 align specialisations are cold at T<=8; align + wg_gather are two launches Engine A does not have (~3-6 us to win back).
+- wg-pdl-gather-w13-w2-chain: a PDL launch of fsi_kernel must griddepcontrol.wait before its first wg_xs TMA.
+- W6-M fork / hybrid and T>=17 items are shape-disjoint controls; same-bytes spread is ~+-1.2%.
+
+### Interference and A/B needs
+No companion: a hold, and no extra run would make it worth a check. If re-minted on a consumer that streams at Engine A's rate, one check is interpretable when the prepare A/B runs after _ea_setup against kernel_fn's routed Engine A path, with rt.py's read flush and 2 interleaved rounds, winning >= 1.03x on the worse of judge-style draws at E=2 and E=3 (T=1) and a random-local routing, printing fsi kernel-only TB/s, units and rounds per E, and the combine time.
+
+### Open questions
+- Does the tiny-T fused idea belong in X5 S3 (K9 first, then Engine S or the M-cell at N<=8) instead of a churn stage? Its upside over Engine A is the T=1 w13->w2 gap (3.8 us) plus one tail (2.3 us), only on a consumer that streams at Engine A's rate.
+- The T=1 bimodality matches the per-call distinct local expert count (E=2 51%, E>=3 49%; +10.3 us ~ one 28.3 MB expert at ~2.75 TB/s); confirmed on the node 2026-10-27 (nodejudge K9).
+- If re-minted on a fast consumer: what unit granularity survives E in {2,3,4} at T=1 without per-tile cluster syncs?
+- Should the remaining wg-consumer items (wg2-pingpong-consumers-occ2-b256) be closed along with this one?
+
