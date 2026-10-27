@@ -801,3 +801,4 @@ append-only, newest last.
   exhausted for today: re-split, wg2, variant B and N tiles all failed.
 - 0524Z: **re-rank by score weighting.** The wave-4 judge found the headline = geomean over 6 loads of (46 t_sliding + 16 t_full), so sliding rows weigh ~2.9x full rows, and today's decode wins hit mostly full rows. Panel 2 (wf_b09b62b9-df5, max effort, read-only) re-ranks decode levers on that weighting and specs wave 6.
 - 0539Z: attention check **4e695fa0**: s2b's B=17..32 gate bar lowered to 1.03 (IQR bound kept; B=2..16 stays 1.05), on master ea24b53c. Judge it on the verify_32 sliding row.
+- 0555Z: attention sw17 check 4e695fa0: 1.6129; B=17..32 routed at the 1.03 bar (x1.032 / x1.037). **Scored run 4e386647edd845f7.**
