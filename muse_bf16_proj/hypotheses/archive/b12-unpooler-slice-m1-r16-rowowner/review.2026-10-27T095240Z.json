@@ -1,0 +1,23 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "The mechanism is plausible and the run can be read in isolation. The in-run read-flush gate against ouns, the PATH CHOSEN line and the decode_1 unpooler profile row (b12_kernel<16,4096,...> vs ouns 4.4-4.6 us) attribute the result without any companion. Part of the change paragraph is out of date against today's master and must be rebuilt as described below, or the cell silently stays off or the whole import fails.",
+ "justification": "Mechanism plausible: the unpooler slice (n=1024, k=4096, 8.4 MB raw, floor 1.7 us) runs on ouns_kernel<8,64,512,8,4> at 4.4-4.6 us; bulk12 shrinks the stream to 6.3 MB and drops the DSMEM reduce. Geometry checked against the b12_kernel static_asserts: CKK 512, NCHUNK 8, NS 32, CHUNK 12288, RING 10496, SMEM 108,800 B; 64 CTAs. Weakest link: the landed o cell with the same 96 KB per CTA reaches only ~2.7 TB/s (per-CTA ramp and ingest bound), so the slice may land near o's ~4.6 us and tie ouns. A no-route result is a real possibility. Out of date against master 8f233e88: (1) do not re-add flush_mode='read' to _cell_gate (CELL_FLUSH_MODES, B12_GATE_FLUSH='read' exist); (2) B12_CELLS variants are 5-tuples (inst, S, MINB, CW, R): ('U12s', 1024, 4096, 16, ((6, 8, 1, 4, 16), (7, 8, 1, 8, 16)), 'b12_unpool_ok'); (3) B12_INST_R must gain 6: 16 and 7: 16 (the import-time assert loop raises KeyError otherwise and kills the submission); (4) use master's _b12_pick unchanged (home-R variant on read <= 0.98), not the hypothesis's write AND read rule; (5) bump B12_EXT_NAME. kernel_fn must test _b12_route_ok before _ouns_route_ok.",
+ "confounders": [
+  "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128 (ouns at unpooler slice m<=8) is the incumbent the gate compares against: read the result as 'b12 beats ouns at m=1'.",
+  "bulk12 m=1 landing (5325ea40): new instances go into the same load_inline module; a compile error drops all three b12 cells, so check the '[b12] build' line first.",
+  "read-flush gate landing (8f233e88): qkv_gate and o b12 cells route near the 0.98 threshold, so gate noise can flip other decode_1 m=1 rows; attribute only through the unpooler decode_1 profile row and its gate line.",
+  "combo-rowowner-reduce-free-m1-qkv-o-plus-naive: no shared kernel or path."
+ ],
+ "interference": "No companion needed: inert on every shape except unpooler cfg m==1 (n==1024) with its own flag on; measured in-run by the gate (flag on vs ouns, read flush), the profiler's kernel assertion and the judged decode_1 unpooler row.",
+ "rules_flags": [
+  "None blocking: lossless 12-bit escape codec verified bit-exact in prepare(); fp32 accumulation; encoding from weights in prepare(); kernel_fn branches on cfg/shapes/flags only.",
+  "Build hazard: both the judge-state loop and the second-state (A/B) path in _b12_prepare must encode state['unpooler'][:1024], not state[layer]; otherwise b12_run's shape TORCH_CHECK switches the cell off silently."
+ ],
+ "companions": [],
+ "open_questions": [
+  "If the read gate lands near 1.0, is a 2-CTA cluster K-split of the b12 kernel the follow-up, or does that rebuild ouns on 12-bit bytes?",
+  "Print the per-variant read-flush cand us next to the incumbent us for this cell, and include it in the end-of-prepare re-print.",
+  "Does the judged decode_1 unpooler row track the read-flush gate for an L2-sized weight? Expect roughly half the gate's gain (o gated 0.92-0.93, judged 0.97)."
+ ]
+}
