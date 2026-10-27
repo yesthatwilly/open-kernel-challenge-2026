@@ -48,7 +48,7 @@ review: proceed
 status: running
 review_at: 2026-10-27T141128Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-27T141128Z
 base_sha: ecc37b57fc4eacd04877ee607dd9f99db59250e8
 base_blob: 42ded47196d5f0417c17f38574876508f0d822f1
@@ -65,6 +65,8 @@ submission_blob: ffa750b47ea61fccb3001b9e628d092d00f15170
 lint_warnings: 115
 attempt_file: 2026-10-27T141758Z-check-o-proj-triton-gemm-turn-gated.md
 prepared_at: 2026-10-27T141758Z
+job: af3b0d0d84834ee9
+dispatched_at: 2026-10-27T141813Z
 ---
 
 # o-proj-triton-gemm-turn-gated
