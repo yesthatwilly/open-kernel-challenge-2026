@@ -1065,3 +1065,13 @@ append-only, newest last.
   - The stack: W6-B + PERHEAD + c320t + fast silu + the W6-G T=128 confirm race.
   - Decode quota: 3 checks, 0 scored left today.
   - submission sha256 d6e5d459b808a9e5...
+- 1334Z: minted 12 hypotheses for phase C (attention 4, bf16 4, prefill 4; churn intake committed them).
+  - Held 4 stale attention entries (already landed or superseded).
+  - Opus reviews running for the top pick per problem:
+    - prefill experts-rega-w2-epilogue-prefetch-bulk-store (no new nvcc build);
+    - bf16 bf16-verify-deepgemm-sm90-s3-tparam-alias-readflush (rewrite stage 3);
+    - attention sk-ticket-merge-onepass (a one-pass merge; c320's twin got x1.119).
+  - Noted:
+    - bf16 router-zero-pdl needs Triton gdc_wait/launch_pdl on the judge (check before spending);
+    - don't run the two router items in one check;
+    - prefill rega_lo's silu is dead code (master won its gate in 10 of 10 logs).
