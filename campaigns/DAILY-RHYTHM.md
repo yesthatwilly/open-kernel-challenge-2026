@@ -33,6 +33,9 @@ still in flight continue in the background while phase B runs.
   cheap question is acceptable: the goal is to spend all checks.
 - **Agents:** ultracode workflows in phase A (the session's workflow size guideline applies); otherwise at most 3
   concurrent agents. Delegate execution; keep the main context lean.
+- **Effort (the user, 2026-10-27 ~03:30Z: "use max effort for phase A builds, bake it in"):** every agent in a
+  phase-A workflow (design panel, judge, builder, auditor, fixer) runs at `effort: 'max'`: pass it on each `agent()`
+  call, whatever the session's /effort is. Phase B/C agents, harvests and routine dispatches keep the session effort.
 - **Heartbeats:** wake on job completion while checks are in flight (fallback 1200-1800 s); idle 1800-3000 s in phase
   A/B; in phase C, no longer than needed to keep checks flowing (checks take ~10-20 min).
 - **Every tick:** `date -u`; check the steer banners (INDEX.md top, active PLAN.md, active campaign CLAUDE.md);

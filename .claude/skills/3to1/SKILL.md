@@ -37,6 +37,9 @@ and pick the default.
        design panel → a build in worktrees (diagnostic rung first when a new engine depends on an unmeasured rate) →
        an adversarial audit of every new CUDA module → `cuda_syntax.py` / lint → the attempt file and rules checklist.
        Each build returns a check-ready commit, and the main thread dispatches the checks.
+     - **Every phase-A workflow agent runs at max effort:** pass `effort: 'max'` on every `agent()` call (design,
+       judge, build, audit, fix). The user asked for this on 2026-10-27, and it applies regardless of the session's
+       /effort.
    - **Phase A** (decode's reasonable checks not yet spent):
      - Dispatch the decode/moe checks that phase-A builds make ready, one new routable cell per GEMM per check.
      - Start the next ultracode phase (build or fix) from the harvests.
