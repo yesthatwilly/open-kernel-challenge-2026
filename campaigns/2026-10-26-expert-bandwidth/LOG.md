@@ -2,16 +2,17 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **Today (10-27), phase A** (updated 2026-10-27T0612Z):
-  - Boards: decode **1.5507** (rank 331; day start 1.4956), moe **1.7076** (384), attention **1.6340** (rank 389,
-    scored 4e386647), bf16 **1.2735**, prefill 1.4677.
-  - Killed today: dq3 / dq4, H=-8, k-slice, wg2, eat18, o_pdl, x-copy, variant B, W5 wgx / exact-N; attention s2, s3.
-  - In flight: wave 6, three workflows off campaign/eb-w6-base cb51ce87 (40391ed0 + Engine D stubs): W6-C
-    (wf_c84e0a3b-a04, d1s BN128 + no-op riders), W6-B (wf_ab1eb282-a20, the T>=128 diet), W6-A (wf_5182d3fd-041,
-    the T=1 glue fold). Each runs build -> two audits -> fix at high effort and returns a check-ready commit.
-  - Next: dispatch decode checks in panel order as builds land (W6-C, then W6-B, then W6-A); then one stack check,
-    and a scored run if it beats 1.5507. Phase C adds SKW full-line + b16 (the panel says it can ride a check today).
-  - Quota 06:10Z: decode 12 checks / 4 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
+- **Today (10-27), phase A** (updated 2026-10-27T0752Z):
+  - Boards: decode **1.5697** (rank 323; day start 1.4956), moe **1.7076** (384), attention **1.6340** (389),
+    bf16 **1.2735**, prefill 1.4677.
+  - Wave 6 results: W6-B (the T>=128 diet) landed (scored 4a7a49d0); W6-C BN128 missed (attention x1.012 in one
+    round), but its riders measured the ceilings; W6-A (the T=1 glue fold) was killed (the last-arriver tail is slower).
+  - In flight: PERHEAD (wf_e31c91af-897, campaign/eb-w6p-perhead off cb51ce87, i.e. without W6-B); W6-D probe
+    check (wf_6c3fde55-e50, off W6-B 3645514e: hot/cold concurrency rider, trigger-first boundary probe, c320t
+    re-time, BN128 at an attention bar of 1.01).
+  - Next: dispatch PERHEAD and W6-D checks when they land. Merge PERHEAD onto W6-B before any stack check or scored run.
+    Phase B (moe > bf16 > attention > prefill) once decode's reasonable checks are spent; phase C from 18:00Z.
+  - Quota 0752Z: decode 8 checks / 3 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
 
 ## Now
 
@@ -856,3 +857,4 @@ append-only, newest last.
   - d1f is ~103 us in every run since 7ceab934, which drew c320t (TRIG, layer x1.039). Later runs pick plain c320
     (x1.022-1.025), so the d1f "regression" is that draw. Phase-C question: c320t's head-to-head bar.
   - submission sha256 60776cbb07209794...
+- 0752Z: W6-D probe build launched (wf_6c3fde55-e50, campaign/eb-w6d-probe off 3645514e). Print-only riders for tomorrow's levers (hot/cold fork, trigger-first boundary, c320t re-time) plus one cell: BN128 at an attention bar of 1.01.
