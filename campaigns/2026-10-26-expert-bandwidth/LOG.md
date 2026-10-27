@@ -5,10 +5,9 @@ append-only, newest last.
 
 ## Now
 
-- **PAUSED for a manual resume by the user; read DISTILL.md first.** The user's steer of ~23:00Z ("distil your
-  context, then stop the loop; do not run the 00:00Z reset plan") stops the loop at 2026-10-26T23:57Z. The user
-  resumes the campaign by hand in a fresh session.
-- updated: 2026-10-26T23:58Z (date -u)
+- **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a). No /loop restarted; the
+  ~23:00Z STOP banners are satisfied (distil done) and superseded by this manual resume.
+- updated: 2026-10-27T0003Z (date -u)
 - **Quota policy (the user, 2026-10-26 ~19:05Z, PLAN §6 top and §11; still in force on resume):**
   - Never idle until a reset, and never pre-build hours ahead of one.
   - When a problem's checks run out, write its reset plan, then work on the highest-gain problem that still has checks
@@ -16,7 +15,8 @@ append-only, newest last.
   - Order: decode > moe > bf16_proj > attention_decode > prefill (last). On bf16 / attention, favour kernels that port
     into decode, and submit when a check beats that board.
   - Every check must answer a new question; using every check is not required; no identical bytes re-rolled.
-- In flight: nothing (no okc job, no agent). No judge action since bf16 check 6617f94d (~21:56Z).
+- In flight (DISTILL §1.3 steps 1-3, dispatched 00:02-00:03Z): decode scored 2bd373c9e23c4667 (27ef83df bytes);
+  moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb (eacf0722 bytes).
 - On resume, the first actions are DISTILL.md §1.3 (drafts in `scratchpad/`):
   1. decode scored run of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347; okc content hash 613b6c2d...);
   2. moe check at eacf0722 (dq A/B, H=-8, v4c);
@@ -502,3 +502,10 @@ append-only, newest last.
 - `okc problems` gives the close as Nov 4 11:59 pm PT, which is 11-05 07:59Z after DST ends on 11-01. The working
   deadline stays 06:59Z.
 - The loop is stopped (ScheduleWakeup stop) and is not restarted.
+
+## 2026-10-27T0003Z: manual resume; reset plan steps 1-3 dispatched
+
+- The user resumed by hand ("run DISTILL.md"). Rules version 2026-10-22.1 unchanged; 20/10 quota fresh on every problem.
+- decode scored 2bd373c9e23c4667: `submission.edoff-27ef83df.py` (sha256 9aad293f... verified vs git 27ef83df).
+- moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb at eacf0722 (bytes = HEAD; cuda_syntax ok).
+- archive.py SCRATCH_RUNS repointed to session 860eee0a's scratchpad (campaign fe240969).
