@@ -58,7 +58,8 @@ prior: "sliding-verify-wgmma-window-s1: s1 routed nothing because its in-kernel 
 rewrite_stage: 2
 replaces: "sliding verify (q_len 8, page 1, tp8) at 2<=B<=32: prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + sglang norm_gate"
 review: required
-status: queued
+status: hold
+hold_reason: "superseded 2026-10-27: s2 was checked and killed by the campaign; its successor s2b landed on master (scored a76ee9b0, then sw17 4e386647 1.6340)"
 ---
 
 # sliding-verify-wgmma-window-s2-split-combine
