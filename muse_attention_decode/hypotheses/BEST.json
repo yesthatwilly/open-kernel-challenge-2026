@@ -1,19 +1,19 @@
 {
  "problem": "muse_attention_decode",
- "job": "8713665f3064462c",
+ "job": "bbf762ed52934bde",
  "mode": "submit",
- "speedup": 1.5295495462227864,
+ "speedup": 1.5902483638315519,
  "ci": [
-  1.5066063030294445,
-  1.552492789416128
+  1.5663946383740786,
+  1.614102089289025
  ],
- "score_us": 2462.358940448092,
- "commit": "5d528bf313ed6deb0094c453214f1584fea0033b",
- "submission_blob": "6d6afa4722731ceb9cb8216d0334a03f1a96ad2b",
- "slug": "combo-b1-chain-c320-fused-pre-pdl",
- "result": "muse_attention_decode/hypotheses/done/neutral/combo-b1-chain-c320-fused-pre-pdl.result.json",
- "updated_at": "2026-10-25T192100Z",
- "master_slug": "sliding-decode1-cluster-per-kvhead",
- "master_job": "4b608df595b046fb",
- "note": "board entry is branch code hyp/muse_attention_decode/combo-b1-chain-c320-fused-pre-pdl (not on master; built on an older master); master is sliding-decode1-cluster-per-kvhead"
+ "score_us": 2368.372189942368,
+ "commit": "0d421faf4c51d6a7d1bfe152d2ea0356f9839dc9",
+ "submission_blob": "3e89dd8990b439feebf5471288e2fb0eae17cbf8",
+ "slug": "sk-full-line-gather",
+ "result": null,
+ "updated_at": "2026-10-27T030158Z",
+ "master_slug": "sk-full-line-gather",
+ "master_job": "bbf762ed52934bde",
+ "note": "registered by hand 2026-10-27 (3:1 rhythm phase B): sk-full-line-gather on the v3chain patch, branch hyp/attn-skfull e4daaa4b; landed on master. Check 00acb91008824b1e 1.5952."
 }

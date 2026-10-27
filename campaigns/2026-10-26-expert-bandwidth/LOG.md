@@ -698,3 +698,8 @@ append-only, newest last.
 
 - Scored run ba57a64f66864219: **1.5441** [1.521, 1.567], the new board (rank 331, was 343). master now holds 7f74c074's
   bytes (sha256 32c323be...), so the board bytes no longer carry the _ead_anatomy fault.
+
+## 2026-10-27T0301Z: attention 1.5902 lands
+
+- Scored run bbf762ed52934bde: **1.5902** [1.566, 1.614], the new attention board (rank 407, was 451). sk-full-line-gather
+  + v3chain is landed on master; attention BEST.json was re-registered by hand (it was stale).
