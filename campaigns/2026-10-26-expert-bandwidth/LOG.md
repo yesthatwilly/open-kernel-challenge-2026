@@ -554,3 +554,12 @@ append-only, newest last.
   cold 134.2 (46%). -> **the wgmma hot path is the big-T lever**: phase-A build 3, launched now.
 - Engine D off: rows within noise of f59cb301. Tooling: archive.py misses the profile glob of kept-file submits;
   rowcmp2 keys moe rows by batch.
+
+## 2026-10-27T0047Z: phase-A workflow 1 built and checked
+
+- Workflow wf_59d9138b-356 finished: 9 agents, ~1.24M tokens. Both builds audited twice; b12p's two MAJORs were fixed.
+- moe check **e1406e5b05ba4cf7**: the k-slice rung (branch campaign/eb-v4k-rung f4280bd5; rungs ks8 / ks4, VERDICT-kslice,
+  kslice_exact). Audit MINOR: a "KILL" with no exact, same-grid rung behind it is not a negative result, so read the
+  per-entry /INEXACT and /GRID-DIFF tags first.
+- decode check **dc3d5614d5e047c8**: bulk12 P at T=1 (branch campaign/eb-b12p-t1 e033fb35), gated with a read flush;
+  the incumbent stays on any miss.
