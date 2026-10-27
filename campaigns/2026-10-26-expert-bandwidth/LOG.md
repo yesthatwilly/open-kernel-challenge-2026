@@ -6,11 +6,11 @@ append-only, newest last.
   - Boards: decode **1.5507** (rank 331; day start 1.4956), moe **1.7076** (384), attention **1.6340** (rank 389,
     scored 4e386647), bf16 **1.2735**, prefill 1.4677.
   - Killed today: dq3 / dq4, H=-8, k-slice, wg2, eat18, o_pdl, x-copy, variant B, W5 wgx / exact-N; attention s2, s3.
-  - In flight: panel 2 wf_b09b62b9-df5 (the sliding-weighted
-    re-rank, max effort) is in its verify-loads agent, then the judge.
-  - Next: when panel 2 returns, save its verdict to
-    research/ and launch wave 6 (design/judge max, build/audit/fix high) on campaign/expert-bandwidth 40391ed0
-    (dl-slim, 941 KB; its bytes ride wave 6's first decode check).
+  - In flight: wave 6, three workflows off campaign/eb-w6-base cb51ce87 (40391ed0 + Engine D stubs): W6-C
+    (wf_c84e0a3b-a04, d1s BN128 + no-op riders), W6-B (wf_ab1eb282-a20, the T>=128 diet), W6-A (wf_5182d3fd-041,
+    the T=1 glue fold). Each runs build -> two audits -> fix at high effort and returns a check-ready commit.
+  - Next: dispatch decode checks in panel order as builds land (W6-C, then W6-B, then W6-A); then one stack check,
+    and a scored run if it beats 1.5507. Phase C adds SKW full-line + b16 (the panel says it can ride a check today).
   - Quota 06:10Z: decode 12 checks / 4 scored; moe 14 / 9; attention 14 / 6; bf16 18 / 9; prefill 20 / 10.
 
 ## Now
@@ -813,3 +813,15 @@ append-only, newest last.
 - 0539Z: attention check **4e695fa0**: s2b's B=17..32 gate bar lowered to 1.03 (IQR bound kept; B=2..16 stays 1.05), on master ea24b53c. Judge it on the verify_32 sliding row.
 - 0555Z: attention sw17 check 4e695fa0: 1.6129; B=17..32 routed at the 1.03 bar (x1.032 / x1.037). **Scored run 4e386647edd845f7.**
 - 0620Z: attention scored 4e386647 (sw17, s2b B=17..32 bar 1.03): **1.6340** (CI 1.609-1.658), the new board (rank 389; was 1.6114 / 398). Landed on master.
+
+## 2026-10-27T0640Z: panel 2 verdict; wave 6 launched
+- Panel 2 (wf_b09b62b9-df5, 4 agents, ~1.65M tokens): research/wave6-panel2-2026-10-27.md (the verdict, plus the three
+  proposals in an appendix). **The weighting is confirmed:** recomputing from 7ceab934's rows gives 1.5506809, exactly
+  the board. A T=1 non-attention microsecond counts on both d1 rows (0.169%), more than a d1s attention microsecond (0.125%).
+- Ranked (gain x p / h): d1s BN128 0.033; T>=128 diet 0.031; T=1 glue fold 0.025; then hot/cold concurrency,
+  PERHEAD and the T=2..8 folds. Reopened: "own boundaries lose" (run 1dfe83fd moved d1s -3.6 us, where the isolated
+  times predicted -0.5).
+- Base campaign/eb-w6-base **cb51ce87**: 40391ed0 + d35142ab's Engine D stubs and size gate. decode is 971,668 bytes
+  unstripped; moe is byte-identical.
+- Three workflows (build, two audits, fix; all at high effort): W6-C wf_c84e0a3b-a04, W6-B wf_ab1eb282-a20,
+  W6-A wf_5182d3fd-041. Expected EV is about +0.4% (~1.557), or +0.6-1.0% if all three route.
