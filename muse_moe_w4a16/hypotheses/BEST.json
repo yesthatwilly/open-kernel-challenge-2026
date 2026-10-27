@@ -14,5 +14,6 @@
  "updated_at": "2026-10-27T095400Z",
  "master_slug": "campaign-eb-w6m-fork",
  "master_job": "2a7b5d2030894c4a",
- "note": "registered by hand 2026-10-27: campaign expert-bandwidth W6-M (the hot/cold fork raced inside moe's hybrid race; routed H-16f at M=256), branch campaign/eb-w6m-fork; check a80dda1a 1.6978; landed on master. The previous campaign board cf937dd3 (eacf0722 bytes, 1.7076) was never registered here."
+ "note": "registered by hand 2026-10-27: campaign expert-bandwidth W6-M (the hot/cold fork raced inside moe's hybrid race; routed H-16f at M=256), branch campaign/eb-w6m-fork; check a80dda1a 1.6978; landed on master. The previous campaign board cf937dd3 (eacf0722 bytes, 1.7076) was never registered here.",
+ "score_us": 7824.6010611942165
 }
