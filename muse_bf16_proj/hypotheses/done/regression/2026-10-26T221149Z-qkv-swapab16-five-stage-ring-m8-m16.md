@@ -41,10 +41,10 @@ kind: primary
 controls_for: null
 prior: "qkv-swapab-m32-splitk8-stages3: that run doubled the split (4 -> 8) and cut the ring to 3 stages at m=17..32 and lost in the reduce tail; this keeps split-K 4, the tile and 2 CTAs/SM and only deepens the m<=16 ring from 4 to 5 stages (+33% weight bytes in flight), gated per m"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-27T103831Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-27T103831Z
 base_sha: 8f8cca6a58905f50bf7dd6d8b3836520f7443c83
 base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
@@ -63,6 +63,13 @@ attempt_file: 2026-10-27T104308Z-check-qkv-swapab16-five-stage-ring-m8-m16.md
 prepared_at: 2026-10-27T104308Z
 job: c65ffcb6d9ab4f95
 dispatched_at: 2026-10-27T104319Z
+outcome: regression
+verdict_detail: regression
+speedup: 1.250691599189016
+speedup_ci: [1.2319312252011807, 1.269451973176851]
+harvested_at: 2026-10-27T111646Z
+best_at_harvest: 1.273478298751914
+promotion: null
 ---
 
 # qkv-swapab16-five-stage-ring-m8-m16
@@ -200,3 +207,53 @@ warn  host-sync    L4266: torch.cuda.synchronize()  (outside kernel_fn's call gr
 warn  host-sync    L4306: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
 OK with warnings: .worktrees/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16/muse_bf16_proj/submission.py
 ```
+
+## Result
+
+- job `c65ffcb6d9ab4f95` (check), status done, passed True, tests 9/9
+- speedup 1.2507x, 95% CI [1.2319, 1.2695], score 3862.5029568699656 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.273478298751914, "ci": [1.2543761242706353, 1.2925804732331925], "job": "bc147c5b87bc465d"}; base result: SGLang (no base result)
+- **outcome: regression** (regression)
+- files: `muse_bf16_proj/hypotheses/done/regression/qkv-swapab16-five-stage-ring-m8-m16.result.json`, `muse_bf16_proj/hypotheses/done/regression/qkv-swapab16-five-stage-ring-m8-m16.patch`; branch `hyp/muse_bf16_proj/qkv-swapab16-five-stage-ring-m8-m16`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 14.16 | 10.74 | 1.3187 | gained |
+| layer=o load=decode_1 m=1 | 62 | 6.72 | 5.89 | 1.1405 | gained |
+| layer=pooler load=decode_1 m=1 | 62 | 20.86 | 15.18 | 1.3741 | gained |
+| layer=unpooler load=decode_1 m=1 | 62 | 7.01 | 5.18 | 1.3536 | gained |
+| layer=router load=decode_1 m=1 | 62 | 10.37 | 5.23 | 1.9834 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 14.38 | 13.56 | 1.0604 | gained |
+| layer=o load=decode_16 m=16 | 62 | 6.74 | 6.32 | 1.0667 | gained |
+| layer=pooler load=decode_16 m=16 | 62 | 20.98 | 19.5 | 1.0755 | gained |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.61 | 18.84 | 0.9877 | flat |
+| layer=router load=decode_16 m=16 | 62 | 15.14 | 5.73 | 2.6401 | gained |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 14.45 | 14.3 | 1.0106 | flat |
+| layer=o load=decode_32 m=32 | 62 | 7.26 | 6.83 | 1.0633 | gained |
+| layer=pooler load=decode_32 m=32 | 62 | 21.31 | 19.91 | 1.0702 | gained |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.82 | 18.51 | 1.0166 | flat |
+| layer=router load=decode_32 m=32 | 62 | 15.18 | 5.94 | 2.5574 | gained |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 14.18 | 13.09 | 1.083 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.69 | 6.29 | 1.0641 | gained |
+| layer=pooler load=verify_1 m=8 | 62 | 20.5 | 19.11 | 1.0725 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 7.18 | 5.55 | 1.295 | gained |
+| layer=router load=verify_1 m=8 | 62 | 26.35 | 5.27 | 4.9958 | gained |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.94 | 16.36 | 1.036 | gained |
+| layer=o load=verify_16 m=128 | 62 | 7.42 | 7.42 | 1.001 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 24.99 | 23.08 | 1.083 | gained |
+| layer=unpooler load=verify_16 m=128 | 62 | 19.97 | 19.08 | 1.0464 | gained |
+| layer=router load=verify_16 m=128 | 62 | 16.35 | 7.62 | 2.1457 | gained |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 19.78 | 19.72 | 1.0028 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.14 | 9.05 | 1.0096 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 29.09 | 27.57 | 1.0552 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.37 | 24.29 | 1.0033 | flat |
+| layer=router load=verify_32 m=256 | 62 | 17.1 | 9.19 | 1.862 | gained |
+
+gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- record which shapes lost (Attribution) and do not retry this area in this form.
+

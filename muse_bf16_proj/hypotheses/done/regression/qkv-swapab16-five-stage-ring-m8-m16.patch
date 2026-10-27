@@ -1,0 +1,268 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index d51c745a..40dfcaff 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -125,6 +125,8 @@ AB_CASES = (
+     ("pooler", 4096, 8192, 256),
+     # combo-rowowner-reduce-free-m1-qkv-o-plus-naive: the new cells (pooler m=1 is above).
+     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
++    # qkv-swapab16-five-stage-ring-m8-m16: the two gated cells (5-stage ring at m 2..16).
++    ("qkv_gate", 2304, 8192, 8), ("qkv_gate", 2304, 8192, 16),
+ )
+ AB_ROUNDS = 2           # A, B, A, B
+ AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
+@@ -854,6 +856,14 @@ SWAPAB16_CFG = {
+     "unpooler_slice": (1024, 4096, 8, 128, 3),  # grid (16, 8)
+ }
+ SWAPAB16_UNPOOL_WARM_MS = tuple(range(1, 9))  # every m the n == 1024 slice can take
++# (hypothesis qkv-swapab16-five-stage-ring-m8-m16) qkv_gate at 2 <= m <= 16 may run the SAME launch with a 5-stage
++# ring instead of SWAPAB16_CFG's 4 (same SPLIT_K 4, BLOCK_K 128, grid (36, 4)), behind its own flag, decided by the
++# section (12) gate. m == 1 (b12 / bulk / swapab16 at its own stages) and m = 17..32 (_swapab) never take it.
++QKV16_S5_FLAG = "qkv16_s5_ok"
++QKV16_S5_STAGES = 5
++QKV16_S5_MIN_M = 2                  # cfg m below this keeps state["swapab16_stages"]["qkv_gate"]
++QKV16_S5_MAX_SHARED = 113 * 1024    # compiled.metadata.shared above this: 2 CTAs/SM no longer fit, flag stays off
++QKV16_S5_CANARY_MS = (8, 16)        # 5-stage vs incumbent-stage output must be bit-identical (same reduce order)
+ 
+ 
+ def _swapab16_key(layer: str, cfg) -> str:
+@@ -895,11 +905,12 @@ def _print_ptx_counts(tag: str, compiled) -> None:
+ 
+ 
+ def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int,
+-                      report: bool = False) -> torch.Tensor:
++                      report: bool = False, compiled_out=None) -> torch.Tensor:
+     """x bf16 [1..16, k] @ w[:n, k].T -> bf16 [m, n], ONE launch, BLOCK_T = WS_M = 16. w is read
+     in place (for the unpooler slice, the full weight with stride_wn = 4096, first n rows only).
+     ws / cnt are the key's own prepare()-allocated 16-row workspace and tickets (None at
+-    SPLIT_K == 1, where the kernel never touches them)."""
++    SPLIT_K == 1, where the kernel never touches them). compiled_out (prepare()-only, optional list) receives the
++    launch's compiled kernel, for its metadata."""
+     n, k, split_k, block_k, _ = SWAPAB16_CFG[key]
+     m = x.shape[0]
+     out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
+@@ -917,6 +928,8 @@ def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
+     if report:
+         _print_ptx_counts(f"[swapab16] {key} m={m} N={n} K={k} SPLIT_K={split_k} "
+                           f"BLOCK_K={block_k} stages={num_stages}", compiled)
++    if compiled_out is not None:
++        compiled_out.append(compiled)
+     return out
+ 
+ 
+@@ -1019,6 +1032,7 @@ def _swapab16_prepare(state: dict) -> None:
+             xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
+             _swapab16_forward(key, xm, w, ws, cnt, num_stages)
+     state["swapab16_stages"] = stages
++    _qkv16_s5_warm(state)   # every state (A and B): compile + smem check + warm m 1..16 + canary, before any capture
+     _incumbent16_report(state)
+     # The split-K variants self-reset, but re-zero the counters after the warm-ups regardless.
+     for key in SWAPAB16_CFG:
+@@ -1026,6 +1040,75 @@ def _swapab16_prepare(state: dict) -> None:
+             state[f"swapab16_cnt_{key}"].zero_()
+ 
+ 
++def _qkv16_s5_warm(state: dict) -> None:
++    """prepare()-only, every state (A and B), before any graph capture. Compile the 5-stage qkv_gate swapab16
++    variant on synthetic x, print its n_regs and compiled metadata.shared, and keep it only if shared <=
++    QKV16_S5_MAX_SHARED (2 CTAs/SM still fit); then warm every m in 1..16 at 5 stages (no Triton JIT inside a
++    capture or a timed call) and run the canary: at m in QKV16_S5_CANARY_MS the 5-stage output must be
++    torch.equal to the incumbent stage count's on the same x. Sets state["qkv16_s5_ready"] (and a reason in
++    state["qkv16_s5_info"]); the routing flag itself is decided by _qkv16_s5_prepare (A) or inherited (B).
++    Never raises."""
++    state["qkv16_s5_ready"] = False
++    state["qkv16_s5_info"] = "qkv_gate swapab16 path not prepared"
++    key = "qkv_gate"
++    if key not in state["swapab16_stages"]:
++        print(f"[qkv16-s5] {state['qkv16_s5_info']}: 5-stage variant off", flush=True)
++        return
++    n, k, split_k, block_k, _ = SWAPAB16_CFG[key]
++    w = state[key]
++    dev = w.device
++    ws, cnt = _swapab16_buffers(state, key)
++    base_stages = state["swapab16_stages"][key]
++    try:
++        x = torch.randn((SWAPAB16_MAX_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++        comp = []
++        _swapab16_forward(key, x, w, ws, cnt, QKV16_S5_STAGES, report=True, compiled_out=comp)
++        c = comp[0] if comp else None
++        md = getattr(c, "metadata", None)
++        shared = getattr(md, "shared", None)
++        if shared is None:
++            shared = getattr(c, "shared", None)
++        n_regs = getattr(c, "n_regs", None)
++        state["qkv16_s5_smem"] = shared
++        print(f"[qkv16-s5] qkv_gate swapab16 m<=16 N={n} K={k} SPLIT_K={split_k} BLOCK_K={block_k} "
++              f"stages={QKV16_S5_STAGES}: compiled.metadata.shared={shared} B (limit {QKV16_S5_MAX_SHARED} B for "
++              f"2 CTAs/SM), n_regs={n_regs}; incumbent stages={base_stages}", flush=True)
++        if shared is None:
++            state["qkv16_s5_info"] = "compiled.metadata.shared unavailable (cannot prove 2 CTAs/SM)"
++        elif int(shared) > QKV16_S5_MAX_SHARED:
++            state["qkv16_s5_info"] = (f"shared {int(shared)} B > {QKV16_S5_MAX_SHARED} B: 1 CTA/SM would push "
++                                      f"12 of 144 CTAs into a second wave")
++        else:
++            for m in range(1, SWAPAB16_MAX_M + 1):
++                xm = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                _swapab16_forward(key, xm, w, ws, cnt, QKV16_S5_STAGES)
++            g = torch.Generator(device=dev)
++            g.manual_seed(24680)
++            bad = ""
++            for m in QKV16_S5_CANARY_MS:
++                xm = torch.randn((m, k), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
++                o_base = _swapab16_forward(key, xm, w, ws, cnt, base_stages)
++                o_s5 = _swapab16_forward(key, xm, w, ws, cnt, QKV16_S5_STAGES)
++                torch.cuda.synchronize()
++                if not torch.equal(o_base, o_s5):
++                    nbad = int((o_base.view(torch.int16) != o_s5.view(torch.int16)).sum().item())
++                    bad = (f"canary m={m}: {QKV16_S5_STAGES}-stage output differs from {base_stages}-stage in "
++                           f"{nbad} of {o_base.numel()} elements")
++                    break
++                print(f"[qkv16-s5] canary m={m}: {QKV16_S5_STAGES}-stage == {base_stages}-stage (torch.equal)",
++                      flush=True)
++            if bad:
++                state["qkv16_s5_info"] = bad
++            else:
++                state["qkv16_s5_ready"] = True
++                state["qkv16_s5_info"] = f"compiled, shared {int(shared)} B, n_regs {n_regs}, warmed m 1..16"
++    except Exception as e:  # never raises: any surprise keeps the incumbent stage count
++        state["qkv16_s5_ready"] = False
++        state["qkv16_s5_info"] = f"5-stage compile/warm raised {type(e).__name__}: {str(e)[-200:]}"
++    print(f"[qkv16-s5] ready={state['qkv16_s5_ready']}: {state['qkv16_s5_info']}", flush=True)
++    cnt.zero_()
++
++
+ # --- (7) unpooler n == 1024 slice, m <= 8: CUDA cluster / DSMEM split-K, gated at prepare -------
+ # (hypothesis restack-unpooler-slice-cluster-dsmem-m8; the kernel is ported unchanged from job
+ # 3f3330f7's oun_kernel, unpooler instantiation only: NT 8, no o instantiation is compiled.)
+@@ -3891,6 +3974,81 @@ def _khalf_prepare(state: dict, t_start: float) -> None:
+ NEW_CELL_FLAGS = NEW_CELL_FLAGS + (KHALF_FLAG,)   # section (11)'s cell joins the A/B check and the FINAL FLAGS line
+ 
+ 
++# (12) qkv_gate swapab16 at 2 <= m <= 16 with a 5-stage ring (hypothesis qkv-swapab16-five-stage-ring-m8-m16). The
++# variant is compiled, smem-checked, warmed and canaried in every state by _qkv16_s5_warm (section (6)); here state A
++# gates it: kernel_fn with QKV16_S5_FLAG on (5 stages) vs off (master's 4), same x, workspace and tickets, through
++# master's _cell_gate at m = 8 and m = 16, QKV16_S5_ROUNDS rounds each. Routes only if EVERY read-flush master/cand
++# ratio is >= QKV16_S5_MIN_RATIO; the write-flush ratio is printed beside it, not gated on. One PATH CHOSEN line.
++QKV16_S5_GATE_MS = (8, 16)
++QKV16_S5_ROUNDS = 2
++QKV16_S5_MIN_RATIO = 1.03            # master / candidate, net of the empty-graph baseline, every read-flush round
++QKV16_S5_START_DEADLINE_S = 200.0    # no gate later than this after state A's build began (prepare has 300 s)
++
++
++def _qkv16_s5_prepare(state: dict, t_start: float) -> None:
++    """State A only. Sets state[QKV16_S5_FLAG]; every surprise keeps the incumbent 4-stage launch. Needs
++    state["qkv16_s5_ready"] (compiled, shared <= limit, warmed, canary bit-identical); re-checks through kernel_fn
++    that the flag-on and flag-off outputs are torch.equal at each gate m; then per gate m, QKV16_S5_ROUNDS rounds of
++    _cell_gate with the read flush (B12_GATE_FLUSH, gated) and the write flush (printed). Never raises."""
++    state[QKV16_S5_FLAG] = False
++    t0 = time.perf_counter()
++    why = ""
++    rounds = []
++    try:
++        n, k = SWAPAB16_CFG["qkv_gate"][0], SWAPAB16_CFG["qkv_gate"][1]
++        if t0 - t_start > QKV16_S5_START_DEADLINE_S:
++            why = f"skipped: deadline ({t0 - t_start:.0f}s into the state build > {QKV16_S5_START_DEADLINE_S:.0f}s)"
++        elif not state.get("qkv16_s5_ready"):
++            why = f"5-stage variant not ready: {state.get('qkv16_s5_info')}"
++        if not why:
++            dev = state["qkv_gate"].device
++            st_on = dict(state)
++            st_on[QKV16_S5_FLAG] = True
++            for m in QKV16_S5_GATE_MS:
++                x = torch.randn((m, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
++                data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": "qkv_gate"}}
++                o_off = kernel_fn(data, state)
++                o_on = kernel_fn(data, st_on)
++                torch.cuda.synchronize()
++                if not torch.equal(o_off, o_on):
++                    why = f"kernel_fn canary m={m}: flag-on output differs from flag-off"
++                    break
++                print(f"[qkv16-s5] kernel_fn canary m={m}: flag on == flag off (torch.equal)", flush=True)
++        if not why:
++            bar = f"route if master/cand >= {QKV16_S5_MIN_RATIO} in all {len(QKV16_S5_GATE_MS) * QKV16_S5_ROUNDS} read rounds"
++            for m in QKV16_S5_GATE_MS:
++                for rnd in range(QKV16_S5_ROUNDS):
++                    res = {"m": m, "rnd": rnd + 1}
++                    for mode in (B12_GATE_FLUSH, "write"):
++                        res[mode] = _cell_gate(f"qkv16-s5 round {rnd + 1}/{QKV16_S5_ROUNDS}", "qkv_gate", m,
++                                               n, k, QKV16_S5_FLAG, state, flush_mode=mode, route_txt=bar)
++                    res["rr"] = res[B12_GATE_FLUSH][1] / res[B12_GATE_FLUSH][0]   # master / cand
++                    res["wr"] = res["write"][1] / res["write"][0]
++                    rounds.append(res)
++            if not all(r["rr"] >= QKV16_S5_MIN_RATIO for r in rounds):
++                why = (f"gate: {B12_GATE_FLUSH}-flush master/cand {[round(r['rr'], 3) for r in rounds]} not all >= "
++                       f"{QKV16_S5_MIN_RATIO} (not a measured loss of the row unless < 1)")
++        if not why:
++            state[QKV16_S5_FLAG] = True
++    except Exception as e:  # never raises: any surprise keeps the incumbent 4-stage launch
++        why = f"raised {type(e).__name__}: {str(e)[-200:]}"
++        state[QKV16_S5_FLAG] = False
++    torch.cuda.synchronize()
++    r_txt = "; ".join(
++        f"m={r['m']} r{r['rnd']} {B12_GATE_FLUSH} {r['rr']:.3f} ({r[B12_GATE_FLUSH][1]:.2f} / "
++        f"{r[B12_GATE_FLUSH][0]:.2f} us) write {r['wr']:.3f} ({r['write'][1]:.2f} / {r['write'][0]:.2f} us)"
++        for r in rounds) or "gate not run"
++    print(f"[prepare-time] qkv16-s5 total: {time.perf_counter() - t0:.2f}s", flush=True)
++    _decision(f"PATH CHOSEN S5 qkv_gate m={QKV16_S5_MIN_M}..{SWAPAB16_MAX_M}: "
++              + (f"candidate {QKV16_S5_STAGES}-stage swapab16" if state[QKV16_S5_FLAG]
++                 else f"master {state['swapab16_stages'].get('qkv_gate', '?')}-stage swapab16")
++              + f" [smem {state.get('qkv16_s5_smem')} B; master/cand {r_txt}]"
++              + ("" if state[QKV16_S5_FLAG] else f"; {why}"))
++
++
++NEW_CELL_FLAGS = NEW_CELL_FLAGS + (QKV16_S5_FLAG,)   # section (12)'s cell joins the A/B check and the FINAL FLAGS line
++
++
+ def _prepare_state(weights: Weights, flags=None) -> dict:
+     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
+     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
+@@ -3918,6 +4076,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+     state["nn_ok"] = True   # constant; the A/B self-check may turn it off for the run
+     state["nn_p256_ok"] = True   # pooler 129..256 only; own flag, own self-check cell
+     state[KHALF_FLAG] = False    # pooler m == 128 K-halves: off until state A's selector (or B's inherit) says so
++    state[QKV16_S5_FLAG] = False  # qkv_gate m 2..16 5-stage ring: off until state A's gate (or B's inherit) says so
+     t = tick("weight splits + NN copies", t)
+     # Stage choice, side-by-side diagnostics and warm-up on synthetic inputs.
+     _router_prepare(state)
+@@ -3988,12 +4147,19 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
+         # (11) pooler m == 128 K-halves, fp32 partials + Triton add-cast (own flag), after every other cell.
+         _khalf_prepare(state, t_all)
+         t = tick("pooler k-halves cell K (probe + canary + check + 2 read-flush gates + profile)", t)
++        # (12) qkv_gate m 2..16 5-stage swapab16 ring (own flag; variant warmed in _swapab16_prepare).
++        _qkv16_s5_prepare(state, t_all)
++        t = tick("qkv16 5-stage cell S5 (canary + 2x2 read/write-flush gates)", t)
+     else:
+         state["ouns_cl"] = flags["ouns_cl"]
+         state["router_cluster_ok"] = flags["router_cluster_ok"]
+         state["nn_ok"] = flags["nn_ok"]
+         state["nn_p256_ok"] = flags["nn_p256_ok"]
+         state[KHALF_FLAG] = bool(flags.get(KHALF_FLAG, False))   # no per-state buffers (pooler_t is per state)
++        # 5 stages re-warmed and canaried by this state's own _swapab16_prepare; inherit only if that passed here too.
++        state[QKV16_S5_FLAG] = bool(flags.get(QKV16_S5_FLAG, False)) and bool(state.get("qkv16_s5_ready"))
++        if flags.get(QKV16_S5_FLAG) and not state[QKV16_S5_FLAG]:
++            print(f"[qkv16-s5] state B: flag not inherited ({state.get('qkv16_s5_info')})", flush=True)
+         # Second state: its own repacked weights / error word / Lt workspace; flags inherited.
+         _bulk_prepare(state, flags=flags)
+         _b12_prepare(state, flags=flags)
+@@ -4020,6 +4186,9 @@ def _ab_component(layer: str, m: int, st=None) -> str:
+         return KHALF_FLAG   # checked first: a miss turns off only this cell, never nn_ok (unpooler m=128 shares it)
+     if st is not None and layer in B12_CELLS and m == B12_M and st.get(B12_CELLS[layer][5]):
+         return B12_CELLS[layer][5]
++    if (st is not None and layer == "qkv_gate" and QKV16_S5_MIN_M <= m <= SWAPAB16_MAX_M
++            and st.get(QKV16_S5_FLAG)):
++        return QKV16_S5_FLAG   # a miss turns off only the 5-stage ring; the 4-stage swapab16 launch stays
+     if layer in BULK_CELLS and m == BULK_M:
+         return BULK_CELLS[layer][7]
+     if layer == "qkv_gate" and m == LT_M:
+@@ -4174,7 +4343,10 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+     if (key16 in state["swapab16_stages"]
+             and _swapab16_route_ok(key16, x, state[layer], cfg)):
+         ws, cnt = _swapab16_buffers(state, key16)
+-        return _swapab16_forward(key16, x, state[layer], ws, cnt, state["swapab16_stages"][key16])
++        stages16 = state["swapab16_stages"][key16]
++        if key16 == "qkv_gate" and cfg["m"] >= QKV16_S5_MIN_M and state[QKV16_S5_FLAG]:
++            stages16 = QKV16_S5_STAGES   # prepare()-gated 5-stage ring, same split / tile / grid (cfg + flag only)
++        return _swapab16_forward(key16, x, state[layer], ws, cnt, stages16)
+     if layer == "pooler" and _pooler_shape_ok(x, state["pooler"], cfg):
+         return _pooler_forward(x, state["pooler"], state["pooler_ws"], state["pooler_cnt"])
+     if (layer == "qkv_gate" and state["qkv_gate"].shape == (QKV_N, QKV_K)
