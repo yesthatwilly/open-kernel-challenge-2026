@@ -1115,3 +1115,4 @@ append-only, newest last.
     deadlines).
   - Read the scored turn_1 profile row (nvjet 112x128 -> _o_proj_kernel).
 - 1418Z: prefill low-class confirm **8716d98c405f417d** (churn's -cf; pooled with 59eb665f).
+- 1421Z: bf16 router-zero-pdl-overlap check **a20f80486c5b4bc1** (a PTX probe for exactly one wait; a slow-stand-in race check; a no-wait control; nopdl arm; tolerance exactness).
