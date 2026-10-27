@@ -936,3 +936,13 @@ append-only, newest last.
     master, the serial H and the forked H with the routed cells. It can only demote, and falls back to master + cells.
   - 976,954 bytes. Decode check **ee9142eb7dd64f8a**.
   - Q1 asks for the worst round of H-16 / H-16f / H-8 / H-8f vs master, cells off; Q1c the same with the cells.
+- 0938Z: W6-M built and audited (wf_f2bd4b32-1ad: 0 blockers / 0 majors).
+  - The fix pass added a fork gate: a fork must beat its serial twin by 1.01 every round (HMF_MARGIN).
+  - Forked H-16f / H-8f race inside moe's hybrid race at M=128 / 256, with a moe_fork_canary that poisons between
+    replays.
+  - Decode is byte-identical; moe 641,473 bytes. The base moe equals master's board bytes (sha256 78e6ef0c...).
+  - moe check **a80dda1ab8c14f48**.
+  - Minors:
+    - the fork stream is module-level, shared across copies (safe with sequential host calls);
+    - an exception in the forked checks drops that T to master rather than the serial pick;
+    - one fallback layer check lacks a deadline guard.
