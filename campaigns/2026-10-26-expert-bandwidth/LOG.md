@@ -825,3 +825,4 @@ append-only, newest last.
   unstripped; moe is byte-identical.
 - Three workflows (build, two audits, fix; all at high effort): W6-C wf_c84e0a3b-a04, W6-B wf_ab1eb282-a20,
   W6-A wf_5182d3fd-041. Expected EV is about +0.4% (~1.557), or +0.6-1.0% if all three route.
+- 0708Z: W6-C built and audited (wf_c84e0a3b-a04: 0 blockers / 0 majors; the fix pass added the BN128 rider safety and the skw zero). The layer margin was set to 1.003 per the spec (0d089807; it was 1.01, so the d1s cell could not route). Decode 989,990 bytes. Decode check **71741a4f2cdc4cc5**: BN128 cell plus the no-op riders (the ceilings for R, the boundaries and combine).
