@@ -61,9 +61,18 @@ kind: primary
 controls_for: null
 prior: "router-splitk-semaphore-no-memset: that deleted the memset with a ticket-semaphore last-arriver reduce, a serialized epilogue that DISTILL 3.1 measured x1.07-1.10 slower than the memset under graph replay; this keeps the memset and the relaxed atomics exactly and only lets the router kernel's weight stream and MMAs run while the zero kernel executes (PDL), with no new reduce or serialization"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-27T141019Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-27T141019Z
+base_sha: 93f6f7fa2f41100d0f75cf209e2ff5e6c65f97e7
+base_blob: d51c745a0e43d20ebf2cbb3d582f3f8ead72f039
+branch: hyp/muse_bf16_proj/router-zero-pdl-overlap-m9-m256
+worktree: .worktrees/muse_bf16_proj/router-zero-pdl-overlap-m9-m256
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # router-zero-pdl-overlap-m9-m256
