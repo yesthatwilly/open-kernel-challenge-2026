@@ -1125,3 +1125,9 @@ append-only, newest last.
     The headline was pulled down by khalf missing again. Phase C: stack router-PDL + the khalf gate fix.
 - 1433Z: **prefill scored 99767cf3 (w2 early loads at low): 1.4897**, a new board by a hair (was 1.4889; rank 176).
   Landed on master by hand; BEST.json updated.
+- 1440Z: attention sk-onepass-verify1-timing-fix check **bfb0457c9ae84322**.
+  - The [op] fix: _ps_prepare_q before _ps_reference in the ps / sd cells, plus the incumbent's timing-data rel L2.
+  - Full decode is not timed.
+- 1440Z: bf16 router-pdl-plus-khalf-pooled-iqr-gate claimed. It folds the 10-round khalf diagnostic in (the control
+  companion is held, folded); routing is POOLED with a 2.0x pooled IQR bar (orchestrator decision: the candidate's
+  true IQR is ~1.42x master's). Implementer running.
