@@ -98,7 +98,10 @@ inference.
 - **Other worktrees stay** (PLAN §11: nothing is deleted): decode-first-rewrite, engine-b, engine-b2, ea-v3, ea-v3big,
   dense-port, hotcold, moe-hybrid, and the churn worktrees `hyp/*`.
 
-### 1.3 First actions, in order (the 00:00Z reset plan, on hold until the new session)
+### 1.3 First actions, in order
+
+> **2026-10-27:** steps 1-3 were dispatched at 00:02-00:03Z. From now on, work follows `campaigns/DAILY-RHYTHM.md`
+> (`/3to1`), and §4.1's build order runs as phase-A ultracode workflows. (the 00:00Z reset plan, on hold until the new session)
 
 **One-time setup in the new session:**
 - `rewrite/bin/archive.py` hardcodes `SCRATCH_RUNS` to this session's /tmp scratchpad

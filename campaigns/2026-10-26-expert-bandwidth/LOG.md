@@ -5,23 +5,28 @@ append-only, newest last.
 
 ## Now
 
-- **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a). No /loop restarted; the
-  ~23:00Z STOP banners are satisfied (distil done) and superseded by this manual resume.
-- updated: 2026-10-27T0003Z (date -u)
-- **Quota policy (the user, 2026-10-26 ~19:05Z, PLAN §6 top and §11; still in force on resume):**
-  - Never idle until a reset, and never pre-build hours ahead of one.
-  - When a problem's checks run out, write its reset plan, then work on the highest-gain problem that still has checks
-    today, with immediate check feedback.
-  - Order: decode > moe > bf16_proj > attention_decode > prefill (last). On bf16 / attention, favour kernels that port
-    into decode, and submit when a check beats that board.
-  - Every check must answer a new question; using every check is not required; no identical bytes re-rolled.
+- **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a); the ~23:00Z STOP is
+  retired.
+- updated: 2026-10-27T0011Z (date -u); phase A
+- **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`, `/loop /3to1`):
+  - 00:00Z until decode's reasonable checks are spent: phase A, the biggest decode rewrites on Opus 5.5 ultracode
+    workflows (moe as testbed), built and checked;
+  - then until 18:00Z: phase B, the other problems' minor gains (moe > bf16 > attention > prefill);
+  - 18:00Z-24:00Z: phase C, use up every remaining check; `/hypothesize`; write tomorrow's phase-A plan by ~23:00Z;
+  - always: a scored submit whenever a check beats a board; never re-roll identical bytes.
+- **Today (10-27), phase A plan:**
+  1. Harvest the three in-flight jobs (below) per DISTILL §4.1; land decode if 2bd373c9 beats 1.4956.
+  2. Ultracode workflow, launched right after the harvest, on the top levers of DISTILL §3.3:
+     - **v4k, the k-slice B-fragment-reuse consumer:** a ladder rung first (one moe check, kill < 1.05x over
+       C-R4), then the engine raced in every gate, audited; moe check, then decode check.
+     - **bulk12 P at T=1 in decode** (DISTILL §4.2), built against the read-flush gate (bf16's
+       `b12-qkv-m1-r32-one-cta-per-sm-readflush-gate` runs in phase B or alongside as its calibration).
+     - **X3 glue at T <= 8** only if 0b085ef4's anatomy shows no-route launches of 10 us or more at T=1, or 40% or
+       more of the block; otherwise the dq layout, if VERDICT-dq passed.
+  3. Phase B: bf16 `b12-qkv-m1-r32-...-readflush-gate`, attention `sk-full-line-gather`, then DISTILL §4.4's order.
+  4. Phase C from 18:00Z: fill every problem's remaining checks.
 - In flight (DISTILL §1.3 steps 1-3, dispatched 00:02-00:03Z): decode scored 2bd373c9e23c4667 (27ef83df bytes);
   moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb (eacf0722 bytes).
-- On resume, the first actions are DISTILL.md §1.3 (drafts in `scratchpad/`):
-  1. decode scored run of `submission.edoff-27ef83df.py` (check f59cb301, 1.5347; okc content hash 613b6c2d...);
-  2. moe check at eacf0722 (dq A/B, H=-8, v4c);
-  3. decode check at eacf0722 (anatomies, H=-8, v4c);
-  4. the k-slice consumer rung and the bulk12 decode port (DISTILL §4).
 - Boards at 23:46Z:
   - decode 1.4956 (rank 365 of 754);
   - moe 1.6851 (400 of 871);
@@ -509,3 +514,10 @@ append-only, newest last.
 - decode scored 2bd373c9e23c4667: `submission.edoff-27ef83df.py` (sha256 9aad293f... verified vs git 27ef83df).
 - moe check 9f8a518ea6c04d20 and decode check 0b085ef420c64ffb at eacf0722 (bytes = HEAD; cuda_syntax ok).
 - archive.py SCRATCH_RUNS repointed to session 860eee0a's scratchpad (campaign fe240969).
+
+## 2026-10-27T0011Z: the user's new standing policy, the 3:1 daily rhythm
+
+- The text is in `campaigns/DAILY-RHYTHM.md`. Run it with the `/3to1` skill (`.claude/skills/3to1/`), or with
+  `/loop /3to1` for an autonomous loop.
+- The STOP banners in INDEX / PLAN / CLAUDE.md are replaced, and the 19:05Z quota steer is marked superseded.
+- Today's phase-A plan is in the Now block.
