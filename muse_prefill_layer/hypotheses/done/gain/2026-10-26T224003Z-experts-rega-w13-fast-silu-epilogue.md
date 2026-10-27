@@ -65,6 +65,7 @@ harvested_at: 2026-10-27T120420Z
 best_at_harvest: 1.4677493909229
 promotion: merged
 promotion_commit: 9fbde72cc980ca534c8db9600bf6f101c82d5a29
+promotion_attempt: 2026-10-27T120421Z-submit-experts-rega-w13-fast-silu-epilogue.md
 ---
 
 # experts-rega-w13-fast-silu-epilogue
