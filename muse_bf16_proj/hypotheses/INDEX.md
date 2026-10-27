@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-27T103501Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
+Regenerated 2026-10-27T111650Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc465d` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -82,7 +82,7 @@ Regenerated 2026-10-27T103501Z. Best: 1.2735x [1.2544,1.2926] job `bc147c5b87bc4
 | 2026-10-26T015638Z | pooler-k-halves-fp32-partials-restack-m128-m256-cf | confirm→pooler-k-halves-fp32-partials-restack-m128-m256 | pooler GEMM (m=128/256, K-split as a 2-batch cuBLAS GEMM) | done/neutral | neutral | 1.2590 | [1.240,1.278] | caaa76cc288d47c7 | check |  | proceed |  |
 | 2026-10-26T221113Z | pooler-khalf-m128-fp32-partials-triton-castadd | primary | pooler GEMM (m=128, K-split as a 2-batch cuBLAS GEMM) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T221132Z | b12-qkv-m1-r32-one-cta-per-sm-readflush-gate | primary | qkv GEMM (m=1, bulk12 12-bit row-owner CTA shape) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-26T221149Z | qkv-swapab16-five-stage-ring-m8-m16 | primary | qkv GEMM (m<=16, swap-AB Triton) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T221149Z | qkv-swapab16-five-stage-ring-m8-m16 | primary | qkv GEMM (m<=16, swap-AB Triton) | done/regression | regression | 1.2507 | [1.232,1.269] | c65ffcb6d9ab4f95 | check |  | proceed | 3/3 |
 | 2026-10-26T221215Z | b12-unpooler-slice-m1-r16-rowowner | primary | unpooler GEMM (sliced n=1024, m=1, bulk12 12-bit row-owner) | done/neutral | neutral | 1.2737 | [1.255,1.293] | a642424734f54365 | check |  | proceed | 1/2 |
 | 2026-10-26T221237Z | lt-nn-layout-cells-o-m128-qkv-m128 | primary | o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T221256Z | lt-config-sweep-m256-beyond-heuristic | primary | bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic) | queue | queued |  |  |  |  |  | required |  |

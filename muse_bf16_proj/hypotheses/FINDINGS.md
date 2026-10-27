@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T103501Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-27T111650Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
@@ -107,6 +107,9 @@ Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranke
 ### qkv GEMM
 - **qkv-gate-triton-skinny-m32** → regression (regression), 0.9238x — lost on qkv_gate decode_1, decode_16, decode_32, verify_1. Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <= 32 (n=2304, k=8192, a 37.7 MB weight): in kernel_fn route qkv_gate at
 - **qkv-gate-triton-splitk4-blockn64-semaphore** → neutral (within-ci), 1.1431x — gained on qkv_gate decode_1, decode_16, verify_1; router decode_16; pooler verify_16; lost on qkv_gate decode_32; o verify_1; unpooler verify_1; router verify_1, verify_16. Built on master (dba4ffd; router untouched). For layer == 'qkv_gate' and cfg m <= 32 only (n=2304, k=8192, 37.7 MB bf16), replace _bf16_gemm_dispatch_impl (nvje
+
+### qkv GEMM (m<=16, swap-AB Triton)
+- **qkv-swapab16-five-stage-ring-m8-m16** → regression (regression), 1.2507x — gained on qkv_gate decode_1, decode_16, verify_1, verify_16; o decode_1, decode_16, decode_32, verify_1; pooler decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; unpooler decode_1, verify_1, verify_16; router decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Built on master blob 2bcfe7d4. qkv_gate at m=2..16 (verify_1 m=8 12.86 us, decode_16 m=16 12.99 us in 3834ceec) runs _bf16_swapab_kernel through _swapab16_forwa
 
 ### qkv GEMM (m<=32, swap-AB)
 - **qkv-swapab-w128-splitk7-one-wave-m32** → neutral (within-ci), 1.2229x — gained on o verify_32; lost on router decode_16, decode_32, verify_1; qkv_gate decode_32, verify_1; o decode_32. Built on master (blob 353e3b19, restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128, check 84f17adc3f074a33, 1.2366x). WHY: at m<=32 qkv_gate (n=2304, k=
@@ -215,13 +218,13 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **bf16-lossless-exp4-decode-only-throughput-probe** [lossless exp4 compressed-weight stream kernel (_lossless_swapab_kernel)] regression, regression: A one-run kill/revive gate for the held lossless line, not a pipeline stage: kernel_fn rou
 - **bf16-verify-deepgemm-bf16-gemm-nt-route** [bf16 GEMM dispatch (m=65..256, DeepGEMM bf16)] regression, regression: At m=128/256 all four bf16 layers still run cuBLAS nvjet and sit at ~1.0x SGLang (master p
 - **qkv-k-split-batched-gemm-m65-m256** [qkv GEMM (m=65..256, K-split as a batched cuBLAS GEMM)] regression, regression: Built on current master (blob 353e3b19). For layer == 'qkv_gate' at 65 <= cfg m <= 256 onl
+- **qkv-swapab16-five-stage-ring-m8-m16** [qkv GEMM (m<=16, swap-AB Triton)] regression, regression: qkv_gate at m=2..16 (verify_1 m=8 12.86 us, decode_16 m=16 12.99 us in 3834ceec) runs _bf1
 
 ## Queue and in flight
 
 - queue: combo-verify-cells-pooler-khalf-plus-qkv-rowowner-m8-m16 [combination (pooler K-halves m=128/256 + qkv row-owner m=8/16 + per-cell Lt plans m=128/256)] p2 hold
 - queue: pooler-khalf-m128-fp32-partials-triton-castadd [pooler GEMM (m=128, K-split as a 2-batch cuBLAS GEMM)] p1 hold
 - queue: b12-qkv-m1-r32-one-cta-per-sm-readflush-gate [qkv GEMM (m=1, bulk12 12-bit row-owner CTA shape)] p1 hold
-- queue: qkv-swapab16-five-stage-ring-m8-m16 [qkv GEMM (m<=16, swap-AB Triton)] p2 queued
 - queue: lt-nn-layout-cells-o-m128-qkv-m128 [o GEMM + qkv GEMM (m=128, cuBLASLt plan on an NN weight copy)] p2 queued
 - queue: lt-config-sweep-m256-beyond-heuristic [bf16 GEMM dispatch (m=256, cuBLASLt configs beyond the heuristic)] p3 queued
 - 8 stale holds expired to `done/expired/` (not run)

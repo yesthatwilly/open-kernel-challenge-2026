@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T103236Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-27T111650Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
@@ -113,6 +113,9 @@ Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (r
 
 ### w13 + w2 expert GEMMs (rega persistent item->CTA schedule)
 - **experts-rega-round-rotated-schedule** → neutral (within-ci), 1.4664x — no shape moved outside noise. Built on master (blob f4751fc0). Only the order in which rega_kernel's persistent CTAs walk items changes; every item is computed by master's code, so outputs a
+
+### w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)
+- **experts-rega-fine-n-buckets** → neutral (within-ci), 1.4573x — no shape moved outside noise. Built on master (blob f4751fc0). rega sizes each item's wgmma N (tokens) and its slab TMA box from the chunk's 16-route block count nbk (1..8) with four buckets
 
 ### w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class
 - **experts-rega-pingpong-consumers-all-t** → neutral (within-ci), 1.4478x — gained on full first_turn; lost on sliding turn_1. Built on master (1932a9c4, align-two-phase-all-t-rega). Consumer schedule of rega_kernel only. ARITHMETIC FIRST (the judge's router seed fixes the busiest GPU's
@@ -227,6 +230,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **qkv-gate-columns-side-stream-under-attention** [qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3)] neutral, within-ci: Built on current master (submission blob a2fe2a75; no depends_on). The qkv_gate projection
 - **experts-rega-pdl-chain-gather-w13-w2** [launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)] neutral, within-ci: DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill 
 - **experts-rega-round-rotated-schedule** [w13 + w2 expert GEMMs (rega persistent item->CTA schedule)] neutral, within-ci: Only the order in which rega_kernel's persistent CTAs walk items changes; every item is co
+- **experts-rega-fine-n-buckets** [w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)] neutral, within-ci: rega sizes each item's wgmma N (tokens) and its slab TMA box from the chunk's 16-route blo
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
@@ -236,7 +240,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: experts-rega-low-2cta-fullslab-mc2 [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster] p4 queued
 - queue: experts-rega-mc2-bm256-stack-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked] p3 queued
 - queue: experts-rega-mc4-cluster-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast] p5 hold
-- queue: experts-rega-fine-n-buckets [w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)] p1 queued
 - queue: experts-rega-rotate-finebucket-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + 16-row N buckets + fast silu, one module)] p2 queued
 - queue: experts-rega-rotation-fastsilu-combo [w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module)] p2 queued
 - queue: experts-rega-w13-fast-silu-epilogue [silu-mul (rega w13 epilogue)] p2 queued
