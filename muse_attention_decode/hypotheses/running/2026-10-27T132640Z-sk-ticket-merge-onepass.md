@@ -71,7 +71,7 @@ base_sha: bb6c492319e7d6ef89caaf609741556209472f17
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 branch: hyp/muse_attention_decode/sk-ticket-merge-onepass
 worktree: .worktrees/muse_attention_decode/sk-ticket-merge-onepass
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-27T135306Z
@@ -80,6 +80,8 @@ submission_sha256: 73665e96b0abe161442fe2108d35e318c50eaa59f67968888064ae559ccea
 norm_sha256: 972c35a3e910948f5d2cc91f8c5182a50e243270e769c217b3f14ae1a2bfffdb
 submission_blob: faed6a62e4ecaed3859d1ed77eaabcb22951d8fd
 lint_warnings: 101
+attempt_file: 2026-10-27T135307Z-check-sk-ticket-merge-onepass.md
+prepared_at: 2026-10-27T135307Z
 ---
 
 # sk-ticket-merge-onepass
