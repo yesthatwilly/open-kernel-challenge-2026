@@ -2332,3 +2332,14 @@ with the operator's go-ahead.
   - Routes: 8 v4xs, 16 v4xd (s within 0.002), 32 v4cxs, plus the T=128 cold half on v4cxs. 13/13 tests, routing recheck held.
   - **Scored run 31e9a69aac344675 sent** (the board keeps the best run).
   - Tooling note: the attempt-gate claims warning matched a stale 10-25 attempt file in that worktree, not the new one. It is warn-only; fix its file selection later.
+
+### 2026-10-28T2210Z — the user's go: everything on the expert block; gpunode06 for 6 h
+- The user, ~22:05Z: "yes, point everything at the expert block, use any token or checks/submits you want.  gpunode06 for h100 tests for the next 6 hours".
+  The H100 window on gpunode06 runs to ~04:00Z 10-29 (same hopper rules; H200 held). Attention, bf16 and prefill get no new tokens; swf S1b 89add1cc was already in flight.
+- The gpunode06 agent (a01b2ff7) was told to keep the runner up past 00:30Z for new moe arms.
+- Workflow `expert-block-1028` (wf_f5fa83bf-200) runs three lanes:
+  (Q) T=256 cold half routable to v4cxs (eb-v4x256, then a decode port);
+  (t256) a design panel at max on verify_32 → judge → build → 2 audits → fix → decode port;
+  (t1) the same chain for moe decode_1 (T=1, 29.7 us vs 11.4 SoL).
+  Value bar: >= 45 us off T=256 or >= 4.5 us off T=1 per row.
+- Quota at 22:04Z: moe 3 checks / 3 runs, decode 1 / 3. Fresh at 00:00Z.
