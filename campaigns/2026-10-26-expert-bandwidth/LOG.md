@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0533Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0550Z (date -u), session 0605b7cc.
   - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
     hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
     `/loop H100 autonomous program ...`.
@@ -26,8 +26,11 @@ append-only, newest last.
     - M1: the null holds; the isolated MDE is ~0.3%/row.
     - M456: pin v4 at classes 8 and 16; CUDA combine at 128 (+1.0%).
     - M08t8: T=8 fit v1 15.5 + 10.3k us, v4 19.4 + 9.85k us.
-  - **In flight:** the P3 audit workflow wf_01ce0f10-ce0 (task wp2zeukc3), which drafts P3b; the moe carrier build (pin v4
-    at classes 8/16 plus the CUDA combine at 128, on the S3 board), then its judge check.
+    - Moe carrier (pin v4 at classes 8/16, CUDA combine at T=128, on S3; campaign/eb-carrier aa9bcb9b): check
+      be4440e2 **1.7457** (beats 1.7340; vs the board T=8 x1.015, T=128 x1.023, decode 16 x1.010).
+    - Released m07, m03c, m08t1 at 05:44Z (registered 02:57Z): m07, m03c and m08t1-r1 done; harvest pending.
+  - **In flight:** the moe carrier scored run 12d17a4696844630 (05:48Z); the P3 audit workflow wf_01ce0f10-ce0 (task
+    wp2zeukc3, at synthesis), which drafts P3b; m08t1-r2 on the H100.
   - **Next:**
     - P3b capture.
     - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
@@ -1627,3 +1630,15 @@ with the operator's go-ahead.
 - T=8 fit: v1 a 15.5 b 10.3; v4 a 19.4 b 9.85 us; they cross at k ~8.7. That indicates both fixed-cost work and a
   streaming engine at T=8.
 - Not built; the carrier needs the user's go-ahead. The H100 is idle again; P3b waits on the audit workflow.
+
+## 2026-10-28T05:50Z: moe carrier check 1.7457 beats the 1.7340 board; scored run sent; m07 / m03c / m08t1 released
+
+- Carrier build ff6b525b (workflow wf_f3616fc7-521) passed its audit; both minor findings applied in aa9bcb9b (skip
+  v6's T=8 race only when the class-8 pin took; the prepare citation). 962,450 B, sha256 d01f5b75.
+- Check be4440e24e244103: **1.7457** (CI 1.7195-1.7719), prepare 126.4 s, every copy check PASS, both PINNED PATH
+  CHOSEN lines present. Per row vs 426218dc: decode 1 x0.995, decode 16 x1.010, decode 32 x0.997, verify 1 x1.015,
+  verify 16 x1.023, verify 32 x1.001; vs the S3 check fd0e9271 every row x1.002-1.009.
+- Scored run 12d17a4696844630 sent at 05:48Z (attempt 2026-10-28T0547Z-submit-carrier-pins.md). Land on master if it
+  beats 1.7340.
+- H100: m07, m03c and m08t1 (registered 02:57Z, unchanged) released at 05:44Z to fill idle GPUs (takemyjob 17f07c3).
+
