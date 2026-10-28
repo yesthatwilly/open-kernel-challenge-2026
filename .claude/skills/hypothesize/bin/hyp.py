@@ -252,7 +252,7 @@ def board_record(p):
     job = best.get("job")
     if not job:
         return best, None
-    for pat in (f"campaigns/*/runs/{job}*.json.gz", f"{p}/hypotheses/archive/*/{job}*.okc.json.gz"):
+    for pat in (f"campaigns/*/runs/{job}.json.gz", f"{p}/hypotheses/archive/*/{job}.okc.json.gz"):
         for f in glob.glob(os.path.join(REPO, pat)):
             try:
                 return best, json.load(gzip.open(f))
@@ -269,9 +269,9 @@ def task_rows(p):
     """(load, shape, weight, floor_us) per row of TASK.md's shape table, in benchmark index order."""
     rows = []
     for line in open(os.path.join(REPO, p, "TASK.md")):
-        m = re.match(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*µs\s*\|", line)
+        m = re.match(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*([\d.,]+)\s*µs\s*\|", line)
         if m:
-            rows.append((m.group(1), m.group(2), int(m.group(3)), float(m.group(4))))
+            rows.append((m.group(1), m.group(2), int(m.group(3)), float(m.group(4).replace(",", ""))))
     return rows
 
 
@@ -285,20 +285,32 @@ def cmd_triage(a):
                        key=lambda x: x["index"])
         rows = task_rows(p)
         if bench and len(bench) == len(rows):
-            W = sum(r[2] for r in rows)
+            # The score is the geometric mean over loads of (SGLang load time / ours), a load's time being
+            # sum(weight x row median_ns) (TASK.md). So a row moves the headline through its own load only:
+            # headline factor = (T_load / T_load')^(1/L) with T_load' = T_load - w x (t - t').
+            t_of = [x["median_ns"] / 1e3 for x in bench]
+            loads = collections.OrderedDict()
+            for i, (load, _, w, _) in enumerate(rows):
+                loads[load] = loads.get(load, 0.0) + w * t_of[i]
+            L = len(loads)
             out, total = [], 1.0
-            for x, (load, shape, w, _) in zip(bench, rows):
-                t, b, sol = x["event_median_ns"] / 1e3, x["baseline_ns"] / 1e3, x["speed_of_light_ns"] / 1e3
+            for i, (x, (load, shape, w, _)) in enumerate(zip(bench, rows)):
+                t, b, sol = t_of[i], x["baseline_ns"] / 1e3, x["speed_of_light_ns"] / 1e3
+                T = loads[load]
+                share = w * t / T / L
                 floor = max(1.3 * sol, FLOOR_MIN_US)
-                at_floor = (t / floor) ** (w / W) if t > floor else 1.0
+                at_floor = (T / (T - w * (t - floor))) ** (1 / L) if t > floor else 1.0
+                halved = (T / (T - w * t / 2)) ** (1 / L)
                 total *= at_floor
                 tag = " ".join(k for k in shape.replace(",", "").split() if k in ("sliding", "full")) or shape[:24]
-                out.append((at_floor, f"  #{x['index']:<2} {load:9} {tag:9} w{w:<3} ours {t:7.1f} us  sglang {b:7.1f}  "
-                                      f"x{x['speedup']:.2f}  SoL {sol:6.1f}  ours/SoL {t / sol if sol >= 0.5 else float('nan'):5.1f}  "
-                                      f"headline x{2 ** (w / W):.3f} if halved, x{at_floor:.3f} at max(1.3 SoL, {FLOOR_MIN_US:.0f} us)"))
+                out.append((at_floor, f"  #{x['index']:<2} {load:10} {tag:9} w{w:<3} share {share * 100:4.1f}%  ours {t:7.1f} us  "
+                                      f"sglang {b:7.1f}  x{x['speedup']:.2f}  SoL {sol:6.1f}  "
+                                      f"ours/floor {t / floor:4.1f}  headline x{halved:.3f} if halved, x{at_floor:.3f} at "
+                                      f"max(1.3 SoL, {FLOOR_MIN_US:.0f} us)"))
             for _, line in sorted(out, reverse=True):
                 print(line)
-            print(f"  every row at its practical floor: headline x{total:.2f}")
+            print(f"  every row at its practical floor: headline x{total:.2f} (share = the row's elasticity of the headline; "
+                  f"median_ns, geomean over {L} loads)")
         else:
             print("  (no per-row data: board record not found or rows do not match TASK.md)")
         q = [h for h in churn.all_hyps(p) if h["_where"] in ("queue", "running")]
