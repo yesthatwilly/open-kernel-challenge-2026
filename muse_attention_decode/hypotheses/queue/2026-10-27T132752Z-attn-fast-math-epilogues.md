@@ -60,7 +60,8 @@ kind: primary
 controls_for: null
 prior: "epilogue-gate-l2-prefetch-cuda: neutral (within-ci); it prefetched the gate operand to L2 and changed no arithmetic, while this changes only the epilogue arithmetic (accurate expf / IEEE div / 1.f/sqrtf to ex2.approx / rcp.approx / rsqrtf), per the 2026-10-27 prefill fast-silu lesson, with per-cell twins and gates"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%"
 ---
 
 # attn-fast-math-epilogues
