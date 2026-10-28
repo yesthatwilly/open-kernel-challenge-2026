@@ -695,3 +695,24 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
 - **Race flips:** 0/12 prepares flipped at any class (T=1 v1, 2..16 v4, 17..32 v4c, 128 v4c, 256 MASTER). X0a's 36-43%
   class-8 flip rate is not reproduced on the node in this state.
 - Recorded in takemyjob 4f1dabb (registrations.md, m1-b6).
+
+## 2026-10-28T05:32Z: M456 + M08t8 results (10 jobs, 05:20-05:24Z, all rc 0, replicates on distinct GPUs)
+
+- **Class 8 (verify 1):** a tie. The best arm, v4, read +0.24% / +0.93% vs the board, which was not +0.5% in both
+  replicates. R10 applies: **pin v4 at class 8**. The board raced class 8 to **v1** in the m456-c8 and m08t8 processes
+  (4/4) but to v4 in all 14 other prepares (M1 12, c16 2). The race outcome depends on the process, and the pin removes
+  that variance.
+- **Class 16 (decode 16):** a tie (v4 +0.15% / -0.12%). R10: **pin v4**. Every v4c variant is resolved slower
+  (-0.9 to -1.5%); v3 is -3%.
+- **Class 32 (decode 32):** **no change**. v4c7 and v4c9 tie with the board; v4 -0.9%; the triton combine -1.2%.
+- **Class 128 (verify 16):** **switch the combine to CUDA**: x1.0112 / x1.0096 vs the board, +1.04% / +0.85% vs the
+  identity arm. That clears the +0.8% combine bar in both replicates, so it goes to the judge carrier.
+- **Every K2-grid variant** is -13 to -14% in all four classes.
+- **M08t8, the T=8 cost per extra local expert** (fit over k 2..12): v1 a 15.3-15.8 us, b 10.26-10.33 us/expert. v4 a
+  19.4 us, b 9.85 us/expert. v4c a 18.2-18.5 us, b 10.1 us/expert. v1 and v4 cross at k ~8.7.
+  - a >= 12 us in every arm, so fixed-cost work at T=8 is indicated. b >= 9.28 in every arm, so a streaming engine at T=8
+    is indicated.
+  - On the H100, b sits near the HBM3 floor (~9.4 us per 28.3-MB expert), so b does not transfer to the H200; a does
+    better.
+- **Carrier candidates for the judge** (not built): pin v4 at classes 8/16, and the CUDA combine at class 128. Details in
+  takemyjob 52dd7c5.

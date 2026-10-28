@@ -1614,3 +1614,13 @@ with the operator's go-ahead.
 - **M1:** the isolated A/A null holds (headline x0.9991); isolated MDE ~0.3% per row (decode 1 ~0.7%); no order
   effect; 0/12 race flips (takemyjob 4f1dabb).
 - The P3 audit workflow is running (resumed after the 04:28Z session limit).
+
+## 2026-10-28T0532Z: M456 + M08t8 harvested: carrier candidates
+
+- Pin v4 at classes 8 and 16 (ties, R10). The class-8 race goes to v1 in some processes and v4 in others, and the pin
+  removes that variance.
+- Switch class 128's combine to CUDA: +1.0% / +0.85% vs the identity arm in both replicates.
+- No change at class 32. Every K2 variant is -13%.
+- T=8 fit: v1 a 15.5 b 10.3; v4 a 19.4 b 9.85 us; they cross at k ~8.7. That indicates both fixed-cost work and a
+  streaming engine at T=8.
+- Not built; the carrier needs the user's go-ahead. The H100 is idle again; P3b waits on the audit workflow.
