@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1059Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1103Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -25,12 +25,10 @@ append-only, newest last.
     -> 1.8719 (L4); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
   - **Quota 1058Z:** decode 14 checks / 7 runs; moe 14 / 6; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - X1 checks (10:50Z): moe 40d6ea36a9dd46f4 (eb-x1 d14bf91e; scored run if > 1.8719 and no spill / MINB 2 / K2
-      co-resident in the prepare log) and decode cbec03d56e8e4da3 (eb-x1d-s3d 087eb3d6; bar 1.6407).
     - fc + L4 moe check dec43c9cd1ac4235 (10:58Z; eb-fc 6412a999, 988,470 B): scored run only if > 1.8719 AND a FAST
       arm (v6p / v6pe) routes at T=1.
   - **Next:**
-    - fc's decode port if its moe check routes a FAST arm and wins; X1 + fc together if both win.
+    - fc's decode port if its moe check routes a FAST arm and wins.
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
 - **(10-27 blocks below are kept for the user's bullets.)**
@@ -1826,3 +1824,13 @@ with the operator's go-ahead.
   the 4 board v6 instances are instruction-identical to L4's.
 - **Check dec43c9cd1ac4235** at 10:58Z. Read the `[ea6] fast` line (K1f 79/0/1, K2f 79/0/2, cmb 121/0/2), the
   `canary fast T=1 ... =v6 bitwise` line, the race and the route line first.
+
+## 2026-10-28T1103Z: X1 checks: ties (moe 1.874, decode 1.639); T=8 slower in production; X1 closed for v4
+
+- Moe 40d6ea36: 1.874 (board 1.8719; the L4 check read 1.887). Decode cbec03d5: 1.639 (board 1.6407). No scored runs.
+- Our times vs the L4 checks: **T=8 loses on both problems** (moe verify 1 79.1 -> 83.9 us, x0.942; decode (1,8) full
+  x0.937), while T=1 (v6) gains a little (moe decode 1 x1.028). The bench's x1.037 at s4 t8 did not transfer: the
+  production v4 kernel inlines consume and consume2, and the up-front x4 preloads likely expose LDSM latency.
+- Lesson: an eac bench arm that changes the load schedule (not just ALU work) needs a production-shape check before
+  it is counted; L3 / L4 (pure ALU cuts) transferred, X1 (a schedule change) did not.
+- X1 closed for v4; a v6-only form (T=1) is a small follow-up at most. Archived runs 40d6ea36 / cbec03d5.
