@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1302Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1306Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -24,11 +24,14 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill 1.4897 (223/561). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1259Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 9; prefill 20 / 10.
+  - **Quota 1306Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 9; prefill 15 / 10.
   - **In flight:**
-    - Attention generator resumed for a second batch (pins + sk-onepass restack, gather-split pinned, window-kernel and
-      FA3 fixed-cost anatomies); 9 attention checks left.
-    - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
+    - Prefill checks (13:06Z, phasec/prefill-1028): lo-pin-v64-fsilu 56752c8d, fa3c-turn4-bar098 d9847285,
+      final-near-ties-nolo 7db6fa1a, diag-lo-conc-curve aada232b, fa3c-pin-turns-b 17c2bc84. Contingent: w2st-pin-high-ft
+      and lo-skip-phase (if final-near-ties-nolo lands below), stack-v64f-near-ties (only if V64 wins), lo-pin-v64
+      (only if V64's module was OFF).
+    - Attention generator: second batch (pins + sk-onepass restack, pinned gather-split, fixed-cost anatomies).
+    - moe + decode generator (phasec/moe-1028, phasec/dec-1028).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -2016,3 +2019,13 @@ with the operator's go-ahead.
 
 - Scored run 3e3ffc5a: **1.2794** (CI 1.2602-1.2986) vs 1.2740 (+0.42%); master 62da2d9e; BEST.json + BEST.result.json
   db9c6fd5. The first board gain from a phase-C variant batch.
+
+## 2026-10-28T1306Z: prefill batch (9 variants); five dispatched
+
+- Agent (339k tokens), phasec/prefill-1028 tip ce906d74. No prefill gate flipped across 17 archived logs; the only
+  questions left are arms that are faster but held off by bars or guards (fa3c contig-varlen 0.973-0.989 x paged vs a
+  0.97 bar; w2st arm a geomean 0.989-0.998; rega-lo V64 guard 1.030-1.037 vs 1.00). The board is a low draw (two checks
+  of the same code read 1.4986 / 1.4994), so judge near-neutral variants on the full turn_4 / turn_1 rows.
+- Dispatched 13:06Z: lo-pin-v64-fsilu (V64 + fast silu at the low class; ~15-25% to win, +1-2% if it does),
+  fa3c-turn4-bar098, final-near-ties-nolo (the deterministic final candidate if V64 loses), diag-lo-conc-curve,
+  fa3c-pin-turns-b.
