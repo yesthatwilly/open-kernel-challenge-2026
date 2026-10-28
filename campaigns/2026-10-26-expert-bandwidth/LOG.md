@@ -11,13 +11,13 @@ append-only, newest last.
   - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
   - **In flight:**
-    - **decode pins round 2** (one agent, high): race table over the judged runs, then prepare-time pins of arms that
-      win their rows consistently, on `campaign/eb-pin2` (`.worktrees/eb-pin2`, from eb-pin128 ca4b26c5). Returns a
-      check-ready commit or "no pin justified". First target: T=1 sliding 96.1 vs the board run's 93.8 us.
+    - decode check **314cca3c51604c23**: pins round 2 (campaign/eb-pin2 e8f8134b, 925,194 B): Engine A T=2..8 v4,
+      unpooler T=9..16 master, qkv_gate + o T=17..32 swap-AB, T=256 pool cell. All are e1fd3c00's own picks. Scored
+      run only if it beats 1.5926.
     - workflow **wf_9a2a0ee6-8bc** (s3-expert-streaming): S3 design panel x3 (max) -> judge (max) -> build on
       `campaign/eb-s3` (from eb-s1a 26994217 = the moe board bytes) -> 2 audits -> fix (high). It returns a
       check-ready commit; the main thread dispatches the moe check. Predicted ~1.4M tokens.
-  - **Next:** review the pin2 diff, then its decode check (attempt file first); S3's moe check when the workflow
+  - **Next:** harvest 314cca3c (all four pins routed? rows at e1fd3c00's draw?); S3's moe check when the workflow
     returns. Phase B once decode's reasonable checks are spent. Quota 0015Z: decode 9 scored / 20 checks; others 10 / 20.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
@@ -1459,3 +1459,18 @@ with the operator's go-ahead.
   (5a33db71 drew 96.3): a race the pins do not cover. SGLang's own rows moved by up to 4% between runs.
 - Plan step 2 started: one agent (high) builds the race table over the comparable judged runs and pins what wins its
   rows consistently, on campaign/eb-pin2 (no CUDA text changes).
+
+## 2026-10-28T0029Z: pins round 2: four pins built; T=1 sliding was a lucky draw; decode check 314cca3c sent
+
+- Agent (237k tokens): race table over 15 judged runs of the W6-B + c320 + b12p + skfull stack (27a008fa .. e1fd3c00).
+- **T=1 sliding 93.8 vs 96 us has no race behind it:** c1daf58b, 5a33db71 and e1fd3c00 made the same pick in every T=1
+  race the logs show; c1daf58b's d1s paired ratio 1.831 is above all 11 other PERHEAD-era runs (1.760-1.786). It
+  looks like a lucky input draw: the T=1 time depends on 2 vs 3 distinct local experts (K9).
+- Pins (each = e1fd3c00's pick): Engine A T=2..8 v4 (v3 routed twice, v1 rows +2-5 us); unpooler T=9..16 master (the
+  two swap-AB runs were the two lowest d16 loads); qkv_gate + o T=17..32 swap-AB (46 of 56 run pairs); T=256 pool cell
+  on (39 of 42 pairs; part of that is SGLang's draw). Estimate +0.1-0.3% averaged over draws, 0 on the board's own draw.
+- Left as races: Engine A v4 / v4c at T=9..16 and 17..32, the T=1 PDL gate (inconsistent across eras), b12p configs.
+- Gap: the 16 KB log tail starts inside Engine A's FINAL PATHS, so the earlier [summary] PATH CHOSEN block is cut off
+  in every archived decode run. Printing it last (as moe does) would make those races auditable.
+- e8f8134b reviewed here (the generated diff is the pin lines only; lint, cuda_syntax, build --check ok) -> decode
+  check 314cca3c51604c23 (attempt 3304c19d on eb-pin2).
