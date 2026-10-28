@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1603Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1708Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -42,12 +42,13 @@ append-only, newest last.
       each dispatch.
     - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope check 7284659f read
       **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
-    - Room for phase A is made: moe campaign/eb-trim 742f3209 827,317 B; decode campaign/eb-trimd 8cb23d1f
-      893,346 B (trim + build.py docstring strip). Both need one judge check tonight (reserved).
-    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873): both designs back by 15:34Z ((1) "swf": one cluster
+    - Trim verification checks dispatched 17:09Z (reserved; no scored runs, behaviour-identical bytes): moe
+      trim-moe **2864f0f4** (eb-trim 742f3209, 827,317 B) and decode trim-docstrip-decode **6985e7f4**
+      (eb-trimd 8cb23d1f, 893,346 B). PASS (tests + PATH lines = the board's) -> phase A bases on them.
+    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873; at its final spec 17:07Z): both designs back by 15:34Z ((1) "swf": one cluster
       launch per sliding-verify step with in-kernel pre-attention on the board's wgmma window tile body; (2)
       full verify B=1 off FA3 via the window kernel at window 0); judge, red team and final spec running.
-    - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z; brief scoped to T = 2..256 with decode's
+    - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z, at its final spec 17:07Z; brief scoped to T = 2..256 with decode's
       T = 128 / 256 ea4 rows first). attn-full-splitkv and dense stay dropped (triage: low value per token).
   - **Next:**
     - **Phase B** until 18:00Z: the two design panels only. Churn (musespark-b1) found nothing runnable, and no
