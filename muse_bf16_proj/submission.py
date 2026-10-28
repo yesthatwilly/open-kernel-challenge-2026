@@ -3263,12 +3263,15 @@ def _bulk_prepare(state: dict, flags=None) -> None:
 
 
 def _lt_graph_median_us(fn, flush: torch.Tensor, reps: int) -> float:
-    """Median of reps graph replays of fn() after a flush write each (prepare()-only ranking)."""
+    """Median of reps graph replays of fn() after a READ flush each (prepare()-only ranking). phasec
+    pc-lt-qkv128-readflush: was a write flush (zero_), which leaves dirty lines the timed kernel writes back; the
+    judge reads a buffer larger than L2 before each replay (DISTILL 3.2.1)."""
     gr = _cell_capture(fn)
     ts = []
     ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
+    flush_i32 = flush.view(torch.int32)
     for _ in range(reps):
-        flush.zero_()
+        flush_i32.sum()
         ev[0].record()
         gr.replay()
         ev[1].record()
@@ -3323,21 +3326,25 @@ def _lt_prepare(state: dict, flags=None) -> None:
                 if key in cands:
                     print(f"{desc}: duplicate", flush=True)
                     continue
-                cands[key] = (algos[i].clone().contiguous(), desc)
+                cands[key] = (algos[i].clone().contiguous(), desc, f"a{algo_id}/t{tile}/s{stg}")
         flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
         x = torch.randn((LT_M, k), device=dev, dtype=torch.float32).to(torch.bfloat16)
         best = None
-        for row, desc in cands.values():
+        ranked = []   # (read-flush us, short label) per timed candidate, for the B-RANK decision line
+        for row, desc, short in cands.values():
             bad = _cell_check(f"B cublasLt {desc[5:]}", lambda xx, row=row: _lt_forward(xx, w, row, ws),
                               w, LT_M, n, k)
             if bad:
                 print(f"{desc}: excluded ({bad})", flush=True)
                 continue
             us = _lt_graph_median_us(lambda row=row: _lt_forward(x, w, row, ws), flush, LT_PICK_REPS)
-            print(f"{desc}: {us:.2f} us (graph replay, cold L2, median of {LT_PICK_REPS})", flush=True)
+            print(f"{desc}: {us:.2f} us (graph replay, read flush, median of {LT_PICK_REPS})", flush=True)
+            ranked.append((us, short))
             if best is None or us < best[0]:
                 best = (us, row, desc)
         del flush
+        _decision(f"B-RANK qkv_gate m={LT_M} split-K-1 Lt plans, read flush, median of {LT_PICK_REPS} (us): "
+                  + " ".join(f"{s}:{u:.2f}" for u, s in sorted(ranked)[:10]) + f" ({len(ranked)} timed)")
         if best is None:
             why = f"no usable split-K-1 candidate ({len(cands)} queried)"
         else:
@@ -3345,7 +3352,7 @@ def _lt_prepare(state: dict, flags=None) -> None:
             state["lt_algo_qkv128"] = best[1]
             state["lt_ws_qkv128"] = ws
             tg = time.perf_counter()
-            cand_us, master_us = _cell_gate("B", "qkv_gate", LT_M, n, k, LT_FLAG, state)
+            cand_us, master_us = _cell_gate("B", "qkv_gate", LT_M, n, k, LT_FLAG, state, flush_mode="read")
             print(f"[prepare-time] gate B qkv_gate m={LT_M}: {time.perf_counter() - tg:.2f}s", flush=True)
             if not cand_us <= CELL_MAX_RATIO * master_us:
                 why = f"gate: cand/master {cand_us / master_us:.3f} > {CELL_MAX_RATIO}"
@@ -3374,7 +3381,7 @@ def _lt_prepare(state: dict, flags=None) -> None:
     torch.cuda.synchronize()
     print(f"[prepare-time] cell B qkv_gate m={LT_M} total: {time.perf_counter() - t0:.2f}s", flush=True)
     _decision(f"PATH CHOSEN B qkv_gate m={LT_M}: {'candidate' if state[LT_FLAG] else 'master'} "
-          f"(cand {cand_us:.2f} us vs master {master_us:.2f} us)"
+          f"(read-flush pick and gate; cand {cand_us:.2f} us vs master {master_us:.2f} us)"
           + ("" if state[LT_FLAG] else f"; {why}"))
 
 
