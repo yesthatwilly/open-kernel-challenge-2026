@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212856Z
 review_companions: null
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-28T145301Z
 base_sha: 47926f5e7d8a192184e21177901be2034d2d4930
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -91,6 +91,8 @@ submission_blob: 7e7938b33b2d532aab7c1f0989f5b95081eee05d
 lint_warnings: 101
 attempt_file: 2026-10-28T150622Z-check-sliding-verify1-pseudo-fused-preattn-rope.md
 prepared_at: 2026-10-28T150622Z
+job: 7284659f6c4d4035
+dispatched_at: 2026-10-28T150631Z
 ---
 
 # sliding-verify1-pseudo-fused-preattn-rope
