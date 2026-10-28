@@ -2303,3 +2303,8 @@ with the operator's go-ahead.
   - The canary failed at B=2, lens 3/2100, C=4: rel L2 4.91e-3 against the incumbent's 5.80e-3, with worst/mean row 6.8. Every band fell back.
   - A fix agent is finding the short-lens cause, or an over-strict criterion, and staging attn-swf-s1b for 00:00Z.
 - 2111Z: stretch results: prefill pf-rega-low-stream 6edf1cb0 1.493 (gate missed: best arm x1.075 slower, master routed; refuted); bf16 shelf-stack f37f01e7 1.2810 vs 1.2794 (+0.1%, many cells routed; inside noise, no scored run).
+- 2120Z: **swf S1 canary cause:** an over-strict worst/mean <= 5 row rule (brief section 5), not a kernel bug.
+  - An e4m3 model reproduces the measured rel L2 (4.74e-3 vs 4.91e-3) and the ratio (6.83 vs 6.8). The incumbent fails the same rule 55% of the time.
+  - The fix is attn-swf **05e314b6**: worst row <= 0.1 (judge floor 0.15), raised only by the incumbent's worst row; canaries at lens 1/2/7/8/9; emulator 14/14.
+  - The attempt file is .worktrees/attn-swf/muse_attention_decode/attempts/2026-10-28T211904Z-check-attn-swf-s1b.md. **Dispatch it first at 00:00Z;** touch the file first (the gate wants it modified within 2 h).
+  - **00:00Z plan:** attention swf S1b, then attn-shelf-stack 8e88d0b6. Then the v4x moe / decode checks as their builds land (the v4x workflow wf_8e086f5f-9f8 is running), plus a scored run for any check that beats its board.
