@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1725Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1735Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -46,8 +46,9 @@ append-only, newest last.
       PASS) and decode campaign/eb-trimd 8cb23d1f (893,346 B; check 6985e7f4 1.6452 PASS).
     - attn-fixed panel DONE (research/phaseA-2026-10-29/attn-fixed.json): swf wins; its tonight rungs are building
       in `attn-swf-rungs-1028` (wf_c0bd87c5-5d2; worktrees attn-rung-cc, attn-rung-swf; phasec tag attn-rungs).
-    - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z, at its final spec 17:07Z; brief scoped to T = 2..256 with decode's
-      T = 128 / 256 ea4 rows first). attn-full-splitkv and dense stay dropped (triage: low value per token).
+    - engineA panel DONE (research/phaseA-2026-10-29/engineA.json): v4x wins; tonight's TC-A (moe) / TC-B (decode)
+      rungs building in `engA-fx-rungs-1028` (wf_3972725f-acd; worktrees pc-moe-fx, pc-dec-fx; tags moe-fx, dec-fx).
+      Both rung builds are the phase-A shape's "diagnostic rung first" step (ultracode; cap-exempt).
   - **Next:**
     - **Phase B** until 18:00Z: the two design panels only. Churn (musespark-b1) found nothing runnable, and no
       minor-gain spending happens without a lead that clears the value bar (the user, ~1415Z).
@@ -2239,3 +2240,20 @@ with the operator's go-ahead.
   diag-swf-merge (the DSMEM reduce-scatter + norm-gate cost), and diag-sw-chain-cost (no new CUDA; per-tile cost at
   B=1, the fvs go / no-go). They are building now in `attn-swf-rungs-1028`; dispatch with phasec.py (tag attn-rungs)
   after telling musespark-b1.
+
+## 2026-10-28T1735Z: engineA panel done: "v4x" (bitwise v4 / v4c twins with the mid-stream stream-K ticket deferred) is tomorrow's Engine A build
+
+- 5 agents, ~2.17M tokens; saved to research/phaseA-2026-10-29/engineA.json (build brief 30 KB). The judge scored v4x
+  7 vs Engine P (persistent T <= 8) 4. The red team said "revise" (1 blocker: the CUDA combine routed to the twin
+  module; 6 majors); the final spec fixes all of them.
+- **H200 facts it measured from today's runs:** at T = 2..32 Engine A v4 / v4c costs ~20-21 us per call plus 7.34 us
+  per pass. Each pass already runs at 88% of the 4.37 TB/s ring ceiling, against an empty-launch floor of 9.3 us. So
+  at these T the lever is FIXED COST, not streaming or dequant. The decode cold half at T = 128 / 256 fits 27.4 +
+  7.34 k_c us. The brief's "165-180 us" double-counted K2's PDL overlap.
+- **v4x:** arm d defers the head partial's mid-stream fence, barriers and ticket to one end-of-CTA round (CUTLASS
+  ordering). Both arms get a warp-scan pass list, 32-bit split math and gs in smem. Arm s is a control (expected 0).
+  Bitwise canaries; raced per class at wr >= 1.01.
+- **Expected:** moe +3.3% (2.0-4.6%), decode +1.8% (1.1-2.7%), contingent on tonight's TC-A / TC-B fix-up measurements.
+- **Tonight:** TC-A moe (D = t(G=257) - t(G=256), K1 k=8 / K2 k=16, on eb-trim) and TC-B decode (D_dec plus the
+  T=128 cold half's onset excess E2c, on eb-trimd), both print-only with routing unchanged. Optional: Engine P's
+  counter hand-off probe and v6-at-T=8 decode anatomy, only if checks remain.
