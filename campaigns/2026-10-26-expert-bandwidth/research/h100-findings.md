@@ -904,3 +904,30 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
 - **Reopening** needs a new registration (the user's call): forced judge picks via E1 arms, a profiled pass whose
   prepare does not run under nsys, and a faster boundary shim. Tool defects: records.py skips dec02-* configs;
   nj_profile truncates kernel names and merges the sliding and full cases per load. takemyjob 703f45f.
+
+## 2026-10-28T08:01Z: eac registered (R2): consumer-only microbenchmark (Engine A dq2 loop, records resident in smem)
+
+- **Question:** cycles per 16-row x 4096-k record per SM of Engine A's dq2 consumer loop at T = 1 / 8 / 16, at the
+  production CTA shapes (S6 = v6 (320,2), S6W = (320,1), S4 = v4 2 x (288,2)). What changes them:
+  - Q1, m-tile reuse r = 2 / 4 (K_s = 512/r sub-blocks or SB = 1);
+  - Q2, the fragment-order scale repack F (L1) and the paired scale decode (L2 = F + paired; L3 = paired on today's
+    layout; L4 = L3 with the add on IMAD);
+  - Q3, x in registers (X2: v6 T <= 8, 64 registers; X1: v4 T=8 per-kq preload).
+  Every arm is bitwise equal to its baseline.
+- **Build-time facts:** the twins match P3b's production body within 0.13 instr/step. The paired decode folds (-2.0
+  instr/step, all ALU; l3c NOFOLD). The register cap at (288,2) / (320,2) is 96, so no reuse variant fits v4 at T=16
+  (SPILL is the port answer there).
+- **Expected (tc130, baseline / variant):** L3 s4 t8 1.12 [1.05, 1.18], s6 t1 1.09 [1.03, 1.15], s4 t16 1.07
+  [1.02, 1.13]. L1 1.000. R2 / R4 0.97-1.08 (SPILL at t16). X1 1.01, X2 1.04, X2L3 1.14. SC0 (uniform-scale ceiling)
+  1.25.
+- **Decision rule** (both replicates; tc133 must agree in sign): port L3 into eak::consume<2> if l3 >= 1.03 at s4 t8
+  with its CI clear of 1.01 and s6 t1 >= 0.99 (into consume2 if >= 1.03 at s4 t16). F only if >= 1.02. Reuse becomes
+  a port candidate only at >= 1.05, spill-free, with port_regs <= 96, else it is closed. X2 only at >= 1.05. A combo
+  must beat its better arm by >= 1%. VOID on ok=0, mhz_min < 1800, an occupancy or smid mismatch, |ss_dev| > 1%, or a
+  REF null out of band.
+- **Metric / instrument:** marginal clock64 cycles per record per SM (256 vs 1,024 chunk-records), the median of 11
+  shuffled reps with a bootstrap CI, MDE 1%. Bundle build/eac.tgz sha256 637d2e3c (eac_130 7ef7fbee, eac_133
+  735b202b). Validation hand-run on GPU 7 (~3 min, Tier A+, DQX exhaustive dequant check, memcheck), then 41-r1 / 41-r2
+  (one pool GPU each) and 42-ncu on gate eac-val-ok. Full text: takemyjob registrations.md `### eac` (a62947b).
+- The L3 production port (workflow wf_5e31da3c-b6f) runs in parallel. Its judge check is the transfer test, and this
+  sweep is the per-cell attribution.
