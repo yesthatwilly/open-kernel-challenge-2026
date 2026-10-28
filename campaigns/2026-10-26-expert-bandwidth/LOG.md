@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1503Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1534Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -40,14 +40,15 @@ append-only, newest last.
       (LOG, Now, trim, phase-A panels, memory) and runs no churn ticks. Campaign checks reserved for tonight: moe 1 +
       decode 1 (verify the trim branches) and attention 2 (the attn-fixed panel's diagnostics); message it before
       each dispatch.
-    - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope, check **7284659f6c4d4035**
-      (~15:07Z): a batch-1 pseudo kernel fusing pre-attention q norm / RoPE and the new K/V rows, 1.03x
-      gate, master fallback; expected ~0.8-1.8 us on sliding verify 1. Churn's last run today.
+    - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope check 7284659f read
+      **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
     - Room for phase A is made: moe campaign/eb-trim 742f3209 827,317 B; decode campaign/eb-trimd 8cb23d1f
       893,346 B (trim + build.py docstring strip). Both need one judge check tonight (reserved).
-    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873, resumed 14:53Z with the per-row triage in its brief). The
-      session limit killed all four panels at ~14:25Z before any design returned; attn-full-splitkv and dense are
-      dropped (triage: low headline value per token), engineA waits until the agent count allows (<= 3).
+    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873): both designs back by 15:34Z ((1) "swf": one cluster
+      launch per sliding-verify step with in-kernel pre-attention on the board's wgmma window tile body; (2)
+      full verify B=1 off FA3 via the window kernel at window 0); judge, red team and final spec running.
+    - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z; brief scoped to T = 2..256 with decode's
+      T = 128 / 256 ea4 rows first). attn-full-splitkv and dense stay dropped (triage: low value per token).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
