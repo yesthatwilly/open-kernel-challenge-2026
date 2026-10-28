@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1303Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1301Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -1999,7 +1999,7 @@ with the operator's go-ahead.
   m = 1-16; the old write-flush gates overstated times 20-30%; at nearby m the board is 0.94-0.98x SGLang at m = 48-130
   (no gate fix needed; worst rel L2 1.5e-4).
 
-## 2026-10-28T1303Z: attention diagnostics: the window kernel's fixed cost is the lever (tomorrow's attention rewrite)
+## 2026-10-28T1301Z: attention diagnostics: the window kernel's fixed cost is the lever (tomorrow's attention rewrite)
 
 - Window kernel (sliding verify): fixed 6.8 / 7.2 us + 3.87 / 7.44 us per 1k keys per request at B=16 / 32 (key stream
   ~1.1 TB/s); 47% / 33% of the time is fixed at K=2048; 8.3x / 6.6x its HBM floor (B=2: 35x). A naive page-1 gather
