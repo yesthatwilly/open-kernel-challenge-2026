@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1303Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1302Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -21,8 +21,9 @@ append-only, newest last.
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
-    1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
-    1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
+    **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
+    prefill 1.4897 (223/561). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
+    1.2794.
   - **Quota 1259Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 9; prefill 20 / 10.
   - **In flight:**
     - Attention generator resumed for a second batch (pins + sk-onepass restack, gather-split pinned, window-kernel and
@@ -2011,7 +2012,7 @@ with the operator's go-ahead.
 - For tomorrow's phase A: a decode-portable attention fixed-cost rewrite (window kernel ~7 us of 14.6 us at B=16; FA3's
   22 us at small B), sized by these numbers.
 
-## 2026-10-28T1303Z: bf16 scored 1.2794 and landed (qkv m=128 read-flush plan; rank 438/1236)
+## 2026-10-28T1302Z: bf16 scored 1.2794 and landed (qkv m=128 read-flush plan; rank 438/1236)
 
 - Scored run 3e3ffc5a: **1.2794** (CI 1.2602-1.2986) vs 1.2740 (+0.42%); master 62da2d9e; BEST.json + BEST.result.json
   db9c6fd5. The first board gain from a phase-C variant batch.
