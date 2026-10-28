@@ -728,3 +728,12 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   - **m07** (K1 w2 prefetch at T=1) and **m08t1** (T=1 cost per extra local expert, nsys per k): moe's T=1 is v6 on
     S3, so their moe class-1 pin clauses are moot. They are read for decode's T=1 (board e1fd3c00 runs v1) and as the
     pre-S3 baseline for the consumer program.
+
+## 2026-10-28T05:53Z: the M456 carrier on the judge: the T=128 combine transfers; landed (moe 1.7345)
+
+- Check be4440e2 1.7457; scored 12d17a46 1.7345 (CI 1.7085-1.7605) vs the 1.7340 board: a tie on the headline, landed
+  by the "beats" rule (master 81c9802e).
+- **Transfer reading (R8):** the T=128 CUDA combine read +1.12% / +0.96% on the node (vs the board) and x1.023 (check) /
+  x1.018 (scored) on the judge's verify 16 row: same sign, larger on the H200 (consumer-bound, so a fixed per-call
+  saving is a larger share). The class 8 / 16 pins (node ties) read x1.015 / x1.007 at verify 1 and x1.010 / x1.001 at
+  decode 16: inside the judge spread, as R10 predicts.

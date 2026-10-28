@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0548Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0552Z (date -u), session 0605b7cc.
   - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
     hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
     `/loop H100 autonomous program ...`.
@@ -27,10 +27,11 @@ append-only, newest last.
     - M456: pin v4 at classes 8 and 16; CUDA combine at 128 (+1.0%).
     - M08t8: T=8 fit v1 15.5 + 10.3k us, v4 19.4 + 9.85k us.
     - Moe carrier (pin v4 at classes 8/16, CUDA combine at T=128, on S3; campaign/eb-carrier aa9bcb9b): check
-      be4440e2 **1.7457** (beats 1.7340; vs the board T=8 x1.015, T=128 x1.023, decode 16 x1.010).
+      be4440e2 **1.7457**; scored 12d17a46 **1.7345** (beats 1.7340 by 0.0005, a tie; T=128 row x1.018 again).
+      **Landed on master 81c9802e: moe board 1.7345, rank 452/962.** BEST.json -> 12d17a46.
     - Released m07, m03c, m08t1 at 05:44Z (registered 02:57Z): m07, m03c and m08t1-r1 done; harvest pending.
-  - **In flight:** the moe carrier scored run 12d17a4696844630 (05:48Z); the P3 audit workflow wf_01ce0f10-ce0 (task
-    wp2zeukc3, at synthesis), which drafts P3b; m08t1-r2 on the H100.
+  - **In flight:** the P3 audit workflow wf_01ce0f10-ce0 (task wp2zeukc3, at synthesis), which drafts P3b; a subagent
+    harvesting m07 / m03c / m08t1 (m08t1-r2 was still on the H100 at 05:48Z).
   - **Next:**
     - P3b capture.
     - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
@@ -1641,4 +1642,13 @@ with the operator's go-ahead.
 - Scored run 12d17a4696844630 sent at 05:48Z (attempt 2026-10-28T0547Z-submit-carrier-pins.md). Land on master if it
   beats 1.7340.
 - H100: m07, m03c and m08t1 (registered 02:57Z, unchanged) released at 05:44Z to fill idle GPUs (takemyjob 17f07c3).
+
+## 2026-10-28T05:52Z: moe carrier scored 1.7345 and landed (new board, rank 452/962)
+
+- Scored run 12d17a4696844630: **1.7345** (CI 1.7085-1.7605), the same routing as the check. It beats 1.7340 by 0.0005,
+  a tie inside the spread; landed on master 81c9802e by the "beats" rule; BEST.json -> 12d17a46 (2d7a7756).
+- Per row vs 426218dc: verify 16 (T=128, CUDA combine) x1.018 (check x1.023, node +1.0%): **the combine gain transfers**.
+  Verify 1 x1.007, decode 16 x1.001, decode 1 x0.987 (v6, unchanged: noise), decode 32 x0.992, verify 32 x0.997.
+- Lesson: an H100 per-SM reading that clears its MDE in both replicates (c128, +1.0%) carried to the judge with the
+  same sign and a larger size on its row. The R10 ties bought determinism, not score.
 
