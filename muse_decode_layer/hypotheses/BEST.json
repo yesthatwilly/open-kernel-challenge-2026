@@ -1,19 +1,19 @@
 {
  "problem": "muse_decode_layer",
- "job": "3a68058a0f0a4eab",
+ "job": "9afcccc328974350",
  "mode": "submit",
- "speedup": 1.6407194772317282,
+ "speedup": 1.6428417591750295,
  "ci": [
-  1.6161086850732522,
-  1.665330269390204
+  1.6181991327874041,
+  1.6674843855626549
  ],
- "score_us": 13786.817499214221,
- "commit": "f3828162b8db18c4dc61164257070f341387cbed",
- "submission_blob": "df18f12b22605e32a18a68647005afd593ce011f",
- "slug": "campaign-eb-l4d-s3d",
+ "score_us": 13769.007193583284,
+ "commit": "f8cf2476caa0da0e53db51c675fccfe5b133f401",
+ "submission_blob": "770edae9dbf2cbbbbd782d88172847f73d052d77",
+ "slug": "campaign-eb-fcd-s3d",
  "result": null,
- "updated_at": "2026-10-28T1032Z",
- "master_slug": "campaign-eb-l4d-s3d",
- "master_job": "3a68058a0f0a4eab",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth decode L4 = the L3 + v6 board (adb9c343) + the L4 header change (eb-l4 1b24750f's three headers, bit-identical); branch campaign/eb-l4d-s3d 95ab5fb1; check 0576191d 1.638; scored 1.6407 vs 1.6262; landed on master."
+ "updated_at": "2026-10-28T1132Z",
+ "master_slug": "campaign-eb-fcd-s3d",
+ "master_job": "9afcccc328974350",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth decode fc = the L4 decode board (3a68058a) + Engine A v6's T=1 fixed-cost arms (v6pe / v6p, bitwise v6) raced in decode's [ea6-dl] stage (CAMPAIGN_EA6F; wiring in rewrite/lib/ea_decode.py); branch campaign/eb-fcd-s3d ba8cffe5; check 5f1047f5 1.647; scored 1.6428 vs 1.6407; landed on master."
 }
