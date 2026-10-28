@@ -73,7 +73,8 @@ controls_for: null
 rewrite_stage: 3
 replaces: FusedQKNorm/rope + FP8 casts + store_cache + FA3 main + FlashAttnFwdCombine + prepare_varlen_num_blocks + FusedRMSNormGate on sliding decode, 17 <= batch <= 32
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: base never landed; sliding B=17..32 already on stream-K window kernel"
 ---
 
 # sliding-cluster-c4-s3-satfinite-on-sk-ticket
