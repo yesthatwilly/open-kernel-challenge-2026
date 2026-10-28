@@ -1,19 +1,19 @@
 {
  "problem": "muse_decode_layer",
- "job": "adb9c3436aad4e1d",
+ "job": "3a68058a0f0a4eab",
  "mode": "submit",
- "speedup": 1.626239868763187,
+ "speedup": 1.6407194772317282,
  "ci": [
-  1.6018462707317391,
-  1.6506334667946345
+  1.6161086850732522,
+  1.665330269390204
  ],
- "score_us": 13909.571665589247,
- "commit": "622b97bb03b71fa3867e8d15205e23a02c1bdc87",
- "submission_blob": "f34ed1729b8d49f620aea9bf51c9fa53b2eea69e",
- "slug": "campaign-eb-l3d-s3d",
+ "score_us": 13786.817499214221,
+ "commit": "f3828162b8db18c4dc61164257070f341387cbed",
+ "submission_blob": "df18f12b22605e32a18a68647005afd593ce011f",
+ "slug": "campaign-eb-l4d-s3d",
  "result": null,
- "updated_at": "2026-10-28T1003Z",
- "master_slug": "campaign-eb-l3d-s3d",
- "master_job": "adb9c3436aad4e1d",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth decode L3 + v6 = the s3d decode port (Engine A v6 at T=1 on the pinned trim + eb-pin2 pins, campaign/eb-s3d a78c2515) + L3, the paired scale decode in Engine A's dq2 consumers (the moe 1.8249 change, bit-identical); branch campaign/eb-l3d-s3d 754876fc; check 31e0aad5 1.637 (L3 alone 7f9712c4 1.624); scored 1.6262 vs 1.5926; landed on master."
+ "updated_at": "2026-10-28T1032Z",
+ "master_slug": "campaign-eb-l4d-s3d",
+ "master_job": "3a68058a0f0a4eab",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth decode L4 = the L3 + v6 board (adb9c343) + the L4 header change (eb-l4 1b24750f's three headers, bit-identical); branch campaign/eb-l4d-s3d 95ab5fb1; check 0576191d 1.638; scored 1.6407 vs 1.6262; landed on master."
 }

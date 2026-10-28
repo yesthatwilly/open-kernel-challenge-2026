@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "261cfe56537241f6",
+ "job": "427a6f289e6745ac",
  "mode": "submit",
- "speedup": 1.8248992268840076,
+ "speedup": 1.8718775540797037,
  "ci": [
-  1.7975257384807475,
-  1.8522727152872676
+  1.8437993907685082,
+  1.899955717390899
  ],
- "commit": "869cd4632c874aa847e975a92454f1ca8d1266ed",
- "submission_blob": "223f43ab86c62ea23ba62bd0a46833a34763a6f2",
- "slug": "campaign-eb-l3",
+ "commit": "bfb3214b88daa41c70b83f39acabdb65563e9bf1",
+ "submission_blob": "d74317f1b9de1c7552d785cf948b075194a3007d",
+ "slug": "campaign-eb-l4",
  "result": null,
- "updated_at": "2026-10-28T0818Z",
- "master_slug": "campaign-eb-l3",
- "master_job": "261cfe56537241f6",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth L3 = the carrier board + the paired scale decode in Engine A's dq2 consumers (eak::consume<2>, eak3::consume2<2>: one 2-source sign-replicating prmt.b32 per step, HMUL2 half selectors; -2 ALU instructions per 256-weight step, bit-identical), found by the H100 eac consumer microbenchmark's SASS census; branch campaign/eb-l3 0fded606; check f2100f49 1.8286; scored 1.8249 vs 1.7345; landed on master.",
- "score_us": 7369.4480231454445
+ "updated_at": "2026-10-28T1032Z",
+ "master_slug": "campaign-eb-l4",
+ "master_job": "427a6f289e6745ac",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth L4 = the L3 board + the scale-pair add as an IMAD (FMA pipe) instead of a LEA (the binding ALU pipe), with a run-time 16 (16u << (n >> 30) from the consumer's count, inline PTX so ptxas cannot fold it); bit-identical; from the H100 eac consumer microbenchmark (L4/L3 x1.066 at T=8); branch campaign/eb-l4 1b24750f; check 7607a1c3 1.887; scored 1.8719 vs 1.8249; landed on master.",
+ "score_us": 7184.497709633506
 }
