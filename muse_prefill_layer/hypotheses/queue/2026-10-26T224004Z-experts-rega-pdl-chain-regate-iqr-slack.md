@@ -34,7 +34,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-pdl-chain-gather-w13-w2: same module, kernels and chain byte for byte; only the gate changes (1% of master's median added as IQR slack, <= 0.995 required in both rounds), which is what kept low and high OFF at measured ratios 0.988-0.991"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: parent on Do-not-try; module predates fsilu/w2st"
 ---
 
 # experts-rega-pdl-chain-regate-iqr-slack
