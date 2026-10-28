@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1036Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1048Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -28,10 +28,11 @@ append-only, newest last.
     - Workflow wf_94c537c3-261 (task wg42z83lc), the **X1 port** (per-kq ldmatrix.x4 preload of x; eac x1l3 / l3 =
       x1.037 at T=8, rule D5 PORT) on campaign/eb-x1 from eb-l4: build + SASS gate (gpunode06, CPU), audit, fix, decode
       carry-over on campaign/eb-x1d-s3d.
-    - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
-      (research/fc-designs-2026-10-28/), then build on campaign/eb-fc (fast-forwarded to eb-l3), audit and fix.
+    - fc (v6 T=1 fixed cost) built and audited (PASS) on L3; an agent merges L4 into campaign/eb-fc, cuts the file to
+      <= 988,500 B and runs the CPU SASS gate on gpunode06; then the moe check (scored run only if > 1.8719 AND a FAST
+      arm routes at T=1).
   - **Next:**
-    - A moe check of the fixed-cost variants when built; then their decode port.
+    - The fc moe check when the merge lands; then fc's decode port (decode's v6 is in #@region ea6_moe spans).
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
 - **(10-27 blocks below are kept for the user's bullets.)**
@@ -1791,3 +1792,19 @@ with the operator's go-ahead.
 - Next consumer lever from the eac sweep: **X1** (B preloaded per 128-k kq with one ldmatrix.x4; x1l3 / l3 = x1.037
   at T=8, rule D5 PORT). Workflow wf_94c537c3-261 builds it on L4 (moe first, then decode). The bench's other arms do
   not port (reuse over v4's 96-register cap; X2 forfeits K2 co-residency; the repack closed).
+
+## 2026-10-28T1048Z: fc (v6 T=1 fixed cost) built and audited on L3; L4 merge and size cut delegated
+
+- Workflow wf_8f182a05-5e7 (judge, build, audit; 723k tokens). Spec research/fc-spec-2026-10-28.md (eb-fc 9f964ecd):
+  two raced arms against v6 at T=1, both bitwise v6. **v6p**: FAST K1/K2 instances whose consumer warps stage B
+  themselves (two 16-B __ldcg per lane) instead of the producer's 8 serialized bulk copies; 32-bit record split
+  (-1.3 us est.). **v6pe**: v6p plus an early combine kernel in the v6 module (w / ids / tw loaded before the PDL wait;
+  -2.2 us est., decode-1 row ~x1.08, moe headline ~+1.2%). Rejected: the ticket-fused K2+combine (a new acq_rel
+  protocol, fusion-only gain about +-0.3 us).
+- Build b309a938 (985,605 B on L3; ea6_emul T1-T7 PASS; lint / cuda_syntax / build --check rc 0). Audit PASS (minor
+  findings: ids read before the wait relies on K2's wait-then-trigger; three T=1 copy checks near EA6_COPY_S; SASS
+  gate not run).
+- L3 + fc + L4 is ~991.4 KB, over our 990,000 B budget, so an agent merges L4, cuts to <= 988,500 B (the spec's cut
+  order, then fc comments) and runs the spec's CPU SASS gate on gpunode06.
+- **Decision (the judge's open question 1):** no scored run if T=1 stays v6, since a higher reading would be noise on
+  board-equal behaviour.
