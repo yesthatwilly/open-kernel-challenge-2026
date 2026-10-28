@@ -2315,3 +2315,4 @@ with the operator's go-ahead.
   - The fix (route d first, then upgrade to s) is building for a check tonight. moe has 5 checks left.
   - Fix-up D barely moved (K1 +3.84 -> s +3.47), so the per-class gain comes from the fixed-cost work, not from the ticket.
   - The decode port (eb-v4xd 6d7aaf32) is gated on S1 routing a d twin.
+- 2140Z: v4x route fix (eb-v4x 34ec61ba: d first, then s upgrades) dispatched as b0d1ecb7d7314dd1; on f045f710's numbers it routes s in all 4 classes.
