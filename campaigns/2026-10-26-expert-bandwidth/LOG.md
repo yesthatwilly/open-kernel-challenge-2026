@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1103Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1105Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,12 +23,12 @@ append-only, newest last.
   - **Boards:** moe **1.8719** (332/974; L4, 10:31Z); decode **1.6407** (346/853; L4 on L3 + v6, 10:31Z); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 350/1409. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3)
     -> 1.8719 (L4); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1058Z:** decode 14 checks / 7 runs; moe 14 / 6; bf16, attention and prefill 20 / 10.
+  - **Quota 1103Z:** decode 14 checks / 7 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - fc + L4 moe check dec43c9cd1ac4235 (10:58Z; eb-fc 6412a999, 988,470 B): scored run only if > 1.8719 AND a FAST
-      arm (v6p / v6pe) routes at T=1.
+    - fc + L4 moe scored run e2827c9e800549cd (11:03Z; check dec43c9c 1.880, v6pe routed): land if > 1.8719.
+    - Agent porting fc to decode on campaign/eb-fcd-s3d (from eb-l4d-s3d); check when it lands (scored run only if
+      > 1.6407 AND `[ea6-dl]` routes a FAST arm at T=1).
   - **Next:**
-    - fc's decode port if its moe check routes a FAST arm and wins.
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
       harvest, and restore takemyjob `probes/nodejudge/problems/moe/board.py` to its committed symlink
@@ -1837,3 +1837,13 @@ with the operator's go-ahead.
 - Lesson: an eac bench arm that changes the load schedule (not just ALU work) needs a production-shape check before
   it is counted; L3 / L4 (pure ALU cuts) transferred, X1 (a schedule change) did not.
 - X1 closed for v4; a v6-only form (T=1) is a small follow-up at most. Archived runs 40d6ea36 / cbec03d5.
+
+## 2026-10-28T1105Z: fc check 1.880: v6pe routes at T=1, decode-1 row x1.084; scored run sent; decode port started
+
+- **dec43c9c: 1.880** (CI 1.852-1.908) vs the 1.8719 board (+0.4%). `[ea6] fast` K1f 79/0/1, K2f 79/0/2, cmb
+  121/0/2; canaries bitwise =v6 10/10 for all three arms; race v6pe 1.059 / 1.060 over v6 (v6p 1.049); copy check PASS;
+  route `T=1 v6pe`. PATH CHOSEN otherwise equal to the L4 check's.
+- **Decode 1 (T=1) ours 32.0 -> 29.6 us (x1.084)** vs the L4 check (x1.038 vs the L4 scored run): the H100 P3c fixed-cost
+  reading transfers. The other rows move within +-1% (noise), so the headline is borderline.
+- Scored run **e2827c9e** sent at 11:03Z (attempt 2026-10-28T1102Z-submit-fc-v6-l4.md). An agent ports fc to decode
+  (campaign/eb-fcd-s3d).

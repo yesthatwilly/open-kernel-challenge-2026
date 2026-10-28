@@ -1,0 +1,71 @@
+okc run dec43c9cd1ac4235 on muse_moe_w4a16
+submission  /home/user/git/musespark/.worktrees/eb-fc/muse_moe_w4a16/submission.py
+status      ok
+passed      true
+speedup     1.880288304475605
+speedup_ci  [1.8520839799084707 1.9084926290427389]
+score_us    7152.360607673228
+tests       5/5 passed
+
+scored shapes (µs; speed of light is the reference's bound)
+case                                                         sglang      yours  speedup        sol  
+bs=1 load=decode 1 sharding=ep8                               77.30      29.55   2.616x      11.42  
+bs=16 load=decode 16 sharding=ep8                            188.62     111.19   1.696x      52.52  
+bs=32 load=decode 32 sharding=ep8                            213.15     150.12   1.420x      70.76  
+bs=8 load=verify 1 sharding=ep8                              142.18      79.28   1.793x      37.32  
+bs=128 load=verify 16 sharding=ep8                           454.21     234.94   1.933x     101.34  
+bs=256 load=verify 32 sharding=ep8                           620.75     306.82   2.023x     108.94  
+
+profile 0: bs=1 load=decode 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak6::ea6_kernel<true, 3, 2, true>(__nv_bfloat16 con...      15.1 µs  53.7%      1
+void eak6::ea6_kernel<false, 2, 2, true>(__nv_bfloat16 co...      10.2 µs  36.3%      1
+eak6::ea6_cmb_kernel(__nv_bfloat16 const*, int const*, fl...       2.8 µs  10.0%      1
+total                                                             28.1 µs
+
+profile 1: bs=16 load=decode 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak4::ea4_w13_kernel<2>(__nv_bfloat16 const*, int co...      63.4 µs  59.1%      1
+void eak4::ea4_w2_kernel<2>(__nv_bfloat16 const*, int con...      40.3 µs  37.5%      1
+eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...       3.6 µs   3.4%      1
+total                                                            107.2 µs
+GPU busy (kernels overlap: PDL or streams)                       106.0 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 2: bs=32 load=decode 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak4::ea4_w13_kernel<2>(__nv_bfloat16 const*, int co...      94.9 µs  58.6%      1
+void eak4::ea4_w2_kernel<2>(__nv_bfloat16 const*, int con...      54.0 µs  33.3%      1
+eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...      13.2 µs   8.1%      1
+total                                                            162.1 µs
+GPU busy (kernels overlap: PDL or streams)                       151.6 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 3: bs=8 load=verify 1 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak4::ea4_w13_kernel<2>(__nv_bfloat16 const*, int co...      50.2 µs  62.0%      1
+void eak4::ea4_w2_kernel<2>(__nv_bfloat16 const*, int con...      27.9 µs  34.4%      1
+eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...       2.9 µs   3.6%      1
+total                                                             81.0 µs
+
+profile 4: bs=128 load=verify 16 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak4::ea4_w13_kernel<2>(__nv_bfloat16 const*, int co...     134.1 µs  60.6%      1
+void eak4::ea4_w2_kernel<2>(__nv_bfloat16 const*, int con...      73.4 µs  33.2%      1
+eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...      13.8 µs   6.2%      1
+total                                                            221.4 µs
+GPU busy (kernels overlap: PDL or streams)                       210.8 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
+
+profile 5: bs=256 load=verify 32 sharding=ep8
+kernel                                                           GPU time  share  calls
+void eak4::ea4_w13_kernel<2>(__nv_bfloat16 const*, int co...     134.3 µs  29.7%      1
+void eak4::ea4_w2_kernel<2>(__nv_bfloat16 const*, int con...     108.1 µs  24.0%      1
+void (anonymous namespace)::wg_kernel<true>((anonymous na...     104.6 µs  23.2%      1
+void (anonymous namespace)::wg_kernel<false>((anonymous n...      85.3 µs  18.9%      1
+_hm_align_kernel                                                  10.1 µs   2.2%      1
+_post_expert_norm_weighted_sum_kernel                              5.9 µs   1.3%      1
+(anonymous namespace)::wg_gather_kernel(__nv_bfloat16 con...       3.1 µs   0.7%      1
+total                                                            451.4 µs
+GPU busy (kernels overlap: PDL or streams)                       355.5 µs
+an overlapping kernel's time includes any wait for the one before it, so the rows add up to more
