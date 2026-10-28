@@ -61,7 +61,8 @@ kind: primary
 controls_for: null
 prior: "sliding-decode1-cluster-per-kvhead: same PERHEAD kernel and layout kept byte-for-byte; what differs is only the merge tail (push with st.async + one receive mbarrier per owner instead of two cluster.sync and a DSMEM pull). full-decode1-sk4-cluster-dsmem-merge (neutral) and sliding-cuda-cluster-dsmem-onelaunch (regression) both used the pull merge with two cluster barriers; the push form has never been built on this problem"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%, high risk"
 ---
 
 # sliding-decode1-ph-push-merge
