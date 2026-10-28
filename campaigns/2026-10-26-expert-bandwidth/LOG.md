@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1051Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1059Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,15 +23,14 @@ append-only, newest last.
   - **Boards:** moe **1.8719** (332/974; L4, 10:31Z); decode **1.6407** (346/853; L4 on L3 + v6, 10:31Z); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 350/1409. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3)
     -> 1.8719 (L4); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1050Z:** decode 14 checks / 7 runs; moe 15 / 6; bf16, attention and prefill 20 / 10.
+  - **Quota 1058Z:** decode 14 checks / 7 runs; moe 14 / 6; bf16, attention and prefill 20 / 10.
   - **In flight:**
     - X1 checks (10:50Z): moe 40d6ea36a9dd46f4 (eb-x1 d14bf91e; scored run if > 1.8719 and no spill / MINB 2 / K2
       co-resident in the prepare log) and decode cbec03d56e8e4da3 (eb-x1d-s3d 087eb3d6; bar 1.6407).
-    - fc (v6 T=1 fixed cost) built and audited (PASS) on L3; an agent merges L4 into campaign/eb-fc, cuts the file to
-      <= 988,500 B and runs the CPU SASS gate on gpunode06; then the moe check (scored run only if > 1.8719 AND a FAST
-      arm routes at T=1).
+    - fc + L4 moe check dec43c9cd1ac4235 (10:58Z; eb-fc 6412a999, 988,470 B): scored run only if > 1.8719 AND a FAST
+      arm (v6p / v6pe) routes at T=1.
   - **Next:**
-    - The fc moe check when the merge lands; then fc's decode port (decode's v6 is in #@region ea6_moe spans).
+    - fc's decode port if its moe check routes a FAST arm and wins; X1 + fc together if both win.
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
 - **(10-27 blocks below are kept for the user's bullets.)**
@@ -1816,3 +1815,14 @@ with the operator's go-ahead.
 - SASS (eacx1, gpunode06, CPU): LDSM per step 1.00 -> 0.50 and 20.88 -> 20.44 instructions per step at T=1 and T=8;
   registers 80 -> 83, 0 spill (bench cells; production registers come from the check's prepare log).
 - Checks at 10:50Z: moe **40d6ea36a9dd46f4** (975,849 B) and decode **cbec03d56e8e4da3** (970,492 B).
+
+## 2026-10-28T1059Z: fc merged onto L4 (988,470 B, SASS gate PASS); moe check dispatched
+
+- Agent (156k tokens): merged campaign/eb-l4 into eb-fc (6412a999; only the generated moe file conflicted). Cut
+  2,969 B without touching behaviour (P6 kernel-only extras, the node-only EA6F_NODE arms, fc comments). Note:
+  build.py silently strips Python comments when a file is over 990,000 B; the cut keeps the real source under budget.
+- SASS gate (probes/eafc, gpunode06, CPU, cu130 + cu133 agree): 0 spill / local for all 7 kernels; K1 / K2 FAST 79
+  registers (co-resident at MINB 2), ea6_cmb 121 (2 CTAs/SM); h / y loads after ACQBULK, w / ids / tw before PREEXIT;
+  the 4 board v6 instances are instruction-identical to L4's.
+- **Check dec43c9cd1ac4235** at 10:58Z. Read the `[ea6] fast` line (K1f 79/0/1, K2f 79/0/2, cmb 121/0/2), the
+  `canary fast T=1 ... =v6 bitwise` line, the race and the route line first.
