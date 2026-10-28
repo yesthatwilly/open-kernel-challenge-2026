@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1108Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1115Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,10 +23,10 @@ append-only, newest last.
   - **Boards:** moe **1.8822** (330/975; fc on L4, 11:05Z); decode **1.6407** (346/853; L4 on L3 + v6); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 350/1412. Today: moe 1.7340 -> 1.7345 (carrier) -> 1.8249 (L3) -> 1.8719
     (L4) -> 1.8822 (fc); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1103Z:** decode 14 checks / 7 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
+  - **Quota 1112Z:** decode 13 checks / 7 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Agent porting fc to decode on campaign/eb-fcd-s3d (from eb-l4d-s3d); check when it lands (scored run only if
-      > 1.6407 AND `[ea6-dl]` routes a FAST arm at T=1).
+    - fc decode check 5f1047f58069453b (11:12Z; campaign/eb-fcd-s3d ba8cffe5, 987,601 B): scored run only if > 1.6407
+      AND `[ea6-dl]` routes a FAST arm at T=1.
   - **Next:**
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
@@ -1854,3 +1854,16 @@ with the operator's go-ahead.
 - Our decode-1 time read 30.7 us, the same as the L4 scored run's (the check read 29.6 vs L4's check 32.0). The fc
   saving is real but about the size of that row's run-to-run spread (~1-1.5 us), so the headline gain is partly the
   SGLang baseline's draw. Expect a small effect on decode (two decode-1 rows) from the port in flight.
+
+## 2026-10-28T1115Z: fc ported to decode; decode check dispatched
+
+- Agent (161k tokens): campaign/eb-fcd-s3d ba8cffe5 from eb-l4d-s3d. `CAMPAIGN_EA6F = True` in muse_decode_layer.py;
+  ea6_kernels.cuh / ea6_emul.py copied from eb-fc (same base blobs); ea6_core.py 3-way merged keeping decode's
+  `#@region ea6_moe` spans; decode's own stage (rewrite/lib/ea_decode.py) gained the FAST admission, the bitwise
+  canary gate, the block race under moe's rule, then the whole-layer guard, layer check and copy check per arm.
+- 987,601 B after build.py's comment strip (the decode base already needs the strip: 1,062,672 B raw). Gates: build
+  --check, cuda_syntax, okc_lint (190 warnings: +2 prepare-only syncs), py_compile, ea6_emul T1-T7 (FAST and fallback
+  builds), l3 / l4 emul PASS. SASS skipped: decode compiles the same v6 module source as the gated moe build.
+- **Check 5f1047f58069453b** at 11:12Z. Risk: the FAST build must join by 95 s in decode's prepare.
+- Phase B next: bf16 / attention / prefill BEST.json match their boards (1.274 rank 441/1228, 1.634 472/933, 1.4897
+  223/561), so churn can run on them as is.
