@@ -2308,3 +2308,4 @@ with the operator's go-ahead.
   - The fix is attn-swf **05e314b6**: worst row <= 0.1 (judge floor 0.15), raised only by the incumbent's worst row; canaries at lens 1/2/7/8/9; emulator 14/14.
   - The attempt file is .worktrees/attn-swf/muse_attention_decode/attempts/2026-10-28T211904Z-check-attn-swf-s1b.md. **Dispatch it first at 00:00Z;** touch the file first (the gate wants it modified within 2 h).
   - **00:00Z plan:** attention swf S1b, then attn-shelf-stack 8e88d0b6. Then the v4x moe / decode checks as their builds land (the v4x workflow wf_8e086f5f-9f8 is running), plus a scored run for any check that beats its board.
+- 2129Z: **v4x S1 moe** (campaign/eb-v4x 25e3d240, 2 audits + fix) dispatched as f045f71064ce4104.
