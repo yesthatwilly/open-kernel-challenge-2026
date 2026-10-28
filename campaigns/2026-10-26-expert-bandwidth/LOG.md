@@ -2316,3 +2316,8 @@ with the operator's go-ahead.
   - Fix-up D barely moved (K1 +3.84 -> s +3.47), so the per-class gain comes from the fixed-cost work, not from the ticket.
   - The decode port (eb-v4xd 6d7aaf32) is gated on S1 routing a d twin.
 - 2140Z: v4x route fix (eb-v4x 34ec61ba: d first, then s upgrades) dispatched as b0d1ecb7d7314dd1; on f045f710's numbers it routes s in all 4 classes.
+- 2144Z: **v4x route fix b0d1ecb7: 1.942 vs the moe board 1.8941 (+2.5%), a gain.**
+  - Every class routed d, then upgraded to s: T=2..16 v4xs, T=17..32 v4cxs, T=128 v4cxs + combine.
+  - Rows: d16 107.5, d32 140.0, v1 77.9 us.
+  - **Scored run af154932df744959 sent, same bytes (sha256 4f5f2072).**
+  - Decode port: arm-s upgrade being added (eb-v4xd), to check before 00:00Z with one of decode's 2 checks.
