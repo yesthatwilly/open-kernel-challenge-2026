@@ -54,7 +54,8 @@ kind: primary
 controls_for: null
 prior: "combo-sk-full-line-c320-tail: the same apply-exactly-N-queued-changes pattern for a same-day candidate; this one stacks three new phase-C tail hypotheses (sk-ticket-merge-onepass, sliding-decode1-ph-push-merge, attn-fast-math-epilogues) on master after sk-full-line-gather and c320-combine-onepass landed, with one multi-flag twin per kernel to bound compile time"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%; onepass on Do-not-try"
 ---
 
 # combo-tail-onepass-push-fastepi

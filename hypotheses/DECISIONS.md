@@ -438,3 +438,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150031Z `muse_attention_decode` **sliding-decode-band2-sk-gate**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (p~0.4), cheap stacker at most
 - 2026-10-28T150031Z `muse_attention_decode` **sliding-decode1-ph-push-merge**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%, high risk
 - 2026-10-28T150032Z `muse_attention_decode` **attn-fast-math-epilogues**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%
+- 2026-10-28T150032Z `muse_attention_decode` **combo-tail-onepass-push-fastepi**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%; onepass on Do-not-try
