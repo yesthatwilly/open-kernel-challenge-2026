@@ -44,7 +44,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-round-rotated-schedule: that rotates which CTA takes which item inside each round; this reorders the expert groups heaviest-first so the last round holds the cheapest items, and composes with it"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: rotation cut imbalance but gate missed; round-rotated on Do-not-try"
 ---
 
 # experts-rega-lpt-group-order
