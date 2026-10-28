@@ -2295,3 +2295,10 @@ with the operator's go-ahead.
   - Every check is ok, err 0, and clusters place one per SM at B=1. MaxActiveClusters at C=16 is 14 (7 when padded).
   - At B=1 the chain + merge is ~10.5 us, against the board's verify_1 sliding row of 13.4 us. That supports swf S1 (109a387b, in flight).
 - 2104Z: stretch checks (below the bar; the checks expire at 00:00Z) dispatched: prefill pf-rega-low-stream 6edf1cb002bf42b9 (low-class dequant/wgmma ring + L2 weight prefetch, gated), bf16 bf16-shelf-stack f37f01e7884e46b1 (shelf cells, each gated). attn-shelf-stack (8e88d0b6) is ready and waits for 00:00Z (attention checks used up).
+- 2106Z: **dec-rt-tail 0635f30d PASS (1.654): INHERENT.**
+  - Keep slack p0.1 is 0.0179 for both the board and FA3. The fp64 FP8-q emulation reads 0.0187; BF16 q reads 0.0296.
+  - The q pre-scale is no lead (+0.0013). There were 0 violations in 16,384 tokens.
+  - So the final-rerun routing risk (~1.6%/run) comes from FP8 q itself, and every FP8-q path shares it. Only a BF16-q full attention at T=256 removes it, at a speed cost not yet measured. This is noted in PENDING_USER.
+- 2106Z: **swf S1 109a387b PASS 1.624, but swf never routed.**
+  - The canary failed at B=2, lens 3/2100, C=4: rel L2 4.91e-3 against the incumbent's 5.80e-3, with worst/mean row 6.8. Every band fell back.
+  - A fix agent is finding the short-lens cause, or an over-strict criterion, and staging attn-swf-s1b for 00:00Z.

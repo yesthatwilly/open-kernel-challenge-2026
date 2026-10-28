@@ -64,3 +64,4 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - Decode check b47f8f73 failed a verify_32-full routing recheck: one expert flipped, +0.0321 against the 0.03 tolerance.
 - The diagnosis (/home/user/git-scratch-c24a6e/decode-recheck-diag.md) rules out the probe. Our FP8-q attention against the judge's BF16-q reference flips a clear-margin expert about 1.6% of runs (1 of 61; 95% upper bound ~8%). The board 83f0c00e is exposed in the final held-out rerun.
 - Settling check dec-rt-tail is being built for tonight. If the q pre-scale fix is a lead, it costs a decode rebuild plus a scored run before 11-04.
+- 21:1xZ update: dec-rt-tail 0635f30d found the decode routing tail is INHERENT to FP8-q attention. Master FA3 has it too, and a q pre-scale does not help. The options are to accept the ~1.6%/run final-rerun risk, or to measure a BF16-q full-attention path at T=256 (verify_32) and pay its speed cost. That is your call before 11-04.
