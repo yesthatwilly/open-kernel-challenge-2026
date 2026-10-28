@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1125Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1134Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -20,14 +20,18 @@ append-only, newest last.
   - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8822** (330/975; fc on L4, 11:05Z); decode **1.6407** (346/853; L4 on L3 + v6); bf16 1.2740,
-    attention 1.6340, prefill 1.4897; overall 350/1412. Today: moe 1.7340 -> 1.7345 (carrier) -> 1.8249 (L3) -> 1.8719
-    (L4) -> 1.8822 (fc); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1123Z:** decode 13 checks / 6 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
+  - **Boards:** moe **1.8822** (330/975; fc on L4); decode **1.6428** (345/854; fc on L4, 11:31Z); bf16 1.2740
+    (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 349/1412. Today: moe 1.7340 -> 1.8822
+    (S3 / carrier / L3 / L4 / fc); decode 1.5926 -> 1.6428 (L3 + v6 / L4 / fc).
+  - **Quota 1132Z:** decode 13 checks / 6 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - fc decode scored run 9afcccc328974350 (11:23Z; check 5f1047f5 1.647, v6pe routed): land if > 1.6407.
+    - Nothing (phase B starting).
   - **Next:**
-    - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
+    - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
+      portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
+      queues' run-first bf16 items (b12 qkv m1 R32 with the read-flush gate; b12 unpooler m1).
+    - Phase C from 18:00Z: spend every check (bf16 / attention / prefill 20 each; moe 14; decode 13), cheap questions
+      allowed (race pins for a deterministic board row); tomorrow's phase-A plan by ~23:00Z.
     - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
       harvest, and restore takemyjob `probes/nodejudge/problems/moe/board.py` to its committed symlink
       (`ln -sfn /home/user/git/musespark/muse_moe_w4a16/submission.py board.py`; it is now a plain-file copy of the
@@ -1875,3 +1879,12 @@ with the operator's go-ahead.
 - Log-tail lesson: okc keeps only the last 14,044 B of a run's log. fc's extra lines pushed the `[engineA-dl]` and the
   T=1 `[dense-swapab]` PATH lines out of the window, so a PATH-line diff can show missing lines that are not routing
   changes. Diff only lines present in both tails, or print a compact route summary at the end of prepare.
+
+## 2026-10-28T1134Z: decode fc scored 1.6428 and landed; phase A done for today, phase B next
+
+- Scored run 9afcccc3: **1.6428** (CI 1.6182-1.6675) vs 1.6407; master f8cf2476; BEST.json 70f961ac; decode rank
+  345/854, overall 349/1412. v6pe routed; decode 1 ours x1.026 / x1.011 vs the L4 board's run.
+- **Phase A summary (10-28):** moe 1.7340 -> 1.8822 (+8.5%: S3 / v6, carrier pins, L3, L4, fc); decode 1.5926 ->
+  1.6428 (+3.2%: pinned trim, L3 + v6, L4, fc). Consumer-side ALU cuts found by the H100 eac bench (L3, L4)
+  transferred; the schedule change (X1) did not; the T=1 fixed-cost cut (fc) transferred at ~1-2 us per call.
+- Phase B starts (no decode build ready or due within 2 h).
