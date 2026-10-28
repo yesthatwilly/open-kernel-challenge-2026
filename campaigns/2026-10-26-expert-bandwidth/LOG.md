@@ -2,13 +2,13 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0717Z (date -u), session 0605b7cc.
-  - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
-    hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
-    `/loop H100 autonomous program ...`.
-  - **Scope:** H100 (gpunode06) jobs, plus judge checks of H100-derived candidates (moe first, then decode), with scored runs
-    when a check beats its board. 3:1 phase B/C spending stays paused (the user's 0257Z pause). H200 (gpunode26) held.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1000Z (date -u), session 0605b7cc.
+  - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
+    3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
+    - ~0530Z: "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8 hours",
+      corrected mid-turn to **"at MOST the next 8"** (hard stop 13:40Z). In scope: H100 (gpunode06) jobs and judge checks /
+      scored runs of H100-derived candidates. H200 (gpunode26) held.
     - 0257Z: "basically do nothing; all the running agents need to finish. i need everytoken i can spare".
     - ~0320Z: "okay what did you learn from what just finished; anything to launch? do the work here but dont do it
       autonomously right now". Picks: "1 Land moe board, 2 Decode-port check, 3 Queue H100 moe program" (all done).
@@ -17,37 +17,26 @@ append-only, newest last.
       Fragment-order repacking should be the other independent experiment."
     - ~0515Z picks: "Release m456 + m08t8, Queue P3b when drafted, Harvest the M1 results" (all done).
     - ~0035Z / ~0100Z: "use the h100 freely for the next 6 hours" (superseded by the 0530Z window).
-  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode 1.5926 (361/829); earlier ~0525Z: moe 1.7340 (448/958), bf16 1.2740 (425/1209), attention 1.6340
-    (452/915), prefill 1.4897 (212/549). Left today: decode 18 checks / 9 runs; moe 19 / 9; the others 20 / 10.
-  - **Done since 0255Z:**
-    - moe 1.7340 landed (S3 / v6).
-    - Decode-port check 678f6e9c: 1.5860, so no scored run (eb-s3d a78c2515).
-    - M00 failed its rule; amended to a 0.45%/row MDE (the user's pick).
-    - M1: the null holds; the isolated MDE is ~0.3%/row.
-    - M456: pin v4 at classes 8 and 16; CUDA combine at 128 (+1.0%).
-    - M08t8: T=8 fit v1 15.5 + 10.3k us, v4 19.4 + 9.85k us.
-    - Moe carrier (pin v4 at classes 8/16, CUDA combine at T=128, on S3; campaign/eb-carrier aa9bcb9b): check
-      be4440e2 **1.7457**; scored 12d17a46 **1.7345** (beats 1.7340 by 0.0005, a tie; T=128 row x1.018 again).
-      **Landed on master 81c9802e: moe board 1.7345, rank 452/962.** BEST.json -> 12d17a46.
-    - Released m07, m03c, m08t1 at 05:44Z (registered 02:57Z): m07, m03c and m08t1-r1 done; harvest pending.
-    - P3 audit done (research/p3-audit-2026-10-28.md): 25-27 instr/step; the ALU floor ~1,750 cycles/record is 71-75%
-      of the H200 consumer-alone 2,421 (transfers); H100 waits do not. P3b registered with its harness patch
-      (takemyjob 0f463b2).
-    - H100 since 06:00Z: m07 / m03c / m08t1 harvested (close prefetch; no T=256 pin; T=1 fixed cost); M09 (v6 a 12.5 +
-      10.2 k us); P3b (VOID by its pairing formula, provisional) + P3c: dequant is 17 of 21.7 instr/step, T=1 fixed-cost
-      levers ranked; decode track: E2 merged, DEC-01 PASS, DEC-02 x4 run (06:57Z).
+  - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
+    mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
+    the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
+  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode 1.5926 (361/829; a scored run of L3 + v6 is in flight);
+    bf16 1.2740, attention 1.6340, prefill 1.4897. Today so far: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249
+    (L3); decode 1.5926 (the pinned trim, 00:16Z).
+  - **Quota 0959Z:** decode 16 checks / 8 runs; moe 17 / 7; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - eac consumer microbenchmark workflow wf_e58bb60c-e1f (task w9kc15qz3; judge stage; P3b/P3c now predict small reuse /
-      repack gains, so it is expected to close those levers cleanly).
-    - v6 fixed-cost workflow wf_54212dd6-936 (task won2xoh94; campaign/eb-fc): prologue cuts and a fused K2+combine
-      epilogue as variants raced against v6 at T=1, then a moe check and the decode port.
-    - Subagent harvesting DEC-02 (V2 / V3 + the decode-1 / decode-32 timeline) and drafting DEC-03 / DEC-05.
+    - Decode scored run adb9c3436aad4e1d: the bytes of check 31e0aad5 (1.637, L3 + v6, campaign/eb-l3d-s3d). Land it on
+      master if it beats 1.5926.
+    - Workflow wf_3bea73e9-fc3 (task w0audtqs6), the L4 port's second run: build (continuing the eb-l4 edits) with a
+      SASS gate on gpunode06 (CPU only), audit, fix, then the decode carry-over on a new campaign/eb-l4d-s3d.
+    - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
+      (research/fc-designs-2026-10-28/), then build on campaign/eb-fc (fast-forwarded to eb-l3), audit and fix.
   - **Next:**
-    - P3b capture.
-    - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
-      then decode.
-    - A decode-layer T=1 timeline when GPUs would idle.
-    - At 13:40Z: stop queuing, harvest, restore the node board.py symlink, and report.
+    - A moe check of L4 when its build lands (decision: scored run if it beats 1.8249); then the decode check of
+      eb-l4d-s3d.
+    - A moe check of the fixed-cost variants when built; then their decode port.
+    - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
+    - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
@@ -1752,3 +1741,14 @@ with the operator's go-ahead.
 - Rows: decode 1 x2.500, decode 16 x1.648, decode 32 x1.371, verify 1 x1.729, verify 16 x1.880, verify 32 x2.012.
 - The causal chain: P3 audit (ALU binds) -> P3b/P3c (17 of 21.7 instr/step are dequant) -> eac design judge (L3 = the
   only ALU-removing, code-only lever) -> eac SASS census (-2.0 instr/step, folds) -> production port -> judge +5.2%.
+
+## 2026-10-28T1000Z: /loop /3to1 restarted; decode L3 checks 1.637 / 1.624; scored run sent; L4 and fixed-cost relaunched
+
+- The user restarted `/loop /3to1` at ~09:51Z, after the session-limit reset; rules re-fetched (2026-10-22.1, unchanged).
+- Decode checks (finished ~08:2xZ, harvested now): **31e0aad5 (L3 + v6 at T=1, eb-l3d-s3d) 1.637** (CI 1.613-1.662)
+  and **7f9712c4 (L3 alone, eb-l3d) 1.624**, against the 1.5926 board. Every row moves the same way: decode 32 sliding
+  x1.07, verify 16 sliding x1.05, and the T=128 full rows unchanged (x0.99). v6 adds about +0.8% on top of L3 (one check).
+- The s3d check meets every decision condition (v6 built, lmem 0, MINB 2, K2 co-resident, canary, copy check, routed at
+  T=1; the 20 PATH CHOSEN lines equal 678f6e9c's). **Scored run adb9c3436aad4e1d sent at 09:54Z.**
+- Both workflows that the 08:20Z session limit stopped were relaunched at 09:58Z: L4 port (wf_3bea73e9-fc3) and the v6
+  fixed cost (wf_8f182a05-5e7, judge onward; the designs were saved from the dead run's transcripts).
