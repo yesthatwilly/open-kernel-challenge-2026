@@ -2327,3 +2327,4 @@ with the operator's go-ahead.
   - The window is gpunode06 only and ends when the jobs finish, 00:30Z at the latest. H200 held.
   - Jobs (no new packaging): moe-iso A/B of the new v4x board vs the 1.8941 bytes; a sanitizer run on the v4x classes; the odd/skew fuzz; the filler.
   - The swf and decode-kernel probes are not run (they need packaging).
+- 2158Z: attention had 1 check left (miscounted as 0): swf S1b (attn-swf 05e314b6) dispatched now as 89add1cc5468453d instead of at 00:00Z.
