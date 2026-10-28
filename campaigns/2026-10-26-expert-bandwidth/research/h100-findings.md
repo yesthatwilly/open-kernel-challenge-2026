@@ -806,3 +806,18 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
 - **Metric / instrument:** as m08t1: BY_K per party, R3a per k at the 0.45% MDE vs the base and vs same, E3 split per
   k (fidelity tol 3%); gpunode06, one pool GPU per replicate (R4), reps 1400, 28 profiled; void below 1800 MHz or on a
   check failure. Jobs 39-h100-m09t1v6-r1/r2, prio after P3b; spec nj-exp check rc 0. ~8 GPU-min in total.
+
+## 2026-10-28T06:19Z: M09 result (T=1 on the current board) and P3b validation PASS
+
+- **M09** (r1 GPU 1 / r2 GPU 3, rc 0, 1830 MHz): the node routes v6 at T=1, as the judge does. k >= 1 fits: **v6 a 12.5
+  us (se ~0.95) + ~10.2 us/expert**; v1 13.8 + ~10.4; v4 21.3 + ~9.35 (v1 and v4 reproduce m08t1 within 0.1-0.3 us).
+  v6 is 3-8% faster than v1 per k except k=4. **Decision: a >= 12 (marginal, ~0.5 se): a fixed-cost T<=8 path is the
+  T=1 lever for the next phase-A plan.** Sizing: v6 cut a by only ~1.3 us; between the k=0 floor (7.0 us) and a (12.5)
+  sit ~5.5 us of pipeline fill / K1->K2 hand-off; the combine is on the critical path for 2.5-3.8 us at every k (fuse it
+  into K2's epilogue). v1's fixed cost splits K1 70% / K2 13% / combine 17%. takemyjob e3b7f04.
+- **P3b validation PASS** (hand-run on GPU 7, 06:15-06:17Z; runs/20261027-231530-gpunode06): preflight lists every
+  required item (one optional metric dropped), per-PC SASS rows and opcode-keyed instance values present, .ncu-rep kept.
+  First opcode mix (ea4_w13, verify 1): per HMMA step LOP3 6.4, IMAD 4.3, HMUL2 4.0, SHF 2.3, LEA 2.2, PRMT 2.1, LDSM 1,
+  HMMA 1, BRA 0.9, ISETP 0.8, LDS 0.45 (27.9 per step at kernel level). P3b queued at 06:20Z (37-h100-p3b, one pool GPU).
+- Ops note: a bare gpus=7 in a job file is a count (seven pool GPUs) and GPU 7 is reserved, so GPU-7 validations are
+  hand-run (queue/README.md, takemyjob 19815b9). The staged p3b-val was pulled before it ran.

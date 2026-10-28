@@ -1668,3 +1668,9 @@ with the operator's go-ahead.
   T=1 lever is fixed cost (~14 us/call on the H100: launches, maps, PDL edges, combine), not a streaming engine.
   Correction: m08t8's 05:32Z "streaming engine at T=8" skipped the one-kernel clause; corrected to not indicated.
 - Next-plan input (phase A): a fixed-cost T<=8 path (fused K1/K2/combine or a persistent kernel) is the T=1 lever.
+
+## 2026-10-28T06:19Z: M09 (T=1 on the current board): v6 a 12.5 + 10.2 k us; fixed-cost T<=8 path indicated; P3b running
+
+- v6's fixed cost at T=1 is 12.5 us on the H100 (v1 13.8, v4 21.3); the combine sits on the critical path for 2.5-3.8
+  us per call. Phase-A input: a fused K2+combine epilogue or a persistent T<=8 kernel attacks ~5.5 us of fill/hand-off
+  plus the combine. P3b's GPU-7 validation passed (hand-run; gpus=7 in a job file is a count) and P3b is queued.
