@@ -2,10 +2,16 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1408Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1455Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
+    - ~1415Z: "i killing these hyopthesis due to low yield youre reporting.  i need you to update /hypothesize so that
+      it is creating ONLY the most valuable ones for H100 or checks.  yes, its the same thing ti did before except right
+      now i need it really really stringent on what it hypothesizes, because i cant get small ROI for the tokens this
+      skill takes.  i need it only producing the most promising leads.  with that said, right now, where is the msot
+      gain to be gotten?  if there was one area of the kernel you wanted a learn-about-anything-you-can-ask, what
+      would it be?  put it in the form of what aspect of the kernel do you wish you had a perfect answer to"
     - ~1400Z: "what is the best use of 1 hour remaining quota reset time to use up 7M tokens." (with
       /workflow-authoring; ultracode on). Read as: spend it now on token-heavy work that uses no checks; the <= 3-agent
       cap is lifted for this window.
@@ -27,15 +33,18 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6551 (+3.9%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1346Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
+  - **Quota 1455Z (checks, runs):** bf16_proj 10 8; attention_decode 10 5; moe_w4a16 10 7; decode_layer 10 5; prefill_layer 10 15 (shared with musespark-b1's churn ticks).
   - **In flight:**
-    - (`/hypothesize --n 5` withdrawn: the user stopped all five minting agents ~14:05-14:08Z; no files were
-      written. Do not re-run /hypothesize today unless the user asks.)
-    - **Token spend before the ~14:50Z reset (the user, ~1400Z):** four `phaseA-1029-panel` workflows, one lever each
-      (attn-full-splitkv wf_8bc41cd2-5f8, attn-fixed wf_c53b5c8a-873, dense wf_aea768d4-80e, engineA
-      wf_68a1b277-7b5): 2 designers (max) -> judge (max) -> red team (high) -> final spec + build brief + tonight's
-      diagnostic checks; save to research/phaseA-2026-10-29/. `size-trim-1028` wf_d74ff78b-0ee: campaign/eb-trim
-      (moe, from ea54b0ee) and campaign/eb-trimd (decode, from 4c404514), never-compiled code cut with proofs.
+    - **Split with session musespark-b1 (c24a6e21, ~14:55Z):** it runs the churn ticks (claims, implements and
+      dispatches queue picks; commits churn paths and .claude/skills/hypothesize); this session runs the campaign
+      (LOG, Now, trim, phase-A panels, memory) and runs no churn ticks. Campaign checks reserved for tonight: moe 1 +
+      decode 1 (verify the trim branches) and attention 2 (the attn-fixed panel's diagnostics); message it before
+      each dispatch.
+    - `size-trim-1028` (wf_d74ff78b-0ee, resumed 14:53Z): the build is done (moe campaign/eb-trim 742f3209:
+      989,618 -> 827,317 B; decode campaign/eb-trimd 180dff82: 988,760 -> 984,406 B); the audit and fix run now.
+    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873, resumed 14:53Z with the per-row triage in its brief). The
+      session limit killed all four panels at ~14:25Z before any design returned; attn-full-splitkv and dense are
+      dropped (triage: low headline value per token), engineA waits until the agent count allows (<= 3).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -2120,3 +2129,31 @@ with the operator's go-ahead.
   Phase C tonight fills its checks from the design panels' prepare-only diagnostic checks, phase-C variant batches and
   the existing reviewed queue items.
 - Still running: the four `phaseA-1029-panel` workflows and `size-trim-1028`.
+
+## 2026-10-28T1455Z: the stringent /hypothesize is in; the triage says attention's sliding rows hold the most gain; panels resumed selectively
+
+- **The user (~1415Z), verbatim in Now:** make /hypothesize mint only the most valuable leads for checks or the H100,
+  then: where is the most gain, and what one aspect of the kernel would I want a perfect answer to.
+- **/hypothesize:** this session wrote hyp.py's value bar (evidence, gain >= 2.5% for a check, >= 3% lever for diag /
+  h100, gain x p >= 1.5%, cost; exit 3 below it), the h100 target (`<p>/hypotheses/h100/`, on hold), `triage` and
+  `--dry-run`. The session limit (14:2xZ-14:50Z) stopped it before SKILL.md. Session musespark-b1 committed both
+  (1a8e3c68) and fixed two leftovers (cce64ff8). Memory: okc-hypothesis-churn and okc-rewrite-share amended.
+- **`hyp.py triage`, row by row (board runs):**
+  - attention: the six sliding rows carry 74% of the weight. Ours / SGLang / speed of light: 14.8-31.3 /
+    20.8-34.5 / 0.1-3.7 us, almost all fixed cost. At ~9 us each the headline goes from 1.63 to ~3.0; at max(1.3
+    SoL, 5 us) for every row, x3.5. Verify 1 full is the worst row: x1.21, 34.2 us.
+  - decode: rows sit at 1.8-3.1x their floor; every row at its floor would be x1.84. The best rows are the sliding
+    verify 32 / 16 ones (x1.11 / x1.09).
+  - moe: every row is 2.2-2.8x its floor (x1.86 in total). The worst ratios vs SGLang are decode 32 (x1.42) and
+    decode 16 (x1.72).
+  - Leaderboard top-100 vs us: attention 2.457 vs 1.634 (we are 477/943, below the median 1.642); decode 2.076 vs
+    1.655; moe 2.320 vs 1.894; bf16 1.527 vs 1.279; prefill 1.685 vs 1.501.
+- **Decision (default):**
+  - Attention's sliding-row fixed cost is today's top lever, and it is decode-portable through the sliding layers'
+    attention. The attn-fixed panel runs with that brief.
+  - Engine A (moe 100%; decode 31-56% per row) is second.
+  - attn-full-splitkv is dropped: the attention problem's decode 16 / 32 full rows run at 1.5-1.7x their floor, and
+    in decode, decode 32 full at its floor is only x1.013 on the headline. dense is deferred.
+- **/tmp is a 1 GB tmpfs:** it reached 0 MB free at ~14:56Z (91 MB now). The biggest users are leftover agent scratch
+  dirs from 10-26..10-28 (sgl-inspect 143 MB, es1a-b* 182 MB, es1a-c 91 MB, l3audit / eac*-audit ~100 MB). Nothing
+  deleted; the user was told.
