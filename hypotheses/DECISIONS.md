@@ -410,3 +410,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T145300Z `muse_moe_w4a16` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
 - 2026-10-28T145300Z `muse_prefill_layer` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
 - 2026-10-28T150028Z `muse_bf16_proj` **lt-config-sweep-m256-beyond-heuristic**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (own Risk +0.4-0.7%)
+- 2026-10-28T150028Z `muse_bf16_proj` **pooler-khalf-lt-batched-plan-m128-m256**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (self-declared below margin)

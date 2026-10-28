@@ -51,7 +51,8 @@ kind: primary
 controls_for: null
 prior: "pooler-khalf-m128-fp32-partials-triton-castadd: landed b2 with torch.bmm's heuristic algo at m=128 only; this keeps b2's partials and add-cast but picks the batched GEMM's algo from cuBLASLt's list by a read-flush pre-screen, and extends it to m=256, where pooler-k-halves-fp32-partials-restack-m128-m256's fp32 candidate lost only with torch's two-kernel add+cast (0.934-0.948)"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (self-declared below margin)"
 ---
 
 # pooler-khalf-lt-batched-plan-m128-m256
