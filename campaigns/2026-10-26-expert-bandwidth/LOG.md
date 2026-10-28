@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1203Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1149Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,10 +23,11 @@ append-only, newest last.
   - **Boards:** moe **1.8822** (330/975; fc on L4); decode **1.6428** (345/854; fc on L4, 11:31Z); bf16 1.2740
     (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 349/1412. Today: moe 1.7340 -> 1.8822
     (S3 / carrier / L3 / L4 / fc); decode 1.5926 -> 1.6428 (L3 + v6 / L4 / fc).
-  - **Quota 1132Z:** decode 13 checks / 6 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
+  - **Quota 1148Z:** decode 12 checks / 6 runs; moe 13 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Agent building X1 for the v6 family only (T=1; XB = 0 default, XB = 1 at the v6 / FAST call sites) on
-      campaign/eb-x1v6 (from eb-fc, moe) and campaign/eb-x1v6d (from eb-fcd-s3d, decode), with a CPU SASS check.
+    - X1v6 checks (11:48Z): moe 2e78be8b86844c30 (eb-x1v6 ea54b0ee, 989,618 B; bar 1.8822) and decode
+      cfdf6df3a6e44e85 (eb-x1v6d 133e4799, 988,749 B; bar 1.6428); scored run only if a v6-family arm routes at T=1
+      with no spill.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1890,10 +1891,10 @@ with the operator's go-ahead.
   transferred; the schedule change (X1) did not; the T=1 fixed-cost cut (fc) transferred at ~1-2 us per call.
 - Phase B starts (no decode build ready or due within 2 h).
 
-## 2026-10-28T1203Z: phase B: X1-for-v6 building; two attention churn picks held by the adversary (stale queue)
+## 2026-10-28T1146Z: phase B: X1-for-v6 building; two attention churn picks held by the adversary (stale queue)
 
 - X1 for the v6 family only (T=1, stacked on fc; v1-v4 keep L4's code) is building for moe and decode.
-- One churn tick (1145Z), one pick at a time, no diagnoses (token budget). Both attention picks were held by their Opus
+- One churn tick (1134Z), one pick at a time, no diagnoses (token budget). Both attention picks were held by their Opus
   reviews (~230k tokens together):
   - `sliding-verify-wgmma-window-s2b-fast-merge`: a duplicate already on master (ea24b53c); its DIAG shows the ticket
     merge losing to the PDL combine (merge_head +17.6-45 us vs +2.9-5.2 us). Added to attention FINDINGS do-not-try.
@@ -1907,3 +1908,15 @@ with the operator's go-ahead.
   366189f0; prefill had none). Regenerated from each BEST.json job with churn.py's trim_result (455d7284, 44c0baa8).
   Lesson: a hand registration in BEST.json must also rewrite BEST.result.json (churn attributes against it);
   `churn.py best-init` is not the tool for that (it re-seeds BEST.json from the highest local record, checks included).
+
+## 2026-10-28T1149Z: X1 for v6 built (SASS: no spill, v6 registers down, v1-v4 identical); checks dispatched; stamp fix
+
+- Agent (173k tokens): `eak::consume<DQ, XB = 0>` with `<2, 1>` only at ea6's single call site (the 4 board v6
+  instances and fc's K1f / K2f). CPU SASS (probes/eax1v6, gpunode06, cu130 + cu133): 0 spill; v6 72/72/78/82 (was
+  79/72/79/83), K1f / K2f 79, cmb 121; K1f + K2f co-resident at MINB 2; the 16 v1-v4 kernels and cmb
+  instruction-identical to eb-fc's. x1_emul / l4 / l3 / ea6_emul PASS.
+- Checks at 11:48Z: moe **2e78be8b** (989,618 B, no strip, 382 B under budget) and decode **cfdf6df3** (988,749 B
+  after the strip).
+- **Stamp correction:** the 11:46Z entry above was first written with an estimated 1203Z heading and "1145Z" for the
+  tick (real: 11:34:17Z, hypotheses/ticks/2026-10-28T113417Z.json); fixed from commit times. The churn DECISIONS
+  notes 5d3ceec1 / cda01307 carry the estimated 1145Z / 1200Z stamps (real 11:34Z / 11:46Z).
