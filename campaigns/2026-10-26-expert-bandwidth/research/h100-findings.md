@@ -821,3 +821,18 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   HMMA 1, BRA 0.9, ISETP 0.8, LDS 0.45 (27.9 per step at kernel level). P3b queued at 06:20Z (37-h100-p3b, one pool GPU).
 - Ops note: a bare gpus=7 in a job file is a count (seven pool GPUs) and GPU 7 is reserved, so GPU-7 validations are
   hand-run (queue/README.md, takemyjob 19815b9). The staged p3b-val was pulled before it ran.
+
+## 2026-10-28T06:20Z: P3c registered (R2): per-PC anatomy of the current board's T=1 fixed cost
+
+- **Question:** where does the T=1 fixed cost go, per PC? M09: v6 a 12.5 us + ~10.2 us/expert; k=0 floor 7.0 us; the
+  combine on the critical path for 2.5-3.8 us. ncu with P3b's sections, metrics and exports on v6 K1 / K2 (ea6_kernel)
+  and the CUDA combine (ea_combine_kernel) at decode 1, k_local 1 and 4 (4 profiled reps each); arm pinned to the
+  board's own T=1 picks (ea.on.1 v6, cmb_t.1 = 1); bytes = master's moe file 81c9802e (snap board-d01f5b757bfd).
+- **Expected:** at k=1, K1's SM-active cycles are dominated by the ramp (prologue, staging, first-record fill) rather
+  than the steady-state loop; K2's waits sit on griddepcontrol.wait and the K1->K2 hand-off; the combine is
+  latency-bound at ~2.5-3.0 us; at k=4 the consumer loop carries >= 80% of executed instructions (25-27 per step).
+- **Decision rule:** characterisation (no pin): name and size, in cycles per launch, the PCs that hold K1's and K2's
+  non-loop cycles at k=1 (prologue, staging, barrier waits, griddepcontrol.wait, epilogue). That ranks the fixed-cost
+  levers for the next phase-A plan. VOID on a dropped required item, a check failure or a clock below 1800 MHz.
+- **Instrument:** gpunode06, one pool GPU, reps 20, ncu 2026.2.1 via nj_profile.py 635e9830; validation
+  nj-moe-val-p3c hand-run on GPU 7 first (2 profiled reps, launch count 6; <= 5 min). ~4 GPU-min.
