@@ -266,3 +266,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
 - running: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 running
 - 17 stale holds expired to `done/expired/` (not run)
+- **In-kernel ticket merge (tk) for the sliding-verify wgmma window kernel** (sliding-verify-wgmma-window-s2b-fast-merge, already on master since ea24b53c; held as a duplicate 2026-10-28): after the one-pass, division-free merge_head rewrite, merge_head still costs +17.6-45.0 us and the ticket-only tail +1.5-2.7 us, against the PDL combine's +2.9-5.2 us (log of bfb0457c; check af08448e). The remaining sliding-verify gap is the window kernel itself (14.6 us alone at B=16 vs a 1.9 us floor; 22.4 us at B=32 vs 3.7 us).
