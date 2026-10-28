@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1115Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1125Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,10 +23,9 @@ append-only, newest last.
   - **Boards:** moe **1.8822** (330/975; fc on L4, 11:05Z); decode **1.6407** (346/853; L4 on L3 + v6); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 350/1412. Today: moe 1.7340 -> 1.7345 (carrier) -> 1.8249 (L3) -> 1.8719
     (L4) -> 1.8822 (fc); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1112Z:** decode 13 checks / 7 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
+  - **Quota 1123Z:** decode 13 checks / 6 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - fc decode check 5f1047f58069453b (11:12Z; campaign/eb-fcd-s3d ba8cffe5, 987,601 B): scored run only if > 1.6407
-      AND `[ea6-dl]` routes a FAST arm at T=1.
+    - fc decode scored run 9afcccc328974350 (11:23Z; check 5f1047f5 1.647, v6pe routed): land if > 1.6407.
   - **Next:**
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
@@ -1867,3 +1866,12 @@ with the operator's go-ahead.
 - **Check 5f1047f58069453b** at 11:12Z. Risk: the FAST build must join by 95 s in decode's prepare.
 - Phase B next: bf16 / attention / prefill BEST.json match their boards (1.274 rank 441/1228, 1.634 472/933, 1.4897
   223/561), so churn can run on them as is.
+
+## 2026-10-28T1125Z: decode fc check 1.647 (v6pe routes at T=1); scored run sent
+
+- **5f1047f5: 1.647** (CI 1.622-1.672) vs the 1.6407 board. `[ea6-dl] fast` as on moe; canaries bitwise =v6; race
+  v6pe 1.074 / 1.072 over v6; copy checks PASS; route `T=1 v6pe`. Decode 1 ours x1.020 / x1.011 vs the board's scored
+  run; other rows noise. Scored run **9afcccc3** sent at 11:23Z.
+- Log-tail lesson: okc keeps only the last 14,044 B of a run's log. fc's extra lines pushed the `[engineA-dl]` and the
+  T=1 `[dense-swapab]` PATH lines out of the window, so a PATH-line diff can show missing lines that are not routing
+  changes. Diff only lines present in both tails, or print a compact route summary at the end of prepare.
