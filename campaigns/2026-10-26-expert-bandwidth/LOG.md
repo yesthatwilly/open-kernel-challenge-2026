@@ -2309,3 +2309,9 @@ with the operator's go-ahead.
   - The attempt file is .worktrees/attn-swf/muse_attention_decode/attempts/2026-10-28T211904Z-check-attn-swf-s1b.md. **Dispatch it first at 00:00Z;** touch the file first (the gate wants it modified within 2 h).
   - **00:00Z plan:** attention swf S1b, then attn-shelf-stack 8e88d0b6. Then the v4x moe / decode checks as their builds land (the v4x workflow wf_8e086f5f-9f8 is running), plus a scored run for any check that beats its board.
 - 2129Z: **v4x S1 moe** (campaign/eb-v4x 25e3d240, 2 audits + fix) dispatched as f045f71064ce4104.
+- 2132Z: **v4x S1 moe f045f710 PASS 1.881, but nothing routed.**
+  - The canary was clean (792 runs, bitwise). Both arms won every class: s x1.026-1.050, d x1.012-1.031.
+  - The route selection picked s and then fell back to the incumbent because of the "s alone" rule; d was never tried. That is a bug from the audit fix 25e3d240.
+  - The fix (route d first, then upgrade to s) is building for a check tonight. moe has 5 checks left.
+  - Fix-up D barely moved (K1 +3.84 -> s +3.47), so the per-class gain comes from the fixed-cost work, not from the ticket.
+  - The decode port (eb-v4xd 6d7aaf32) is gated on S1 routing a d twin.
