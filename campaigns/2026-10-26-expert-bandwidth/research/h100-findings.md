@@ -248,3 +248,20 @@ Runs `runs/20261027-184017-gpunode06` and `-184020`; fitted with the harvest scr
   partitioned over SMs or CTA groups (a quantization of the per-expert SM share), not a flat streaming rate. S3
   design input: balance the per-expert split so the makespan does not jump at odd counts and at 9+ experts.
 - Each extra local route costs 0.11 (T=8) to 0.40 (T=16) us: routes barely matter; distinct experts do.
+
+## 2026-10-28T0234Z: S3 node validation, PRE-REGISTERED (R2) before queuing
+
+- **Bytes:** campaign/eb-s3 8dcdf0fb (the S3 builder's commit, before its two audits; Engine A v6 / v6s raced at moe
+  T=1 and T=8), moe file sha256 f4050fc3f0ac (958,245 B), pinned as `problems/moe/s3.py` (a copy, not a link). Bundle
+  nj-s3: harness nodejudge.py 02df40ec (takemyjob 0c0bc56), board 498afbd8e73d. The judge check later uses the
+  post-audit commit; if its bytes differ, Q1 reruns on them.
+- **Q1, correctness:** does s3 pass fuzz-odd (53 odd / prime bs), fuzz-skew (22 skewed bs) and the 32-shape held-out
+  sweep, every replay checked? **Rule:** any failure blocks a scored run of these bytes and goes back to the S3 fix.
+- **Q2, the staircase on the same instrument:** K9 x2 on s3 against the 0141Z board K9 (11.6 / 10.0 / 9.55 us per
+  distinct local expert at T=1 / 8 / 16, with the +14 us 8 -> 9 step). Expected if v6 routes at T=1: a smaller T=1
+  slope (the panel estimates 7.2-8.0 us on the judge). Absolute node times run higher where memory-bound (node HBM
+  ~0.69x the judge's). **Rule:** if v6 routes and the T=1 slope is not below the board's, the node says the re-split
+  did not help. Only the judge check applies the kill rule.
+- **Q3, isolated A/B:** 2 cold moe-s3-iso runs (board vs s3) and 1 moe-null-iso (board vs board, the noise floor).
+  Report the moe headline ratio, per-load ratios, the [ea6] PATH CHOSEN lines and the prepare-budget line.
+  **Rule:** reported, not decisive (HBM-bound arms do not transfer node -> judge).

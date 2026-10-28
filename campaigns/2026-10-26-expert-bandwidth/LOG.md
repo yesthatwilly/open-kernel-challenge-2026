@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0206Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0234Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -1533,3 +1533,15 @@ with the operator's go-ahead.
   iteration** (the panel saw only the 2 / 3 / 4 alternation). Ledger: research/h100-findings.md.
 - 0205Z: moe enablers integrating (E1, E3, E4 returned); S3 judge still running; E2 building. H100 queue idle until
   the program's moe jobs are staged.
+
+## 2026-10-28T0234Z: S3 built (Engine A v6, 8dcdf0fb); early node validation queued
+
+- S3 panel (research/s3-panel-2026-10-28.md, c842ecfb): **GO, Engine A v6 "S3-sched"**: grid = SMs with whole-record
+  ownership, per-expert K2 blocks, the K2 co-resident with K1 at T=1, plus a v6s arm; raced at T=1 and T=8 with its
+  own canary and copy check. The cross-CTA split (fix-ups, n=3's idle K2 CTAs) is named as the staircase's cause.
+  Expected T=1 x1.07-1.15, moe headline +1.2-2.4% [E]; kill if the per-extra-expert OLS slope stays >= 9.0 us.
+- Build 8dcdf0fb on campaign/eb-s3 (958,245 B; build / cuda_syntax / okc_lint / its CPU emulator pass). Audits are
+  running in the workflow.
+- With the H100 free: the pre-audit bytes (f4050fc3) are pinned as problems/moe/s3.py in bundle nj-s3. Queued:
+  fuzz-odd, fuzz-skew, K9 x2 (vs the 0141Z board K9), the 32-shape sweep, 2 cold isolated A/Bs and a null A/B.
+  Pre-registered in research/h100-findings.md. The judge check waits for the post-audit commit.
