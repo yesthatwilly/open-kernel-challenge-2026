@@ -2302,3 +2302,4 @@ with the operator's go-ahead.
 - 2106Z: **swf S1 109a387b PASS 1.624, but swf never routed.**
   - The canary failed at B=2, lens 3/2100, C=4: rel L2 4.91e-3 against the incumbent's 5.80e-3, with worst/mean row 6.8. Every band fell back.
   - A fix agent is finding the short-lens cause, or an over-strict criterion, and staging attn-swf-s1b for 00:00Z.
+- 2111Z: stretch results: prefill pf-rega-low-stream 6edf1cb0 1.493 (gate missed: best arm x1.075 slower, master routed; refuted); bf16 shelf-stack f37f01e7 1.2810 vs 1.2794 (+0.1%, many cells routed; inside noise, no scored run).
