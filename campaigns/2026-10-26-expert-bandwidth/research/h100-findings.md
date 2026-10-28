@@ -767,3 +767,27 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
     registered stamp). Cost ~6 GPU-min.
   - **Validation (R1):** 37-h100-p3b-val on GPU 7 (<= 5 min): rc 0, preflight stop false with the required items
     listed, per-PC SASS rows for ea4_w13/ea4_w2, opcode-keyed instance values, .ncu-rep kept. FAIL: P3b is not queued.
+
+## 2026-10-28T06:08Z: M07 + M03c + M08t1 results
+
+- 6 jobs (05:45-05:49Z), rc 0, 1830 MHz, 0 check failures; replicate GPUs 1/3, 4/5, 6/1. m07-r2 and m03c-r1 share
+  runs/20261027-224533 (same launch second), but both outputs are complete and self-consistent, so neither is VOID.
+- **M07 (K1 w2 prefetch, T=1):** **close prefetch for moe and decode.** pf3 x0.973 / x0.971 vs v1 (x0.978 / x0.976 vs
+  identity); pf2 at k=2 x0.981 / x0.974, k=3 null holds. +0.7-1.4 us/call; nothing for J0. PDL off -12%, v4 -13 to -15%.
+- **M03c (T=256 fork, cold half):** **no pin**, no S3 carrier. Best: WG PDL off +0.39% / +0.38% (inside the MDE); cw9
+  ties; cw7, cw11 and cold v3 are 0.5-1.6% slower. E3: the cold half blocks the hot path for 167-172 of ~342 us, and
+  every knob trades that blocking for path time. Serial H-16 -7.7% (the fork is worth x1.083 on the node).
+- **M08t1 (T=1 cost per local expert, fit over k >= 1):** v1 a 13.5-13.9 us, b 10.40-10.45 us/expert; v4 a 21.2-21.4,
+  b 9.35; v3 a 16.6-16.8, b 10.29; pf8 a 12.6-12.8, b 11.7 (all-k v1 11.1-11.4 + 10.9 k, as on GPU 7). a >= 12 in all:
+  **fixed-cost work at T=1** (v1 by 1.1-1.5 se). b >= 9.28 in all, but split w13 64-75% / w2 23-34%: **no streaming
+  engine.** v4 never beats v1 (ties at k=8). r2's identity row resolves (board capture slow at k <= 1): its R3a vs board
+  is void until explained; fits and E3 unaffected. m08t8 (T=8) splits ~2:1 too; its 05:27Z call skipped this clause.
+- Recorded in takemyjob 1f96029 (registrations.md).
+
+## 2026-10-28T06:09Z: correction to the 05:32Z M08t8 line (streaming engine at T=8: not indicated)
+
+- The registered rule is "b >= 9.28 us per expert **in one kernel** -> streaming engine". The 05:27Z harvest read b
+  (9.85-10.33) against 9.28 without the one-kernel clause. The per-expert cost splits between w13 and w2 roughly 2:1, as
+  their bytes do (8192 vs 4096 rows), so no single kernel carries 9.28 us per expert. **Corrected decision for T=8:
+  fixed-cost work indicated (a >= 12 us, unchanged); streaming engine not indicated.** The v4 class-8 pin is unaffected
+  (it rests on m456-c8 and R10). The 05:32Z entry stays as written; this line supersedes its streaming-engine clause.
