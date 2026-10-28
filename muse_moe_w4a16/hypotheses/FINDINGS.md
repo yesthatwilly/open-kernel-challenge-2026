@@ -1,10 +1,10 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-27T103236Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-28T113416Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.7187x [1.6930,1.7445] from job `2a7b5d2030894c4a` (submit), master commit `a865d15ecc`, hypothesis campaign-eb-w6m-fork
+1.8822x [1.8539,1.9104] from job `e2827c9e800549cd` (submit), master commit `52ab6fdef6`, hypothesis campaign-eb-fc
 
 Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -141,11 +141,11 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: cuda-fused-moe-midm-single-launch-routed [whole-layer fusion] p2 hold
 - queue: cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: marlin-exec-config-autotune-mid-m [Marlin launch config (w13 + w2)] p3 hold
-- queue: cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix [w13 marlin + silu-mul + w2 marlin] p3 queued
+- queue: cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix [w13 marlin + silu-mul + w2 marlin] p3 hold
 - queue: cuda-nvfp4-wgmma-rega-producer-scale-expand [w13 marlin + silu-mul + w2 marlin] p2 hold
-- queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 queued
+- queue: cuda-fused-split-i-moe-tiny-t [w13 marlin + silu-mul + w2 marlin] p1 hold
 - queue: wg-producer-direct-x-rows-no-gather [MoE dispatch (wgmma x gather)] p3 hold
-- queue: wg2-pingpong-consumers-occ2-b256 [w13 marlin + silu-mul + w2 marlin] p2 queued
-- queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 queued
+- queue: wg2-pingpong-consumers-occ2-b256 [w13 marlin + silu-mul + w2 marlin] p2 hold
+- queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 hold
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 queued
 - 21 stale holds expired to `done/expired/` (not run)

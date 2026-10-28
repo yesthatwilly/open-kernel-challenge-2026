@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-27T145300Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-28T113416Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -96,8 +96,8 @@ Regenerated 2026-10-27T145300Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-25T161609Z | combo-tiled-preattn-neighbour-regate-c320 | primary | combination (conjectural: tiled pre-attention as every pair's first node, sd B=16 and skF selectors re-decided, + chunk320) | done/neutral | neutral | 1.5199 | [1.497,1.543] | 52cbfaebab9646f2 | submit |  | proceed | 3/7 |
 | 2026-10-25T190812Z | merge-perkvhead-c320-sv32-tiled | primary | full decode_1 split-KV + sliding verify_32 pre-attention | done/neutral | neutral | 1.5347 | [1.512,1.558] | a78f29aeab9b47cb | submit |  | proceed | 2/3 |
 | 2026-10-25T212048Z | full-verify-wgmma-s6-split-ring-2cta | rewrite | full-layer attention (verify, wgmma stream-K kernel, per-warpgroup ring) | done/neutral | neutral | 1.5331 | [1.510,1.556] | 4899ab49d74f4df7 | check |  | proceed | 1/5 |
-| 2026-10-25T212052Z | full-verify1-wgmma-s7-grid-sm-two-level | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket) | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-25T212052Z | sliding-verify1-pseudo-fused-preattn-rope | primary | sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold) | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T212052Z | full-verify1-wgmma-s7-grid-sm-two-level | rewrite | full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket) | running | running |  |  |  |  |  | proceed |  |
 | 2026-10-25T212052Z | full-decode-sk-s5-deferred-ticket-fault-fix | rewrite | full-layer attention (decode 1<B<=64, stream-K ticket epilogue) | done/neutral | neutral | 1.5162 | [1.493,1.539] | f1d6d493c24244f4 | check |  | proceed | 1/5 |
 | 2026-10-25T212052Z | merge-perkvhead-v3chain-sv32-tiled | primary | full decode_1 split-KV launch chain (merge onto per-kvhead master, with SV32 tiled pre-attention) | done/neutral | neutral | 1.5360 | [1.513,1.565] | b4b20425eaff4942 | check |  | proceed | 3/5 |
 | 2026-10-26T222037Z | sk-full-line-gather | primary | full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping) | queue | hold |  |  |  |  |  | required |  |

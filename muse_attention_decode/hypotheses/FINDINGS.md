@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-27T145300Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-28T113416Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -248,7 +248,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 hold
 - queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 hold
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 queued
-- queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 queued
 - queue: sliding-verify1-pseudo-fused-preattn-rope [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] p1 queued
 - queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 hold
 - queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 hold
@@ -265,4 +264,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued
+- running: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 running
 - 17 stale holds expired to `done/expired/` (not run)

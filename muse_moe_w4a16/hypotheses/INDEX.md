@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894c4a` (submit)
+Regenerated 2026-10-28T113416Z. Best: 1.8822x [1.8539,1.9104] job `e2827c9e800549cd` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -66,7 +66,7 @@ Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894
 | 2026-10-25T042151Z | marlin-exec-config-autotune-mid-m | primary | Marlin launch config (w13 + w2) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T042151Z | w2-marlin-atomic-add-verify | primary | w2 marlin | done/neutral | neutral | 1.3407 | [1.321,1.361] | ccbcda65da584be0 | check |  | proceed | 4/6 |
 | 2026-10-25T044131Z | cuda-nvfp4-wgmma-rega-grouped-s4-replay-safe | rewrite | wgmma NVFP4 grouped w13+silu/w2 at 128<=T<=512: per-state tensor maps, graph-replay safety | done/neutral | neutral | 1.3439 | [1.324,1.364] | 4e7f8be895a145ba | check |  | proceed | 0/3 |
-| 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3744 | [1.354,1.395] | 7be125e9e1ea42e3 | check | done | proceed | 4/4 |
 | 2026-10-25T054545Z | cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3490 | [1.329,1.369] | d4ad4f31d2764050 | check |  | proceed | 5/6 |
 | 2026-10-25T054545Z | w13-marlin-atomic-add-t1-only | primary | w13 marlin | done/neutral | neutral | 1.3461 | [1.326,1.366] | 1048c6edf3e54892 | check |  | proceed | 3/4 |
@@ -78,7 +78,7 @@ Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894
 | 2026-10-25T145952Z | align-two-phase-port-from17 | primary | MoE align/dispatch | done/neutral | neutral | 1.3700 | [1.349,1.391] | c05a8f7326004be6 | submit | done | proceed | 4/6 |
 | 2026-10-25T145952Z | silu-mul-triton-row-tiled-gated | primary | silu-mul | done/expired | expired |  |  |  |  |  | proceed |  |
 | 2026-10-25T150301Z | restack-bucket-gate-on-master-align-atomic | primary | expert GEMM path selection (wgmma vs Marlin) restack | done/expired | expired |  |  |  |  |  | hold |  |
-| 2026-10-25T153417Z | cuda-fused-split-i-moe-tiny-t | rewrite | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153417Z | cuda-fused-split-i-moe-tiny-t | rewrite | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153417Z | wg-producer-direct-x-rows-no-gather | primary | MoE dispatch (wgmma x gather) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T153417Z | cuda-fused-split-i-moe-midt-cluster-reduce | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3885 | [1.368,1.409] | 6fe2a63f490f49a3 | check |  | proceed | 3/6 |
 | 2026-10-25T153417Z | wg-pdl-gather-w13-w2-chain | primary | launch overhead | done/neutral | neutral | 1.3752 | [1.355,1.396] | 667b64e3fb1343ec | submit | done | proceed | 3/4 |
@@ -89,8 +89,8 @@ Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894
 | 2026-10-25T161613Z | combo-wg-occ2-v64-hot-interleave-align2 | primary | combination: wgmma two-CTA/SM (prefill port) x hot-expert tile interleave + shared floor | done/neutral | neutral | 1.4021 | [1.381,1.423] | 31c27e4b8fc84bd2 | submit |  | proceed | 4/5 |
 | 2026-10-25T211728Z | restack-occ2-wg2-b256-two-stream-halves-on-master | primary | expert GEMM path selection (wgmma wg2 at B256 + Marlin two-stream halves at T 8-32) restack | done/neutral | neutral | 1.3996 | [1.379,1.421] | 6ee7b6e302a348c8 | check |  | proceed | 3/6 |
 | 2026-10-25T211822Z | nvfp4-rowowner-bulk-stream-tiny-t-rewrite | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3887 | [1.368,1.409] | c08dbd737e29442d | check |  | proceed | 2/4 |
-| 2026-10-25T211843Z | wg2-pingpong-consumers-occ2-b256 | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-25T211909Z | wg2-w13-occ2-nmax128-stg2-hot | primary | w13 marlin + silu-mul | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-25T211843Z | wg2-pingpong-consumers-occ2-b256 | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T211909Z | wg2-w13-occ2-nmax128-stg2-hot | primary | w13 marlin + silu-mul | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T211926Z | wg2-stream-k-tail-floor-g-over-r | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
@@ -98,5 +98,9 @@ Regenerated 2026-10-27T103236Z. Best: 1.7187x [1.6930,1.7445] job `2a7b5d2030894
 - cuda-fused-moe-midm-single-launch-routed: moe per-shape read 2026-10-25: its parent cuda-nvfp4-swapab-mma-persistent-small-m hit an illegal instruction on first launch (0/0 tests); hold until a fixed swap-AB runs on the CUDA path and reaches its M2
 - cuda-nvfp4-wgmma-rega-grouped-sm90a-rebuild: adversarial review: The sm_90a build fix is correct and the rewrite is worth re-running as stage 1, but the spec also requires the self-check to run in a spawned child process, and
 - marlin-exec-config-autotune-mid-m: Reviewer: no evidence SGLang moe_wna16_marlin_gemm takes thread_k/thread_n/blocks_per_sm; a print-only kwargs probe + cold-L2 config timing table rides in w13-marlin-atomic-add-on-master-small-m prepare(). Build only if a config is >=8% faster on two routings; fp32 reference; w2 in master atomic mode; T=8/16/32 only.
+- cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix: superseded (phase C 2026-10-27 2215Z): implemented, but its data-derived table routes B128 -> master and B256 -> wgmma for both GEMMs, exactly the s5 bucket-gate twin (4e4a0e26 / 7be125e9, 1.3744x); paths (b)/(c) are never selected, and the base is the stale s5 commit (master 1.7187), so a check answers no new question. Implementation left unstaged in worktree .worktrees/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-s6-per-kernel-bucket-mix (never built by nvcc).
 - cuda-nvfp4-wgmma-rega-producer-scale-expand: adversarial review: This design has already been measured and refuted. muse_prefill_layer's experts-rega-producer-scale-expand-all-t (job 6be2a8d3, written as an explicit 'port of 
+- cuda-fused-split-i-moe-tiny-t: adversarial review: Hold. The file is written against a master that no longer exists at T<=8. Today's master (86e4a4d9) runs Engine A v1/v4 there, with decode_1 at 35.0 us and veri
 - wg-producer-direct-x-rows-no-gather: own condition: first measurement must be an okc check (new cp.async/mbarrier producer can fault or hang); only scored submits remained on 2026-10-25, and a gain on master cannot move the board (best is the occ2 branch). Unhold when checks reset; apply the reviewer's fence.proxy.async and nvalid-bound fixes when building
+- wg2-pingpong-consumers-occ2-b256: killed line (X5 2026-10-27): wg2 re-split measured x0.405/0.882 (SINGLE-PASS s1 killed table), ping-pong consumer WGs x1.18-1.53 slower (prefill rega-pp, campaign K5 prior); the T<=8 incumbent is Engine A, not the wg consumer; adversary of cuda-fused-split-i-moe-tiny-t asked to close remaining wg-consumer items
+- wg2-w13-occ2-nmax128-stg2-hot: killed line (X5 2026-10-27): wg2 hot-half re-split measured x0.405/0.882 on the judge (SINGLE-PASS s1); S1a's node build shows today's wg hot half already runs at the K4 K-step rate (S/wg x0.89-0.95), so occupancy/stage tweaks of wg2 have no headroom to find
