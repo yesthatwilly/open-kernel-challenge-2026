@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1717Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1725Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -44,9 +44,8 @@ append-only, newest last.
       **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
     - **Phase-A bases, verified on the judge:** moe campaign/eb-trim 742f3209 (827,317 B; check 2864f0f4 1.8873
       PASS) and decode campaign/eb-trimd 8cb23d1f (893,346 B; check 6985e7f4 1.6452 PASS).
-    - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873; at its final spec 17:07Z): both designs back by 15:34Z ((1) "swf": one cluster
-      launch per sliding-verify step with in-kernel pre-attention on the board's wgmma window tile body; (2)
-      full verify B=1 off FA3 via the window kernel at window 0); judge, red team and final spec running.
+    - attn-fixed panel DONE (research/phaseA-2026-10-29/attn-fixed.json): swf wins; its tonight rungs are building
+      in `attn-swf-rungs-1028` (wf_c0bd87c5-5d2; worktrees attn-rung-cc, attn-rung-swf; phasec tag attn-rungs).
     - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z, at its final spec 17:07Z; brief scoped to T = 2..256 with decode's
       T = 128 / 256 ea4 rows first). attn-full-splitkv and dense stay dropped (triage: low value per token).
   - **Next:**
@@ -2222,3 +2221,21 @@ with the operator's go-ahead.
 - No scored runs: the bytes are behaviour-identical. Room for phase A: moe 162 KB, decode 96.7 KB. build.py's
   docstring strip (8cb23d1f) is proven on the judge. Runs archived in runs/; attempts on each branch.
 - Checks left: moe 6, decode 4 (the reservations are now spent); attention keeps 2 reserved for the attn-fixed panel.
+
+## 2026-10-28T1725Z: attn-fixed panel done: "swf" (one cluster launch per sliding-verify step) is tomorrow's attention build
+
+- 5 agents, ~980k tokens; saved to research/phaseA-2026-10-29/attn-fixed.json (final.build_brief, 32 KB, stands alone).
+  The judge scored swf 7.5 vs fvs 3.5. The red team said "revise" (3 major findings, 6 minor); the final spec fixes
+  all of them. Major 1: rank 0's 8 new keys are now an mma.sync seed in the prologue, not an extra ring tile.
+  Major 3: decode's room comes from eb-trimd (now verified).
+- **swf:** grid B*C, cluster C = 16 / 8 / 4 by band; the board's wgmma tile body on fixed tail-aligned slices; a
+  DSMEM merge in fixed rank order with the norm-gate fused. It is raced per band against the pinned incumbent (PRE=1
+  folds pre-attention into the prologue; PRE=0 keeps today's node). No workspace, ticket or atomic, so it differs
+  from the refuted tk merge.
+- **Expected, stage 1:** verify 1 / 16 / 32 sliding 13.9 / 19.5 / 27.1 -> ~11.0 / 15.2 / 23.2 us, attention x1.036
+  (1.634 -> ~1.69; a check from base X should read ~1.671). Stage 3 is the decode port: +0.6-0.9%. Stage 4 (fvs:
+  full verify B=1 off FA3) is conditional.
+- **Tonight (phase C, attention, reserved + 1 spare):** diag-swf-chain (the prologue chain per rank and placement),
+  diag-swf-merge (the DSMEM reduce-scatter + norm-gate cost), and diag-sw-chain-cost (no new CUDA; per-tile cost at
+  B=1, the fvs go / no-go). They are building now in `attn-swf-rungs-1028`; dispatch with phasec.py (tag attn-rungs)
+  after telling musespark-b1.
