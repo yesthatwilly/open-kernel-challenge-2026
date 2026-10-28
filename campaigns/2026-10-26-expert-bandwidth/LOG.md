@@ -42,7 +42,7 @@ append-only, newest last.
       each dispatch.
     - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope check 7284659f read
       **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
-    - Trim verification checks dispatched 17:09Z (reserved; no scored runs, behaviour-identical bytes): moe
+    - Trim verification checks dispatched 17:08Z (reserved; no scored runs, behaviour-identical bytes): moe
       trim-moe **2864f0f4** (eb-trim 742f3209, 827,317 B) and decode trim-docstrip-decode **6985e7f4**
       (eb-trimd 8cb23d1f, 893,346 B). PASS (tests + PATH lines = the board's) -> phase A bases on them.
     - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873; at its final spec 17:07Z): both designs back by 15:34Z ((1) "swf": one cluster
