@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1026Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1036Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -20,13 +20,14 @@ append-only, newest last.
   - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode **1.6262** (351/849; L3 + v6, 10:01Z); bf16 1.2740,
-    attention 1.6340, prefill 1.4897; overall 355/1410. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3);
-    decode 1.5926 (the pinned trim, 00:16Z) -> 1.6262 (L3 + v6).
-  - **Quota 1024Z:** decode 15 checks / 7 runs; moe 16 / 6; bf16, attention and prefill 20 / 10.
+  - **Boards:** moe **1.8719** (332/974; L4, 10:31Z); decode **1.6407** (346/853; L4 on L3 + v6, 10:31Z); bf16 1.2740,
+    attention 1.6340, prefill 1.4897; overall 350/1409. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3)
+    -> 1.8719 (L4); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
+  - **Quota 1036Z:** decode 15 checks / 7 runs; moe 16 / 6; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - L4 scored runs (sent 10:24Z): moe 427a6f289e6745ac (eb-l4 bytes, check 1.887; land if > 1.8249) and decode
-      3a68058a0f0a4eab (eb-l4d-s3d bytes, check 1.638; land if > 1.6262).
+    - Workflow wf_94c537c3-261 (task wg42z83lc), the **X1 port** (per-kq ldmatrix.x4 preload of x; eac x1l3 / l3 =
+      x1.037 at T=8, rule D5 PORT) on campaign/eb-x1 from eb-l4: build + SASS gate (gpunode06, CPU), audit, fix, decode
+      carry-over on campaign/eb-x1d-s3d.
     - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
       (research/fc-designs-2026-10-28/), then build on campaign/eb-fc (fast-forwarded to eb-l3), audit and fix.
   - **Next:**
@@ -1780,3 +1781,13 @@ with the operator's go-ahead.
 - Decode scored run 3a68058a sent anyway (borderline): the bytes are the board's plus a bit-identical consumer cut;
   decode has 7 scored runs left; the final rerun uses the board row's bytes. The override of the pre-registered
   PATH condition is noted in the attempt file.
+
+## 2026-10-28T1036Z: L4 scored on both boards (moe 1.8719, decode 1.6407), landed; X1 port started
+
+- **Moe 427a6f28: 1.8719** (CI 1.8438-1.9000) vs 1.8249 (+2.6%); master bfb3214b; rank 332/974 (was 372). Routing as
+  in the check.
+- **Decode 3a68058a: 1.6407** (CI 1.6161-1.6653) vs 1.6262 (+0.9%); master f3828162; rank 346/853 (was 351). Its race
+  picks went back to the board's (v4 at T=2..16, b12p pdl=1). BEST.json for both: 7511734d. Overall 350/1409.
+- Next consumer lever from the eac sweep: **X1** (B preloaded per 128-k kq with one ldmatrix.x4; x1l3 / l3 = x1.037
+  at T=8, rule D5 PORT). Workflow wf_94c537c3-261 builds it on L4 (moe first, then decode). The bench's other arms do
+  not port (reuse over v4's 96-register cap; X2 forfeits K2 co-residency; the repack closed).

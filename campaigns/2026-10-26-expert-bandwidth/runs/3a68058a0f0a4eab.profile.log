@@ -1,0 +1,117 @@
+A-dl] k2 grid gate T=1 (v1, whole layer): full/132-CTA worst ratio 0.932 -> full grid
+[engineA-dl] combine gate T=1 (whole layer): Triton/CUDA worst ratio 1.019 -> CUDA
+[engineA-dl] combine gate T=8 (whole layer): Triton/CUDA worst ratio 1.011 -> CUDA
+[engineA-dl] combine gate T=16 (whole layer): Triton/CUDA worst ratio 1.003 -> CUDA
+[engineA-dl] combine gate T=32 (whole layer): Triton/CUDA worst ratio 1.006 -> CUDA
+[engineA-dl] pdl gate T=1 (whole layer, R -> K1): plain/PDL worst ratio 0.992 -> plain
+[engineA-dl] PATH CHOSEN T=1 = ENGINE A v6
+[engineA-dl] PATH CHOSEN T=2..16 = ENGINE A v4
+[engineA-dl] PATH CHOSEN T=17..32 = ENGINE A v4c
+[engineA-dl] PATH CHOSEN T=128 = ENGINE A v4c
+[engineA-dl] PATH CHOSEN T=256 = ENGINE A v4c
+[dense-swapab] PATH CHOSEN T=1: qkv_gate SWAP-AB (swap-AB 11.42 vs cuBLAS 13.34 us), o SWAP-AB (swap-AB 5.01 vs cuBLAS 5.63 us); whole layer x1.033
+[dense-swapab] PATH CHOSEN T=2..8: qkv_gate SWAP-AB (swap-AB 11.79 vs cuBLAS 13.52 us), o SWAP-AB (swap-AB 5.01 vs cuBLAS 5.33 us); whole layer x1.015
+[dense-swapab] PATH CHOSEN T=9..16: qkv_gate SWAP-AB (swap-AB 11.84 vs cuBLAS 13.26 us), o SWAP-AB (swap-AB 5.04 vs cuBLAS 5.34 us), unpooler MASTER (PINNED; gemm x1.029; swap-AB 16.62 vs cuBLAS 17.15
+[dense-swapab] PATH CHOSEN T=17..32: qkv_gate SWAP-AB PINNED (swap-AB 12.91 vs cuBLAS 13.31 us), o SWAP-AB PINNED (swap-AB 5.23 vs cuBLAS 5.39 us), unpooler MASTER (gemm x1.012; swap-AB 16.66 vs cuBLA
+[hotcold] PATH CHOSEN T=256 (192..256): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block 16, cold split by cost), layer 452.5 us vs master 465.8 us
+[b12p] ===== bulk12 P T=1 SUMMARY (0.6 s; build 37.3 s at import; prepare at 109.8 s) =====
+[b12p] encode: pooler base 54 (binades -19..-4), escapes 4596 (1.4e-04), max 52/CTA (cap 224); stream 58.98 MB vs raw P 75.50 MB; host + device round trips bit-exact (pooler + router tail) (0.0 s)
+[b12p] check b12p<8,8,1> pdl=0: ok; ei rel 0.0017 row 0.0017, logits rel 1e-06 (incumbent 1.3e-06)
+[b12p] check b12p<8,4,1> pdl=0: ok; ei rel 0.0017 row 0.0017, logits rel 2.2e-06 (incumbent 1.3e-06)
+[b12p] check b12p<8,8,4> pdl=0: ok; ei rel 0.0017 row 0.0017, logits rel 1e-06 (incumbent 1.4e-06)
+[b12p] check b12p<12,8,4> pdl=0: ok; ei rel 0.0017 row 0.0017, logits rel 1e-06 (incumbent 1.5e-06)
+[b12p] check b12p<8,8,1> pdl=1: ok; ei rel 0.0017 row 0.0017, logits rel 1e-06 (incumbent 1.4e-06)
+[b12p] check b12p<8,4,1> pdl=1: ok; ei rel 0.0017 row 0.0017, logits rel 2.2e-06 (incumbent 1.4e-06)
+[b12p] check b12p<8,8,4> pdl=1: ok; ei rel 0.0017 row 0.0017, logits rel 1e-06 (incumbent 1.4e-06)
+[b12p] check b12p<12,8,4> pdl=1: ok; ei rel 0.0017 row 0.0017, logits rel 1.1e-06 (incumbent 1.4e-06)
+[b12p] gemm P T=1 (read flush, pdl=0), us: incumbent 19.63, <8,8,1> 15.87 (3.72 TB/s) x1.234, <8,4,1> 16.02 (3.68 TB/s) x1.224, <8,8,4> 15.74 (3.75 TB/s) x1.246, <12,8,4> 15.39 (3.83 TB/s) x1.270 -> b
+[b12p] layer canary b12p<12,8,4> pdl=0 in kernel_fn T=1: ok
+[b12p] layer canary b12p<12,8,4> pdl=1 in kernel_fn T=1: ok
+[b12p] layer gate T=1 b12p<12,8,4>, us incumbent/pdl0/pdl1 per round: 102.0/98.8/98.3 102.0/99.0/98.2 | 95.2/92.8/91.4 95.5/92.4/91.3 -> pdl0 x1.026, pdl1 x1.038 -> b12p pdl=1
+[b12p] layer check T=1 (on vs off, 2 inputs) ok: worst hidden 0.0014, stream 0.0011, update 0.0016, k_rel 0, v_rel 0, k_gap 0, v_gap 0, tokens_rerouted 0
+[b12p] copy check: 8 replays on two states, T=1: PASS
+[b12p] profiler T=1: b12p_kernel x1, dl_pooler_router_kernel x0 -> ok
+[b12p] PATH CHOSEN P T=1: B12P<12,8,4> pdl=1 (gemm x1.270, whole layer x1.038); T>1 incumbent
+[skfull] build muse_decode_sk_s3_fl1 (-DSK_FULLLINE=1): ok in 37.4s at import
+[skfull] sk_fullline_canary: 6 cases (4 synthetic, 2 judge-shaped) bitwise identical half-line vs full-line, tickets 0, synced
+[skfull] stage-2 self-check (full-line, single-level): ok
+[skfull] state check (this state's buffers): ok
+[skfull] layer canary + check d16f (on vs off): attention output bitwise IDENTICAL (half-line run-to-run deterministic), graph replays finite True, tickets 0; hidden 0, stream 0, update 0, k_rel 0, v_
+[skfull] layer gate d16f (whole layer, read flush), us half/full per round: 249.9/243.3 249.0/242.8 | 273.7/267.6 273.7/267.8 -> worst x1.022 (need >= 1.01 every round) -> FULL-LINE
+[skfull] layer canary + check d32f (on vs off): attention output bitwise IDENTICAL (half-line run-to-run deterministic), graph replays finite True, tickets 0; hidden 0, stream 0, update 0, k_rel 0, v_
+[skfull] layer gate d32f (whole layer, read flush), us half/full per round: 378.4/342.9 378.8/343.4 | 427.8/391.0 427.7/390.6 -> worst x1.094 (need >= 1.01 every round) -> FULL-LINE
+[skfull] PATH CHOSEN full decode attention d16f K/V gather: FULL-LINE (SK_FULLLINE, muse_decode_sk_s3_fl1; whole layer x1.022)
+[skfull] PATH CHOSEN full decode attention d32f K/V gather: FULL-LINE (SK_FULLLINE, muse_decode_sk_s3_fl1; whole layer x1.094)
+[skfull] ===== W3-A SUMMARY (0.7 s; prepare at 110.5 s) fl={16: True, 32: True} =====
+[c320d] ===== c320 d1f SUMMARY (setup 0.8 s; build 37.6 s at import; prepare at 111.3 s) =====
+[c320d] attrs cubin/regs/local B/smem B/CTA per SM: A 90/95/0/87568/2, combine 90/90/0/0/1, trig 90/90/0/0/1 -> ok
+[c320d] canary ok, Q bitwise ok; cases 22x2 c320 ok c320t ok, worst ref 1.8e-03 V0 4.5e-04 (V0-ref 1.8e-03), TRIG diff 0; replays c320 ok, c320t ok
+[c320d] readout Q->O d1f (graph, read flush), us inc/c320/c320t per round: 39.01/35.84/34.27 | 38.88/35.84/34.14; c320 x1.087, c320t x1.138, TRIG delta -1.63 us
+[c320d] layer canaries c320 ok, c320t ok; gate d1f worst c320 x1.029, c320t x1.044 (>= 1.01); TRIG head to head c320t vs c320 x1.013 (need >= 1.003 every round) -> c320t -> c320t; mean us 104.2/101.1/
+[c320d] c320t: layer check ok (k/v gap 0); copy check PASS; profiler d1f: c320_attn x1, c320_combine x1, sk x0 -> ok; tickets 0
+[c320d] PATH CHOSEN full decode_1 attention (piece A): C320 c320t [c320_attn<320,false> plain + combine<320,16,PDL,ONEPASS,TRIG>] (whole layer x1.044); other shapes unchanged
+[w6b-t128diet] t128_cells_canary T=128 norm vs fp64 0.0017 (inc 0.0017; vs inc 2.1e-05)
+[w6b-t128diet] t128_cells_canary T=128 comb vs fp64 0.0017 (inc 0.0024; vs inc 0.0029)
+[w6b-t128diet] t128_cells_canary T=128 pool vs fp64 0.0017 (inc 0.0017; vs inc 0.00016)
+[w6b-t128diet] t128_cells_canary T=128 hilo vs fp64 1.2e-06 (inc 1.4e-06; vs inc 8.8e-07), top-8 differs on 0/128
+[w6b-t128diet] t128_cells_canary T=128 unpool vs fp64 0.0017 (inc 0.0017; vs inc 0)
+[w6b-t128diet] t128_cells_canary T=256 norm vs fp64 0.0017 (inc 0.0017; vs inc 2.7e-05)
+[w6b-t128diet] t128_cells_canary T=256 comb vs fp64 0.0017 (inc 0.0024; vs inc 0.0029)
+[w6b-t128diet] t128_cells_canary T=256 pool vs fp64 0.0017 (inc 0.0017; vs inc 0)
+[w6b-t128diet] t128_cells_canary T=256 hilo vs fp64 2.3e-06 (inc 2.1e-06; vs inc 1.1e-06), top-8 differs on 0/256
+[w6b-t128diet] Q1 T=128 norm isolated r1/r2 x3.704/3.679 (bar 1.5)
+[w6b-t128diet] Q1 T=128 comb isolated r1/r2 x1.989/2.012 (bar 1.15)
+[w6b-t128diet] Q1 T=128 pool isolated r1/r2 x1.156/1.152 (bar 1.07)
+[w6b-t128diet] Q1 T=128 hilo isolated r1/r2 x2.524/2.486 (bar 1.5)
+[w6b-t128diet] Q1 T=128 unpool isolated r1/r2 x1.044/1.042 (bar 1.02)
+[w6b-t128diet] rider T=128 us r1/r2 before -> after: main 30.8/30.5 -> 24.2/24.3; side 26.5/26.4 -> 16.5/16.4; Q2 slack +4.3/+4.1 -> +7.7/+7.8
+[w6b-t128diet] rider T=128 no-op norm +0.4/-0.2 of 333.4/333.4 us; cells norm+comb+pool+hilo+unpool
+[w6b-t128diet] gate T=128 ['norm', 'comb', 'pool', 'hilo', 'unpool'] (layer, 2 inputs x 2 rounds): worst x1.047 (>= 1.01), us 341.6 -> 324.7
+[w6b-t128diet] layer check T=128 (on vs off, 2 inputs) ok: worst hidden 0.0026, stream 0.0022, update 0.0029, k_cache 0, k_gap 0, ids_tokens_differ 0
+[w6b-t128diet] Q1 T=256 norm isolated r1/r2 x2.500/2.605 (bar 1.5)
+[w6b-t128diet] Q1 T=256 comb isolated r1/r2 x0.994/1.012 (bar 1.15, DROP)
+[w6b-t128diet] Q1 T=256 pool isolated r1/r2 x1.031/1.045 (bar 1.02, PINNED)
+[w6b-t128diet] Q1 T=256 hilo isolated r1/r2 x2.087/2.037 (bar 1.5)
+[w6b-t128diet] rider T=256 us r1/r2 before -> after: main 35.9/36.4 -> 32.4/32.6; side 31.5/31.4 -> 22.3/22.2; Q2 slack +4.4/+5.1 -> +10.1/+10.4
+[w6b-t128diet] rider T=256 no-op norm +0.2/+1.1 of 457.4/458.0 us; cells norm+pool+hilo
+[w6b-t128diet] gate T=256 ['norm', 'pool', 'hilo'] (layer, 2 inputs x 2 rounds): worst x1.026 (>= 1.01), us 442.4 -> 415.1
+[w6b-t128diet] layer check T=256 (on vs off, 2 inputs) ok: worst hidden 0.00022, stream 0.00017, update 0.00022, k_cache 0, k_gap 0, ids_tokens_differ 0
+[w6b-t128diet] [hotcold] copy check: 16 replays on two states, T [128, 256]: PASS
+[w6b-t128diet] PATH CHOSEN T=256: CELLS norm+pool+hilo (pool PINNED)
+[w6b-t128diet] Q3: judged v16 / v32 rows vs 7ceab934 (expect -4..-8 / -3..-6 us); 1.9 s
+[w6p-perhead] ===== W6P SUMMARY (setup 6.4 s; prepare at 119.7 s) =====
+[w6p-perhead] Q2 SKW TU build 39.1 s at import; sliding_cluster_kernel<true> (no new module): 122 regs, 32 B local, 103424 B smem, sm_90/ptx 90, co-resident clusters of 16 14 (need >= 2)
+[w6p-perhead] d1s_perhead_canary: 26 cases ok; PERHEAD vs own-q fp64 rel 1.8e-03 row 2.6e-03 (<= 0.015/0.05), k rel 0.0e+00 gap 0, v + other rows bitwise; info: vs exact fp64 / fp8-q ref err x1.48, vs
+[w6p-perhead] two-state alternation (2 inputs x 4 replays, vs BN64 and the fp64 / fp8-q judge form): ok
+[w6p-perhead] layer check d1s (PERHEAD vs BN64, 2 inputs, loose as SKW) ok: worst hidden 0.023, stream 0.023, update 0.032, k_cache 0, k_gap 0, ids_tokens_differ 0
+[w6p-perhead] copy check: 8 replays on two states, d1s PERHEAD: PASS
+[w6p-perhead] Q1a attn ratio (in0r1 in0r2 in1r1 in1r2) vs best Triton x1.094 x1.096 x1.107 x1.111 (>= 1.03; best BN128/128/64/64), vs BN64 x1.105 x1.102 x1.107 x1.111
+[w6p-perhead] Q1b layer ratio vs BN64 x1.036 x1.037 x1.039 x1.035 (>= 1.003); mean us attn BN64/BN128/PH 25.00/24.95/22.60, layer BN64/PH 101.2/97.6
+[w6p-perhead] PATH CHOSEN d1s sliding attention (B=1, q_len 1): PERHEAD (attention side x1.094 vs the best Triton, whole layer x1.035, worst round)
+[w6p-perhead] counters at the end: 0
+[w6p-perhead] kill: attn < 1.03 vs best Triton in any round, layer < 1.003, or a check miss -> BN64; port killed if judged d1s gains < 1.0 us vs its own SGLang time
+[w6p-perhead] expected: judged d1s -1.0..-2.5 us (attention side x1.10-1.25), every other row 0
+[engineA-dl] anatomy T=1 (v6): expert block 25.3 us for 2 local experts (56.6 MB, 2.24 TB/s); no local route 6.1 us
+[engineA-dl] anatomy T=8 (v4): expert block 57.0 us for 5 local experts (141.6 MB, 2.48 TB/s); no local route 9.3 us
+[engineA-dl] anatomy T=16 (v4): expert block 120.6 us for 14 local experts (396.4 MB, 3.29 TB/s); no local route 9.2 us
+[engineA-dl] anatomy T=32 (v4c): expert block 130.8 us for 15 local experts (424.7 MB, 3.25 TB/s); no local route 9.3 us
+[hotcold] anatomy T=128 (H=-16): routes 171, hot 3 experts (91 routes), cold 16; all 218.7 us (538 MB, 2.46 TB/s); hot 72.2 us (85 MB, 1.18 TB/s); cold 144.7 us (453 MB, 3.13 TB/s)
+[hotcold] anatomy T=256 (H=-16): routes 316, hot 5 experts (206 routes), cold 17; all 270.1 us (623 MB, 2.31 TB/s); hot 108.7 us (142 MB, 1.30 TB/s); cold 156.6 us (481 MB, 3.07 TB/s)
+[w6g-hcgate] Q1b promote at T=128: no; cells-off pick H-16 kept -> H-16+comb (cells-off race routed H-16: confirm only promotes (incumbent kept))
+[w6g-hcgate] Q2 v16s/v16f: confirm did not decide; judge vs 4a7a49d0 (hybrid) / f2aece51 (master)
+[w6g-hcgate] kill: no H >= 1.03/1.02 vs master+cells every round, or any canary/layer/copy miss -> the cells-off pick; expected: v16s/v16f -10..-20 us each when H routes where the race said master
+[hotcold] PATH CHOSEN T=128 (128..191): HOT/COLD H=-16 (cold experts block 16, hot > 16 rows block 16, cold split by cost), layer 354.2 us vs master 348.2 us
+[w6b-t128diet] PATH CHOSEN T=128: CELLS norm+comb+pool+hilo+unpool
+[w6g-hcgate] PATH CHOSEN T=128 (128..191): H-16+comb with W6-B cells norm+comb+pool+hilo+unpool (cells-off race H-16); 0 s
+[combo] gate stream basis: draw 1 beta 0.15, worst distinct error 11.7% (0.7 s); busiest range routes/distinct/max/hot per BxL: 1x1 2/2.4/1/0.0 (judge distinct 2.5), 1x8 12/6.6/4/0.0 (judge distinct 7.5), 16x1 25/8.1/7/0.0 (judge distinct 7.5), 32x1 44/8.4/13/0.0 (judge distinct 9.0), 16x8 170/20.2/35/3.0 (judge distinct 18.4), 32x8 320/22.4/71/5.9 (judge distinct 21.3)
+[engineA-dl] gate inputs, busiest range routes/distinct/max/hot: T=1 3/2.5/1/0.0 (n=50), T=2 4/3.3/2/0.0 (n=6), T=3 5/4.0/2/0.0 (n=1), T=5 8/4.0/4/0.0 (n=1), T=8 13/7.6/4/0.0 (n=18), T=9 16/9.0/4/0.0 (n=1), T=12 16/7.0/5/0.0 (n=1), T=16 24/7.4/8/0.0 (n=18), T=17 24/7.8/8/0.0 (n=6), T=24 36/9.0/13/0.0 (n=1), T=32 46/9.5/14/0.2 (n=18), T=128 165/20.1/37/2.6 (n=27), T=256 322/22.7/74/5.6 (n=32)
+[ea6-dl] build 37.9 s (regs/lmem B/occ): K1m2 79/0/1 K1m1 72/0/1 K2m2 79/0/2 K2m1 83/0/2; MINB 2; grid 132; K2 co-resident at T=1: yes
+[ea6-dl] canary T=1 (9 inputs x 2 runs, K1 plain, NaN h/y): clean; worst rel-L2 vs fp32 0.00397, master worst 0.0066; repeat runs bitwise equal
+[ea6-dl] T=1 block us n1..n5 r1: inc(v1) 19.4/26.3/37.0/42.9/54.8 | v6 17.8/25.8/35.0/42.7/49.6; per extra expert (2>3/3>4/4>5/OLS2-5): inc 10.62/5.92/11.94/9.14 | v6 9.22/7.68/6.98/7.93
+[ea6-dl] T=1 block us n1..n5 r2: inc(v1) 19.5/26.2/36.9/42.7/54.8 | v6 18.1/25.8/35.0/42.5/49.8; per extra expert (2>3/3>4/4>5/OLS2-5): inc 10.66/5.79/12.19/9.17 | v6 9.18/7.55/7.30/7.96
+[ea6-dl] T=1 block inc/v6 n1..n5: r1 1.086/1.022/1.057/1.005/1.104 ; r2 1.076/1.016/1.054/1.003/1.101 | wr (judge mix n2..5) 1.037/1.032 (>= 1.03, 1.02t) | floor margin +0.033@n4 -> Q
+[ea6-dl] whole layer T=1 us inc(v1) vs v6 r1/r2: in0 n=3 107.4/107.4 vs 105.0/104.6 x1.023/1.026; in1 n=2 96.5/96.2 vs 96.0/96.3 x1.005/1.000; worst x1.000 (guard >= 0.995) -> v6
+[ea6-dl] v6 T=1: K1 plain (EAD_PLAIN_K1); combine gate -> CUDA (x1.018); layer check ok
+[ea6-dl] copy check v6 T=1: 8 replays on two states: PASS
+[ea6-dl] route T=1: v6 -> v6 (K1 plain, K2 co-resident, CUDA combine); stage 0.8 s, prepare at 64.4 s
+[ea6-dl] PATH CHOSEN T=1 = ENGINE A v6 (T>=2 unchanged; T=8 ENGINE A v4, EAD_PIN v4 routed)
