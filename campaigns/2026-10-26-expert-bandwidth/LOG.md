@@ -30,7 +30,10 @@ append-only, newest last.
   - **Next:**
     - fc's decode port if its moe check routes a FAST arm and wins.
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
-    - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
+    - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
+      harvest, and restore takemyjob `probes/nodejudge/problems/moe/board.py` to its committed symlink
+      (`ln -sfn /home/user/git/musespark/muse_moe_w4a16/submission.py board.py`; it is now a plain-file copy of the
+      10-27 board, 498afbd8, kept in snap/), then report.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
