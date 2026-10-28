@@ -2283,3 +2283,14 @@ with the operator's go-ahead.
 - 2048Z: attn diag-swf-rungs (diag-swf-chain + diag-swf-merge, one check; campaign/attn-rung-swf 62713ae5, audited) dispatched as 296ec797b8294f4c.
 - 2056Z: decode dec-rt-tail (the routing-tail settling probe; phasec/dec-rt-1028 65306cbf) dispatched as 0635f30d0dc84455.
   - **attn swf stage 1** (campaign/attn-swf d63a1d92; 2 audits, both majors fixed) dispatched as **109a387b34a3441a**. It uses attention's last check tonight rather than the shelf-stack stretch, because it has the higher EV and an early readout.
+- 2058Z: diag-swf-rungs 296ec797 PASS (1.614, routing unchanged). The judge's swf chain, net of the null node:
+
+  | (B, C) | full+QPRO | QPRO cost | merge |
+  |---|---|---|---|
+  | (1,16) | 7.52 us | +2.66 | +3.04 |
+  | (1,8) | 8.58 | +3.07 | +2.27 |
+  | (16,8) | 10.56 | +3.42 | +3.62 |
+  | (32,4) | 13.50 | +3.17 | +1.82 |
+
+  - Every check is ok, err 0, and clusters place one per SM at B=1. MaxActiveClusters at C=16 is 14 (7 when padded).
+  - At B=1 the chain + merge is ~10.5 us, against the board's verify_1 sliding row of 13.4 us. That supports swf S1 (109a387b, in flight).
