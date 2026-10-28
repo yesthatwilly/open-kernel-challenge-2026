@@ -41,7 +41,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-s4-bm256-wide-tile-high-ft: queued and unmeasured; it halves activation bytes per FLOP inside one CTA; this adds mc2's cross-CTA slab multicast on top, so issued slab bytes per FLOP drop 4x, and the gate compares against the better single winner"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 and bm256 both slower; DISTILL retire"
 ---
 
 # experts-rega-mc2-bm256-stack-high-ft
