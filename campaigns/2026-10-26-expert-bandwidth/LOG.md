@@ -2275,3 +2275,8 @@ with the operator's go-ahead.
 - 2032Z: TC-A moe-fx-tca f720d749 PASS (1.897, routing unchanged): D=+4.62 us (K1 +4.35, K2 +4.90), E1 +5.40, E2 +5.74, so **BUILD v4x S1 mid**. Launched phaseA-v4x-s1-build-1028 (wf_8e086f5f-9f8): moe build, 2 audits, fix, then the decode port after TC-B.
   - tonight-leads-1028 minted 0 of 5 problems: nothing at >= 2.5% is buildable in 90 min, and the rejections are recorded with their EV.
   - Stretch checks below the bar (checks expire at 00:00Z; tokens to spend): tonight-stretch-1028 (wf_f9fc40c1-0b2) builds prefill rega-low weight stream, the bf16 shelf stack and the attention shelf stack.
+- 2034Z: diag-sw-chain-cost 664a6da6 PASS 1.625 (readout in its log; the swf workflows read it).
+  - TC-B dec-fx-tcb b47f8f73: the readout printed (D_dec +5.12 us: K1 +5.58, K2 +4.66; E2c +4.35), so **BUILD v4x decode**.
+  - **The run FAILED timing:** the verify_32-full routing recheck at repetition 8 ("token 88 dropped expert 22 ... 3.21e-02 above its 9th best (> 0.03)").
+  - The same base without the probe passed: trim 6985e7f4, board 83f0c00e.
+  - An investigator is checking probe side effects vs a latent T=256 routing hazard (/home/user/git-scratch-c24a6e/decode-recheck-diag.md). If latent, the board's final held-out rerun is at risk.
