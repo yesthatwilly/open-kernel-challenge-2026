@@ -2355,3 +2355,7 @@ with the operator's go-ahead.
   - The moe v4x sanitizer runs were VOID: the copy check runs out of memory under compute-sanitizer and falls back to master. Fuzz passed 6/6.
 - The workflow cap is CPUs-2 = 2 per workflow, so the lanes are being split into separate workflows: t1 runs as wf_aca4e81a-ce1, and t256 will be relaunched after its designers finish.
 - 2026-10-28T2245Z: scored 787a2815 read **1.9253** [1.896, 1.954]: a tie with af154932 inside the margin, but it is now the board's run, with verify_32 at 297.1 us. Landed on master and registered.
+- 2026-10-28T2300Z H100 anatomy (research/h100-expert-1028.md, 03f391c8):
+  - **T=1:** K1 w13 runs 0-19.0 us. K2 w2 ends at 27.5: its loads wait on griddepcontrol and do not overlap K1, adding ~3.4 us of tail per expert. K1 reaches ~2.0 of 3.11 TB/s. Levers: prefetch w2 before the wait (<= 5-6 us), K1 streaming (~5), fusing the combine (~2.5).
+  - **T=256:** the halves cannot co-reside (cold w13 fills every SM; a hot CTA needs a whole SM). The cold half is per-SM-bound (DRAM 73%, SM 44%, tail imbalance 1.11), and the uncovered hot tail is 0, so the levers are per-SM dequant and cold-grid tail balance, not concurrency.
+- The t1 lane was restarted with this evidence as wf_d5b8f0cb-af6. The t256 relaunch after its designers finish will carry it too.
