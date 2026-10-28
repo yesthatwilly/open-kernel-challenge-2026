@@ -2,10 +2,13 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1346Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1400Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
+    - ~1400Z: "what is the best use of 1 hour remaining quota reset time to use up 7M tokens." (with
+      /workflow-authoring; ultracode on). Read as: spend it now on token-heavy work that uses no checks; the <= 3-agent
+      cap is lifted for this window.
     - ~0530Z: "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8 hours",
       corrected mid-turn to **"at MOST the next 8"** (hard stop 13:40Z). In scope: H100 (gpunode06) jobs and judge checks /
       scored runs of H100-derived candidates. H200 (gpunode26) held.
@@ -26,8 +29,13 @@ append-only, newest last.
     1.2794.
   - **Quota 1346Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
   - **In flight:**
-    - `/hypothesize --n 5` (the user, ~13:40Z; read as `all`): wave 1 minting agents for prefill, bf16 and decode;
-      wave 2 (moe, attention) when they return (<= 3 agents).
+    - `/hypothesize --n 5` (the user, ~13:40Z; read as `all`): wave 1 (prefill, bf16, decode) and wave 2 (moe,
+      attention, launched ~13:59Z) minting agents.
+    - **Token spend before the ~14:50Z reset (the user, ~1400Z):** four `phaseA-1029-panel` workflows, one lever each
+      (attn-full-splitkv wf_8bc41cd2-5f8, attn-fixed wf_c53b5c8a-873, dense wf_aea768d4-80e, engineA
+      wf_68a1b277-7b5): 2 designers (max) -> judge (max) -> red team (high) -> final spec + build brief + tonight's
+      diagnostic checks; save to research/phaseA-2026-10-29/. `size-trim-1028` wf_d74ff78b-0ee: campaign/eb-trim
+      (moe, from ea54b0ee) and campaign/eb-trimd (decode, from 4c404514), never-compiled code cut with proofs.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -2084,3 +2092,20 @@ with the operator's go-ahead.
   c2117f4a; decode rank 345/863. The decode board row now pins v4c at T=9..16 (deterministic there).
 - **The user, ~13:40Z: `/hypothesize --n 5`** (no problem named; read as `all`, 5 each). Wave 1 (prefill, bf16,
   decode) is minting with today's measurements in the brief; moe and attention follow (<= 3 agents at once).
+
+## 2026-10-28T1400Z: the user: use ~7M tokens before the ~14:50Z quota reset; tomorrow's phase-A design panels launched
+
+- **The user, ~1400Z:** "what is the best use of 1 hour remaining quota reset time to use up 7M tokens." Answer taken:
+  front-load tomorrow's phase-A design work, which is token-heavy and spends no checks; tomorrow's quota then goes to
+  builds and checks. Also run the size enabler both decode-side files need and /hypothesize wave 2. The <= 3-agent cap
+  is lifted for this window by the request. This box has 4 CPUs, so a workflow runs 2 agents at once: one workflow per lever.
+- `phaseA-1029-panel` x 4, launched ~13:58-14:00Z (date -u read 14:00Z right after): attn-full-splitkv (decode 32 full's splitkv_attn_sk 187.5 us),
+  attn-fixed (the window path's ~9-10 us and FA3's ~15-22 us fixed cost), dense (split-K tail, router + pooler, streaming
+  at m <= 32), engineA (the v4-family fixed cost at T = 2..32, a persistent T <= 8 engine). Each runs 2 designers from
+  different angles (max), then a judge (max), a red team (high) and a final spec (max) with a standalone build brief
+  and tonight's prepare-only diagnostic checks for phase C.
+- `size-trim-1028`: branches campaign/eb-trim and campaign/eb-trimd from the board sources. It deletes never-compiled
+  code, aiming at >= 20 KB per file, and proves the change by byte-identical module sources, an AST diff, lint and
+  cuda_syntax; then an audit and a fix pass.
+- /hypothesize wave 2 (moe, attention) launched ~13:59Z with the panel's scope named, so it does not mint the same
+  rewrites; wave 1 (prefill, bf16, decode) still running.
