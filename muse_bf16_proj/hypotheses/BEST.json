@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "254c83ae55834807",
+ "job": "3e3ffc5afc57433b",
  "check_job": "474490c8258d4521",
  "mode": "submit",
- "speedup": 1.2739626767393788,
+ "speedup": 1.279360358306445,
  "ci": [
-  1.254853236588288,
-  1.2930721168904693
+  1.2601699529318484,
+  1.2985507636810416
  ],
- "score_us": 3791.947824063501,
- "commit": "478146a174857d513ecf2daaead021eb40660328",
- "submission_blob": "ada0503dc81049c9bfc984ad24101c09d992438f",
- "slug": "router-pdl-plus-khalf-pooled-iqr-gate",
+ "score_us": 3775.9494177190063,
+ "commit": "62da2d9e805bd0a710a40eaa6e30439360a4f068",
+ "submission_blob": "a36f33927c06500cbba267d7e0be2235eb8cd716",
+ "slug": "phasec-pc-lt-qkv128-readflush",
  "result": null,
- "updated_at": "2026-10-27T145200Z",
- "master_slug": "router-pdl-plus-khalf-pooled-iqr-gate",
- "master_job": "254c83ae55834807",
- "note": "landed by hand 2026-10-27 (orchestrator): router zero-fill + PDL at m=9..256 (routed 16/128/256 in the scored run) + the khalf b2 POOLED gate rule (10 rounds, decide on 1-3: every >= 1.01, median >= 1.03, pooled IQR <= 2.0x); check 023f4260 1.2723; churn had it as neutral."
+ "updated_at": "2026-10-28T1302Z",
+ "master_slug": "phasec-pc-lt-qkv128-readflush",
+ "master_job": "3e3ffc5afc57433b",
+ "note": "registered by hand 2026-10-28: phase-C variant pc-lt-qkv128-readflush (campaign expert-bandwidth, branch phasec/bf16-1028 92b717c2) = the 1.274 board with the qkv m=128 cuBLASLt plan ranked and gated under the judge's read flush; check 0c9095e2 1.2844; scored 1.2794 vs 1.2740; landed on master."
 }
