@@ -74,7 +74,7 @@ review: proceed
 status: running
 review_at: 2026-10-25T212856Z
 review_companions: null
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-28T145301Z
 base_sha: 47926f5e7d8a192184e21177901be2034d2d4930
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -83,6 +83,12 @@ worktree: .worktrees/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-
 mode: null
 restack_of: merge-perkvhead-v3chain-sv32-tiled
 stale_base: null
+implemented_at: 2026-10-28T150621Z
+impl_commit: d73edd948dd3a847b00a08207be4d06635a30025
+submission_sha256: 368304ce28e7eba549f470074d2ec91cdca6493d7a4b10b3f7b66553d8460df1
+norm_sha256: f3d236e5225affd8c4eb1f5a6f2e0111788b83bcc9ac81c9e71f203866aba478
+submission_blob: 7e7938b33b2d532aab7c1f0989f5b95081eee05d
+lint_warnings: 101
 ---
 
 # sliding-verify1-pseudo-fused-preattn-rope
@@ -127,3 +133,33 @@ No companion is warranted. The change has one routed effect, the sliding verify_
 - The new-key positions are identified by key index >= seq_b - 8. Does the self-check include a len where seq-8 straddles a 64-key tile boundary and the window-start edge cases (lens 2047/2048/2055 are listed; add a len with (seq-8) % 64 == 60)?
 - Is the 5.473 q scale (and the e4m3 cast of q at the same point as _pre_attention_kernel) reproduced exactly, and are k_scale/v_scale handled for the kv_scale 0.015625 test (the B=1 route is config-gated to page 1, which no B=1 q_len 8 test hits, so only the self-check covers it)?
 
+
+## Implementation notes
+
+Built 2026-10-28 in the worktree (base 47926f5e, blob 2eb03f76). The change still applies: master's B=1 sliding verify is `_pre_attention_kernel` + PSEUDO `splitkv_attn_sk_kernel` (the `_sw` route is B=2..32 only), and no fused module existed. The base merge (merge-perkvhead-v3chain-sv32-tiled) is already on master. Diff: `submission.py` +943 lines, 3 hunks.
+
+- **New section** before the import block: module `muse_sv1_fused_v1` (`_fl1` suffix when the live `_EXT2` uses the full-line gather). Its source is `_SKF_HEAD` (the helper head) plus `splitkv_attn_sv1_kernel`, a copy of the stream-K template with one extra flag `FUSED`. Only `<4, ticket, {single, two-level}, PSEUDO, TOK 8, FUSED>` is instantiated, as twins of variants 4/5. The landed `_EXT2` instantiations are untouched. Layout `LayF<4>` is the PSEUDO layout with a 2 KB raw bf16 q slot per stage, a float2 RoPE table [8][32] and the new rows [2][8][128], 106016 B in total. A static_assert checks that 2 CTAs fit per SM.
+- **(a) q:** the segment's first tile cp.asyncs pseudo-row r's raw bf16 q row from qkv (rides the tile's group). At consume time the kernel does scaleless RMSNorm (eps), interleaved RoPE pairs qi*2+8s and +1, and the e4m3 cast, then builds `qa`. The (cos, sin) values for the 8 rows x 32 pairs are computed once per CTA in the prologue, overlapped with the page-index wait. The angle is `__fmul_rn((float)positions[r], inv_freq[i])` with master's `_inv_freq`.
+- **(b) new K/V:** a CTA builds the 8 rows into smem in the prologue if its tile range holds any new key, or if it is the owner. New key m sits at local position `cnt_j - j - 1 + m` of row j >= m. The rows are k: RMSNorm, RoPE, / k_scale, e4m3, and v: / v_scale, e4m3. In the loop, a tile that holds new keys is identified by key index (not slot). It gets the built rows written over the landed swizzled stage after cp_wait, followed by one `__syncthreads` before the S MMA. The owner is CTA gx-1, because at B=1 flat tile T-1 is pseudo-row 7's last tile. The owner stores the 8 rows to k_cache/v_cache at cache_loc. `_sv1_owner_check` verifies this on the host. kc/vc are non-const only in this module.
+- **Route:** `kernel_fn` gets one config-only branch after `_sw_gate`: `_SV1_ROUTE and _sv1_gate(cfg)` (window 2048, q_len 8, page 1, tp8, RoPE, B == 1). `_SV1_ROUTE` is a MappingProxyType frozen at import.
+- **Setup** (`_sv1_setup`) runs last, after `_sw_setup` and before the PATH re-print. It needs `_PS_ROUTE[1]`. Start deadlines on the import clock are build 400 s, checks 440 s, gate 455 s and replay 470 s, which answers the review's deadline question. The order is: attrs for both twins, printed next to the landed PSEUDO twins (cubin 90; **local bytes > 0 refused**; warning if under 2 CTAs/SM); then the canary and self-check (B=1 lens 1, 3, 7, 8, 60, 63, 1980, 2047, 2048, 2055, 80000; kv 1 and 0.25; grids 3/p4/p8/SM and the routed grid; both twins). Each self-check case asserts `cache_loc[m] == page_table[0, seq-8+m]` and the owner, compares the output with the FP32 RoPE reference (< 2e-2) and with the master pair (< 3e-2), compares the new rows with `_pre_attention_kernel`'s by rel L2 (< 2e-2), and checks that other rows are unchanged. Every launch is announced and synced. Then come the tickets check, and then the gate at B=1 x 80000. The gate first runs each path eagerly for correctness, then times kernel_fn's real incumbent [pre-attn + PSEUDO routed variant/grid] against FUSED at the routed variant and spec, plus FUSED at p4/p8/sm (printed only), in one `_interleaved_us` call (cold L2, empty graph subtracted). It routes at >= 1.03x, and the PATH CHOSEN line prints both numbers. Last is the two-state `_alt_check` through kernel_fn (refilled inputs, NaN-poisoned outputs, lens 80000/974/1950/...). Any miss leaves B=1 on pre-attn + PSEUDO with one PATH CHOSEN line, and tickets are re-zeroed.
+- **Deviation:** "accurate sincosf" is implemented as `rope_sincos`, which writes out CUDA's own sinf/cosf fast path: 3-constant Cody-Waite fma reduction by pi/2 and the Cephes minimax kernels, valid for |a| < 105615 (inv_freq <= 1, positions about 8e4 here). A library `sincosf` compiles in the Payne-Hanek slow path, which has a local-memory frame, and that would trip the spec's own "refuse local bytes > 0" rule. The accuracy is fp32-level and is checked by rel L2 against Triton's rows and the torch reference.
+- **Deviation:** the spec's "riding the page-index cp.async group" is implemented as riding the segment tile's cp.async group, as skF does. The raw K/V source (about 4 KB) is loaded in the prologue (the review's open question), not at the overwrite point.
+- **Not done:** no q-only/no-KV DIAG instantiation. The review called it optional, and it would cost compile time.
+- **Uncertain:** register pressure on top of the PSEUDO kernel's ~121-128 regs, since the q build adds RoPE math. If ptxas spills, the attrs check refuses it, which falls back to master and spends one check for nothing. The import clock at this phase's start is unknown. If the earlier phases run past 400 s, the phase is skipped (printed).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope diff`:
+
+- [x] CUDA-graph capturable: the kernel_fn path (`_sv1_gate` -> `_sv1_forward` -> `_sv1_launch`) has no `.item()`/`.cpu()`/`synchronize()`/prints/try. Allocations are sized by grid (config + SM count) and shapes only. The one branch is config-only.
+- [x] Nothing derived from `data` is cached across calls. The only module state is `_SV1_EXT`, the frozen `_SV1_ROUTE`, the shared self-resetting int32 PSEUDO tickets (zeroed at import and returned to 0 by every launch) and `_inv_freq` (from config theta, as master). The C++ statics are bool flags. No device pointer, TMA map or state-sized buffer is held.
+- [x] Weights: n/a: attention problem, no weights. Activations stay bf16 (qkv in, bf16 out).
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 e4m3 (new rows / k_scale, / v_scale); queries rounded to FP8 E4M3 exactly once (same point as `_pre_attention_kernel`); softmax and merges fp32.
+- [x] Attention sees every key: same per-pseudo-row window [max(0, p-2047), p] and causal ranges as the landed PSEUDO kernel. New keys are replaced in smem, not skipped. No top-k, sparse or block skip.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network. load_inline at import only (torch's own nvcc build, as the 5 existing modules do).
+- [x] All work happens inside the timed call; no output caching or replay. The import-time self-check/gate/replay use synthetic inputs only.
+- [x] Build: TORCH_CUDA_ARCH_LIST=9.0a (restored after), `-std=c++20`, `-lineinfo`, `-O3`; in-process canary; sync + print after each self-check launch; regs/local/CTAs per SM printed; local > 0 refused.
+- [x] Two judge states: the owner CTA writes only cache_loc rows of the state passed in; `_alt_check` two-state capture-once replay runs before routing.
+
+Lint (`okc_lint.py ... --problem muse_attention_decode`): `OK with warnings`. There are 0 errors. The warnings are all pre-existing `host-sync` lines in prepare-time code outside kernel_fn's call graph, plus the new section's own prepare-time syncs (`_sv1_case`, `_sv1_validate`, `_sv1_gate_b1`) and one pre-existing `dtype` warning at L7646. `python3 -I -m py_compile`: OK (`__pycache__` removed).
