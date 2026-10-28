@@ -716,3 +716,15 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
     better.
 - **Carrier candidates for the judge** (not built): pin v4 at classes 8/16, and the CUDA combine at class 128. Details in
   takemyjob 52dd7c5.
+
+## 2026-10-28T05:44Z: carrier check dispatched; m07, m03c, m08t1 released (registered 02:57Z, unchanged)
+
+- **Moe carrier** (pin v4 at classes 8/16, the CUDA combine at T=128, on the S3 board): build ff6b525b, audit PASS with
+  two minor findings, both applied (aa9bcb9b: skip v6's T=8 race only when the class-8 pin took). Judge check
+  be4440e24e244103 dispatched 05:43Z from campaign/eb-carrier (962,450 B, sha256 d01f5b75...).
+- **Released** to keep the H100s busy while P3b and the consumer microbenchmark are prepared. Gate m00-accepted; the
+  registrations and decision rules are unchanged.
+  - **m03c** (T=256 fork, cold-half knobs): the S3 board runs the same T=256 kernels and gate code, so a pin carries.
+  - **m07** (K1 w2 prefetch at T=1) and **m08t1** (T=1 cost per extra local expert, nsys per k): moe's T=1 is v6 on
+    S3, so their moe class-1 pin clauses are moot. They are read for decode's T=1 (board e1fd3c00 runs v1) and as the
+    pre-S3 baseline for the consumer program.
