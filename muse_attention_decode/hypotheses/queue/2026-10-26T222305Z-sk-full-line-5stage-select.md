@@ -38,7 +38,8 @@ kind: primary
 controls_for: null
 prior: "full-decode-splitkv-s2-streamk-ticket-inproc: its sk-diag measured 5 stages at 0.971x (B=16) / 1.001x (B=32) with the half-line mapping; this re-times 5 stages only after the whole-line remap changes the request pattern, and routes by a two-round gate instead of a fixed choice"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%"
 ---
 
 # sk-full-line-5stage-select

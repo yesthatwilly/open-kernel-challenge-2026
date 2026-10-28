@@ -434,3 +434,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150031Z `muse_attention_decode` **combo-sk-full-line-c320-tail**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: full-line gather + c320 onepass landed; early trigger measured, not routed
 - 2026-10-28T150031Z `muse_attention_decode` **c320-attn-full-line-gather**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%
 - 2026-10-28T150031Z `muse_attention_decode` **sliding-decode1-perkvhead-launch-select**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%
+- 2026-10-28T150031Z `muse_attention_decode` **sk-full-line-5stage-select**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%
