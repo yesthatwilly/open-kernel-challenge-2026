@@ -2,6 +2,22 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0008Z (date -u), session 0605b7cc.
+  - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
+    queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
+  - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`). **H100/H200: on hold since the operator's 2122Z stop; no GPU runs
+    by any path** (hopper-probe, hopper-queue, agents) until they say.
+  - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
+    (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
+  - **In flight:**
+    - decode scored run **e1fd3c00c83045dc**: the pinned trim (campaign/eb-pin128 3dd55e25 = the bytes of check
+      5a33db71). It lands only above 1.5920.
+    - workflow **wf_9a2a0ee6-8bc** (s3-expert-streaming): S3 design panel x3 (max) -> judge (max) -> build on
+      `campaign/eb-s3` (from eb-s1a 26994217 = the moe board bytes) -> 2 audits -> fix (high). It returns a
+      check-ready commit; the main thread dispatches the moe check. Predicted ~1.4M tokens.
+  - **Next:** when e1fd3c00 lands, plan step 2 (more decode pins: PATH CHOSEN lines and rows over the six judged runs
+    of these routes); then S3's moe check when the workflow returns. Phase B once decode's reasonable checks are spent.
+- **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
   'USER' unpriv user. otherwise, stay focused on this campaign specifically, on a loop such that this specific area
@@ -1412,3 +1428,20 @@ with the operator's go-ahead.
   (a4d1c81d). BEST.json updated (2ad81d78). The bytes are eb-s1a 826d15fa's: board paths; the S1a engine is present
   but loses its race.
 
+
+## 2026-10-28T0008Z: day start (phase A): boards, decode scored run of the pinned trim, S3 workflow
+
+- The user, ~2355Z on 10-27: "/loop the Phase A overhaul. get prepared now, and wait for the zulu reset for any queued
+  work". Prep before 00:00Z: verified the pinned trim's bytes (eb-pin128 3dd55e25, sha256 2fd3d945..., 924,352 B; the
+  file of check 5a33db71; HEAD d909453b adds attempt files only), okc_lint exit 0 (prepare-only warnings, as on the
+  board), rules version 2026-10-22.1 re-fetched; created `campaign/eb-s3` / `.worktrees/eb-s3` from eb-s1a 26994217
+  (moe file sha256 498afbd8... = master = the 8f33e5ee board bytes).
+- 0000Z: quota reset confirmed (10 / 20 everywhere). Boards: see the top block.
+- **0001Z: decode scored run e1fd3c00c83045dc** (attempt `muse_decode_layer/attempts/2026-10-28T0001Z-submit-x5-pinboth.md`
+  on eb-pin128, 22b966cd). Rules check against the full diff vs the board bytes: the trim (ced20a71) plus the pins
+  (5a33db71), no CUDA text changed.
+- **S3 workflow:** first launch wf_3d58a209-5e0 was stopped after ~4 min (designers only) because its brief missed
+  10-27's kills: eat18 / eaf (fused w13 -> w2, x0.991 at T=1, LOG 767-800), the k-slice consumer (701-714) and W6-A's
+  folds (944-960). Relaunched as **wf_9a2a0ee6-8bc** with them in the brief; the "sched" angle now targets the makespan,
+  not fusion (eaf won only O). The judge writes `research/s3-panel-2026-10-28.md`.
+- Archived run 2157c43bb41f4d43.json.gz (S1a's judge check, LOG 2210Z) is committed with this entry.
