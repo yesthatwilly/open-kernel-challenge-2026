@@ -863,3 +863,23 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   PASS (q/k 0.50 ulp, RMSNormGate 0.50 ulp, boundary stream rel 2.6e-8, routing weights rel <= 6.7e-8, 0 id-set
   mismatches); 38 API call sites bound; FA3 / GEMM lines present; no VOID. Gate dec01-pass written; the four DEC-02 jobs
   were moved into pending together (06:46Z) so they land on four GPUs.
+
+## 2026-10-28T07:15Z: P3b + P3c results (P3b VOID by its registered rule; P3c VALID)
+
+- **P3b** (runs/20261027-232220-gpunode06) is **VOID** by its registered pairing check: 12/36 launches miss 3% on pct x 4 x
+  132 x gpc__cycles_elapsed (max 6.47%). Cause: the exported gpc elapsed comes from another of the 37 replay passes.
+  Post hoc, the registered raw counters reproduce P3 within 0.02%. No amendment: P3b's readings are provisional, and
+  P3c (VALID) reproduces (a)-(d) independently on v6.
+- **Consume body** (the same in v1/v4/v6), per 256-weight step: ext_prop 11.0 (6 LOP3, 3 IMAD.SHL, 2 SHF) +
+  scale_prop_rt 4.0 (2 PRMT, 2 LEA) + mul_bf16x2 4.0 (HMUL2) + LDSM 1 + HMMA 1 + LDS 0.375 + ~0.25 = 21.6-21.75.
+  Per-record control adds 1.6-2.1. The ~4.2/step double charge is HMUL2.BF16 (fmaheavy + fmalite). No pipe reaches 80% of
+  SM-active (ALU <= 55.7%). long_scoreboard sits 65-83% on the consumers' full-barrier wait. Every LDS/LDSM PC is at
+  1.000x ideal wavefronts, so H4 is closed.
+- **P3c** (runs/20261027-232407-gpunode06), T=1, standalone under ncu: K1 7.96 + 6.81k, K2 7.49 + 3.58k, combine 4.61 +
+  0.09k us. Non-loop at k=1: ~2 us launch/teardown per kernel; 1.6-1.8 us prologue; K1 x staging 1.2 us; first-record
+  fill 1.4 us. The combine is latency-bound on one SM (2.05 us boundary + 2.66 us).
+- **Implications.** The fragment-order repack removes <= 2.1/step (pair 3 only = dq3's floor, measured x1.000-1.019).
+  m-tile reuse r=2/4 removes 0.5/0.75 LDSM per step, with LSU at 9-12%. **Neither touches the 17/step per-weight
+  dequant.** Fixed-cost levers at T=1 [E]: persistent T<=8 kernel ~3-4.5 us > fused K2+combine epilogue ~1.5-3 us > K1's
+  x copy before build_map <= 1.2 us > prologue trims 0.3-0.8 us.
+- Report: research/p3b-p3c-2026-10-28.md (script p3bc_analysis.py). Registrations: takemyjob 764a2ce.
