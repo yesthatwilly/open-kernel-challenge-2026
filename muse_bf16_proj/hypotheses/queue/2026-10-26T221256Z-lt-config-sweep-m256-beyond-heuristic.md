@@ -50,7 +50,8 @@ kind: primary
 controls_for: null
 prior: "bf16-cublaslt-algo-pick-in-prepare-m128-m256: it chose among the heuristic's own candidates with one non-interleaved timing and flipped in the judge; this enumerates the non-heuristic tile / stage / swizzle configs of every algo id, m=256 only, and routes a config only after two interleaved read-flush rounds at >= 1.03"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (own Risk +0.4-0.7%)"
 ---
 
 # lt-config-sweep-m256-beyond-heuristic
