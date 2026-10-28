@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1324Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1325Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -24,14 +24,14 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1324Z:** decode 8 checks / 5 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
+  - **Quota 1325Z:** decode 5 checks / 5 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
     - moe checks (13:23Z, phasec/moe-1028): moe-diag-v4c-t32 71c2f8d5, moe-pin8-v6 16c33848, moe-pin16-v4c d9cc48e8,
       moe-hyb128-h16f 1d36bf74, moe-diag-v4-fixed a7a013ba, moe-pin-all 756a928f. Conditional: moe-v4c-cw8 / cw9 /
       moe-pin32-v4 (only if moe-diag-v4c-t32 shows >= 1% at T=24 and 32 in both rounds).
     - decode checks (13:23Z, phasec/dec-1028): dec-pin-all 6a06de53, dec-pin16-v4c 86edd970, dec-b12p-pdl0 d6baf196,
-      dec-diag-anat-t8-t32 62ae54a2. **Not yet sent (okc rate limit):** dec-diag-v4c-cw (its attempt file is written,
-      unconsumed, valid to 15:23Z), dec-pin16-v4, dec-b12p-pdl1. Conditional: dec-v4c-cw8 / cw9.
+      dec-diag-anat-t8-t32 62ae54a2; after the rate limit (13:25Z): dec-diag-v4c-cw 2316c5c1, dec-pin16-v4 414222b1,
+      dec-b12p-pdl1 ddda42b2. Conditional: dec-v4c-cw8 / cw9.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
