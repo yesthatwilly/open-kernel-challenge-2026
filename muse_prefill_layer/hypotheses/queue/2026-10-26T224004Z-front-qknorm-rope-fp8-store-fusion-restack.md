@@ -39,7 +39,8 @@ kind: primary
 controls_for: null
 prior: "qk-norm-fp8-cache-store-fusion: the same 5->1 kernel re-measured on the 1.468 base (its 1.009 run was on the 1.004 parity base, where the five launches were a smaller share of every shape), now behind a prepare self-check and timing gate so a loss falls back to master"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%, stack-only"
 ---
 
 # front-qknorm-rope-fp8-store-fusion-restack

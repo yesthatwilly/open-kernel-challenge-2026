@@ -415,3 +415,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150028Z `muse_prefill_layer` **experts-rega-low-2cta-fullslab-mc2**: hold: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 never landed (1.31-1.81x slower); DISTILL 3.1 retire; REGA_LO_SKIP on master
 - 2026-10-28T150028Z `muse_prefill_layer` **experts-rega-mc2-bm256-stack-high-ft**: hold: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 and bm256 both slower; DISTILL retire
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-pdl-chain-regate-iqr-slack**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: parent on Do-not-try; module predates fsilu/w2st
+- 2026-10-28T150029Z `muse_prefill_layer` **front-qknorm-rope-fp8-store-fusion-restack**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%, stack-only
