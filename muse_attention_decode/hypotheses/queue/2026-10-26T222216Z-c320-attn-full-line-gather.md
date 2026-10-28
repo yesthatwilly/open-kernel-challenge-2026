@@ -34,7 +34,8 @@ kind: primary
 controls_for: null
 prior: "splitkv-full-line-gather-mapping: same remap measured on stage-1 kernel A at B=16/32 (-4.7% / -14% kernel time); the B=1 c320 kernel (one 320-token item per CTA) copied A's half-line mapping and was never tried with it"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%"
 ---
 
 # c320-attn-full-line-gather
