@@ -2272,3 +2272,6 @@ with the operator's go-ahead.
   - phaseA-swf-s1-build-1028 (wf_9c5c1ad8-08f): tomorrow's attention stage 1, started now so it is check-ready at 00:00Z.
 - v4x S1 (moe, then decode) launches once TC-A reads.
 - The decode X1v6 port was already landed on 10-28 (7352add6 1.6470), so it is not a candidate tonight.
+- 2032Z: TC-A moe-fx-tca f720d749 PASS (1.897, routing unchanged): D=+4.62 us (K1 +4.35, K2 +4.90), E1 +5.40, E2 +5.74, so **BUILD v4x S1 mid**. Launched phaseA-v4x-s1-build-1028 (wf_8e086f5f-9f8): moe build, 2 audits, fix, then the decode port after TC-B.
+  - tonight-leads-1028 minted 0 of 5 problems: nothing at >= 2.5% is buildable in 90 min, and the rejections are recorded with their EV.
+  - Stretch checks below the bar (checks expire at 00:00Z; tokens to spend): tonight-stretch-1028 (wf_f9fc40c1-0b2) builds prefill rega-low weight stream, the bf16 shelf stack and the attention shelf stack.
