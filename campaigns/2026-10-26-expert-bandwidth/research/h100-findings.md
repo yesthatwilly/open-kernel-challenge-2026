@@ -265,3 +265,29 @@ Runs `runs/20261027-184017-gpunode06` and `-184020`; fitted with the harvest scr
 - **Q3, isolated A/B:** 2 cold moe-s3-iso runs (board vs s3) and 1 moe-null-iso (board vs board, the noise floor).
   Report the moe headline ratio, per-load ratios, the [ea6] PATH CHOSEN lines and the prepare-budget line.
   **Rule:** reported, not decisive (HBM-bound arms do not transfer node -> judge).
+
+## 2026-10-28T0242Z: S3 node results, Q1 + Q2 (bytes f4050fc3 = eb-s3 8dcdf0fb, pre-audit; bundle nj-s3; warm)
+
+- **Q1 correctness: PASS.** fuzz-odd (runs/20261027-193732), fuzz-skew (-193735) and the 32-shape sweep (-193745): s3
+  passed=True. The v6 canary was clean (36 inputs, NaN-poisoned h/y; v6 T1..8 worst 0.00396 vs master 0.00843; 18
+  bitwise repeats). Copy checks at T=1 / T=8: PASS.
+- **Routing on the node** (`[ea6]` lines): T=1 v6 vs v1 weighted 1.045-1.057 in every run, but the per-n floor at
+  n=4 is marginal (+0.007, +0.005, **-0.002**): in the fuzz-odd run v6 missed its n=4 floor and T=1 stayed on v1. T=8
+  v6 vs v4/v1 1.037-1.051: routed in every run. v6s (no co-resident K2) lost, 0.964-0.968, so the co-resident K2
+  earns the gain (panel decision (c): keep it for the decode port).
+- **Q2, K9 on s3** (runs -193737 / -193743; 2 x 2000 reps; v6 routed at T=1 and T=8 in both):
+
+  | T | board 0141Z: OLS us/expert; medians | s3: OLS us/expert; medians |
+  |---|---|---|
+  | 1 | 11.64; d2 37.1, d3 50.7, d4 57.4, d5 72.5 | 11.84; d2 35.3, d3 47.9, d4 58.3, d5 68.4 |
+  | 8 | 9.98; d4 59.8, d8 101.9, d9 114.6 | 9.74; d4 59.0, d8 98.0, d9 109.7 |
+  | 16 | 9.58 | 9.70 (v4c, outside S3) |
+
+  - At T=1, v6 removes the alternation (steps now 12.6 / 10.4 / 10.1) and the fixed cost (intercept net 8.1-8.5 vs
+    10.85 us), saving 1.8-2.8 us at n=2-3 and 4.1 us at n=5. It does **not** lower the per-expert slope on the
+    node, and it is flat at n=4 (58.3 vs 57.4).
+  - **Pre-registered Q2 rule: the re-split did not cut the per-expert slope on the node.** The judge check
+    decides the panel's kill rule (2) (slope >= 9.0 us on the judge).
+  - K9-config headline x1.3310 / 1.3384 vs the board's x1.2950 / 1.3004 (+2.8%).
+- **Prepare:** warm prepare 120-141 s vs the board's ~34 s (the v6 build is 32 s plus its canary, race and copy check).
+  Cold behaviour and deadline effects are read from the Q3 cold isolated runs.
