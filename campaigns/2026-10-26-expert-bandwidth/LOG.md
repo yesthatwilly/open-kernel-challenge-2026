@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1337Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1346Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -20,14 +20,14 @@ append-only, newest last.
   - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
+  - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6551** (345/863; v4c pinned at T=9..16, 13:46Z); bf16
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
-    prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
+    prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6551 (+3.9%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1337Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
+  - **Quota 1346Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
   - **In flight:**
-    - Decode scored run 83f0c00eb3644e1c (13:36Z): dec-pin16-v4c (check 86edd970 1.6599; v4c pinned at T=9..16); land
-      if > 1.6470.
+    - `/hypothesize --n 5` (the user, ~13:40Z; read as `all`): wave 1 minting agents for prefill, bf16 and decode;
+      wave 2 (moe, attention) when they return (<= 3 agents).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -2077,3 +2077,10 @@ with the operator's go-ahead.
 - dec-b12p-pdl0 1.6345 / pdl1 1.6404: no b12p pin. The conditional cost-weight variants (moe and decode) are dropped.
 - **H100 window closed at 13:37Z:** the queue was empty; `bin/hopper-queue stop` (queue/STOP; the runner exits at its
   next poll); nodejudge `problems/moe/board.py` restored to its committed symlink. Memory updated.
+
+## 2026-10-28T1346Z: decode dec-pin16-v4c scored 1.6551 and landed; /hypothesize --n 5 (the user) running
+
+- Scored run 83f0c00e: **1.6551** (CI 1.6303-1.6799) vs 1.6470 (+0.49%); master ec3c4dcb; BEST.json + BEST.result.json
+  c2117f4a; decode rank 345/863. The decode board row now pins v4c at T=9..16 (deterministic there).
+- **The user, ~13:40Z: `/hypothesize --n 5`** (no problem named; read as `all`, 5 each). Wave 1 (prefill, bf16,
+  decode) is minting with today's measurements in the brief; moe and attention follow (<= 3 agents at once).
