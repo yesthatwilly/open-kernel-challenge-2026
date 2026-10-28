@@ -737,3 +737,33 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   x1.018 (scored) on the judge's verify 16 row: same sign, larger on the H200 (consumer-bound, so a fixed per-call
   saving is a larger share). The class 8 / 16 pins (node ties) read x1.015 / x1.007 at verify 1 and x1.010 / x1.001 at
   decode 16: inside the judge spread, as R10 predicts.
+
+## 2026-10-28T06:04Z: P3 audit done; P3b registered (R2), its GPU-7 validation queued
+
+- **P3 audit** (workflow wf_01ce0f10-ce0; research/p3-audit-2026-10-28.md). Engine A runs 24.9-27.1 HW warp
+  instructions per 256-weight step (not ~17); the step normalization holds (HMMA/step 1.000 at q=1). v4 issues on
+  42-55% of SMSP-active cycles, with warps stalling and waking together. The ALU-pipe floor is 1,720-1,810 busy cycles
+  per 36,864-B record, the same for v1 and v4 at every T: **71-75% of the H200 consumer-alone 2,421 cycles and 79-83%
+  of the 2,190 target**, so the target needs ALU >= ~80% busy and issue >= ~73%. Resources: v4 91 regs, 0 spills,
+  113,008 B smem, 2 CTAs/SM (cap 112 regs at 288 threads). x loads add no excess wavefronts (1.9-2.2 per extra tile vs
+  2.0 ideal). Waits (long_scoreboard ~1,100-1,180 cycles/record) are H100 memory-coupled and do not transfer.
+- **P3b registration** (full text: takemyjob queue-staged/registrations.md `### p3b`, appended after the validation).
+  - **Question:** where do the 25-27 instructions per step and the SM-active cycles per record go, per PC, at T=1 (v1),
+    T=8 and T=16 (v4)? Same bytes (snap 498afbd8e73d), pinned arm and seed as P3, so reps 0..5 pair with P3's launches.
+  - **Expected:** consume / consume2 carry >= 90% of executed instructions at T=8/16; ALU-class ~13-14 per step; the
+    ~4.2/step double pipe charge is one opcode class (HFMA2.BF16 or IMAD); long_scoreboard on the consumers'
+    full-barrier wait (smaller share on the epilogue's gs[le] LDG); ldmatrix bank conflicts ~0; per-PC shared
+    wavefronts actual/ideal <= 1.1.
+  - **Decision rule:** update the audit's evidence rows (a)-(e) by the registered thresholds (>= 95% of instructions
+    attributed to named regions; a pipe saturated only at >= 80% of SM-active; H4 reopens at > 0.2 bank conflicts per
+    two-tile step or > 1.1x ideal wavefronts on ldmatrix PCs). No kernel change follows from P3b alone.
+  - **Metric / instrument:** ncu 2026.2.1, --clock-control none; SourceCounters, InstructionStats,
+    ComputeWorkloadAnalysis, MemoryWorkloadAnalysis_Tables/_Chart + P3's six sections + 38 metrics, preflight-checked;
+    exports per-instance and per-PC SASS; .ncu-rep kept. gpunode06, one pool GPU, reps 20, 6 profiled per shape (decode 1,
+    decode 16, verify 1). VOID below 1800 MHz, on a check failure, or if I_step / tensor-busy per record miss P3's same
+    rep by > 3%.
+  - **Harness:** nj_profile.py d05ce8ba -> 635e9830 (the P3b patch, sha 52ae7432; selftest PASS; without the new keys it
+    builds P3's ncu command byte for byte). configs/p3b.json from nj-exp make (identical to the audited draft but the
+    registered stamp). Cost ~6 GPU-min.
+  - **Validation (R1):** 37-h100-p3b-val on GPU 7 (<= 5 min): rc 0, preflight stop false with the required items
+    listed, per-PC SASS rows for ea4_w13/ea4_w2, opcode-keyed instance values, .ncu-rep kept. FAIL: P3b is not queued.
