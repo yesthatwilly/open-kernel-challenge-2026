@@ -49,7 +49,8 @@ kind: primary
 controls_for: null
 prior: "router-hilo-tall-tile-m65-m256: it timed one hand-picked tall config per m (BLOCK_M 128/256, deeper split-K) against master in a single write-flush round at a 1.02 bar, routed m=256 and lost in the judge (9.72 -> 9.99); this sweeps ~40 configs per m including shorter split-K / wider BLOCK_N / 2-CTA-per-SM shapes, ranks them under the judge-like read flush, and routes only after two read-flush rounds at >= 1.03 with the IQR rule"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%; predecessor on Do-not-try"
 ---
 
 # router-hilo-m128-m256-readflush-config-sweep
