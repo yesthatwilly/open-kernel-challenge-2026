@@ -2,15 +2,20 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0045Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0112Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
   - **H100 (gpunode06) RESUMED by the user at ~0035Z** (verbatim: "can we simultaneously juggle submitting all the h100
     stuff? or create a subagent to deploy to gpunode06 to use the h100 over the next few hours. or at least juts an agent
-    that deploys all the already-existing h100 tests"). One agent redeploys: node check, nodejudge setup, fuzz fillers
-    released, runner restarted, the 10-27 2114-2121Z results harvested into `research/h100-findings.md`. **H200
-    (gpunode26) stays held.** The S3 build gets node validation (moe-iso A/B, memcheck, fuzz) before its judge check.
+    that deploys all the already-existing h100 tests"). **~0100Z: "go ahead and finish the enablers, queue the
+    program. use the h100 freely for the next 6 hours"** (window to ~07:05Z). H200 (gpunode26) stays held.
+    - Enablers: workflows h100-moe-enablers wf_9d19c8b4-aa4 (E1 + E1b, E3, E4 -> hopper/nj-moe) and
+      h100-decode-enablers wf_efbfae22-bd4 (E2 + E2b, DEC-01 -> hopper/nj-e2), in takemyjob worktrees under
+      `~/git/.takemyjob-wt/`; GPU 7 for their validations. The interrupted WIP is on hopper/nj-base (da05b87, 5df90e5).
+    - Runner tree reset to the committed harness 0c0bc56; `hopper-probe setup gpunode06 nodejudge` running since 0112Z;
+      then rebuild build/nodejudge.tgz (board 498afbd8), release the fuzz fillers, restart the runner on GPUs 1/3/4/5/6.
+    - The S3 build gets node validation (moe-iso A/B, fuzz; memcheck is VOID on 80 GB) before its judge check.
   - **Decode board 1.5926 since 0014Z** (e1fd3c00, the pinned trim; rank 347/823; overall 352/1369).
   - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
@@ -1492,3 +1497,21 @@ with the operator's go-ahead.
   ladder replicates), unharvested; only the two moe fuzz fillers (H100) and two H200 jobs were held; the
   x5-h100-program's judged experiments were never queued (its E1 / E2 enabler builds were cut off mid-edit; their
   edits sit uncommitted in takemyjob). One agent now redeploys gpunode06 and harvests; H200 stays held.
+
+## 2026-10-28T0112Z: H100 program resumed: enablers building, node setup running
+
+- **The user, ~0100Z:** "go ahead and finish the enablers, queue the program. use the h100 freely for the next 6 hours".
+- The redeploy agent (425k tokens) stopped before setup, correctly: `hopper-probe` packs the working-tree
+  `probes/nodejudge/`, which held the interrupted E1 / E2 edits (and build/nodejudge.tgz had been rebuilt at 2123Z with
+  E1 code). Node at 0048Z: IDLE+DRAIN, 0 jobs, no compute process. **GPU0 idles at 86 C / 229 W with SW thermal
+  slowdown** (78-79 C on 10-27); we never queue on it. For USER.
+- **Harvest -> `research/h100-findings.md`.** Every 10-27 nodejudge run used the OLD moe board ab46fbb7 (1.7187), not
+  498afbd8. K9 replicates: per-expert slope 11.3-11.6 / 9.9-10.1 / 9.56-9.63 us at T=1 / 8 / 16 (T=1 steps alternate
+  +13.3 / +6.8, two-step mean 10.0); each extra local route <= 0.4 us; big-T 8.5-8.7 us per distinct expert. Sweep
+  37/37, soaks 0/6000 faults, one Engine A v1/v4 gate flip in four board runs. Memcheck (24-*) VOID: out of memory on
+  80 GB. k6 NO-GO confirmed. The clock is only snapshotted (1830 MHz before / after), so the 1800 MHz rule is unverified.
+- The WIP is preserved on takemyjob hopper/nj-base (da05b87 + 5df90e5; every file checked byte-identical, including
+  11 untracked files the first copy missed). The main tree's nodejudge is back at HEAD 0c0bc56 (the WIP files moved to
+  the job's tmp backup), so setup and the runner ship the committed harness.
+- Two workflows build the enablers (top block); predicted ~2-2.5M tokens. The judged program is saved verbatim as
+  `research/h100-program-2026-10-27.md`.
