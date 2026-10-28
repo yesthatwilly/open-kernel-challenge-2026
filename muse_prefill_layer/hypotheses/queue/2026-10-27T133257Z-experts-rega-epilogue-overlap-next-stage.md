@@ -51,7 +51,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-pingpong-consumers-all-t: that overlapped dequant with wgmma inside the k loop by offsetting the warpgroups (1.18-1.47x slower), and the s3 double-buffered register-A variant was no faster; this keeps the k loop as master's lockstep variant A and overlaps only the item epilogue with the next item's first-stage wgmma on a second accumulator set"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR <=1.2%, high risk (232-reg ceiling), needs re-aim to fsilu_w2a"
 ---
 
 # experts-rega-epilogue-overlap-next-stage
