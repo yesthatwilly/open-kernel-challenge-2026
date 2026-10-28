@@ -2360,3 +2360,8 @@ with the operator's go-ahead.
   - **T=256:** the halves cannot co-reside (cold w13 fills every SM; a hot CTA needs a whole SM). The cold half is per-SM-bound (DRAM 73%, SM 44%, tail imbalance 1.11), and the uncovered hot tail is 0, so the levers are per-SM dequant and cold-grid tail balance, not concurrency.
 - The t1 lane was restarted with this evidence as wf_d5b8f0cb-af6. The t256 relaunch after its designers finish will carry it too.
 - 2026-10-28T2305Z: eb-v4x256b e74366aa (v4cxs qualifies alone at T=256, s first; the fork stream from _rt_fork_stream, priority -1, never the capture stream) dispatched as check ba509845cbf94458. Node A/B was requested in parallel. The decode port eb-v4xd256b is building.
+- 2026-10-28T2310Z: check ba509845 (v4x256b) read **1.912** [1.883, 1.940], a regression. verify_32 is 310.8 us.
+  - Change B, the fork stream at priority -1, killed the fork on the judge: H-16f/H-16 x0.997-1.004 against x1.03-1.07 with the pooled stream, so serial H-16 was picked.
+  - Change A worked: v4cxs routed alone at S1.014.
+  - The H100's fork-collapse theory does not transfer as the fix; keep master's pooled fork.
+  - The decode port is told to skip B. No more moe checks tonight: 1 check and 2 runs are left, and nothing qualifies.
