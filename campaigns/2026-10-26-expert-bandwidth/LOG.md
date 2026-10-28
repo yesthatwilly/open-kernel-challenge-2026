@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1534Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1603Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -50,12 +50,12 @@ append-only, newest last.
     - `phaseA-1029-panel` engineA (wf_a3efd9a7-e0b, launched 15:34Z; brief scoped to T = 2..256 with decode's
       T = 128 / 256 ea4 rows first). attn-full-splitkv and dense stay dropped (triage: low value per token).
   - **Next:**
-    - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
-      portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
-      queues' run-first bf16 items (b12 qkv m1 R32 with the read-flush gate; b12 unpooler m1).
-    - Phase C from 18:00Z: spend every check (bf16 / attention / prefill 20 each; moe 14; decode 13), cheap questions
-      allowed (race pins for a deterministic board row); tomorrow's phase-A plan by ~23:00Z.
-    - H100 window closed at 13:37Z (see the entry below); no GPU work without a new go-ahead.
+    - **Phase B** until 18:00Z: the two design panels only. Churn (musespark-b1) found nothing runnable, and no
+      minor-gain spending happens without a lead that clears the value bar (the user, ~1415Z).
+    - **Phase C** from 18:00Z: the reserved campaign checks (moe 1 + decode 1 trim checks, attention 2 panel
+      diagnostics), plus any other panel diagnostic that clears the bar (tell musespark-b1 before each dispatch).
+      Tomorrow's phase-A plan by ~23:00Z from the two panels' final specs.
+    - H100 window closed at 13:37Z; no GPU work without a new go-ahead.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
@@ -2181,3 +2181,33 @@ with the operator's go-ahead.
     sw_combine is 15.8 us of 38.8.
   - The engineA panel's brief now carries both the T = 128 / 256 scope and the room. It launches when the attn-fixed
     designers return (<= 3 agents).
+
+## 2026-10-28T1603Z: CORRECTION: the 14:55Z triage figures were wrong (hyp.py weighting bug); the attention panel's judge was re-briefed
+
+- **The error:** musespark-b1 found that the triage weighted rows by w/W on event_median_ns. The score is the
+  geomean over the six loads of each load's time ratio, each load timing 46 sliding + 16 full layers, on median_ns
+  (TASK.md ~line 90). Fixed in 4b45b873. My hand check: the formula reproduces attention's 1.634 (1.6347).
+- **Retracted from the 14:55Z entry and from the reply to the user:**
+  - "attention's sliding rows carry 74% of the headline" (they carry ~37%);
+  - "~9 us per sliding row takes attention to ~3.0" (it gives ~1.89, x1.16);
+  - "x3.5 with every row at its floor" (x1.79).
+- **Correct attention shares:** full verify 32 13.2% (302.1 us, 1.8x floor); decode 32 full 13.1% (1.1x); full verify 16
+  12.4% (2.0x); decode 16 full 11.7% (1.3x); decode 1 sliding 11.1%; verify 1 sliding 9.5%; verify 1 full 7.2% (5.4x);
+  decode 1 full 5.6%; the four mid-B sliding rows 3.4-4.9% each. The two big pieces:
+  - the small-B rows' fixed cost (~33%);
+  - FA3 full verify at B = 16 / 32 (25.6%, 1.8-2.0x its floor).
+- **Decode:** the sliding rows are 10-12% each (~67% in all), and Engine A is about half of each. Every row at its
+  floor gives x1.66. moe: x1.86.
+- **What stands:** dropping attn-full-splitkv (attention's decode 16 / 32 full rows run at 1.1-1.3x their floor) and
+  Engine A as the lever that spans two problems.
+- **Actions:**
+  - The attn-fixed panel was stopped and resumed with a CORRECTION block in the judge, red-team and final prompts
+    (args.correction). Its two designs replayed from cache. The block names the two big pieces and asks how a design
+    reaches FA3's B = 16 / 32 full verify.
+  - The engineA panel's brief carries one wrong multiplier (decode verify 32 sliding "x1.11"; really ~x1.08 at its
+    floor). Its judge re-derives gains from TASK.md, so it was left running.
+- **Also from musespark-b1:**
+  - the "b12 unpooler m1" pick in the old Next block already ran (churn done/neutral, job a6424247); that block is
+    rewritten.
+  - Campaign landings never reach churn's BEST.json `result` or `landed()` lineage (its review:
+    hypotheses/FINDINGS-MODEL-REVIEW-2026-10-28.md).
