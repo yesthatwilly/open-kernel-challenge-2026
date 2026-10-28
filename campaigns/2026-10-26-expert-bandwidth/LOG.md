@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1048Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1051Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,11 +23,10 @@ append-only, newest last.
   - **Boards:** moe **1.8719** (332/974; L4, 10:31Z); decode **1.6407** (346/853; L4 on L3 + v6, 10:31Z); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 350/1409. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3)
     -> 1.8719 (L4); decode 1.5926 (pinned trim) -> 1.6262 (L3 + v6) -> 1.6407 (L4).
-  - **Quota 1036Z:** decode 15 checks / 7 runs; moe 16 / 6; bf16, attention and prefill 20 / 10.
+  - **Quota 1050Z:** decode 14 checks / 7 runs; moe 15 / 6; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Workflow wf_94c537c3-261 (task wg42z83lc), the **X1 port** (per-kq ldmatrix.x4 preload of x; eac x1l3 / l3 =
-      x1.037 at T=8, rule D5 PORT) on campaign/eb-x1 from eb-l4: build + SASS gate (gpunode06, CPU), audit, fix, decode
-      carry-over on campaign/eb-x1d-s3d.
+    - X1 checks (10:50Z): moe 40d6ea36a9dd46f4 (eb-x1 d14bf91e; scored run if > 1.8719 and no spill / MINB 2 / K2
+      co-resident in the prepare log) and decode cbec03d56e8e4da3 (eb-x1d-s3d 087eb3d6; bar 1.6407).
     - fc (v6 T=1 fixed cost) built and audited (PASS) on L3; an agent merges L4 into campaign/eb-fc, cuts the file to
       <= 988,500 B and runs the CPU SASS gate on gpunode06; then the moe check (scored run only if > 1.8719 AND a FAST
       arm routes at T=1).
@@ -1808,3 +1807,12 @@ with the operator's go-ahead.
   order, then fc comments) and runs the spec's CPU SASS gate on gpunode06.
 - **Decision (the judge's open question 1):** no scored run if T=1 stays v6, since a higher reading would be noise on
   board-equal behaviour.
+
+## 2026-10-28T1051Z: X1 built and audited (PASS); moe and decode checks dispatched
+
+- Workflow wf_94c537c3-261 (3 agents, 274k tokens). eak::consume<DQ, XB = 1>: one ldmatrix.x4 per 128-k kq replaces
+  the per-step ldmatrix.x2 (v1 / v2 / v3 / v4 / v6 take it by default; consume2 / v4c unchanged). x1_emul: every T
+  1..16, kq, step and lane equal to the per-step loads, 0 mismatches, both negative controls trip; l4 / l3 emul PASS.
+- SASS (eacx1, gpunode06, CPU): LDSM per step 1.00 -> 0.50 and 20.88 -> 20.44 instructions per step at T=1 and T=8;
+  registers 80 -> 83, 0 spill (bench cells; production registers come from the check's prepare log).
+- Checks at 10:50Z: moe **40d6ea36a9dd46f4** (975,849 B) and decode **cbec03d56e8e4da3** (970,492 B).
