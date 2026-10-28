@@ -1586,3 +1586,15 @@ with the operator's go-ahead.
   m456 x8 and m08t8 x2 (behind queue/gates/m00-accepted), m1 x7, p3. Held: m07, m08t1, m03c. Pre-registered in
   research/h100-findings.md (bfa3f010).
 - Next: read M00, write the gate if E1 is accepted; the decode-port check when wf_33d9cfe1-32d returns.
+
+## 2026-10-28T0340Z: decode-port check 678f6e9c: 1.5860, below the board; no scored run
+
+- **s3d-v6 (eb-s3d fdc618f9) passed at 1.5860** (CI 1.562-1.610), below the 1.5926 board, so **no scored run**.
+  Attempt result is on eb-s3d a78c2515; the run is archived in runs/678f6e9c87f14769.json.gz.
+- **v6 routed at decode T=1.** Copy check PASS, K2 co-resident, regs <= 79 with no lmem. Block OLS per extra expert went
+  from 10.03 to 8.98 us (r2 10.08 to 9.00), against moe's 8.5-8.7. Block weighted ratio 1.082 / 1.088.
+- **Whole layer at T=1:** n=2 x1.004-1.007, n=3 x1.043-1.047. Against e1fd3c00, d1 sliding was x1.020 and d1 full x0.998.
+  The T>=2 rows (unchanged code) moved x0.949-x1.020, which is noise.
+- The expected headline gain is about +0.25%, inside the scored spread. Keep fdc618f9 as the decode carry-over base for
+  the next T=1 lever (the consumer, 1.57 us/record against the 1.25-1.41 floors). Not approved yet; awaiting the user.
+- Also archived fd0e92717ec0400e.json.gz (the S3 moe check, left untracked by 873b1103).
