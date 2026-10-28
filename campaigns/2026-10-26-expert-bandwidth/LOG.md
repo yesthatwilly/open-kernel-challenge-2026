@@ -1573,3 +1573,16 @@ with the operator's go-ahead.
   is not ported: v6 lost T=8 at p50). Expected d1 rows -3 to -5 us, decode +0.5-0.85% [E].
 - Note from the moe enablers: their P3 ncu validation overlapped E2's DEC-01 run on GPU 7 (02:50:30-02:52:05Z). The
   timings of nj-e2 runs/20261027-194939-gpunode06 are contaminated; rerun dec01a before quoting them.
+
+## 2026-10-28T0329Z: the user's picks (1, 2, 3): moe board landed; H100 moe program queued; decode port next
+
+- **moe scored 426218dc: 1.7340, new board** (was 1.7225; rank 441/949). Landed on master 2abc122e; BEST.json and the
+  archived run 873b1103. S3 / Engine A v6 is now the moe board at T=1.
+- Workflows done: h100-moe-enablers (1.88M tokens; takemyjob hopper/nj-moe 5f53c70) and h100-decode-enablers (1.14M;
+  hopper/nj-e2 55e8356, DEC-01 passes, not merged). E4's X0: only Engine A class 8 flips (a tie; the judge picks v4);
+  hot/cold arms vs master flip sign node -> judge (X0b); decode err/bound 0.464 worst, P(fail) ~4e-5 (X0c).
+- **H100 moe program:** hopper/nj-moe merged into the runner tree (takemyjob 3d1dfd2); node board.py pinned to 498afbd8
+  (uncommitted copy; restore the link when the program ends); bundle rebuilt (harness 8866e311). Queued 0329Z: m00 x2,
+  m456 x8 and m08t8 x2 (behind queue/gates/m00-accepted), m1 x7, p3. Held: m07, m08t1, m03c. Pre-registered in
+  research/h100-findings.md (bfa3f010).
+- Next: read M00, write the gate if E1 is accepted; the decode-port check when wf_33d9cfe1-32d returns.
