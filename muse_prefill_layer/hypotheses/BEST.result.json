@@ -1,17 +1,17 @@
 {
  "schema": 1,
  "problem": "muse_prefill_layer",
- "slug": "experts-rega-w2-early-loads-low-class",
- "job": "99767cf374bb4688",
+ "slug": "phasec-final-near-ties-nolo",
+ "job": "b2941ea23dc743a3",
  "mode": "submit",
  "duplicate_of": null,
- "content_hash": "b73c626b8d3b2984709bef0a9c6298026305a1108a7d645d79f5d04344445ae6",
+ "content_hash": "b50f30b208652de803f23e08c92dab6ddbd80baffe7b7db90fd05878086def9f",
  "submission_sha256": null,
- "submission_blob": "11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d",
+ "submission_blob": "c63801e7a1dcfdb7cbdd0d38bc9b295407be7489",
  "impl_commit": null,
  "base_sha": null,
- "created_at": 1793111181.7420678,
- "finished_at": 1793111593.1192906,
+ "created_at": 1793193255.8082085,
+ "finished_at": 1793193627.3661757,
  "gpu": "H200",
  "evaluator_sha256": "b023c806840d9a0be71e887768b3bd414ad29978b94071d7d965af9f8cd976f0",
  "status": "done",
@@ -23,12 +23,12 @@
   "passed": 5
  },
  "first_failing": null,
- "speedup": 1.4897491154674667,
+ "speedup": 1.5007957663757285,
  "speedup_ci": [
-  1.4674028787354547,
-  1.5120953521994784
+  1.4782838298800927,
+  1.5233077028713644
  ],
- "score_us": 260046.40377211233,
+ "score_us": 258132.32465036976,
  "baseline_us": 387403.9,
  "flags": [],
  "checks": {
@@ -49,37 +49,37 @@
     "page": 1,
     "q_len": 753,
     "repeats": 6,
-    "seed": 6934681623232439817,
+    "seed": 4475115686582210208,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 735123.9212626995,
-   "baseline_ns": 1095360.049046576,
-   "speedup": 1.4900345606562633,
-   "speedup_of_medians": 1.4895886107997351,
-   "err_ns": 6671.318188647312,
+   "median_ns": 700955.0614475337,
+   "baseline_ns": 1074127.9651410878,
+   "speedup": 1.5323777859923278,
+   "speedup_of_medians": 1.5377725205847514,
+   "err_ns": 8833.435980300996,
    "speed_of_light_ns": 256950.95121536904,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::rega_kernel<true, false>((ano...",
-     258.2,
-     35.0
+     249.9,
+     35.3
     ],
     [
      "nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN",
-     153.9,
-     20.9
+     154.8,
+     21.8
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, false>((an...",
-     142.0,
-     19.2
+     127.4,
+     18.0
     ],
     [
      "nvjet_sm90_tst_112x128_64x7_1x2_h_bz_TNN",
-     38.6,
-     5.2
+     38.7,
+     5.5
     ]
    ]
   },
@@ -95,37 +95,37 @@
     "page": 1,
     "q_len": 753,
     "repeats": 6,
-    "seed": 6934875834004523577,
+    "seed": 4475358750341291772,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 1101015.1974685437,
-   "baseline_ns": 1440944.0397284925,
-   "speedup": 1.3087412808120304,
-   "speedup_of_medians": 1.2852719066605542,
-   "err_ns": 14811.839685112514,
+   "median_ns": 1083727.7614788783,
+   "baseline_ns": 1453519.994392991,
+   "speedup": 1.3412224417038892,
+   "speedup_of_medians": 1.3272700570471812,
+   "err_ns": 10753.09926214287,
    "speed_of_light_ns": 496692.6391911021,
    "status": "pass",
    "top_kernels": [
     [
      "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
-     416.4,
-     35.1
+     405.5,
+     35.2
     ],
     [
      "void (anonymous namespace)::rega_kernel<true, false>((ano...",
-     253.9,
-     21.4
+     237.1,
+     20.6
     ],
     [
      "nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN",
-     153.3,
-     12.9
+     153.5,
+     13.3
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, false>((an...",
-     144.5,
-     12.2
+     126.3,
+     11.0
     ]
    ]
   },
@@ -141,37 +141,37 @@
     "page": 1,
     "q_len": 753,
     "repeats": 6,
-    "seed": 6935070044776607338,
+    "seed": 4475601814100373337,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 2117761.889643865,
-   "baseline_ns": 3386063.9799386263,
-   "speedup": 1.5988879564302887,
-   "speedup_of_medians": 1.6073902997428946,
-   "err_ns": 19026.661493700183,
+   "median_ns": 2088450.2952428556,
+   "baseline_ns": 3365375.9849257767,
+   "speedup": 1.6114225905167803,
+   "speedup_of_medians": 1.6085776037047659,
+   "err_ns": 8542.66365036006,
    "speed_of_light_ns": 1036277.2319514662,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::rega_kernel<true, false>((ano...",
-     683.9,
-     31.0
+     703.9,
+     31.3
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, false>((an...",
-     349.1,
-     15.8
+     372.6,
+     16.6
     ],
     [
      "nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT",
-     327.6,
-     14.8
+     327.2,
+     14.6
     ],
     [
      "nvjet_sm90_tst_128x256_64x4_2x1_v_bz_coopA_TNN",
-     257.1,
-     11.6
+     256.3,
+     11.4
     ]
    ]
   },
@@ -187,37 +187,37 @@
     "page": 1,
     "q_len": 753,
     "repeats": 6,
-    "seed": 6935264255548691100,
+    "seed": 4475844877859454903,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 3662474.7465020735,
-   "baseline_ns": 4893904.15744856,
-   "speedup": 1.3362287786755636,
-   "speedup_of_medians": 1.33701538890349,
-   "err_ns": 25695.726332391674,
+   "median_ns": 3614437.3034228855,
+   "baseline_ns": 4941680.007148534,
+   "speedup": 1.3672059002016013,
+   "speedup_of_medians": 1.3653222046183064,
+   "err_ns": 9365.250626450044,
    "speed_of_light_ns": 1992419.5081577352,
    "status": "pass",
    "top_kernels": [
     [
      "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
-     1638.9,
-     44.1
+     1545.6,
+     42.5
     ],
     [
      "void (anonymous namespace)::rega_kernel<true, false>((ano...",
-     635.6,
-     17.1
+     681.0,
+     18.7
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, false>((an...",
-     329.4,
-     8.9
+     347.4,
+     9.5
     ],
     [
      "nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT",
-     324.8,
-     8.7
+     323.6,
+     8.9
     ]
    ]
   },
@@ -233,37 +233,37 @@
     "page": 1,
     "q_len": 16384,
     "repeats": 6,
-    "seed": 6935652677092858627,
+    "seed": 4476331005377618038,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 11876929.329564407,
-   "baseline_ns": 19019295.836798847,
-   "speedup": 1.6013647390706829,
-   "speedup_of_medians": 1.59056767446182,
-   "err_ns": 18227.371631558464,
+   "median_ns": 11011984.602167597,
+   "baseline_ns": 16825760.116335005,
+   "speedup": 1.5279498404877014,
+   "speedup_of_medians": 1.52995727561127,
+   "err_ns": 16848.99488096454,
    "speed_of_light_ns": 5518431.777650151,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::rega_kernel<true, true>((anon...",
-     3824.3,
-     31.4
+     3197.4,
+     28.6
     ],
     [
      "nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN",
-     2553.3,
-     21.0
+     2540.5,
+     22.8
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, true>((ano...",
-     1993.8,
-     16.4
+     1668.5,
+     14.9
     ],
     [
      "nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT",
-     1497.0,
-     12.3
+     1491.1,
+     13.4
     ]
    ]
   },
@@ -279,37 +279,37 @@
     "page": 1,
     "q_len": 16384,
     "repeats": 6,
-    "seed": 6935846887864942392,
+    "seed": 4476574069136699607,
     "weight": 138
    },
    "weight": 138,
-   "median_ns": 10914534.827900384,
-   "baseline_ns": 17341999.717522413,
-   "speedup": 1.588890409987218,
-   "speedup_of_medians": 1.5864053377183627,
-   "err_ns": 24602.24784165589,
+   "median_ns": 10865915.649600776,
+   "baseline_ns": 16952048.550359905,
+   "speedup": 1.5601122903050273,
+   "speedup_of_medians": 1.5583814142127497,
+   "err_ns": 24776.559855221596,
    "speed_of_light_ns": 5663353.674806875,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::rega_kernel<true, true>((anon...",
-     3443.4,
-     31.2
+     3441.1,
+     31.4
     ],
     [
      "nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN",
-     2549.1,
+     2537.9,
      23.1
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, true>((ano...",
-     1797.1,
-     16.3
+     1799.0,
+     16.4
     ],
     [
      "nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT",
-     1496.6,
-     13.6
+     1391.4,
+     12.7
     ]
    ]
   },
@@ -325,37 +325,37 @@
     "page": 1,
     "q_len": 16384,
     "repeats": 6,
-    "seed": 6936041098637026158,
+    "seed": 4476817132895781177,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 14779549.027048139,
-   "baseline_ns": 20974015.47478512,
-   "speedup": 1.4191241854809271,
-   "speedup_of_medians": 1.4279461488482583,
-   "err_ns": 99525.9768691048,
+   "median_ns": 14763781.654224401,
+   "baseline_ns": 20926463.686861098,
+   "speedup": 1.417418936216342,
+   "speedup_of_medians": 1.4172935138669054,
+   "err_ns": 168713.55598505473,
    "speed_of_light_ns": 7710004.388626896,
    "status": "pass",
    "top_kernels": [
     [
      "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
-     4301.8,
-     29.4
+     4318.4,
+     27.8
     ],
     [
      "void (anonymous namespace)::rega_kernel<true, true>((anon...",
-     3185.0,
-     21.8
+     3757.6,
+     24.2
     ],
     [
      "nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN",
-     2554.1,
-     17.5
+     2571.2,
+     16.6
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, true>((ano...",
-     1683.3,
-     11.5
+     1916.4,
+     12.3
     ]
    ]
   },
@@ -371,37 +371,37 @@
     "page": 1,
     "q_len": 16384,
     "repeats": 6,
-    "seed": 6936429520181193693,
+    "seed": 4477303260413944320,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 18222014.666099153,
-   "baseline_ns": 24986047.87979275,
-   "speedup": 1.3712011727373719,
-   "speedup_of_medians": 1.3780363454738769,
-   "err_ns": 134577.5072906943,
+   "median_ns": 18546936.92132988,
+   "baseline_ns": 25560703.752562404,
+   "speedup": 1.3781630821834712,
+   "speedup_of_medians": 1.405311424595339,
+   "err_ns": 284212.5417292119,
    "speed_of_light_ns": 9847682.949824065,
    "status": "pass",
    "top_kernels": [
     [
      "void cutlass::device_kernel<flash::enable_sm90_or_later<f...",
-     7725.2,
-     41.1
+     7725.1,
+     42.1
     ],
     [
      "void (anonymous namespace)::rega_kernel<true, true>((anon...",
-     3701.7,
-     19.7
+     3411.9,
+     18.6
     ],
     [
      "nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN",
-     2559.3,
-     13.6
+     2544.8,
+     13.9
     ],
     [
      "void (anonymous namespace)::rega_kernel<false, true>((ano...",
-     1911.5,
-     10.2
+     1749.2,
+     9.5
     ]
    ]
   }
@@ -409,21 +409,21 @@
  "loads": [
   {
    "load": "first turn",
-   "sglang_ns": 3432865708.0801206,
-   "yours_ns": 2224261694.6136403,
-   "speedup": 1.5433731185468345
+   "sglang_ns": 3352389540.841803,
+   "yours_ns": 2208659610.4884567,
+   "speedup": 1.517838930418257
   },
   {
    "load": "turn 1",
-   "sglang_ns": 73441666.89179838,
-   "yours_ns": 51431943.53758088,
-   "speedup": 1.4279387835720263
+   "sglang_ns": 72666206.3067779,
+   "yours_ns": 49583577.0102486,
+   "speedup": 1.465529731583469
   },
   {
    "load": "turn 4",
-   "sglang_ns": 234061409.59635377,
-   "yours_ns": 156016642.867651,
-   "speedup": 1.5002335987636153
+   "sglang_ns": 233874175.42096227,
+   "yours_ns": 153899710.43593752,
+   "speedup": 1.5196531218836504
   }
  ],
  "attribution": null

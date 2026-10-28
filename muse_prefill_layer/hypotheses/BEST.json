@@ -1,18 +1,20 @@
 {
  "problem": "muse_prefill_layer",
- "job": "99767cf374bb4688",
+ "job": "b2941ea23dc743a3",
  "check_job": "21911eb694ce467c",
  "mode": "submit",
- "speedup": 1.4897491154674667,
+ "speedup": 1.5007957663757285,
  "ci": [
-  1.4674028787354547,
-  1.5120953521994784
+  1.4782838298800927,
+  1.5233077028713644
  ],
- "score_us": 260046.40377211233,
- "commit": "52169f17",
- "submission_blob": "11a08b3ff3cc8cb1ac2d0a96e19c7e94b92ab27d",
- "slug": "experts-rega-w2-early-loads-low-class",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-w13-fast-silu-epilogue.result.json",
- "updated_at": "2026-10-27T143300Z",
- "note": "landed by hand 2026-10-27 (orchestrator): scored 99767cf3 of hyp/muse_prefill_layer/experts-rega-w2-early-loads-low-class impl 52169f17 (arm a early gs/sid loads in the rega w2 epilogue at the LOW class, on top of fast silu); churn had pooled checks 59eb665f 1.4986 + 8716d98c 1.4994 as unproven-vs-best."
+ "score_us": 258132.32465036976,
+ "commit": "350343bcf26d26e11eddf1c1b2e72cd4d7dc8c18",
+ "submission_blob": "c63801e7a1dcfdb7cbdd0d38bc9b295407be7489",
+ "slug": "phasec-final-near-ties-nolo",
+ "result": null,
+ "updated_at": "2026-10-28T1320Z",
+ "note": "registered by hand 2026-10-28: phase-C variant final-near-ties-nolo (campaign expert-bandwidth, branch phasec/prefill-1028 994a3e95) = the 1.4897 board with the near-tie arms pinned (fa3c contig-varlen at turn_4 / turn_1, w2st arm a at high / ft) and the never-routed LO phase skipped (~40 s shorter prepare); check 7db6fa1a 1.5055; scored 1.5008 vs 1.4897; landed on master.",
+ "master_slug": "phasec-final-near-ties-nolo",
+ "master_job": "b2941ea23dc743a3"
 }
