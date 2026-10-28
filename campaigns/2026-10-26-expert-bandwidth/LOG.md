@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0249Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0255Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -22,8 +22,10 @@ append-only, newest last.
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
   - **In flight:**
     - **H100 redeploy agent** (gpunode06 only; see the policy bullet).
-    - **moe check fd0e92717ec0400e** (0248Z): S3 = Engine A v6, campaign/eb-s3 52251d20 (960,674 B, sha256 b464bd4b).
-      Scored run only if it beats 1.7225 AND the node correctness rerun on these bytes passes (queued 0249Z).
+    - **moe scored run 426218dc889d45d0** (0256Z): S3 = Engine A v6, campaign/eb-s3 52251d20 (sha256 b464bd4b); check
+      fd0e9271 drew 1.7377 (+0.88%) and the node correctness rerun on these bytes passed. Lands only above 1.7225.
+    - workflow **wf_33d9cfe1-32d** (s3-decode-port): v6 into decode d1 on `campaign/eb-s3d` (from eb-pin2 e8f8134b),
+      T=1 only, co-resident K2 kept; build -> 2 audits -> fix (high), ~1M tokens predicted.
   - **Decode base for the next decode builds: campaign/eb-pin2 e8f8134b** (pins round 2: check 314cca3c 1.5883, all
     four pins routed, a tie, so not scored).
   - **Next:** when S3's build lands, queue its node validation, then its moe judge check; harvest the H100 queue at
@@ -1556,3 +1558,17 @@ with the operator's go-ahead.
   n=4 floor is marginal; no per-expert slope cut on the node; cold prepare +2 s over the board.
 - **moe check fd0e92717ec0400e** dispatched 0248Z (attempt 9b45dd20 on eb-s3). Node Q1 rerun + K9 + one isolated A/B
   on the final bytes queued 0249Z (bundle nj-s3 = s3.py b464bd4b).
+
+## 2026-10-28T0255Z: S3 check 1.7377: v6 routes at T=1; scored run sent; decode port started
+
+- **fd0e92717ec0400e passed, 1.7377** [1.712, 1.764] vs the 1.7225 board (+0.88%). v6 routed at T=1 (weighted 1.054 /
+  1.062, every floor held); T=8 stayed on v4 (v6 1.016, slower at p50). T=1 n1..n5: v1 20.2 / 27.5 / 39.3 / 46.3 /
+  59.3 -> v6 18.2 / 27.0 / 36.0 / 44.3 / 52.7 us. **Per extra expert 8.53 / 8.71 vs 10.2 us** (inside the 8-9 band; not
+  a kill). v6 vs v6s at n=2 x1.137 (keep the co-resident K2). decode 1 row 35.4 -> 33.3 us (x1.065); other loads
+  noise. Attempt result fa5e4d07 on eb-s3; archived runs/fd0e92717ec0400e.json.gz.
+- Node correctness rerun on the final bytes b464bd4b: fuzz-odd, fuzz-skew and the sweep all passed.
+- **Scored run 426218dc889d45d0** sent 0256Z (attempt 36c43048). Borderline under 1.2%; no better moe candidate is due.
+- **Decode port** (panel 6.10): workflow wf_33d9cfe1-32d on campaign/eb-s3d (from eb-pin2 e8f8134b), T=1 only (class 8
+  is not ported: v6 lost T=8 at p50). Expected d1 rows -3 to -5 us, decode +0.5-0.85% [E].
+- Note from the moe enablers: their P3 ncu validation overlapped E2's DEC-01 run on GPU 7 (02:50:30-02:52:05Z). The
+  timings of nj-e2 runs/20261027-194939-gpunode06 are contaminated; rerun dec01a before quoting them.
