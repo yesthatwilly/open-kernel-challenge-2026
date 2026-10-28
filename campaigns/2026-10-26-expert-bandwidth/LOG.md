@@ -2281,3 +2281,5 @@ with the operator's go-ahead.
   - The same base without the probe passed: trim 6985e7f4, board 83f0c00e.
   - An investigator is checking probe side effects vs a latent T=256 routing hazard (/home/user/git-scratch-c24a6e/decode-recheck-diag.md). If latent, the board's final held-out rerun is at risk.
 - 2048Z: attn diag-swf-rungs (diag-swf-chain + diag-swf-merge, one check; campaign/attn-rung-swf 62713ae5, audited) dispatched as 296ec797b8294f4c.
+- 2056Z: decode dec-rt-tail (the routing-tail settling probe; phasec/dec-rt-1028 65306cbf) dispatched as 0635f30d0dc84455.
+  - **attn swf stage 1** (campaign/attn-swf d63a1d92; 2 audits, both majors fixed) dispatched as **109a387b34a3441a**. It uses attention's last check tonight rather than the shelf-stack stretch, because it has the higher EV and an early readout.
