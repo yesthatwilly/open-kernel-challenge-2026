@@ -71,7 +71,8 @@ kind: primary
 controls_for: null
 prior: "marlin-block-m-cap-16: that lowered every expert's block to 16 at T>=128 (gain 8-15%); moe marlin-block-m-8-verify16 lowered it further and regressed (391 vs 341 us) from hot-expert re-reads; moe marlin-two-class-block-m-decode32 (expired, never ran) split COLD experts to bsm 8 at T=17..32. This keeps cold experts at 16 and gives only hot experts a LARGER block so their weights stream once, at T=128/256, with an optional side stream for the hot class: never tried"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: hotcold landed (H=-16)"
 ---
 
 # marlin-hot-cold-two-class-bsm-t128-t256

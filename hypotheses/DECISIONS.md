@@ -428,3 +428,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150030Z `muse_decode_layer` **fsi-moe-tiny-t-decode-port**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A replaced Marlin at T<=8
 - 2026-10-28T150030Z `muse_decode_layer` **fsi-moe-midt-decode-port**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A v4c at T=9..32
 - 2026-10-28T150030Z `muse_decode_layer` **marlin-bsm8-t17-t32-w13-atomic-t1**: hold: screen 2026-10-28 1520Z (value bar, vs master): STALE: Marlin no longer on the T<=32 path
+- 2026-10-28T150030Z `muse_decode_layer` **marlin-hot-cold-two-class-bsm-t128-t256**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: hotcold landed (H=-16)
