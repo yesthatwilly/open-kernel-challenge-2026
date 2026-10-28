@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0234Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0249Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -22,9 +22,8 @@ append-only, newest last.
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
   - **In flight:**
     - **H100 redeploy agent** (gpunode06 only; see the policy bullet).
-    - workflow **wf_9a2a0ee6-8bc** (s3-expert-streaming): S3 design panel x3 (max) -> judge (max) -> build on
-      `campaign/eb-s3` (from eb-s1a 26994217 = the moe board bytes) -> 2 audits -> fix (high). It returns a
-      check-ready commit; the main thread dispatches the moe check. Predicted ~1.4M tokens.
+    - **moe check fd0e92717ec0400e** (0248Z): S3 = Engine A v6, campaign/eb-s3 52251d20 (960,674 B, sha256 b464bd4b).
+      Scored run only if it beats 1.7225 AND the node correctness rerun on these bytes passes (queued 0249Z).
   - **Decode base for the next decode builds: campaign/eb-pin2 e8f8134b** (pins round 2: check 314cca3c 1.5883, all
     four pins routed, a tie, so not scored).
   - **Next:** when S3's build lands, queue its node validation, then its moe judge check; harvest the H100 queue at
@@ -1545,3 +1544,15 @@ with the operator's go-ahead.
 - With the H100 free: the pre-audit bytes (f4050fc3) are pinned as problems/moe/s3.py in bundle nj-s3. Queued:
   fuzz-odd, fuzz-skew, K9 x2 (vs the 0141Z board K9), the 32-shape sweep, 2 cold isolated A/Bs and a null A/B.
   Pre-registered in research/h100-findings.md. The judge check waits for the post-audit commit.
+
+## 2026-10-28T0249Z: S3 workflow done; moe check fd0e9271 sent
+
+- wf_9a2a0ee6-8bc finished: 8 agents, **2.75M tokens** (predicted 1.4M). Audits: correctness "fix" (a major: the v6
+  stage could starve the shared Engine A copy check's time; fixed with its own budget: start 170 s, gates 200 s, copy
+  215 s), perf "ship" (a major: at G=132 each extra expert adds 6 whole records per CTA, so ~8.0-8.5 us per expert is
+  the design's floor, not 7.5). Fix commit **52251d20** (co-residency flag bit 2, per-step guards, broader v6 copy
+  check refills, v1 kernel-only baseline with pf / g2_t).
+- Node evidence on the pre-audit bytes (h100-findings.md): correct; T=8 x1.03-1.04 routed; T=1 x1.05 weighted but the
+  n=4 floor is marginal; no per-expert slope cut on the node; cold prepare +2 s over the board.
+- **moe check fd0e92717ec0400e** dispatched 0248Z (attempt 9b45dd20 on eb-s3). Node Q1 rerun + K9 + one isolated A/B
+  on the final bytes queued 0249Z (bundle nj-s3 = s3.py b464bd4b).
