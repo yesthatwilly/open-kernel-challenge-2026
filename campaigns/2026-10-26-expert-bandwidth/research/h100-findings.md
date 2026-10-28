@@ -931,3 +931,16 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   (one pool GPU each) and 42-ncu on gate eac-val-ok. Full text: takemyjob registrations.md `### eac` (a62947b).
 - The L3 production port (workflow wf_5e31da3c-b6f) runs in parallel. Its judge check is the transfer test, and this
   sweep is the per-cell attribution.
+
+## 2026-10-28T08:07Z: eac amendment before any replicate: max-shared carveout, and R1 on the median clock
+
+- The first validation (runs/20261028-010157-gpunode06) had no correctness failures: 42 timed cells, 0 failed checks,
+  DQX 0 mismatches over 3 x 1.8M cases, memcheck clean, every null in band (A/A 1.0010). But 31 cells were ok=0, so the
+  gate was not written.
+  - **S4's two CTAs per SM ran mostly one after the other.** cyc_2h / cyc_rec = 1.45-1.47 on every S4 cell, against
+    the 1.5 that back-to-back CTAs give. The driver chose a carveout for one CTA. Fix: the max-shared carveout on
+    every cell. The ss_dev void now also checks co-residency.
+  - **The clock:** at this ALU load it settles at 1793-1825 MHz. Cycles per record are clock64 counts, which DVFS does
+    not change, so R1 reads the median clock.
+- New bundle 7b486156. The validation is re-run before the gate (takemyjob d018dc8). Its indicative 3-rep ratios are
+  not decision data.
