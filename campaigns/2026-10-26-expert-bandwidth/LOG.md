@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1455Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1503Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -40,8 +40,8 @@ append-only, newest last.
       (LOG, Now, trim, phase-A panels, memory) and runs no churn ticks. Campaign checks reserved for tonight: moe 1 +
       decode 1 (verify the trim branches) and attention 2 (the attn-fixed panel's diagnostics); message it before
       each dispatch.
-    - `size-trim-1028` (wf_d74ff78b-0ee, resumed 14:53Z): the build is done (moe campaign/eb-trim 742f3209:
-      989,618 -> 827,317 B; decode campaign/eb-trimd 180dff82: 988,760 -> 984,406 B); the audit and fix run now.
+    - Room for phase A is made: moe campaign/eb-trim 742f3209 827,317 B; decode campaign/eb-trimd 8cb23d1f
+      893,346 B (trim + build.py docstring strip). Both need one judge check tonight (reserved).
     - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873, resumed 14:53Z with the per-row triage in its brief). The
       session limit killed all four panels at ~14:25Z before any design returned; attn-full-splitkv and dense are
       dropped (triage: low headline value per token), engineA waits until the agent count allows (<= 3).
@@ -2157,3 +2157,23 @@ with the operator's go-ahead.
 - **/tmp is a 1 GB tmpfs:** it reached 0 MB free at ~14:56Z (91 MB now). The biggest users are leftover agent scratch
   dirs from 10-26..10-28 (sgl-inspect 143 MB, es1a-b* 182 MB, es1a-c 91 MB, l3audit / eac*-audit ~100 MB). Nothing
   deleted; the user was told.
+
+## 2026-10-28T1503Z: trim audited clean; build.py strips docstrings over budget (decode 893,346 B); churn queues hold nothing runnable
+
+- `size-trim-1028` done (2 agents, 123k tokens): audit **clean** on both branches.
+  - moe campaign/eb-trim 742f3209: 989,618 -> 827,317 B (-162 KB). The X5 Gate-0 carrier and the Engine A ladder
+    (never compiled) are out. es1a stays: it is raced as H-116.
+  - decode campaign/eb-trimd 180dff82: -4.4 KB only, because decode has almost no unreachable code.
+  - Every compiled CUDA source is byte-identical to the board's.
+- **build.py (8cb23d1f, eb-trimd):** over budget, a second pass drops docstrings. It refuses if anything reads
+  `__doc__`, and it asserts the AST equals the original minus exactly those statements. Decode: 340 docstrings,
+  984,406 -> 893,346 B (sha256 b9ff4589...). Nothing in the file reads __file__ / inspect / __doc__. ast.parse, okc_lint
+  and cuda_syntax pass. Phase A now has 96.7 KB of room on decode and 162 KB on moe.
+- **musespark-b1's churn screen:** all 30 non-held queued files are held (14 superseded or stale, 16 below 1.24% by
+  their own estimates; commits to 3035e038). One churn run is left today (attention
+  sliding-verify1-pseudo-fused-preattn-rope), so the rest of today's checks are the campaign's.
+  - Two unaimed areas: decode's ea4 w13 / w2 at T = 128 / 256 (~165-180 us per verify 16 / 32 row; decode's rows
+    furthest from the floor are verify 32 / 16 sliding at 3.1x / 2.6x) and attention verify 32 sliding, where
+    sw_combine is 15.8 us of 38.8.
+  - The engineA panel's brief now carries both the T = 128 / 256 scope and the room. It launches when the attn-fixed
+    designers return (<= 3 agents).
