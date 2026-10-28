@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-28T145238Z. Best: 1.6551x [1.6303,1.6799] job `83f0c00eb3644e1c` (submit)
+Regenerated 2026-10-28T171704Z. Best: 1.6551x [1.6303,1.6799] job `83f0c00eb3644e1c` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -68,12 +68,12 @@ Regenerated 2026-10-28T145238Z. Best: 1.6551x [1.6303,1.6799] job `83f0c00eb3644
 | 2026-10-25T054108Z | full-decode-sk-ticket-restack-b1-b64 | primary | FA3 call (full decode, all batches): split-KV A/B at 1<B<=64 and FA3 chain at B=1 | done/neutral | neutral | 1.2847 | [1.265,1.304] | 9c99379067084f6e | check |  | proceed | 4/5 |
 | 2026-10-25T054127Z | sliding-cluster-c4-decode32-s2-k-encode-match | rewrite | FA3 call (sliding decode, batch 17..32) | done/neutral | neutral | 1.2803 | [1.261,1.299] | 7c04214e90354dfa | check |  | proceed | 2/5 |
 | 2026-10-25T054152Z | dense-chain-s3-t1-q-sk2-o-route-unpool | rewrite | whole-layer fusion (T=1 dense chain: qkv/o GEMM side + routing R + unpooler) | done/neutral | neutral | 1.3018 | [1.282,1.321] | 34a9be06918d448b | check | superseded | proceed | 3/5 |
-| 2026-10-25T110639Z | sliding-cluster-c4-s3-satfinite-on-sk-ticket | rewrite | FA3 call (sliding decode, batch 17..32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T110639Z | sliding-cluster-c4-s3-satfinite-on-sk-ticket | rewrite | FA3 call (sliding decode, batch 17..32) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T110701Z | qkv-o-swapab16-t2-t16-no-fork | primary | qkv GEMM + o GEMM (2 <= T <= 16) | done/neutral | neutral | 1.3056 | [1.286,1.325] | b0057d2e6cef4d5a | submit |  | proceed | 3/6 |
 | 2026-10-25T145938Z | dl3-unpool-nf1-t2-t8 | primary | unpooler GEMM (T=2..8, dl3 piece C widened) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T145938Z | dl3-piece-a-gate-stride-check-fix | primary | full decode_1 attention side (dl3 piece A enable) | done/neutral | neutral | 1.3080 | [1.288,1.328] | 933d3f825a044d36 | submit | done | proceed | 7/7 |
 | 2026-10-25T153205Z | dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32 | primary | qkv GEMM + o GEMM + unpooler GEMM (T <= 32) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T153205Z | ffn-front-t128-t256-concat-route | rewrite | pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T153205Z | ffn-front-t128-t256-concat-route | rewrite | pooler GEMM + router GEMM + routing top-k + MoE align + pre-expert norm (T > 32) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | moe-rega-bucket-gate-port-t128-t512 | rewrite | w13 marlin + silu-mul + w2 marlin (128 <= T <= 512) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T153205Z | preattn-fused-t-gt1-sk-and-fa3-feeds | primary | pre-attention norm+rope + cache store (T > 1, every shape not routed to _sliding_forward or dl3 piece A) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-25T153205Z | sliding-cluster-c16-decode1-port | primary | FA3 call (sliding decode, batch 1) | queue | hold |  |  |  |  |  | hold |  |
@@ -82,11 +82,11 @@ Regenerated 2026-10-28T145238Z. Best: 1.6551x [1.6303,1.6799] job `83f0c00eb3644
 | 2026-10-25T161651Z | combo-measured-rows-plus-rega-align2-large-t | primary | combination: C1 measured stack + w13/w2 rega and align2 at 128<=T<=512 | done/neutral | neutral | 1.3164 | [1.297,1.336] | eaa8cc0f18f64bfb | submit |  | proceed | 1/7 |
 | 2026-10-25T161651Z | combo-measured-rows-slide-batched-preattn-t8-tail | primary | combination: sliding attention B=2..32 + pre-attention feeds (T>1) + routing R / unpooler (2<=T<=32 / 2<=T<=8) | done/neutral | neutral | 1.3142 | [1.295,1.334] | a903b9d004d2452d | submit | done | proceed | 3/8 |
 | 2026-10-25T202335Z | swapab16-t2-t16-port-on-master | primary | qkv GEMM + o GEMM (2 <= T <= 16) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T212731Z | fsi-moe-midt-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (9 <= T <= 32) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T212731Z | fsi-moe-tiny-t-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (1 <= T <= 8) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T212731Z | marlin-bsm8-t17-t32-w13-atomic-t1 | primary | w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T212731Z | marlin-hot-cold-two-class-bsm-t128-t256 | primary | w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | fsi-moe-midt-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (9 <= T <= 32) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | fsi-moe-tiny-t-decode-port | rewrite | w13 marlin + silu-mul + w2 marlin + post-expert combine (1 <= T <= 8) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | marlin-bsm8-t17-t32-w13-atomic-t1 | primary | w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | marlin-hot-cold-two-class-bsm-t128-t256 | primary | w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | hold |  |  |  |  |  | required |  |
 
 ## Held
 
@@ -94,10 +94,17 @@ Regenerated 2026-10-28T145238Z. Best: 1.6551x [1.6303,1.6799] job `83f0c00eb3644
 - moe-small-t-cuda-swapab-port: its parent, moe cuda-nvfp4-swapab-mma-persistent-small-m (8f198afc3bf14f6f), failed its tests on 2026-10-24; the minter made dispatch conditional on that parent winning
 - moe-bs1-fused-persistent-port: adversarial review: Hold: the hypothesis gates its own dispatch on the moe parent (1105a02aa3fa4e56) being faster than moe master at bs=1, and it was not (bs=1 50.93 us vs 48.37 us
 - moe-chain-cuda-swapab-expert-once-fix: Retired: its design runs the self-check in a child process, which the rules statically reject; superseded by the -inproc line (LESSONS 2026-10-25).
+- sliding-cluster-c4-s3-satfinite-on-sk-ticket: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: base never landed; sliding B=17..32 already on stream-K window kernel
 - dl3-unpool-nf1-t2-t8: superseded: the unpooler path is already on master (decode minter, 2026-10-25)
 - dense-qkv-o-unpool-swapab-bf16-master-port-t1-t32: adversarial review: Hold. The conjecture is that bf16 master's 'newer' swap-AB kernel will run in decode at its standalone 9.7/3.9 us. That premise is false, and the transfer has a
+- ffn-front-t128-t256-concat-route: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w6b-t128diet cells landed
 - moe-rega-bucket-gate-port-t128-t512: superseded: decode's own selector switched rega OFF at T=128 (384.8 vs Marlin 327.2 us) and T=256 (454.6 vs 440.0) on 2026-10-25; dead in decode (decode minter, 2026-10-25)
 - preattn-fused-t-gt1-sk-and-fa3-feeds: adversarial review: Duplicate of master: the landed combo-measured-rows-slide-batched-preattn-t8-tail (ec89382b, BEST 1.3142x) carries _pre_attention_kernel as source S3 (PAIRED an
 - sliding-cluster-c16-decode1-port: adversarial review: Plausible but small (~2 us on the 118.5 us sliding decode_1 row, ~0.25% headline); its own first measurement must be an okc check, and it is an unchecked cross-
 - combo-attn-master-sliding-race-skw-c16: superseded: remainder equals sliding-sk-window-port-decode32-verify1 + sliding-cluster-c16-decode1-port, both queued (decode minter, 2026-10-25)
 - swapab16-t2-t16-port-on-master: adversarial review: Hold. The swap-AB in-gate effect (T=8/16) was already measured kernel-by-kernel in the parent's profile b0057d2e6cef4d5a: ~1.5-2 us per in-gate shape, ~+0.3% he
+- fsi-moe-midt-decode-port: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A v4c at T=9..32
+- fsi-moe-tiny-t-decode-port: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A replaced Marlin at T<=8
+- marlin-bsm8-t17-t32-w13-atomic-t1: screen 2026-10-28 1520Z (value bar, vs master): STALE: Marlin no longer on the T<=32 path
+- marlin-hot-cold-two-class-bsm-t128-t256: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: hotcold landed (H=-16)
+- wg2-occ2-b256-decode-port: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.4%; Marlin premise gone

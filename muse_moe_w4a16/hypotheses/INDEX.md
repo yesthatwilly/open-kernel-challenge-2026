@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-28T145238Z. Best: 1.8941x [1.8657,1.9225] job `0b49b1aae6a04acb` (submit)
+Regenerated 2026-10-28T171704Z. Best: 1.8941x [1.8657,1.9225] job `0b49b1aae6a04acb` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -91,7 +91,7 @@ Regenerated 2026-10-28T145238Z. Best: 1.8941x [1.8657,1.9225] job `0b49b1aae6a04
 | 2026-10-25T211822Z | nvfp4-rowowner-bulk-stream-tiny-t-rewrite | rewrite | w13 marlin + silu-mul + w2 marlin | done/neutral | neutral | 1.3887 | [1.368,1.409] | c08dbd737e29442d | check |  | proceed | 2/4 |
 | 2026-10-25T211843Z | wg2-pingpong-consumers-occ2-b256 | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T211909Z | wg2-w13-occ2-nmax128-stg2-hot | primary | w13 marlin + silu-mul | queue | hold |  |  |  |  |  | proceed |  |
-| 2026-10-25T211926Z | wg2-stream-k-tail-floor-g-over-r | primary | w13 marlin + silu-mul + w2 marlin | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T211926Z | wg2-stream-k-tail-floor-g-over-r | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 
 ## Held
 
@@ -104,3 +104,4 @@ Regenerated 2026-10-28T145238Z. Best: 1.8941x [1.8657,1.9225] job `0b49b1aae6a04
 - wg-producer-direct-x-rows-no-gather: own condition: first measurement must be an okc check (new cp.async/mbarrier producer can fault or hang); only scored submits remained on 2026-10-25, and a gain on master cannot move the board (best is the occ2 branch). Unhold when checks reset; apply the reviewer's fence.proxy.async and nvalid-bound fixes when building
 - wg2-pingpong-consumers-occ2-b256: killed line (X5 2026-10-27): wg2 re-split measured x0.405/0.882 (SINGLE-PASS s1 killed table), ping-pong consumer WGs x1.18-1.53 slower (prefill rega-pp, campaign K5 prior); the T<=8 incumbent is Engine A, not the wg consumer; adversary of cuda-fused-split-i-moe-tiny-t asked to close remaining wg-consumer items
 - wg2-w13-occ2-nmax128-stg2-hot: killed line (X5 2026-10-27): wg2 hot-half re-split measured x0.405/0.882 on the judge (SINGLE-PASS s1); S1a's node build shows today's wg hot half already runs at the K4 K-step rate (S/wg x0.89-0.95), so occupancy/stage tweaks of wg2 have no headroom to find
+- wg2-stream-k-tail-floor-g-over-r: adversarial review: Stale and superseded: the change edits wg2_kernel at OCC2 / G=264 on the restack-occ2-wg2-b256 base, but that base never landed (it is on FINDINGS' Do-not-try l

@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-28T145238Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
+Regenerated 2026-10-28T171704Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -83,8 +83,8 @@ Regenerated 2026-10-28T145238Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-25T161233Z | combo-a-master-normgather-naive-stack | primary | restack: pre-expert norm + rega gather fused (all rega classes) on master 1.4587; naive per-shape winner stack | done/neutral | neutral | 1.4605 | [1.439,1.482] | 9bfc488c36c84924 | submit | done | proceed | 0/3 |
 | 2026-10-25T161233Z | combo-b-normgather-two-cta-low-regate | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (two CTAs/SM V64/V32 port, re-gated on master's random routing with a skew guard) stacked on combo A | done/neutral | neutral | 1.4677 | [1.446,1.490] | 73b40cd13fdf4bb0 | submit | done | proceed | 0/4 |
 | 2026-10-25T211737Z | experts-rega-mc2-slab-multicast-all-t | rewrite | w13 + w2 expert GEMMs, every rega class: activation slab loaded once per 2-CTA cluster and shared by TMA multicast | done/neutral | neutral | 1.4630 | [1.441,1.485] | 0ca60bb781db48e4 | check |  | proceed | 0/3 |
-| 2026-10-25T211825Z | experts-rega-low-2cta-fullslab-mc2 | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-25T211825Z | experts-rega-mc2-bm256-stack-high-ft | primary | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-25T211825Z | experts-rega-low-2cta-fullslab-mc2 | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-25T211825Z | experts-rega-mc2-bm256-stack-high-ft | primary | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T211833Z | experts-rega-pdl-chain-gather-w13-w2 | primary | launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2) | done/neutral | neutral | 1.4622 | [1.440,1.484] | 8e4685f303c143a8 | check |  | proceed | 1/3 |
 | 2026-10-25T211857Z | experts-rega-mc4-cluster-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): activation slab shared across a 4-CTA cluster by TMA multicast | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-26T023858Z | experts-rega-s4-bm256-wide-tile-high-ft-cf | confirm→experts-rega-s4-bm256-wide-tile-high-ft | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | done/neutral | neutral | 1.4711 | [1.449,1.493] | 13cfaf1e25c341af | check |  | proceed |  |
@@ -93,18 +93,18 @@ Regenerated 2026-10-28T145238Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-26T224003Z | experts-rega-rotation-fastsilu-combo | primary | w13 + w2 expert GEMMs (rega: rotated schedule + fast silu, one module) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T224003Z | experts-rega-w13-fast-silu-epilogue | primary | silu-mul (rega w13 epilogue) | done/gain | gain | 1.4949 | [1.472,1.517] | 21911eb694ce467c | check | done | proceed | 1/1 |
 | 2026-10-26T224003Z | experts-rega-fine-n-buckets | primary | w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity) | done/neutral | neutral | 1.4573 | [1.435,1.479] | c951d9168cd546bb | check |  | proceed | 1/3 |
-| 2026-10-26T224004Z | experts-rega-pdl-chain-regate-iqr-slack | primary | launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224004Z | front-qknorm-rope-fp8-store-fusion-restack | primary | pre-attention norm+rope + cache store (five launches -> one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224008Z | experts-rega-lpt-group-order | primary | w13 + w2 expert GEMMs (rega persistent schedule: expert groups heaviest first) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224009Z | experts-rega-dynamic-item-scheduler | primary | w13 + w2 expert GEMMs (rega persistent schedule: atomic work counter) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224009Z | experts-rega-stage-anatomy-diag | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224009Z | front-routing-pdl-launch-diet-stack | primary | launch overhead (front fusion + routing fusion + PDL chain regate, stacked) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T224009Z | routing-triton-hilo-sum-topk-localids | primary | routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T224004Z | experts-rega-pdl-chain-regate-iqr-slack | primary | launch overhead (PDL chain _norm_gather_kernel -> rega w13 -> rega w2: gate rule only) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224004Z | front-qknorm-rope-fp8-store-fusion-restack | primary | pre-attention norm+rope + cache store (five launches -> one Triton kernel) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224008Z | experts-rega-lpt-group-order | primary | w13 + w2 expert GEMMs (rega persistent schedule: expert groups heaviest first) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | experts-rega-dynamic-item-scheduler | primary | w13 + w2 expert GEMMs (rega persistent schedule: atomic work counter) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | experts-rega-stage-anatomy-diag | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | front-routing-pdl-launch-diet-stack | primary | launch overhead (front fusion + routing fusion + PDL chain regate, stacked) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-26T224009Z | routing-triton-hilo-sum-topk-localids | primary | routing top-k (side-stream logits sum + FusedMuseSparkRouting + local-id remap in one Triton kernel) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T111744Z | experts-rega-fine-n-high-plus-fast-silu | primary | rega experts kernel (w13/w2 N buckets at the high class + w13 silu epilogue) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-27T133154Z | experts-rega-w2-epilogue-prefetch-bulk-store | primary | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | done/neutral | neutral | 1.5010 | [1.479,1.524] | 665c32dd8c794c0b | check |  | proceed | 1/3 |
-| 2026-10-27T133216Z | experts-rega-epilogue-wg-local-bulk-store | primary | w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T133216Z | experts-rega-epilogue-wg-local-bulk-store | primary | w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T133236Z | o-proj-triton-gemm-turn-gated | primary | o GEMM (attention output projection at 200 < T <= 4096) | done/neutral | neutral | 1.4863 | [1.464,1.509] | af3b0d0d84834ee9 | check |  | proceed | 2/3 |
-| 2026-10-27T133257Z | experts-rega-epilogue-overlap-next-stage | primary | w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-27T133257Z | experts-rega-epilogue-overlap-next-stage | primary | w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T140020Z | experts-rega-w2-epilogue-prefetch-bulk-store-cf | confirm→experts-rega-w2-epilogue-prefetch-bulk-store | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4986 | [1.476,1.521] | 59eb665f162a4ac9 | check |  | proceed | 2/3 |
 | 2026-10-27T141744Z | experts-rega-w2-early-loads-low-class-cf | confirm→experts-rega-w2-early-loads-low-class | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4994 | [1.477,1.522] | 8716d98c405f417d | check |  | proceed |  |
@@ -112,8 +112,19 @@ Regenerated 2026-10-28T145238Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 ## Held
 
 - fa3-num-splits-cap-gated-turn: adversarial review: Hold this as a scored submit; the cause is the budget, not the idea. The mechanism is plausible and rules-clean, but the best case is about +0.2% on a headline 
+- experts-rega-low-2cta-fullslab-mc2: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 never landed (1.31-1.81x slower); DISTILL 3.1 retire; REGA_LO_SKIP on master
+- experts-rega-mc2-bm256-stack-high-ft: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 and bm256 both slower; DISTILL retire
 - experts-rega-mc4-cluster-high-ft: adversarial review: Hold: this hypothesis's own build condition has failed. Stage 1's 2-CTA slab multicast cut issued L2 bytes by 24-39% yet rega ran 1.31-1.38x slower at high/ft a
 - experts-rega-rotate-finebucket-fastsilu-combo: rotation was neutral on its own 2026-10-27 (d00770b6: pop x0.991-1.004, all classes OFF); a combo built on it would carry dead code. Re-mint fine-N (high class) + fast-silu without rotation via /hypothesize.
 - experts-rega-rotation-fastsilu-combo: rotation was neutral on its own 2026-10-27 (d00770b6: pop x0.991-1.004, all classes OFF); a combo built on it would carry dead code. Re-mint fine-N (high class) + fast-silu without rotation via /hypothesize.
+- experts-rega-pdl-chain-regate-iqr-slack: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: parent on Do-not-try; module predates fsilu/w2st
+- front-qknorm-rope-fp8-store-fusion-restack: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%, stack-only
+- experts-rega-lpt-group-order: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: rotation cut imbalance but gate missed; round-rotated on Do-not-try
+- experts-rega-dynamic-item-scheduler: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: stages/CTA max/min 928/896, imbalance premise fails
+- experts-rega-stage-anatomy-diag: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR 0% (diagnostic only; DISTILL names it as the mc2/bm256 revival test)
+- front-routing-pdl-launch-diet-stack: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~1%; parent not landed
+- routing-triton-hilo-sum-topk-localids: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%, stack-only
 - experts-rega-fine-n-high-plus-fast-silu: adversarial review: Hold. As written the run cannot build the stack: prepare reaches 166.9 s before the fine phase and the 200 s pre-build deadline lets only one ~42 s nvcc build s
+- experts-rega-epilogue-wg-local-bulk-store: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w2st arm a landed; bulk store is arm b which lost (665c32dd)
+- experts-rega-epilogue-overlap-next-stage: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR <=1.2%, high risk (232-reg ceiling), needs re-aim to fsilu_w2a
 - experts-rega-w2-epilogue-prefetch-bulk-store-cf: orchestrator 2026-10-27: nothing routed in the parent's run (every class OFF; 1.5010 is noise), so a confirm rerun measures nothing new. The parent's real finding (arm a x0.971-0.981 at the LOW class, print-only) goes to a new hypothesis.
