@@ -2322,3 +2322,4 @@ with the operator's go-ahead.
   - **Scored run af154932df744959 sent, same bytes (sha256 4f5f2072).**
   - Decode port: arm-s upgrade being added (eb-v4xd), to check before 00:00Z with one of decode's 2 checks.
 - 2147Z: **moe scored af154932 1.925 (rank 320/1003; was 1.8941) LANDED** on master 37a5921a; register-landing wrote BEST.json/BEST.result.json + the [landed] claim.
+- 2151Z: v4x decode port with the s upgrade (eb-v4xd c38f5a91) dispatched as 1fd2c931cf874a07 (decode check 1 of the last 2).
