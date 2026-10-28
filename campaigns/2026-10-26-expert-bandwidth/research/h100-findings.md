@@ -670,3 +670,14 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   larger than the -1.5% predicted).
 - **Gate not written** (takemyjob 04e8ace). m1 and p3 run as queued. Re-registering m456 / m08t8 at a 0.45% per-row MDE
   is the user's call.
+
+## 2026-10-28T05:16Z: amendment (the user's decision, before any m456 / m08t8 data): E1 accepted at a 0.45% per-row MDE; gate opened
+
+- **Amendment.** The per-row MDE for in-process readings is 0.45%, the M00 identity spread, replacing R6's provisional
+  0.30%. E1 is accepted for this program at that MDE despite M00's CI-coverage miss (7-8/12), which stays on record.
+  M00's sensitivity arms resolved as predicted, and the identity headline held within 0.25%.
+- **Unchanged decision rules.** m456: pin at +0.5% or more in both replicates; K2 / combine only at +0.8%; ties go to R10.
+  Readings must agree in sign with the reading against the identity arm and clear 0.45%. m08t8: the fit thresholds
+  a >= 12 us and b >= 9.28 us per expert.
+- **Released.** queue/gates/m00-accepted written; 32-m456 x8 and 34-m08t8 x2 are eligible. The amendments are also in
+  takemyjob queue-staged/registrations.md.
