@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1259Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1303Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -25,9 +25,8 @@ append-only, newest last.
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
   - **Quota 1259Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 9; prefill 20 / 10.
   - **In flight:**
-    - Attention diagnostics (12:49Z): diag-sw-perb-floor 15606a81, diag-sw-keys-sweep 0017ccea, diag-sw-gather-split
-      7745d256, diag-fa3-verify-ctx-sweep e8aac4b8, diag-fa3-verify-gather-split 6f1b1e8c, diag-fa3-verify-perb-floor
-      cc388d94, diag-gather-floor de2770ab.
+    - Attention generator resumed for a second batch (pins + sk-onepass restack, gather-split pinned, window-kernel and
+      FA3 fixed-cost anatomies); 9 attention checks left.
     - bf16 scored run 3e3ffc5afc57433b (12:58Z): pc-lt-qkv128-readflush (check 0c9095e2 1.2844); land if > 1.274.
     - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
   - **Next:**
@@ -1999,3 +1998,16 @@ with the operator's go-ahead.
   split-K reduce tail costs 1.0-1.5 us per GEMM at m <= 32; router + pooler on two streams saves 0.9-2.4 us at
   m = 1-16; the old write-flush gates overstated times 20-30%; at nearby m the board is 0.94-0.98x SGLang at m = 48-130
   (no gate fix needed; worst rel L2 1.5e-4).
+
+## 2026-10-28T1303Z: attention diagnostics: the window kernel's fixed cost is the lever (tomorrow's attention rewrite)
+
+- Window kernel (sliding verify): fixed 6.8 / 7.2 us + 3.87 / 7.44 us per 1k keys per request at B=16 / 32 (key stream
+  ~1.1 TB/s); 47% / 33% of the time is fixed at K=2048; 8.3x / 6.6x its HBM floor (B=2: 35x). A naive page-1 gather
+  reads at only 0.2 TB/s, so the kernel's streaming is already decent: **the fixed cost is the first lever**, the same
+  shape as moe's fc today.
+- FA3 full verify (B>1): fixed 22.0 / 22.7 us + 2.58 TB/s per key; 2.0-2.2x floor at 80k keys (4.9x at B=2); not
+  gather-bound (sequential tables save 3-9 us).
+- diag-sw-gather-split returned no data (no sliding band routed in that run: one more flip sample). All seven read
+  1.610-1.626 on board routing.
+- For tomorrow's phase A: a decode-portable attention fixed-cost rewrite (window kernel ~7 us of 14.6 us at B=16; FA3's
+  22 us at small B), sized by these numbers.
