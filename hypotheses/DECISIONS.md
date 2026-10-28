@@ -406,3 +406,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T114848Z `muse_attention_decode` **full-verify-wgmma-s7-split-combine**: stamp correction: the two notes above stamped 2026-10-28T1145Z and 1200Z were estimates; the real times are 11:34Z (tick 2026-10-28T113417Z) and 11:46Z (commit times of 5d3ceec1 / cda01307)
 - 2026-10-28T145300Z `muse_attention_decode` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
 - 2026-10-28T145300Z `muse_bf16_proj` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
+- 2026-10-28T145300Z `muse_decode_layer` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
