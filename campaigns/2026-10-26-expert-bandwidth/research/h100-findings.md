@@ -231,3 +231,20 @@ Queued by the main thread after the runner restart (runner pid 1400704 from 01:2
   node / judge disagreement on that race. The full flip table and the replay-check counts are left to E4's parser.
 - **Read:** the current board passes every proving job the old board passed (sweep, soaks, fuzz, cold runs). No new
   end-game correctness risk found for the final held-out rerun.
+
+## 2026-10-28T0206Z: K9 on the CURRENT moe board 498afbd8 (S3 baseline; 2 x 2000 reps, warm, GPUs 1 / 3)
+
+Runs `runs/20261027-184017-gpunode06` and `-184020`; fitted with the harvest scripts (`/tmp/h100-harvest/k9.py`, `k9_fit.py`).
+
+| T | OLS slope, us per distinct local expert (run 1 / run 2) | median raw replay by distinct experts (pooled) |
+|---|---|---|
+| 1 | 11.72 [11.57, 11.87] / 11.56 [11.42, 11.72] | d2 37.1, d3 50.7, d4 57.4, d5 72.5 |
+| 8 | 9.86 [9.82, 9.90] / 10.09 [10.05, 10.14] | d4 59.8, d5 74.4, d6 83.5, d7 92.9, d8 101.9, d9 114.6, d10 123.8 |
+| 16 | 9.61 [9.55, 9.66] / 9.55 [9.49, 9.61] | d8 104.0, d9 118.0, d10 126.9, d11 133.7, d12 144.0 |
+
+- Same staircase as the old board (the T<=8 path did not change between ab46fbb7 and 498afbd8).
+- **The steps are not uniform:** at T=1 they alternate (+13.6, +6.7, +15.1 from d2 to d5); at T=8 and T=16 the
+  **8 -> 9 distinct-expert step is +14.5 / +13.8 us** against a median step of 8.6 / 9.5. That points to how experts are
+  partitioned over SMs or CTA groups (a quantization of the per-expert SM share), not a flat streaming rate. S3
+  design input: balance the per-expert split so the makespan does not jump at odd counts and at 9+ experts.
+- Each extra local route costs 0.11 (T=8) to 0.40 (T=16) us: routes barely matter; distinct experts do.

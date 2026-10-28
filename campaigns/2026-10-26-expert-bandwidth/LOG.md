@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0139Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0206Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -1524,3 +1524,12 @@ with the operator's go-ahead.
   soaks, x1.3907-1.4028 cold board). On the node the T=128 hybrid race picks master (314-319 vs H-16 ~344 us); T=256
   picks H-16. Ledger: research/h100-findings.md.
 - Workflows at 0138Z: S3 judge running (3 designs in); moe enablers E1 / E3 / E4 building (1 of 3 returned); E2 building.
+
+## 2026-10-28T0206Z: K9 on today's moe board: S3 baseline, and an 8 -> 9 expert jump
+
+- 2 x K9 on 498afbd8 (H100): 11.6 / 10.0 / 9.55 us per distinct local expert at T=1 / 8 / 16, same as the old board.
+  The steps are uneven: T=1 alternates (+13.6, +6.7, +15.1 from 2 to 5 experts); at T=8 and T=16 the 8 -> 9 step is
+  +14.5 / +13.8 us vs a ~9 us median. That suggests an expert-to-SM partitioning effect. **Input for S3's next
+  iteration** (the panel saw only the 2 / 3 / 4 alternation). Ledger: research/h100-findings.md.
+- 0205Z: moe enablers integrating (E1, E3, E4 returned); S3 judge still running; E2 building. H100 queue idle until
+  the program's moe jobs are staged.
