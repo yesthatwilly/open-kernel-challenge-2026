@@ -883,3 +883,24 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   dequant.** Fixed-cost levers at T=1 [E]: persistent T<=8 kernel ~3-4.5 us > fused K2+combine epilogue ~1.5-3 us > K1's
   x copy before build_map <= 1.2 us > prologue trims 0.3-0.8 us.
 - Report: research/p3b-p3c-2026-10-28.md (script p3bc_analysis.py). Registrations: takemyjob 764a2ce.
+
+## 2026-10-28T07:19Z: DEC-02 results: FAIL (V2 and V3 on all four bytes), so decode node work stops
+
+- 4 runs, rc 0, 1830 MHz, 13/13 tests: w6g 234719 (GPU 4), trim 234724 (GPU 5), pin128 234716 (GPU 3), board 234714
+  (GPU 1). Node headlines x1.357-1.391 vs SGLang; the judge read 1.572-1.592.
+- **V2 FAIL.** err/bound inside the judge envelope: w6g 12/13, trim 13/13, pin128 11/13, board 13/13. PATH / canary
+  fails on all four (11-14 of 20 races outside the judge's picks). Causes:
+  1. Under E3's nsys wrapper the bytes' in-prepare profiler checks count 0 kernels (B12P and c320d forced to the
+     incumbent).
+  2. The T=1 Engine A gate falls to MASTER on 2/4 draws (x1.016-1.019 vs the judge's x1.050), and its atomic w2 then
+     fails the T=1 canaries and copy checks.
+  3. H100 timing races.
+- **V3 FAIL.** The norm_residual shim is +1.24..+1.76 us per call at T=1. At T=1 cuBLAS picks a different qkv_gate
+  kernel (64x8 vs the judge's 128x8). w6g decode-1 fidelity FAIL (x1.053).
+- **Decode-layer timeline** (board, node; shares moe / dense / attention / small, 46 sliding : 16 full): decode 1 node
+  38/43/12/7 vs judge 40/42/11/7; decode 32 node 47/26/23/3 vs judge 56/22/20/3. Decode 1 is dense + moe back to back,
+  with almost no gaps (the pooler / router GEMV alone is ~29 us node, 17-22 us judge). Per-kernel transfer: dense
+  x1.23-1.38, long-context attention x1.12-1.34, small ops ~1:1, T=32 expert block x0.90.
+- **Reopening** needs a new registration (the user's call): forced judge picks via E1 arms, a profiled pass whose
+  prepare does not run under nsys, and a faster boundary shim. Tool defects: records.py skips dec02-* configs;
+  nj_profile truncates kernel names and merges the sliding and full cases per load. takemyjob 703f45f.

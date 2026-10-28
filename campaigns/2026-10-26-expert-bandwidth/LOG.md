@@ -1714,3 +1714,14 @@ with the operator's go-ahead.
     before data.
 - Plan: if the build's SASS census shows L3 folding (-2 instructions per step), port L3 into eak::consume on a branch
   from the board and send a moe judge check without waiting for the sweep, since all of v1 / v4 / v6 share the consumer.
+
+## 2026-10-28T07:20Z: DEC-02 FAIL: decode node work stops (registered rule); the decode-layer timeline is in hand
+
+- V2 and V3 fail on all four bytes. Causes: the nsys wrapper changes the prepare's path; the T=1 Engine A gate falls to
+  MASTER on 2/4 router draws; H100 timing races; the norm_residual shim is +1.2-1.8 us. The node cannot stand in for
+  the judge on decode as built.
+- The timeline matches the judge's shares within a few points (decode 1: moe 38-40%, dense 42-43%, attention 11-12%,
+  small ops 7%). Dense bf16 (the pooler / router GEMV, ~17-22 us on the judge) is the biggest decode-1 block.
+- Open (the user's call, not blocking): reopen decode node work with forced judge picks, prepare outside nsys and a
+  faster shim (new registration). Decode stays on judge checks: the moe-side T=1 wins (L3, fixed-cost cuts) port to
+  decode through eb-s3d.
