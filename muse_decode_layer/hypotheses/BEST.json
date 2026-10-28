@@ -1,19 +1,19 @@
 {
  "problem": "muse_decode_layer",
- "job": "c1daf58bf192471e",
+ "job": "e1fd3c00c83045dc",
  "mode": "submit",
- "speedup": 1.5920184790343794,
+ "speedup": 1.592635173653721,
  "ci": [
-  1.5681382018488637,
-  1.615898756219895
+  1.568745646048915,
+  1.6165247012585267
  ],
- "score_us": 14208.56623078903,
- "commit": "4c0f02534de72be081bb27b6262f9295cd5c01ef",
- "submission_blob": "a259ca2f2a32614466e8c3e212289e50393dc17c",
- "slug": "campaign-eb-w6g-hcgate",
+ "score_us": 14203.064439488653,
+ "commit": "d6c1a9b106a1c53ffb1e5bc8bdb4b3a3e650b1ea",
+ "submission_blob": "dc0b246abe6c8239cf3b56591bfbe6ec95d6e7df",
+ "slug": "campaign-eb-pin128",
  "result": null,
- "updated_at": "2026-10-27T131200Z",
- "master_slug": "campaign-eb-w6g-hcgate",
- "master_job": "c1daf58bf192471e",
- "note": "registered by hand 2026-10-27: campaign expert-bandwidth stack = W6-B T>=128 diet + PERHEAD d1s + c320t bar 1.003 + fast silu (ea/eb/wg) + W6-G T=128 confirm race with W6-B cells (promote-only); branch campaign/eb-w6g-hcgate; check 41975d1c 1.5749; landed on master."
+ "updated_at": "2026-10-28T0014Z",
+ "master_slug": "campaign-eb-pin128",
+ "master_job": "e1fd3c00c83045dc",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth pinned trim = the trim (eb-sp-trim 01c67655: never-compiled code out of decode's build, 924,352 B) + HC_PIN {128: -16, 256: -16} and HCG_PIN -16 (eb-pin128 3dd55e25); checks ced20a71 1.5758 (trim), 8e3b9874 1.5722 (pin128), 5a33db71 1.5847 (pin-both); landed on master."
 }
