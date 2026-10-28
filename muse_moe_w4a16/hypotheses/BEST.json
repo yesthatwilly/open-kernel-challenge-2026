@@ -1,19 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "0b49b1aae6a04acb",
+ "job": "af154932df744959",
+ "check_job": null,
  "mode": "submit",
- "speedup": 1.8941065766324314,
+ "speedup": 1.9250482782306033,
  "ci": [
-  1.865694977982945,
-  1.9225181752819178
+  1.8961725540571441,
+  1.9539240024040623
  ],
- "commit": "2ec8090fab89fe5c5d424bf3a58b17883e78c6bf",
- "submission_blob": "54068229a891bad6bce6aca68961ecb2181d983e",
- "slug": "campaign-eb-x1v6",
+ "score_us": 6986.058558677349,
+ "commit": "37a5921a777207d64cc6146d5e6ddd527baf0f40",
+ "submission_blob": "1567c99da9b350d11ddb11492906bce4c51d33e0",
+ "slug": "landing-af154932",
+ "master_slug": "landing-af154932",
+ "master_job": "af154932df744959",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T171015Z",
- "master_slug": "campaign-eb-x1v6",
- "master_job": "0b49b1aae6a04acb",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth X1v6 = the fc moe board + X1 (x preloaded once per 128-k kq with one ldmatrix.x4) at ea6's call site only (eak::consume<DQ, XB = 0> elsewhere, so v1-v4 are unchanged); branch campaign/eb-x1v6 ea54b0ee; check 2e78be8b 1.906; scored 1.8941 vs 1.8822; landed on master.",
- "score_us": 7100.181249521
+ "updated_at": "2026-10-28T214752Z",
+ "note": "registered by churn.py register-landing from okc status af154932df744959"
 }
