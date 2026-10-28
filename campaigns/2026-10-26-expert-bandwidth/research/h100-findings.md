@@ -729,7 +729,7 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
     S3, so their moe class-1 pin clauses are moot. They are read for decode's T=1 (board e1fd3c00 runs v1) and as the
     pre-S3 baseline for the consumer program.
 
-## 2026-10-28T05:53Z: the M456 carrier on the judge: the T=128 combine transfers; landed (moe 1.7345)
+## 2026-10-28T05:52Z: the M456 carrier on the judge: the T=128 combine transfers; landed (moe 1.7345)
 
 - Check be4440e2 1.7457; scored 12d17a46 1.7345 (CI 1.7085-1.7605) vs the 1.7340 board: a tie on the headline, landed
   by the "beats" rule (master 81c9802e).
