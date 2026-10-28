@@ -95,7 +95,8 @@ prior: "moe-bs1-fused-persistent-port: that design kept the w13->w2 dependency a
 rewrite_stage: 1
 replaces: Marlin w13 + act_and_mul + Marlin w2 (w2 use_atomic_add at T=1) + _post_norm_combine_kernel at 1 <= tokens <= 8 (decode_1, verify_1, both layers)
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A replaced Marlin at T<=8"
 ---
 
 # fsi-moe-tiny-t-decode-port
