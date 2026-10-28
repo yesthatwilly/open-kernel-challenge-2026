@@ -1698,3 +1698,19 @@ with the operator's go-ahead.
   the combine at 2.05 + 2.66 us. Workflow wf_54212dd6-936 builds the prologue cuts and the fused combine as raced
   variants (estimated 1.5-4 us at T=1; moe decode 1 is ~32 us on the judge).
 
+
+## 2026-10-28T07:18Z: eac spec judged (cfd47f45 on campaign/eb-eac); defaults taken on its two open questions
+
+- The judge built the spec on the fidelity design's skeleton, with the bottleneck design's controls (REF twins of
+  eak::consume / consume2 verbatim, reuse R as K_s = 512/R sub-blocks, A/A and data nulls, shuffled reps with CIs).
+- **New lever, L3 (code-only, bit-identical):** a paired scale decode. A 2-source sign-replicating prmt.b32 puts both row
+  scales in one register, and HMUL2 reads the .H0_H0 / .H1_H1 half selectors. That removes one PRMT and one LEA per
+  step on the ALU pipe that binds (math_pipe_throttle sits on LOP3 / PRMT / SHF / LEA). Predicted x1.12 at T=8 if
+  ptxas folds the selectors; the SASS gate decides before any GPU time. The fragment-order scale repack (L1) is
+  registered as a null: ptxas already merges today's scale loads.
+- Open questions, defaults taken (the user may overrule):
+  - (1) L3 counts as the fragment-order follow-up, since the dequantized values are unchanged (exhaustive check).
+  - (2) Port bars: 3% for code-only changes (L3, X1, L4) and 5% for restructurings (R, the repack, X2), registered
+    before data.
+- Plan: if the build's SASS census shows L3 folding (-2 instructions per step), port L3 into eak::consume on a branch
+  from the board and send a moe judge check without waiting for the sweep, since all of v1 / v4 / v6 share the consumer.
