@@ -2365,3 +2365,4 @@ with the operator's go-ahead.
   - Change A worked: v4cxs routed alone at S1.014.
   - The H100's fork-collapse theory does not transfer as the fix; keep master's pooled fork.
   - The decode port is told to skip B. No more moe checks tonight: 1 check and 2 runs are left, and nothing qualifies.
+- 2026-10-28T2318Z: v4x256b diagnosis. The fork was really width 2, with all 30 captures distinct. **Priority -1** let the grid-filling wg hot half take the SMs first, so the fork serialized in effect. Fix for later: keep the identity guard with RT_FORK_PRIO=0, A/B on the node first. The decode port is change A only (T=256).
