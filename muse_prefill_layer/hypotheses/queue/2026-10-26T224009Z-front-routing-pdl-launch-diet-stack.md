@@ -32,7 +32,8 @@ kind: primary
 controls_for: null
 prior: "stack-tonight-four-prefill: that stacked four flat align / router / zero-store changes on the old 1.07 base; this stacks three launch removals measured separately on the 1.468 base"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~1%; parent not landed"
 ---
 
 # front-routing-pdl-launch-diet-stack

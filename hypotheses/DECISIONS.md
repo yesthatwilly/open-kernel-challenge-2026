@@ -419,3 +419,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-lpt-group-order**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: rotation cut imbalance but gate missed; round-rotated on Do-not-try
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-dynamic-item-scheduler**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: stages/CTA max/min 928/896, imbalance premise fails
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-stage-anatomy-diag**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR 0% (diagnostic only; DISTILL names it as the mc2/bm256 revival test)
+- 2026-10-28T150029Z `muse_prefill_layer` **front-routing-pdl-launch-diet-stack**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~1%; parent not landed
