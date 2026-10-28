@@ -2294,3 +2294,4 @@ with the operator's go-ahead.
 
   - Every check is ok, err 0, and clusters place one per SM at B=1. MaxActiveClusters at C=16 is 14 (7 when padded).
   - At B=1 the chain + merge is ~10.5 us, against the board's verify_1 sliding row of 13.4 us. That supports swf S1 (109a387b, in flight).
+- 2104Z: stretch checks (below the bar; the checks expire at 00:00Z) dispatched: prefill pf-rega-low-stream 6edf1cb002bf42b9 (low-class dequant/wgmma ring + L2 weight prefetch, gated), bf16 bf16-shelf-stack f37f01e7884e46b1 (shelf cells, each gated). attn-shelf-stack (8e88d0b6) is ready and waits for 00:00Z (attention checks used up).
