@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1000Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1013Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,15 +23,13 @@ append-only, newest last.
   - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode **1.6262** (351/849; L3 + v6, 10:01Z); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 355/1410. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3);
     decode 1.5926 (the pinned trim, 00:16Z) -> 1.6262 (L3 + v6).
-  - **Quota 1001Z:** decode 16 checks / 8 runs; moe 17 / 7; bf16, attention and prefill 20 / 10.
+  - **Quota 1011Z:** decode 15 checks / 8 runs; moe 16 / 7; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Workflow wf_3bea73e9-fc3 (task w0audtqs6), the L4 port's second run: build (continuing the eb-l4 edits) with a
-      SASS gate on gpunode06 (CPU only), audit, fix, then the decode carry-over on a new campaign/eb-l4d-s3d.
+    - L4 checks (dispatched 10:11Z): moe 7607a1c39e134a4f (campaign/eb-l4 1b24750f; scored run if > 1.8249) and decode
+      0576191d3d544bf9 (campaign/eb-l4d-s3d 95ab5fb1; scored run if > 1.6262).
     - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
       (research/fc-designs-2026-10-28/), then build on campaign/eb-fc (fast-forwarded to eb-l3), audit and fix.
   - **Next:**
-    - A moe check of L4 when its build lands (decision: scored run if it beats 1.8249); then the decode check of
-      eb-l4d-s3d.
     - A moe check of the fixed-cost variants when built; then their decode port.
     - Phase B once decode's reasonable checks are spent (moe > bf16 > attention > prefill); phase C from 18:00Z.
     - At 13:40Z: stop queuing H100 work, harvest, restore the node's problems/moe/board.py symlink, and report.
@@ -1758,3 +1756,16 @@ with the operator's go-ahead.
 - Same routing as the check (the 20 PATH CHOSEN lines are equal; copy checks PASS); rows x0.964-1.028 against the check.
 - Both Engine A consumer gains (L3) are now on both boards. Next decode candidates: L4 (eb-l4d-s3d) and the T=1 fixed
   cost, both building.
+
+## 2026-10-28T1013Z: L4 built and audited (PASS); moe and decode checks dispatched
+
+- Workflow wf_3bea73e9-fc3 (3 agents, 280k tokens): the builder kept the first run's edits. The run-time 16 is
+  `16u << (n >> 30)` from the consumer's existing count, done in inline PTX so ptxas cannot fold it. SASS on gpunode06:
+  every pair add is an IMAD, LEA 1.03 -> 0.03 per step, ALU 10.44 -> 9.56, 0 spill, 80 registers at T=1/8/16 (L3:
+  72/72/86). Per step it is 20.88 vs eac's l4 cell at 20.59, because ptxas rematerialises m16 in the loop (+9
+  instructions per record).
+- Bit identity: l4_emul 2,718,912 L4 == L3 words, 0 mismatches; l3_emul passes on the L4 helper. Audit: PASS, minor
+  findings only, so no fix stage. Decode carry-over: the same three header blobs on eb-l3d-s3d (eb-l4d-s3d 95ab5fb1,
+  969,407 B); ea6_emul passes.
+- Checks: moe **7607a1c39e134a4f** (974,764 B; bar 1.8249) and decode **0576191d3d544bf9** (bar 1.6262), both 10:11Z.
+  Watch the prepare logs for v6's MINB 2 / co-residency at 80 registers.
