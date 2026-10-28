@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1313Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1314Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -24,12 +24,9 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill 1.4897 (223/561). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1313Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 10.
+  - **Quota 1314Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 5 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
-    - Prefill checks (13:06Z, phasec/prefill-1028): lo-pin-v64-fsilu 56752c8d, fa3c-turn4-bar098 d9847285,
-      final-near-ties-nolo 7db6fa1a, diag-lo-conc-curve aada232b, fa3c-pin-turns-b 17c2bc84. Contingent: w2st-pin-high-ft
-      and lo-skip-phase (if final-near-ties-nolo lands below), stack-v64f-near-ties (only if V64 wins), lo-pin-v64
-      (only if V64's module was OFF).
+    - Prefill scored run b2941ea23dc743a3 (13:15Z): final-near-ties-nolo (check 7db6fa1a 1.5055); land if > 1.4897.
     - Attention batch 2 (13:12Z; all on pins + onepass): pins-onepass 4cfddb59, diag-sw-gather-split-pinned 8a9a874c,
       diag-sw-fixed-anatomy 7f481040, diag-fa3-fixed-anatomy f1043d2c (four samples of the pins-onepass candidate).
     - moe + decode generator (phasec/moe-1028, phasec/dec-1028).
@@ -2039,3 +2036,14 @@ with the operator's go-ahead.
   12.66-13.90 us, so onepass's 12.7-12.8 us is at the spread's low end; expect pins-onepass ~1.62-1.63.
 - Dispatched 13:12Z: pins-onepass **4cfddb59**, diag-sw-gather-split-pinned **8a9a874c**, diag-sw-fixed-anatomy
   **7f481040**, diag-fa3-fixed-anatomy **f1043d2c**. Attention left: 5 checks.
+
+## 2026-10-28T1314Z: prefill checks: the deterministic final candidate 1.5055; V64 refuted; scored run sent
+
+- **final-near-ties-nolo 7db6fa1a: 1.5055** (fa3c contig-varlen pinned at turn_4 / turn_1, w2st arm a pinned at high /
+  ft, LO phase skipped): above the 1.4897 board and above two same-code board checks (1.4986 / 1.4994); every pin
+  routed. Scored run **b2941ea2** at 13:15Z.
+- lo-pin-v64-fsilu 1.4776: V64 pinned at the low class loses on the judge's routing (FINDINGS do-not-try added).
+  fa3c-turn4-bar098 1.4807, fa3c-pin-turns-b 1.4907 (tie), diag-lo-conc-curve 1.4838. The contingent variants:
+  stack-v64f and lo-pin-v64 are dropped (V64 lost with its module ON); w2st-pin-high-ft and lo-skip-phase stay as
+  phase-C attribution checks.
+- scratchpad/phasec.py gained subprep / subrecord (the submit attempt is built from the check attempt).

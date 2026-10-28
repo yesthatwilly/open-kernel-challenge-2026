@@ -248,6 +248,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **experts-rega-w2-early-loads-low-class** [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] neutral, not confirmed (pooled 1.499021779478406): Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
+- **rega-lo V64 at the low class, pinned on the judge's own routing** (phase-C lo-pin-v64-fsilu, check 56752c8d, 2026-10-28): 1.4776 vs the 1.4897 board (V64 + fast silu ON [PINNED]; the gate alone kept master, guard 1.009). The judge's low-class routing is more concentrated than the gate's random case, as the routing model predicted. Reopen only with a different low-class kernel, not V64 / V32.
 
 ## Queue and in flight
 

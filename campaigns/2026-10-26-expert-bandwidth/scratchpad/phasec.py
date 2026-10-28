@@ -127,8 +127,57 @@ def cmd_result(wt, tag, problem, slug, job, text):
     print(f"{slug} {job} {r.get('speedup', 0):.4f} archived to runs/")
 
 
+def cmd_subprep(wt, tag, problem, slug, check_job, board):
+    """Restore the variant's bytes and write <UTC>-submit-<slug>.md from its check attempt (same checklist)."""
+    r = row(wt, tag, slug)
+    data = subprocess.check_output(["git", "-C", wt, "show", f"{r['commit']}:{problem}/submission.py"])
+    sha = hashlib.sha256(data).hexdigest()
+    if sha != r["sha256"]:
+        sys.exit("sha256 mismatch")
+    sub = os.path.join(wt, problem, "submission.py")
+    open(sub, "wb").write(data)
+    chk = dispatched(wt, problem, slug)
+    if not chk:
+        sys.exit("no check attempt to base the submit on")
+    s = open(chk[-1]).read()
+    s = re.sub(r"^- \*\*Job:\*\* `[0-9a-f]{16}`.*$", "- **Job:** `<job id>`", s, count=1, flags=re.M)
+    m = re.search(r"^## Result[^\n]*\n", s, re.M)
+    if m:
+        s = s[:m.start()]
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+    head = (f"# {problem} · {ts} · submit · {slug}\n\n"
+            f"A scored run of the bytes of check {check_job}; the board is {board}. File: {problem}/submission.py on "
+            f"{tag}'s phase-C branch at {r['commit'][:8]}, {r['bytes']:,} B, sha256 {sha}, restored from that commit and "
+            f"re-hashed at {ts}. Decision: land it on master as {problem}/submission.py if the scored run beats {board}.\n"
+            f"Below: the check's attempt text (goal, change, rules checklist ticked against the same diff), unchanged.\n\n")
+    s = head + s[s.index("\n") + 1:].lstrip("\n")
+    s = s.rstrip("\n") + "\n\n## Result (after the run)\n- (pending)\n"
+    att = os.path.join(wt, problem, "attempts", f"{ts}-submit-{slug}.md")
+    open(att, "w").write(s)
+    print(json.dumps({"attempt": att, "sha256": sha[:16], "bytes": len(data),
+                      "run": f"okc submit {problem} {os.path.abspath(sub)} --no-wait"}))
+
+
+def cmd_subrecord(wt, tag, problem, slug, job):
+    att = sorted(glob.glob(os.path.join(wt, problem, "attempts", f"*-submit-{slug}.md")))
+    if not att:
+        sys.exit("no submit attempt")
+    att = att[-1]
+    s = open(att).read()
+    ts = os.path.basename(att)[:16]
+    s2, n = re.subn(r"^- \*\*Job:\*\* `<job id>`\s*$", f"- **Job:** `{job}` (`okc status {job}`), dispatched {ts}", s, flags=re.M)
+    if n != 1:
+        sys.exit("Job placeholder not found exactly once")
+    open(att, "w").write(s2)
+    git(wt, "add", os.path.relpath(att, wt))
+    git(wt, "commit", "-q", "-m", f"attempts: phasec {tag} {slug} scored run {job} (pending)\n\n"
+        "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>")
+    print(f"recorded submit {slug} -> {job}")
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if not a:
         sys.exit(__doc__)
-    {"list": cmd_list, "prep": cmd_prep, "record": cmd_record, "result": cmd_result}[a[0]](*a[1:])
+    {"list": cmd_list, "prep": cmd_prep, "record": cmd_record, "result": cmd_result,
+     "subprep": cmd_subprep, "subrecord": cmd_subrecord}[a[0]](*a[1:])
