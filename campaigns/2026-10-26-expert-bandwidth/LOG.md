@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1325Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1337Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -24,24 +24,17 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1325Z:** decode 5 checks / 5 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
+  - **Quota 1337Z:** decode 2 checks / 4 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
-    - moe checks (13:23Z, phasec/moe-1028): moe-diag-v4c-t32 71c2f8d5, moe-pin8-v6 16c33848, moe-pin16-v4c d9cc48e8,
-      moe-hyb128-h16f 1d36bf74, moe-diag-v4-fixed a7a013ba, moe-pin-all 756a928f. Conditional: moe-v4c-cw8 / cw9 /
-      moe-pin32-v4 (only if moe-diag-v4c-t32 shows >= 1% at T=24 and 32 in both rounds).
-    - decode checks (13:23Z, phasec/dec-1028): dec-pin-all 6a06de53, dec-pin16-v4c 86edd970, dec-b12p-pdl0 d6baf196,
-      dec-diag-anat-t8-t32 62ae54a2; after the rate limit (13:25Z): dec-diag-v4c-cw 2316c5c1, dec-pin16-v4 414222b1,
-      dec-b12p-pdl1 ddda42b2. Conditional: dec-v4c-cw8 / cw9.
+    - Decode scored run 83f0c00eb3644e1c (13:36Z): dec-pin16-v4c (check 86edd970 1.6599; v4c pinned at T=9..16); land
+      if > 1.6470.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
       queues' run-first bf16 items (b12 qkv m1 R32 with the read-flush gate; b12 unpooler m1).
     - Phase C from 18:00Z: spend every check (bf16 / attention / prefill 20 each; moe 14; decode 13), cheap questions
       allowed (race pins for a deterministic board row); tomorrow's phase-A plan by ~23:00Z.
-    - At 13:40Z: stop queuing H100 work (the queue is empty; stop the idle runner with `bin/hopper-queue stop`),
-      harvest, and restore takemyjob `probes/nodejudge/problems/moe/board.py` to its committed symlink
-      (`ln -sfn /home/user/git/musespark/muse_moe_w4a16/submission.py board.py`; it is now a plain-file copy of the
-      10-27 board, 498afbd8, kept in snap/), then report.
+    - H100 window closed at 13:37Z (see the entry below); no GPU work without a new go-ahead.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
@@ -2068,3 +2061,19 @@ with the operator's go-ahead.
   window path's fixed cost is ~9-10 us of the ~21 us sliding-verify step (kernel alone 7.6 us at K=8 vs a 2.1 us null
   kernel; the separate combine 5.6-5.9 us), and it is not gather-bound (scattered = sequential). FA3's fixed cost is
   ~15 us (num_splits=1 and precomputed scheduler metadata save ~2.2 us each). These size tomorrow's attention rewrite.
+
+## 2026-10-28T1337Z: moe / decode batch read; decode pin16-v4c scored run sent; H100 window closed
+
+- **decode dec-pin16-v4c 86edd970: 1.6599** (v4c pinned at T=9..16): the (16,1) rows run 162.8 / 250.0 us vs 165.1 /
+  261.8 with v4 pinned (dec-pin-all 1.6470, dec-pin16-v4 1.6509). In isolation v4's block is 1.8-2.5% faster
+  (dec-diag-v4c-cw), but the layer prefers v4c. Scored run **83f0c00e** at 13:36Z.
+- **moe-pin8-v6 1.9103: not sent.** Its pinned row (verify 1, T=8) is 81.6 us vs 78.8-79.3 on board routing today; the
+  headline gain is the other rows' draw (the board's scored run drew a slow 84.8). These bytes would lower the board
+  row's expectation. moe-pin-all 1.8871, moe-pin16-v4c 1.8879, moe-hyb128-h16f 1.8856; board-routing samples 1.898 /
+  1.905 put moe's level at ~1.90. The two moe diagnostics printed nothing in the 14 KB tail.
+- **Decode layer anatomy (graph, read flush):** verify 1 sliding 135.9 us = moe 48% / dense 34% / attn 9%; verify 1
+  full 176.5 = 49 / 27 / 16; decode 32 sliding 210.7 = moe 54% / dense 32% / attn 8%; decode 32 full 391.5 = moe 31% /
+  dense 17% / **attn 48% (splitkv_attn_sk_kernel 187.5 us)**.
+- dec-b12p-pdl0 1.6345 / pdl1 1.6404: no b12p pin. The conditional cost-weight variants (moe and decode) are dropped.
+- **H100 window closed at 13:37Z:** the queue was empty; `bin/hopper-queue stop` (queue/STOP; the runner exits at its
+  next poll); nodejudge `problems/moe/board.py` restored to its committed symlink. Memory updated.
