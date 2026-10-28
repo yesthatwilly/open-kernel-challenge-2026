@@ -2,21 +2,23 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0008Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0016Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`). **H100/H200: on hold since the operator's 2122Z stop; no GPU runs
     by any path** (hopper-probe, hopper-queue, agents) until they say.
+  - **Decode board 1.5926 since 0014Z** (e1fd3c00, the pinned trim; rank 347/823; overall 352/1369).
   - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
   - **In flight:**
-    - decode scored run **e1fd3c00c83045dc**: the pinned trim (campaign/eb-pin128 3dd55e25 = the bytes of check
-      5a33db71). It lands only above 1.5920.
+    - **decode pins round 2** (one agent, high): race table over the judged runs, then prepare-time pins of arms that
+      win their rows consistently, on `campaign/eb-pin2` (`.worktrees/eb-pin2`, from eb-pin128 ca4b26c5). Returns a
+      check-ready commit or "no pin justified". First target: T=1 sliding 96.1 vs the board run's 93.8 us.
     - workflow **wf_9a2a0ee6-8bc** (s3-expert-streaming): S3 design panel x3 (max) -> judge (max) -> build on
       `campaign/eb-s3` (from eb-s1a 26994217 = the moe board bytes) -> 2 audits -> fix (high). It returns a
       check-ready commit; the main thread dispatches the moe check. Predicted ~1.4M tokens.
-  - **Next:** when e1fd3c00 lands, plan step 2 (more decode pins: PATH CHOSEN lines and rows over the six judged runs
-    of these routes); then S3's moe check when the workflow returns. Phase B once decode's reasonable checks are spent.
+  - **Next:** review the pin2 diff, then its decode check (attempt file first); S3's moe check when the workflow
+    returns. Phase B once decode's reasonable checks are spent. Quota 0015Z: decode 9 scored / 20 checks; others 10 / 20.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
@@ -1445,3 +1447,15 @@ with the operator's go-ahead.
   folds (944-960). Relaunched as **wf_9a2a0ee6-8bc** with them in the brief; the "sched" angle now targets the makespan,
   not fusion (eaf won only O). The judge writes `research/s3-panel-2026-10-28.md`.
 - Archived run 2157c43bb41f4d43.json.gz (S1a's judge check, LOG 2210Z) is committed with this entry.
+
+## 2026-10-28T0016Z: decode scored e1fd3c00: 1.5926, new board (pinned trim landed); pins round 2 started
+
+- **e1fd3c00c83045dc passed, 1.5926** [1.569, 1.617] vs the 1.5920 board (c1daf58b): new board by +0.04%, rank
+  347/823, overall 352/1369. The board row, and so the final held-out rerun, now carry the pinned T=128/256 routing.
+- Landed on master d6c1a9b1 (eb-pin128 3dd55e25 bytes, sha256 2fd3d945...); BEST.json + archive 6088dbab; attempt
+  result ca4b26c5 on eb-pin128.
+- Both pins routed (T=128 H=-16: layer 349.7 vs master 380.3 us; T=256 H=-16: 448.4 vs 552.2). Rows vs the board run:
+  (16,8) 342.6 / 469.0 vs 339.0 / 482.2; (32,8) 437.1 / 718.7 vs 441.0 / 710.6; **T=1 sliding 96.1 vs 93.8 again**
+  (5a33db71 drew 96.3): a race the pins do not cover. SGLang's own rows moved by up to 4% between runs.
+- Plan step 2 started: one agent (high) builds the race table over the comparable judged runs and pins what wins its
+  rows consistently, on campaign/eb-pin2 (no CUDA text changes).
