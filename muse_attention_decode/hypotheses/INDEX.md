@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-28T113416Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-28T145237Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -105,13 +105,13 @@ Regenerated 2026-10-28T113416Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-26T222117Z | c320-combine-onepass | primary | full decode_1 split-KV combine (c320 chain) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T222131Z | c320-pdl-early-trigger | primary | launch overhead (full decode_1 c320 kernel A -> combine PDL) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T222147Z | combo-sk-full-line-c320-tail | primary | combination (full decode B>=2 gather mapping + full decode_1 combine tail) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T222203Z | sliding-verify-wgmma-window-s2b-fast-merge | rewrite | sliding-layer attention (verify B=2..32, wgmma window kernel merge) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T222203Z | sliding-verify-wgmma-window-s2b-fast-merge | rewrite | sliding-layer attention (verify B=2..32, wgmma window kernel merge) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-26T222216Z | c320-attn-full-line-gather | primary | full-layer attention (batch-1 decode, c320 kernel A K/V gather mapping) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222231Z | sliding-verify-wgmma-split-combine-on-v3chain | primary | sliding-layer attention (verify B=2..32, wgmma window kernel merge) on the v3chain base | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-26T222249Z | sliding-decode1-perkvhead-launch-select | primary | sliding-layer attention (batch-1 decode, cluster kernel launch configuration) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222305Z | sk-full-line-5stage-select | primary | full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-26T222324Z | sliding-decode-band2-sk-gate | primary | sliding-layer attention (decode B=2..16, stream-K window route gate) | queue | queued |  |  |  |  |  | required |  |
-| 2026-10-26T222353Z | full-verify-wgmma-s7-split-combine | rewrite | full-layer attention (verify B=2..64, wgmma stream-K kernel merge) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-26T222353Z | full-verify-wgmma-s7-split-combine | rewrite | full-layer attention (verify B=2..64, wgmma stream-K kernel merge) | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-27T132640Z | sk-ticket-merge-onepass | primary | stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32) | done/neutral | neutral | 1.6177 | [1.593,1.642] | ba8c8a6103124f71 | check |  | proceed | 3/5 |
 | 2026-10-27T132706Z | sliding-decode1-ph-push-merge | primary | sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull) | queue | queued |  |  |  |  |  | required |  |
 | 2026-10-27T132752Z | attn-fast-math-epilogues | primary | output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels | queue | queued |  |  |  |  |  | required |  |
@@ -137,4 +137,6 @@ Regenerated 2026-10-28T113416Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 - sliding-verify-wgmma-window-s2-split-combine: superseded 2026-10-27: s2 was checked and killed by the campaign; its successor s2b landed on master (scored a76ee9b0, then sw17 4e386647 1.6340)
 - c320-combine-onepass: stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)
 - c320-pdl-early-trigger: stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)
+- sliding-verify-wgmma-window-s2b-fast-merge: adversarial review: This hypothesis has already run and is on master: it was implemented as 9f428796 (hyp/attn-s2b on hyp/attn-c320 0453ca70), checked at af08448e82c04fdf (1.6247),
 - sliding-verify-wgmma-split-combine-on-v3chain: stale 2026-10-27: already run and landed by the campaign (sk full-line gather, c320 onepass, PDL trigger on master since 10-27), or superseded by s2b (scored a76ee9b0 / sw17 4e386647)
+- full-verify-wgmma-s7-split-combine: adversarial review: Hold. Not on master (no s7 module; full verify at B>1 still runs paired FA3 at 164/304 us), but s6's own DIAG (archive full-verify-wgmma-s6-split-ring-2cta/4899

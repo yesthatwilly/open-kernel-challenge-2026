@@ -1,21 +1,10 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-27T143426Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-28T145238Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Current best
 
-1.4897x [1.4674,1.5121] from job `99767cf374bb4688` (submit), master commit `52169f17`, hypothesis experts-rega-w2-early-loads-low-class
-
-Where the time goes (per scored shape, top kernels):
-
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 732.6µs vs SGLang 1101.8µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 302.0µs 37.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 159.3µs 19.9%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.9µs 19.3%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1120.8µs vs SGLang 1486.6µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 420.4µs 35.5%, void (anonymous namespace)::rega_kernel<true, false>((ano... 256.4µs 21.6%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 12.9%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2140.1µs vs SGLang 3414.0µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 682.9µs 30.9%, void (anonymous namespace)::rega_kernel<false, false>((an... 356.0µs 16.1%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.0µs 14.8%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3698.9µs vs SGLang 4995.7µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1646.3µs 42.7%, void (anonymous namespace)::rega_kernel<true, false>((ano... 716.6µs 18.6%, void (anonymous namespace)::rega_kernel<false, false>((an... 381.6µs 9.9%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11731.0µs vs SGLang 18419.4µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3638.9µs 30.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2570.0µs 21.7%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1884.8µs 15.9%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10892.9µs vs SGLang 17248.8µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3474.3µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2568.8µs 23.2%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1798.4µs 16.3%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 15080.4µs vs SGLang 21946.5µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4268.3µs 28.1%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3610.2µs 23.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2569.8µs 16.9%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18110.3µs vs SGLang 24821.2µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7610.9µs 41.2%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3495.5µs 18.9%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2568.5µs 13.9%
+1.5008x [1.4783,1.5233] from job `b2941ea23dc743a3` (submit), master commit `350343bcf2`, hypothesis phasec-final-near-ties-nolo
 
 Today's clean-context diagnosis: `muse_prefill_layer/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
@@ -248,7 +237,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **experts-rega-w2-early-loads-low-class** [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] neutral, not confirmed (pooled 1.499021779478406): Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
-- **rega-lo V64 at the low class, pinned on the judge's own routing** (phase-C lo-pin-v64-fsilu, check 56752c8d, 2026-10-28): 1.4776 vs the 1.4897 board (V64 + fast silu ON [PINNED]; the gate alone kept master, guard 1.009). The judge's low-class routing is more concentrated than the gate's random case, as the routing model predicted. Reopen only with a different low-class kernel, not V64 / V32.
 
 ## Queue and in flight
 

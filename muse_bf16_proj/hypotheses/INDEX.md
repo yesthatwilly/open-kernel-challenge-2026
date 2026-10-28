@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-27T145300Z. Best: 1.2740x [1.2549,1.2931] job `254c83ae55834807` (submit)
+Regenerated 2026-10-28T145237Z. Best: 1.2794x [1.2602,1.2986] job `3e3ffc5afc57433b` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

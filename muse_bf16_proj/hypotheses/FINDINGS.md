@@ -1,10 +1,10 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-27T145300Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-28T145237Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Current best
 
-1.2740x [1.2549,1.2931] from job `254c83ae55834807` (submit), master commit `478146a174`, hypothesis router-pdl-plus-khalf-pooled-iqr-gate
+1.2794x [1.2602,1.2986] from job `3e3ffc5afc57433b` (submit), master commit `62da2d9e80`, hypothesis phasec-pc-lt-qkv128-readflush
 
 Today's clean-context diagnosis: `muse_bf16_proj/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 

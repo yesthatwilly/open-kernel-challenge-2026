@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-28T113416Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-28T145237Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Current best
 
@@ -231,7 +231,6 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
 - **sliding-decode-paired-kvhead-rows** [sliding-layer attention (batched decode, KV row gather)] regression, regression: One change inside master _sliding_fused_kernel and its launch in _sliding_forward, sliding
 - **sliding-verify-fa3-head-pairing** [FA3 call (head packing, sliding verify)] regression, regression: Config-only change in kernel_fn: extend master head-pairing predicate to sliding verify. T
-- **In-kernel ticket merge (tk) for the sliding-verify wgmma window kernel** (sliding-verify-wgmma-window-s2b-fast-merge, already on master since ea24b53c; held as a duplicate 2026-10-28): after the one-pass, division-free merge_head rewrite, merge_head still costs +17.6-45.0 us and the ticket-only tail +1.5-2.7 us, against the PDL combine's +2.9-5.2 us (log of bfb0457c; check af08448e). The remaining sliding-verify gap is the window kernel itself (14.6 us alone at B=16 vs a 1.9 us floor; 22.4 us at B=32 vs 3.7 us).
 
 ## Queue and in flight
 
@@ -255,13 +254,13 @@ Rewrite stages are exempt: a slow early stage is not a dead end.
 - queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 hold
 - queue: c320-pdl-early-trigger [launch overhead (full decode_1 c320 kernel A -> combine PDL)] p2 hold
 - queue: combo-sk-full-line-c320-tail [combination (full decode B>=2 gather mapping + full decode_1 combine tail)] p2 queued
-- queue: sliding-verify-wgmma-window-s2b-fast-merge [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p3 queued
+- queue: sliding-verify-wgmma-window-s2b-fast-merge [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p3 hold
 - queue: c320-attn-full-line-gather [full-layer attention (batch-1 decode, c320 kernel A K/V gather mapping)] p3 queued
 - queue: sliding-verify-wgmma-split-combine-on-v3chain [sliding-layer attention (verify B=2..32, wgmma window kernel merge) on the v3chain base] p3 hold
 - queue: sliding-decode1-perkvhead-launch-select [sliding-layer attention (batch-1 decode, cluster kernel launch configuration)] p4 queued
 - queue: sk-full-line-5stage-select [full-layer attention (decode 1<B<=64, stream-K ring depth after the whole-line remap)] p4 queued
 - queue: sliding-decode-band2-sk-gate [sliding-layer attention (decode B=2..16, stream-K window route gate)] p4 queued
-- queue: full-verify-wgmma-s7-split-combine [full-layer attention (verify B=2..64, wgmma stream-K kernel merge)] p4 queued
+- queue: full-verify-wgmma-s7-split-combine [full-layer attention (verify B=2..64, wgmma stream-K kernel merge)] p4 hold
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 queued
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 queued
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 queued

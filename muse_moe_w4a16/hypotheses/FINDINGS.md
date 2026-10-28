@@ -1,10 +1,10 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-28T113416Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-28T145238Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Current best
 
-1.8822x [1.8539,1.9104] from job `e2827c9e800549cd` (submit), master commit `52ab6fdef6`, hypothesis campaign-eb-fc
+1.8941x [1.8657,1.9225] from job `0b49b1aae6a04acb` (submit), master commit `2ec8090fab`, hypothesis campaign-eb-x1v6
 
 Today's clean-context diagnosis: `muse_moe_w4a16/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list).
 
