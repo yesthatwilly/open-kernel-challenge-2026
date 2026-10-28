@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0605Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0717Z (date -u), session 0605b7cc.
   - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
     hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
     `/loop H100 autonomous program ...`.
@@ -33,10 +33,15 @@ append-only, newest last.
     - P3 audit done (research/p3-audit-2026-10-28.md): 25-27 instr/step; the ALU floor ~1,750 cycles/record is 71-75%
       of the H200 consumer-alone 2,421 (transfers); H100 waits do not. P3b registered with its harness patch
       (takemyjob 0f463b2).
-  - **In flight:** P3b's GPU-7 validation (37-h100-p3b-val, queued 06:04Z; P3b itself on PASS); the consumer
-    microbenchmark workflow wf_e58bb60c-e1f (task wu3k8ufbz: design x3 -> judge -> build -> audit -> fix; branch
-    campaign/eb-eac, probe package probes/eac); subagents harvesting m07 / m03c / m08t1 and merging the decode track
-    (hopper/nj-e2 -> master; DEC-01 re-run + DEC-02 staged for registration).
+    - H100 since 06:00Z: m07 / m03c / m08t1 harvested (close prefetch; no T=256 pin; T=1 fixed cost); M09 (v6 a 12.5 +
+      10.2 k us); P3b (VOID by its pairing formula, provisional) + P3c: dequant is 17 of 21.7 instr/step, T=1 fixed-cost
+      levers ranked; decode track: E2 merged, DEC-01 PASS, DEC-02 x4 run (06:57Z).
+  - **In flight:**
+    - eac consumer microbenchmark workflow wf_e58bb60c-e1f (task w9kc15qz3; judge stage; P3b/P3c now predict small reuse /
+      repack gains, so it is expected to close those levers cleanly).
+    - v6 fixed-cost workflow wf_54212dd6-936 (task won2xoh94; campaign/eb-fc): prologue cuts and a fused K2+combine
+      epilogue as variants raced against v6 at T=1, then a moe check and the decode port.
+    - Subagent harvesting DEC-02 (V2 / V3 + the decode-1 / decode-32 timeline) and drafting DEC-03 / DEC-05.
   - **Next:**
     - P3b capture.
     - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
@@ -1681,3 +1686,15 @@ with the operator's go-ahead.
   clean GPU 7. DEC-02 (4 bytes: c1daf58b, ced20a71, 8e3b9874, the board 5a33db71) is running: node fidelity V2/V3 plus
   the first clean decode-layer nsys timeline at T=1 and T=32. 12 older E2 runs overlapped other GPU-7 runs: their
   verdicts stand, their timings do not.
+
+## 2026-10-28T07:17Z: P3b / P3c analysed; second build workflow (v6 T=1 fixed cost) started
+
+- P3b is VOID by its registered pairing formula (a cross-pass gpc__cycles_elapsed); its raw counters reproduce P3 within
+  0.02%, so its readings stand as provisional. P3c (valid) reproduces them on v6.
+- The consume body is 21.7 instructions per step: ext_prop 11, scale decode 4, HMUL2 4, LDSM 1, HMMA 1. The repack can
+  cut at most 2.1 (dq3's floor, already measured x1.000-1.019) and reuse 0.5-0.75. So the eac sweep is expected to
+  close those levers, not win.
+- T=1 fixed cost at k=1 (P3c): ~2 us launch per kernel, 1.6-1.8 us prologue, 1.2 us x staging, 1.4 us first fill, and
+  the combine at 2.05 + 2.66 us. Workflow wf_54212dd6-936 builds the prologue cuts and the fused combine as raced
+  variants (estimated 1.5-4 us at T=1; moe decode 1 is ~32 us on the judge).
+
