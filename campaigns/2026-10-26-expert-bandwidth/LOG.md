@@ -2,6 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
+- **PAUSED by the user at 2026-10-28T0257Z: "basically do nothing; all the running agents need to finish. i need everytoken i can spare".** No new agents, workflows, checks or scored runs; the loop is stopped. Running at the pause: workflows h100-moe-enablers, h100-decode-enablers, s3-decode-port; moe scored run 426218dc (unharvested); the H100 runner drains its queue.
 - **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0255Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
