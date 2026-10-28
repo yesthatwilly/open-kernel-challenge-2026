@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "8f33e5ee4dbd41da",
+ "job": "426218dc889d45d0",
  "mode": "submit",
- "speedup": 1.722456026474114,
+ "speedup": 1.734012522579515,
  "ci": [
-  1.6966191860770024,
-  1.7482928668712256
+  1.7080023347408224,
+  1.7600227104182076
  ],
- "commit": "a4d1c81de390c9c5d00cb641c79f1279cf32e0d4",
- "submission_blob": "f3f1835fdc444708ac8028cd1bba4027f3bf7d9b",
- "slug": "campaign-eb-s1a",
+ "commit": "2abc122e94e0577634882c36e44b69ab210cc829",
+ "submission_blob": "5b96e76cdb39051da710f054972345f2814cdea2",
+ "slug": "campaign-eb-s3",
  "result": null,
- "updated_at": "2026-10-27T2225Z",
- "master_slug": "campaign-eb-s1a",
- "master_job": "8f33e5ee4dbd41da",
- "note": "registered by hand 2026-10-27: X5 S1a bytes (campaign/eb-s1a 826d15fa; Engine S hot kernel present but unrouted, board paths: T=128 master, T=256 forked wg H-16); check 2157c43b 1.7347 (borderline +0.93%, submitted per DAILY-RHYTHM); scored 1.7225 > 1.7187 (2a7b5d20).",
- "score_us": 7807.746492970984
+ "updated_at": "2026-10-28T0327Z",
+ "master_slug": "campaign-eb-s3",
+ "master_job": "426218dc889d45d0",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth S3 = Engine A v6 'S3-sched' (whole-record ownership, per-expert K2 blocks, co-resident K2 at T=1), routed at T=1 only; branch campaign/eb-s3 52251d20; check fd0e9271 1.7377; landed on master.",
+ "score_us": 7755.7110025907
 }
