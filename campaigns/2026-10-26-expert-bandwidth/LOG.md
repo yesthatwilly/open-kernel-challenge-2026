@@ -2343,3 +2343,4 @@ with the operator's go-ahead.
   (t1) the same chain for moe decode_1 (T=1, 29.7 us vs 11.4 SoL).
   Value bar: >= 45 us off T=256 or >= 4.5 us off T=1 per row.
 - Quota at 22:04Z: moe 3 checks / 3 runs, decode 1 / 3. Fresh at 00:00Z.
+- 2026-10-28T2215Z harvest: decode scored 31e9a69a **1.661** [1.636, 1.685] beat the 1.6551 board, so v4x decode is landed on master and registered (BEST, claim). swf S1b check 89add1cc 1.626 sits below attention's 1.6340, so no scored run; recorded as an [unresolved] claim, and attention is parked under the expert-block focus.

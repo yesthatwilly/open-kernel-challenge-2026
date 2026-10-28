@@ -1,19 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "83f0c00eb3644e1c",
+ "job": "31e9a69aac344675",
+ "check_job": "1fd2c931cf874a07",
  "mode": "submit",
- "speedup": 1.6550847303532332,
+ "speedup": 1.660563388552061,
  "ci": [
-  1.6302584593979348,
-  1.6799110013085317
+  1.6356549377237801,
+  1.6854718393803418
  ],
- "score_us": 13667.155273175837,
- "commit": "ec3c4dcbb101c204b6b525d6498fb0b07eab658e",
- "submission_blob": "b04cdf5cf59b340758028e29ece6a0c5925f2c5b",
- "slug": "phasec-dec-pin16-v4c",
+ "score_us": 13622.063545387398,
+ "commit": "d1fb10ab8a06318d376629a0477a885fabbf43fc",
+ "submission_blob": "124f158f082d34af78cd1f9195c1ae921f859cc9",
+ "slug": "landing-31e9a69a",
+ "master_slug": "landing-31e9a69a",
+ "master_job": "31e9a69aac344675",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T171015Z",
- "master_slug": "phasec-dec-pin16-v4c",
- "master_job": "83f0c00eb3644e1c",
- "note": "registered by hand 2026-10-28: phase-C variant dec-pin16-v4c (campaign expert-bandwidth, branch phasec/dec-1028) = the 1.6470 X1v6 decode board with Engine A v4c pinned at T=9..16 (the race flipped v4 / v4c 6:4 across today's runs; the layer prefers v4c there); check 86edd970 1.6599; scored 1.6551 vs 1.6470; landed on master."
+ "updated_at": "2026-10-28T221004Z",
+ "note": "registered by churn.py register-landing from okc status 31e9a69aac344675"
 }
