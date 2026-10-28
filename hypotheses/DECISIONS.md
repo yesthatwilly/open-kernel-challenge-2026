@@ -424,3 +424,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150030Z `muse_prefill_layer` **experts-rega-epilogue-wg-local-bulk-store**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w2st arm a landed; bulk store is arm b which lost (665c32dd)
 - 2026-10-28T150030Z `muse_prefill_layer` **experts-rega-epilogue-overlap-next-stage**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR <=1.2%, high risk (232-reg ceiling), needs re-aim to fsilu_w2a
 - 2026-10-28T150030Z `muse_decode_layer` **sliding-cluster-c4-s3-satfinite-on-sk-ticket**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: base never landed; sliding B=17..32 already on stream-K window kernel
+- 2026-10-28T150030Z `muse_decode_layer` **ffn-front-t128-t256-concat-route**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w6b-t128diet cells landed

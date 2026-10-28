@@ -86,7 +86,8 @@ controls_for: null
 rewrite_stage: 1
 replaces: pooler nvjet + side-stream router hi/lo tss splitK x2 + splitKreduce x2 + fp32 add + FusedMuseSparkRouting + _align_parallel + vectorized_layer_norm (pre-expert RMSNorm) + the side-stream fork/join, at 33 <= T <= 512 (verify_16 T=128, verify_32 T=256)
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w6b-t128diet cells landed"
 ---
 
 # ffn-front-t128-t256-concat-route
