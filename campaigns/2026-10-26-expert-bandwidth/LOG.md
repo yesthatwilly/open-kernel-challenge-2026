@@ -1674,3 +1674,10 @@ with the operator's go-ahead.
 - v6's fixed cost at T=1 is 12.5 us on the H100 (v1 13.8, v4 21.3); the combine sits on the critical path for 2.5-3.8
   us per call. Phase-A input: a fused K2+combine epilogue or a persistent T<=8 kernel attacks ~5.5 us of fill/hand-off
   plus the combine. P3b's GPU-7 validation passed (hand-run; gpus=7 in a job file is a count) and P3b is queued.
+
+## 2026-10-28T06:44Z: decode track live on the H100: E2 merged, DEC-01 PASS, DEC-02 x4 running
+
+- E2 (decode shim) merged into hopper-probe master by a subagent (moe path byte-identical). DEC-01 re-run PASS on a
+  clean GPU 7. DEC-02 (4 bytes: c1daf58b, ced20a71, 8e3b9874, the board 5a33db71) is running: node fidelity V2/V3 plus
+  the first clean decode-layer nsys timeline at T=1 and T=32. 12 older E2 runs overlapped other GPU-7 runs: their
+  verdicts stand, their timings do not.

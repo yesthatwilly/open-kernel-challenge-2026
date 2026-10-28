@@ -856,3 +856,10 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   - Decision: all four must pass. V2 fail -> stop decode node work. V3 fail -> arms next to a shimmed op stay
     unresolved.
   - ~12 min each on four pool GPUs, gated on dec01-pass. Full text: takemyjob queue-staged/registrations.md.
+
+## 2026-10-28T06:44Z: DEC-01 re-run PASS on a clean GPU 7; DEC-02 x4 released
+
+- dec01a (runs/20261027-233921-gpunode06, 06:39:39-06:43:51Z, rc 0; no other run on GPU 7 in that window): shim self-test
+  PASS (q/k 0.50 ulp, RMSNormGate 0.50 ulp, boundary stream rel 2.6e-8, routing weights rel <= 6.7e-8, 0 id-set
+  mismatches); 38 API call sites bound; FA3 / GEMM lines present; no VOID. Gate dec01-pass written; the four DEC-02 jobs
+  were moved into pending together (06:46Z) so they land on four GPUs.
