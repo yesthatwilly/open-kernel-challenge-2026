@@ -407,3 +407,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T145300Z `muse_attention_decode` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
 - 2026-10-28T145300Z `muse_bf16_proj` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
 - 2026-10-28T145300Z `muse_decode_layer` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
+- 2026-10-28T145300Z `muse_moe_w4a16` **diagnosis**: 2026-10-28 1455Z: daily diagnosis skipped this tick to save tokens (user token budget; ~700k Opus each); picks run on existing FINDINGS
