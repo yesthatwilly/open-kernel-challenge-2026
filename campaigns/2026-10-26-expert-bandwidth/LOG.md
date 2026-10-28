@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1200Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1208Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -20,13 +20,12 @@ append-only, newest last.
   - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8822** (330/975; fc on L4); decode **1.6428** (345/854; fc on L4, 11:31Z); bf16 1.2740
-    (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 349/1412. Today: moe 1.7340 -> 1.8822
-    (S3 / carrier / L3 / L4 / fc); decode 1.5926 -> 1.6428 (L3 + v6 / L4 / fc).
+  - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
+    1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
+    1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
   - **Quota 1159Z:** decode 12 checks / 5 runs; moe 13 / 4; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - X1v6 scored runs (11:59Z): moe 0b49b1aae6a04acb (check 1.906; land if > 1.8822) and decode 7352add6920f40e7
-      (check 1.646, borderline; land if > 1.6428).
+    - Nothing.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1927,3 +1926,11 @@ with the operator's go-ahead.
   v6 keeps the T=1 gain without X1's T=8 loss. Scored run **0b49b1aa** at 11:59Z.
 - **Decode cfdf6df3: 1.646** vs 1.6428 (+0.2%), flat vs the fc check: decode 1 ours x1.010 / x1.013. Borderline, sent
   as scored run **7352add6** (6 runs left, no better decode candidate due today).
+
+## 2026-10-28T1208Z: X1v6 scored on both boards (moe 1.8941, decode 1.6470), landed
+
+- Moe 0b49b1aa: **1.8941** (CI 1.8657-1.9225) vs 1.8822; master 2ec8090f; rank 327/979.
+- Decode 7352add6: **1.6470** (CI 1.6223-1.6717) vs 1.6428; master d0cdde04; rank 344/855. Overall 348/1417.
+- BEST.json and BEST.result.json registered together (0698acc5). v6pe routed at T=1 in both.
+- Size margins left: moe 382 B and decode 51 B under the 990,000 B budget (decode after build.py's comment strip):
+  the next change on either file must cut first.
