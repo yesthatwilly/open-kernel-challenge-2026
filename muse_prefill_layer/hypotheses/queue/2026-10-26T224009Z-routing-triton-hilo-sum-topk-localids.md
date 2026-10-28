@@ -39,7 +39,8 @@ kind: primary
 controls_for: null
 prior: "router-hilo-one-gemm-n512: that merged the two router GEMMs into the N=512 GEMM master now runs and left the add and the routing as separate launches; this keeps that GEMM and folds the add, the routing kernel and the main-stream remap into one launch"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%, stack-only"
 ---
 
 # routing-triton-hilo-sum-topk-localids
