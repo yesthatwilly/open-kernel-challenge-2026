@@ -2257,3 +2257,18 @@ with the operator's go-ahead.
 - **Tonight:** TC-A moe (D = t(G=257) - t(G=256), K1 k=8 / K2 k=16, on eb-trim) and TC-B decode (D_dec plus the
   T=128 cold half's onset excess E2c, on eb-trimd), both print-only with routing unchanged. Optional: Engine P's
   counter hand-off probe and v6-at-T=8 decode anatomy, only if checks remain.
+
+## 2026-10-28T2025Z: session musespark-b1 (c24a6e21) takes over the campaign for tonight
+- The campaign session (0605b7cc) is gone. It stopped ~17:40Z when the user's token quota ran out, so its rung workflows wf_c0bd87c5 / wf_3972725f never finished.
+- The user, at the 20:20Z quota reset: "the token quota you have should be ample for a heavy plan ... maximize that token for TODAY".
+- Dispatched the 3 committed, sha-verified rungs at ~20:23Z (checks, print-only):
+  - attention diag-sw-chain-cost 664a6da6321a45c9;
+  - moe moe-fx-tca f720d749741445bc;
+  - decode dec-fx-tcb b47f8f7382d04d47.
+  TC-A/TC-B decide v4x S1 per engineA.json final.tonight.
+- Launched three workflows:
+  - tonight-leads-1028 (wf_0942238c-8c0): /hypothesize under the new value bar and CLAIMS.md for all 5 problems, then review, build, audit and stage, so checks go out before 00:00Z;
+  - attn-swf-rungs-finish-1028 (wf_eaf43f74-09e): diag-swf-chain / merge, from the stopped work in .worktrees/attn-rung-swf;
+  - phaseA-swf-s1-build-1028 (wf_9c5c1ad8-08f): tomorrow's attention stage 1, started now so it is check-ready at 00:00Z.
+- v4x S1 (moe, then decode) launches once TC-A reads.
+- The decode X1v6 port was already landed on 10-28 (7352add6 1.6470), so it is not a candidate tonight.
