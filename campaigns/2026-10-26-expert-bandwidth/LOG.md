@@ -17,7 +17,7 @@ append-only, newest last.
       Fragment-order repacking should be the other independent experiment."
     - ~0515Z picks: "Release m456 + m08t8, Queue P3b when drafted, Harvest the M1 results" (all done).
     - ~0035Z / ~0100Z: "use the h100 freely for the next 6 hours" (superseded by the 0530Z window).
-  - **Boards (~0525Z):** decode 1.5926 (361/829), moe 1.7340 (448/958), bf16 1.2740 (425/1209), attention 1.6340
+  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode 1.5926 (361/829); earlier ~0525Z: moe 1.7340 (448/958), bf16 1.2740 (425/1209), attention 1.6340
     (452/915), prefill 1.4897 (212/549). Left today: decode 18 checks / 9 runs; moe 19 / 9; the others 20 / 10.
   - **Done since 0255Z:**
     - moe 1.7340 landed (S3 / v6).
@@ -1745,3 +1745,10 @@ with the operator's go-ahead.
 - Decode: L3 + v6 (eb-l3d-s3d) check 31e0aad5 and L3 alone (eb-l3d) check 7f9712c4 are in flight.
 - eac replicates: L4 (the pair add on the FMA pipe) is a further +6.6% at T=8 in the bench, so the L4 port workflow
   wf_caac665e-9ed is building on top of L3. The repack is closed; reuse does not fit v4's registers.
+
+## 2026-10-28T08:18Z: moe L3 scored 1.8249 and landed (new board; rank 372/965, was 452)
+
+- Scored run 261cfe56: **1.8249** (CI 1.7975-1.8523) vs 1.7345 (+5.2%); master 869cd463; BEST.json -> 261cfe56.
+- Rows: decode 1 x2.500, decode 16 x1.648, decode 32 x1.371, verify 1 x1.729, verify 16 x1.880, verify 32 x2.012.
+- The causal chain: P3 audit (ALU binds) -> P3b/P3c (17 of 21.7 instr/step are dequant) -> eac design judge (L3 = the
+  only ALU-removing, code-only lever) -> eac SASS census (-2.0 instr/step, folds) -> production port -> judge +5.2%.
