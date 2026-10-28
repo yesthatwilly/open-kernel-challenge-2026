@@ -40,6 +40,9 @@ append-only, newest last.
       (LOG, Now, trim, phase-A panels, memory) and runs no churn ticks. Campaign checks reserved for tonight: moe 1 +
       decode 1 (verify the trim branches) and attention 2 (the attn-fixed panel's diagnostics); message it before
       each dispatch.
+    - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope, check **7284659f6c4d4035**
+      (~15:07Z): a batch-1 pseudo kernel fusing pre-attention q norm / RoPE and the new K/V rows, 1.03x
+      gate, master fallback; expected ~0.8-1.8 us on sliding verify 1. Churn's last run today.
     - Room for phase A is made: moe campaign/eb-trim 742f3209 827,317 B; decode campaign/eb-trimd 8cb23d1f
       893,346 B (trim + build.py docstring strip). Both need one judge check tonight (reserved).
     - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873, resumed 14:53Z with the per-row triage in its brief). The
