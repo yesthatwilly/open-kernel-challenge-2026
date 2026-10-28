@@ -2,35 +2,38 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **PAUSED by the user at 2026-10-28T0257Z: "basically do nothing; all the running agents need to finish. i need everytoken i can spare".** No new agents, workflows, checks or scored runs; the loop is stopped. Running at the pause: workflows h100-moe-enablers, h100-decode-enablers, s3-decode-port; moe scored run 426218dc (unharvested); the H100 runner drains its queue.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0255Z (date -u), session 0605b7cc.
-  - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
-    queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
-  - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
-  - **H100 (gpunode06) RESUMED by the user at ~0035Z** (verbatim: "can we simultaneously juggle submitting all the h100
-    stuff? or create a subagent to deploy to gpunode06 to use the h100 over the next few hours. or at least juts an agent
-    that deploys all the already-existing h100 tests"). **~0100Z: "go ahead and finish the enablers, queue the
-    program. use the h100 freely for the next 6 hours"** (window to ~07:05Z). H200 (gpunode26) stays held.
-    - Enablers: workflows h100-moe-enablers wf_9d19c8b4-aa4 (E1 + E1b, E3, E4 -> hopper/nj-moe) and
-      h100-decode-enablers wf_efbfae22-bd4 (E2 + E2b, DEC-01 -> hopper/nj-e2), in takemyjob worktrees under
-      `~/git/.takemyjob-wt/`; GPU 7 for their validations. The interrupted WIP is on hopper/nj-base (da05b87, 5df90e5).
-    - Runner tree reset to the committed harness 0c0bc56. Setup rc 0 (0122Z, 689 s; venv-cu130 torch 2.14.1+cu130).
-      Bundle nodejudge rebuilt (harness 02df40ec, moe board 498afbd8, decode board 2fd3d945). **Runner live since 0124Z**
-      (pid 1400704, poll 300 s; GPU 7 reserved); the fuzz fillers pass on 498afbd8 (first pair 0126Z).
-    - The S3 build gets node validation (moe-iso A/B, fuzz; memcheck is VOID on 80 GB) before its judge check.
-  - **Decode board 1.5926 since 0014Z** (e1fd3c00, the pinned trim; rank 347/823; overall 352/1369).
-  - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
-    (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
-  - **In flight:**
-    - **H100 redeploy agent** (gpunode06 only; see the policy bullet).
-    - **moe scored run 426218dc889d45d0** (0256Z): S3 = Engine A v6, campaign/eb-s3 52251d20 (sha256 b464bd4b); check
-      fd0e9271 drew 1.7377 (+0.88%) and the node correctness rerun on these bytes passed. Lands only above 1.7225.
-    - workflow **wf_33d9cfe1-32d** (s3-decode-port): v6 into decode d1 on `campaign/eb-s3d` (from eb-pin2 e8f8134b),
-      T=1 only, co-resident K2 kept; build -> 2 audits -> fix (high), ~1M tokens predicted.
-  - **Decode base for the next decode builds: campaign/eb-pin2 e8f8134b** (pins round 2: check 314cca3c 1.5883, all
-    four pins routed, a tie, so not scored).
-  - **Next:** when S3's build lands, queue its node validation, then its moe judge check; harvest the H100 queue at
-    each tick. Phase B once decode's reasonable checks are spent. Quota: decode 9 scored / 19 checks; others 10 / 20.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0533Z (date -u), session 0605b7cc.
+  - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
+    hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
+    `/loop H100 autonomous program ...`.
+  - **Scope:** H100 (gpunode06) jobs, plus judge checks of H100-derived candidates (moe first, then decode), with scored runs
+    when a check beats its board. 3:1 phase B/C spending stays paused (the user's 0257Z pause). H200 (gpunode26) held.
+  - **User bullets carried forward (verbatim):**
+    - 0257Z: "basically do nothing; all the running agents need to finish. i need everytoken i can spare".
+    - ~0320Z: "okay what did you learn from what just finished; anything to launch? do the work here but dont do it
+      autonomously right now". Picks: "1 Land moe board, 2 Decode-port check, 3 Queue H100 moe program" (all done).
+    - ~0410Z, a pasted reviewer plan the user endorsed: "Approve the P3 audit, then a targeted missing-counter capture --
+      not another broad rewrite ... a correct, spill-free two- and four-m-tile reuse sweep, with unchanged dq2 ...
+      Fragment-order repacking should be the other independent experiment."
+    - ~0515Z picks: "Release m456 + m08t8, Queue P3b when drafted, Harvest the M1 results" (all done).
+    - ~0035Z / ~0100Z: "use the h100 freely for the next 6 hours" (superseded by the 0530Z window).
+  - **Boards (~0525Z):** decode 1.5926 (361/829), moe 1.7340 (448/958), bf16 1.2740 (425/1209), attention 1.6340
+    (452/915), prefill 1.4897 (212/549). Left today: decode 18 checks / 9 runs; moe 19 / 9; the others 20 / 10.
+  - **Done since 0255Z:**
+    - moe 1.7340 landed (S3 / v6).
+    - Decode-port check 678f6e9c: 1.5860, so no scored run (eb-s3d a78c2515).
+    - M00 failed its rule; amended to a 0.45%/row MDE (the user's pick).
+    - M1: the null holds; the isolated MDE is ~0.3%/row.
+    - M456: pin v4 at classes 8 and 16; CUDA combine at 128 (+1.0%).
+    - M08t8: T=8 fit v1 15.5 + 10.3k us, v4 19.4 + 9.85k us.
+  - **In flight:** the P3 audit workflow wf_01ce0f10-ce0 (task wp2zeukc3), which drafts P3b; the moe carrier build (pin v4
+    at classes 8/16 plus the CUDA combine at 128, on the S3 board), then its judge check.
+  - **Next:**
+    - P3b capture.
+    - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
+      then decode.
+    - A decode-layer T=1 timeline when GPUs would idle.
+    - At 13:40Z: stop queuing, harvest, restore the node board.py symlink, and report.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
