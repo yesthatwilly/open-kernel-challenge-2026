@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1400Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1408Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -29,8 +29,8 @@ append-only, newest last.
     1.2794.
   - **Quota 1346Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
   - **In flight:**
-    - `/hypothesize --n 5` (the user, ~13:40Z; read as `all`): wave 1 (prefill, bf16, decode) and wave 2 (moe,
-      attention, launched ~13:59Z) minting agents.
+    - (`/hypothesize --n 5` withdrawn: the user stopped all five minting agents ~14:05-14:08Z; no files were
+      written. Do not re-run /hypothesize today unless the user asks.)
     - **Token spend before the ~14:50Z reset (the user, ~1400Z):** four `phaseA-1029-panel` workflows, one lever each
       (attn-full-splitkv wf_8bc41cd2-5f8, attn-fixed wf_c53b5c8a-873, dense wf_aea768d4-80e, engineA
       wf_68a1b277-7b5): 2 designers (max) -> judge (max) -> red team (high) -> final spec + build brief + tonight's
@@ -2109,3 +2109,14 @@ with the operator's go-ahead.
   cuda_syntax; then an audit and a fix pass.
 - /hypothesize wave 2 (moe, attention) launched ~13:59Z with the panel's scope named, so it does not mint the same
   rewrites; wave 1 (prefill, bf16, decode) still running.
+
+## 2026-10-28T1408Z: the user stopped all five /hypothesize agents; the design panels and the trim continue
+
+- Stopped on the user's side between ~14:05Z and ~14:08Z: the minting agents for prefill, bf16 and decode (wave 1) and
+  for moe and attention (wave 2). None had written a queue file (`git status` clean), so there is nothing to clean up.
+  This came right after the comparison of sources (H100-derived builds ~0.56% of board per judge run; the churn's own
+  yield ~1 gain per 14 checks since 10-26).
+- Decision (default, not asked): `/hypothesize --n 5` is withdrawn; no /hypothesize runs today unless the user asks.
+  Phase C tonight fills its checks from the design panels' prepare-only diagnostic checks, phase-C variant batches and
+  the existing reviewed queue items.
+- Still running: the four `phaseA-1029-panel` workflows and `size-trim-1028`.
