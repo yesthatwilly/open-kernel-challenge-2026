@@ -681,3 +681,17 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   a >= 12 us and b >= 9.28 us per expert.
 - **Released.** queue/gates/m00-accepted written; 32-m456 x8 and 34-m08t8 x2 are eligible. The amendments are also in
   takemyjob queue-staged/registrations.md.
+
+## 2026-10-28T05:18Z: M1 result: the isolated A/A null holds; isolated MDE ~0.3% per row; no order effect; 0/12 race flips
+
+- Six blocks (board vs a byte-identical copy, one judge-shaped process each), all on GPU 1 at 1830 MHz, rc 0. b1-b3 WARM,
+  b4-b6 COLD; orders alternated AB/BA.
+- **R3b paired:** rows x0.9968-x1.0011, all unresolved; headline x0.9991 [0.9974, 1.0008]. **Raw:** headline x0.9978
+  [0.9956, 1.0001].
+- **Isolated MDE (R6):** the 95% half-width is ~0.3% per row (v1 0.26 to d32 0.32), except decode 1 at ~0.70%;
+  headline ~0.17%. That is tighter than the in-process instrument's 0.45% per row (M00).
+- **Order effect:** AB x0.9989 vs BA x0.9993 (0.04% < 0.2%), so balancing is not mandatory. The GPU effect was not
+  testable (all blocks on GPU 1).
+- **Race flips:** 0/12 prepares flipped at any class (T=1 v1, 2..16 v4, 17..32 v4c, 128 v4c, 256 MASTER). X0a's 36-43%
+  class-8 flip rate is not reproduced on the node in this state.
+- Recorded in takemyjob 4f1dabb (registrations.md, m1-b6).

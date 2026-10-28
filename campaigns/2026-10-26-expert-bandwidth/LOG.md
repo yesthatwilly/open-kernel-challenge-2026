@@ -1606,3 +1606,11 @@ with the operator's go-ahead.
   resolve as predicted. Details are in research/h100-findings.md and takemyjob 04e8ace.
 - m456 x8 and m08t8 x2 stay pending behind the unwritten gate. m1 (b0 done, b1 running) and p3 proceed. Re-registering
   at a 0.45% MDE is the user's call. The window closes at ~07:05Z; restore the node board.py link then.
+
+## 2026-10-28T0518Z: H100: m456 / m08t8 released (the user's pick); M1 harvested; P3 audit running
+
+- **Released.** The user picked "release m456 + m08t8, queue P3b when drafted, harvest M1". m456 / m08t8 were amended
+  before any data to a 0.45% per-row MDE (60a56ad8; takemyjob 255620e), and queue/gates/m00-accepted is written.
+- **M1:** the isolated A/A null holds (headline x0.9991); isolated MDE ~0.3% per row (decode 1 ~0.7%); no order
+  effect; 0/12 race flips (takemyjob 4f1dabb).
+- The P3 audit workflow is running (resumed after the 04:28Z session limit).
