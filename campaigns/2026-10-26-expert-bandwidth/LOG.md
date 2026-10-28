@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1253Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1259Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,14 +23,12 @@ append-only, newest last.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
     1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
-  - **Quota 1253Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 10; prefill 20 / 10.
+  - **Quota 1259Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 9; prefill 20 / 10.
   - **In flight:**
     - Attention diagnostics (12:49Z): diag-sw-perb-floor 15606a81, diag-sw-keys-sweep 0017ccea, diag-sw-gather-split
       7745d256, diag-fa3-verify-ctx-sweep e8aac4b8, diag-fa3-verify-gather-split 6f1b1e8c, diag-fa3-verify-perb-floor
       cc388d94, diag-gather-floor de2770ab.
-    - bf16 checks (12:51-12:52Z, the other nine bf16 variants): pc-diag-anatomy b22542a0, pc-diag-roofline 7167d8d3,
-      pc-diag-reducetail bd2520a9, pc-diag-nearby 9d005818, pc-diag-cosched 05336b03, pc-lt-qkv128-readflush 0c9095e2,
-      pc-diag-wave 46728895, pc-diag-ceiling 25438639, pc-b12-cw4-pooler-o b4ca8b22.
+    - bf16 scored run 3e3ffc5afc57433b (12:58Z): pc-lt-qkv128-readflush (check 0c9095e2 1.2844); land if > 1.274.
     - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
@@ -1991,3 +1989,13 @@ with the operator's go-ahead.
   under the read flush (tiled / orig 0.966 / 0.979 / 0.978 at m = 8 / 16 / 32; 3.72 -> 3.86 TB/s). Below the 0.95 bar
   for a same-day routed repack; a small decode-portable lever to stack later.
 - The remaining nine bf16 variants went out at 12:51-12:52Z. bf16 left: 8 checks.
+
+## 2026-10-28T1259Z: bf16 batch read: the qkv m=128 read-flush plan checks 1.2844; scored run sent
+
+- **pc-lt-qkv128-readflush 0c9095e2: 1.2844** vs the 1.274 board, above today's board-routing spread (the diag runs
+  on board routing read 1.266-1.276). Scored run **3e3ffc5a** at 12:58Z. pc-b12-cw4-pooler-o read 1.2786 (inside the
+  spread; to stack with the qkv128 plan later).
+- Diagnostics for planning (decode-portable): small GEMVs stream at 3.0-4.1 TB/s cold vs the 4.8 TB/s floor; the
+  split-K reduce tail costs 1.0-1.5 us per GEMM at m <= 32; router + pooler on two streams saves 0.9-2.4 us at
+  m = 1-16; the old write-flush gates overstated times 20-30%; at nearby m the board is 0.94-0.98x SGLang at m = 48-130
+  (no gate fix needed; worst rel L2 1.5e-4).
