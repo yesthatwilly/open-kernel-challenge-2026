@@ -1,0 +1,77 @@
+] capture kernel_fn router m=32 n=256 state B (component router_pdl_ok_32) ...
+[ab] router m=32 n=256: A,B,A,B replays OK, worst rel L2 2.54e-06
+[ab] capture kernel_fn router m=256 n=256 state A (component router_pdl_ok_256) ...
+[ab] capture kernel_fn router m=256 n=256 state B (component router_pdl_ok_256) ...
+[ab] router m=256 n=256: A,B,A,B replays OK, worst rel L2 3.39e-06
+[ab] capture kernel_fn unpooler m=1 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=1 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=1 n=1024: A,B,A,B replays OK, worst rel L2 1.75e-03
+[ab] capture kernel_fn unpooler m=8 n=1024 state A (component ouns_cl) ...
+[ab] capture kernel_fn unpooler m=8 n=1024 state B (component ouns_cl) ...
+[ab] unpooler m=8 n=1024: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] capture kernel_fn unpooler m=128 n=8192 state A (component nn_ok) ...
+[ab] capture kernel_fn unpooler m=128 n=8192 state B (component nn_ok) ...
+[ab] unpooler m=128 n=8192: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=1 n=4096 state A (component b12_pooler_ok) ...
+[ab] capture kernel_fn pooler m=1 n=4096 state B (component b12_pooler_ok) ...
+[ab] pooler m=1 n=4096: A,B,A,B replays OK, worst rel L2 1.70e-03
+[ab] capture kernel_fn pooler m=8 n=4096 state A (component master path) ...
+[ab] capture kernel_fn pooler m=8 n=4096 state B (component master path) ...
+[ab] pooler m=8 n=4096: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn pooler m=128 n=4096 state A (component pooler_khalf128_ok) ...
+[ab] capture kernel_fn pooler m=128 n=4096 state B (component pooler_khalf128_ok) ...
+[ab] pooler m=128 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn pooler m=256 n=4096 state A (component nn_p256_ok) ...
+[ab] capture kernel_fn pooler m=256 n=4096 state B (component nn_p256_ok) ...
+[ab] pooler m=256 n=4096: A,B,A,B replays OK, worst rel L2 1.66e-03
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state A (component b12_qkv_ok) ...
+[ab] capture kernel_fn qkv_gate m=1 n=2304 state B (component b12_qkv_ok) ...
+[ab] qkv_gate m=1 n=2304: A,B,A,B replays OK, worst rel L2 1.72e-03
+[ab] capture kernel_fn o m=1 n=8192 state A (component b12_o_ok) ...
+[ab] capture kernel_fn o m=1 n=8192 state B (component b12_o_ok) ...
+[ab] o m=1 n=8192: A,B,A,B replays OK, worst rel L2 1.68e-03
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state A (component lt_qkv128_ok) ...
+[ab] capture kernel_fn qkv_gate m=128 n=2304 state B (component lt_qkv128_ok) ...
+[ab] qkv_gate m=128 n=2304: A,B,A,B replays OK, worst rel L2 1.67e-03
+[ab] done in 0.2s; flags now {'ouns_cl': 8, 'router_cluster_ok': True, 'nn_ok': True, 'nn_p256_ok': True, 'bulk_pooler_ok': True, 'bulk_qkv_ok': True, 'bulk_o_ok': False, 'lt_qkv128_ok': True, 'b12_pooler_ok': True, 'b12_qkv_ok': True, 'b12_o_ok': True, 'pooler_khalf128_ok': True, 'router_pdl_ok_16': True, 'router_pdl_ok_32': True, 'router_pdl_ok_128': True, 'router_pdl_ok_256': True}
+DIAG anatomy read flush (judge) net us: q1 9.25 q8 11.52 q16 11.90 q32 12.96 q128 14.98 q256 18.34 o1 4.74 o8 4.96 o16 4.96 o32 5.57 o128 6.43 o256 8.19 p1 13.86 p8 18.21 p16 18.05 p32 18.85 p128 21.34 p256 28.48 u1 3.90 u8 4.32 u16 17.22 u32 17.06 u128 17.92 u256 23.62 r1 3.90 r8 3.84 r16 3.97 r32 4.51 r128 6.02 r256 7.87 (base 5.18)
+DIAG anatomy write flush (old gates) net us: q1 12.13 q8 14.94 q16 15.10 q32 16.16 q128 18.11 q256 24.00 o1 6.05 o8 7.04 o16 6.69 o32 7.26 o128 8.13 o256 9.09 p1 19.23 p8 23.90 p16 24.13 p32 24.80 p128 26.46 p256 31.74 u1 5.28 u8 5.44 u16 23.26 u32 22.91 u128 23.46 u256 28.42 r1 5.06 r8 5.06 r16 5.12 r32 5.47 r128 6.82 r256 9.28 (base 5.18)
+DIAG anatomy warm L2 net us: q1 0.86 q8 0.99 q16 0.99 q32 2.37 q128 6.98 q256 10.34 o1 0.00 o8 0.00 o16 0.26 o32 0.06 o128 0.00 o256 0.00 p1 6.02 p8 11.42 p16 11.68 p32 12.61 p128 14.94 p256 21.63 u1 0.19 u8 0.13 u16 10.34 u32 10.40 u128 11.33 u256 16.48 r1 0.00 r8 0.00 r16 0.26 r32 0.51 r128 0.00 r256 0.00 (base 12.19)
+DIAG anatomy read-flush weight TB/s (bf16 bytes; b12 rows q1/o1/p1 stream ~0.75x): q1 4.08 q8 3.28 q16 3.17 q32 2.91 q128 2.52 q256 2.06 o1 3.54 o8 3.38 o16 3.38 o32 3.01 o128 2.61 o256 2.05 p1 4.84 p8 3.69 p16 3.72 p32 3.56 p128 3.14 p256 2.36 u1 2.15 u8 1.94 u16 3.90 u32 3.93 u128 3.74 u256 2.84 r1 2.15 r8 2.18 r16 2.11 r32 1.86 r128 1.39 r256 1.07
+DIAG anatomy: 0.4 s, prepare() age 9.2 s
+[ouns] final: cl=8: cudaOccupancyMaxActiveClusters=45, needs 16
+[ouns] final: cl=4: cudaOccupancyMaxActiveClusters=62, needs 32
+[router_cluster] final: [162, 0, 0, 82432, 30] (regs, spill B, static smem, dyn smem, max active clusters; needs 16)
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=False lt_qkv128_ok=True b12_pooler_ok=True b12_qkv_ok=True b12_o_ok=True pooler_khalf128_ok=True router_pdl_ok_16=True router_pdl_ok_32=True router_pdl_ok_128=True router_pdl_ok_256=True; prepare total 9.2s
+[prepare] DECISIONS (25 lines, re-printed for the log tail):
+  [ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+  [router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+  PATH CHOSEN R-PDL router m=16 (router_pdl_ok_16): zero kernel + PDL router [read-flush, us; r1 m/c 1.040 net m/c/nopdl 4.16/4.00/4.29 IQR 0.16/0.29/0.13; r2 m/c 1.082 net m/c/nopdl 4.22/3.90/4.51 IQR 0.19/0.26/0.26] [race 32x vs master: cand worst 1.4e-07, slow-primary worst 1.5e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=32 (router_pdl_ok_32): zero kernel + PDL router [read-flush, us; r1 m/c 1.076 net m/c/nopdl 4.96/4.61/4.80 IQR 0.22/0.22/0.13; r2 m/c 1.094 net m/c/nopdl 4.83/4.42/4.77 IQR 0.16/0.22/0.13] [race 32x vs master: cand worst 1.4e-07, slow-primary worst 1.5e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=128 (router_pdl_ok_128): zero kernel + PDL router [read-flush, us; r1 m/c 1.036 net m/c/nopdl 6.43/6.21/6.43 IQR 0.13/0.19/0.16; r2 m/c 1.070 net m/c/nopdl 6.40/5.98/6.40 IQR 0.22/0.19/0.22] [race 32x vs master: cand worst 1.0e-07, slow-primary worst 1.0e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=256 (router_pdl_ok_256): zero kernel + PDL router [read-flush, us; r1 m/c 1.052 net m/c/nopdl 8.35/7.94/8.38 IQR 0.26/0.19/0.10; r2 m/c 1.040 net m/c/nopdl 8.26/7.94/8.22 IQR 0.22/0.26/0.19] [race 32x vs master: cand worst 7.5e-08, slow-primary worst 7.7e-08, no-wait control 32/32 wrong (worst 9.6e-01)]
+  PATH CHOSEN A pooler m=1: candidate (cand 22.75 us vs master 23.84 us)
+  PATH CHOSEN A2 qkv_gate m=1: candidate (cand 13.54 us vs master 14.62 us)
+  PATH CHOSEN A3 o m=1: master (cand 6.78 us vs master 6.88 us); gate: cand/master 0.986 > 0.98
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,8> R=32 grid 128: read 0.849 (13.70 / 16.13 us) write 0.862 (19.17 / 22.24 us)
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,4> R=32 grid 128: read 0.859 (13.79 / 16.06 us) write 0.863 (19.20 / 22.24 us)
+  PATH CHOSEN A12 pooler m=1: candidate b12_kernel<32,8192,8,1,8> R=32 (inst 0) [chosen b12_kernel<32,8192,8,1,8> read 0.849 (13.70 vs 16.13 us), write 0.862 (19.17 vs 22.24 us); route at read <= 0.98]
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,4> R=16 grid 144: read 0.954 (9.38 / 9.82 us) write 0.907 (12.19 / 13.44 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,8> R=16 grid 144: read 0.970 (9.47 / 9.76 us) write 0.892 (12.13 / 13.60 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,8> R=32 grid 72: read 1.013 (9.92 / 9.79 us) write 0.917 (12.38 / 13.50 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,4> R=32 grid 72: read 1.033 (10.14 / 9.82 us) write 0.922 (12.42 / 13.47 us)
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,8> R=32: fails read gate 1.013 > 0.98
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,4> R=32: fails read gate 1.033 > 0.98
+  PATH CHOSEN A2_12 qkv_gate m=1: candidate b12_kernel<16,8192,6,2,4> R=16 (inst 2) [chosen b12_kernel<16,8192,6,2,4> read 0.954 (9.38 vs 9.82 us), write 0.907 (12.19 vs 13.44 us); route at read <= 0.98]
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,8> R=64 grid 128: read 0.925 (4.70 / 5.09 us) write 0.870 (5.98 / 6.88 us)
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,4> R=64 grid 128: read 0.930 (4.67 / 5.02 us) write 0.856 (5.89 / 6.88 us)
+  PATH CHOSEN A3_12 o m=1: candidate b12_kernel<64,1024,8,1,8> R=64 (inst 4) [chosen b12_kernel<64,1024,8,1,8> read 0.925 (4.70 vs 5.09 us), write 0.870 (5.98 vs 6.88 us); route at read <= 0.98]
+  PATH CHOSEN B qkv_gate m=128: candidate (cand 18.18 us vs master 19.90 us)
+  PATH CHOSEN K pooler m=128: candidate b2 (bmm fp32 partials + _add2_cast_kernel) [read-flush gate, r1 master/cand 1.052 (net 22.05 / 20.96 us; med 27.07 / 25.98 us, IQR 0.83 / 0.77, base 5.02); r2 master/cand 1.044 (net 21.92 / 20.99 us; med 26.94 / 26.02 us, IQR 0.58 / 0.77, base 5.02); r3 master/cand 1.044 (net 21.98 / 21.06 us; med 27.01 / 26.08 us, IQR 0.61 / 0.54, base 5.02); median 1.044, pooled IQR master/cand 0.80 / 0.80 us (123 reps each); decided by POOLED: route (OLD would route, PARENT would route)]
+  K-DIAG pooler m=128 rounds 1-10: ratios 1.052 1.044 1.044 1.036 1.047 1.044 1.053 1.047 1.042 1.036; per-round IQR (1.5x) fail 0/10, ratio < 1.03 0/10; 1-3 OLD route PARENT route POOLED route; 4-6 OLD route PARENT route POOLED route; 7-9 OLD route PARENT route POOLED route
+[prepare] DIAG (5 lines, re-printed):
+  DIAG anatomy read flush (judge) net us: q1 9.25 q8 11.52 q16 11.90 q32 12.96 q128 14.98 q256 18.34 o1 4.74 o8 4.96 o16 4.96 o32 5.57 o128 6.43 o256 8.19 p1 13.86 p8 18.21 p16 18.05 p32 18.85 p128 21.34 p256 28.48 u1 3.90 u8 4.32 u16 17.22 u32 17.06 u128 17.92 u256 23.62 r1 3.90 r8 3.84 r16 3.97 r32 4.51 r128 6.02 r256 7.87 (base 5.18)
+  DIAG anatomy write flush (old gates) net us: q1 12.13 q8 14.94 q16 15.10 q32 16.16 q128 18.11 q256 24.00 o1 6.05 o8 7.04 o16 6.69 o32 7.26 o128 8.13 o256 9.09 p1 19.23 p8 23.90 p16 24.13 p32 24.80 p128 26.46 p256 31.74 u1 5.28 u8 5.44 u16 23.26 u32 22.91 u128 23.46 u256 28.42 r1 5.06 r8 5.06 r16 5.12 r32 5.47 r128 6.82 r256 9.28 (base 5.18)
+  DIAG anatomy warm L2 net us: q1 0.86 q8 0.99 q16 0.99 q32 2.37 q128 6.98 q256 10.34 o1 0.00 o8 0.00 o16 0.26 o32 0.06 o128 0.00 o256 0.00 p1 6.02 p8 11.42 p16 11.68 p32 12.61 p128 14.94 p256 21.63 u1 0.19 u8 0.13 u16 10.34 u32 10.40 u128 11.33 u256 16.48 r1 0.00 r8 0.00 r16 0.26 r32 0.51 r128 0.00 r256 0.00 (base 12.19)
+  DIAG anatomy read-flush weight TB/s (bf16 bytes; b12 rows q1/o1/p1 stream ~0.75x): q1 4.08 q8 3.28 q16 3.17 q32 2.91 q128 2.52 q256 2.06 o1 3.54 o8 3.38 o16 3.38 o32 3.01 o128 2.61 o256 2.05 p1 4.84 p8 3.69 p16 3.72 p32 3.56 p128 3.14 p256 2.36 u1 2.15 u8 1.94 u16 3.90 u32 3.93 u128 3.74 u256 2.84 r1 2.15 r8 2.18 r16 2.11 r32 1.86 r128 1.39 r256 1.07
+  DIAG anatomy: 0.4 s, prepare() age 9.2 s
