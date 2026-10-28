@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "427a6f289e6745ac",
+ "job": "e2827c9e800549cd",
  "mode": "submit",
- "speedup": 1.8718775540797037,
+ "speedup": 1.8821567778513866,
  "ci": [
-  1.8437993907685082,
-  1.899955717390899
+  1.8539244261836159,
+  1.9103891295191573
  ],
- "commit": "bfb3214b88daa41c70b83f39acabdb65563e9bf1",
- "submission_blob": "d74317f1b9de1c7552d785cf948b075194a3007d",
- "slug": "campaign-eb-l4",
+ "commit": "52ab6fdef632a539c591666e633bf495f5bb82d6",
+ "submission_blob": "959e053de61bea2578f0c1ed61851e021d52174c",
+ "slug": "campaign-eb-fc",
  "result": null,
- "updated_at": "2026-10-28T1032Z",
- "master_slug": "campaign-eb-l4",
- "master_job": "427a6f289e6745ac",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth L4 = the L3 board + the scale-pair add as an IMAD (FMA pipe) instead of a LEA (the binding ALU pipe), with a run-time 16 (16u << (n >> 30) from the consumer's count, inline PTX so ptxas cannot fold it); bit-identical; from the H100 eac consumer microbenchmark (L4/L3 x1.066 at T=8); branch campaign/eb-l4 1b24750f; check 7607a1c3 1.887; scored 1.8719 vs 1.8249; landed on master.",
- "score_us": 7184.497709633506
+ "updated_at": "2026-10-28T1107Z",
+ "master_slug": "campaign-eb-fc",
+ "master_job": "e2827c9e800549cd",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth fc = the L4 board + Engine A v6's T=1 fixed-cost arms raced against v6 (v6p: FAST K1/K2 instances with consumer-staged B and a 32-bit record split; v6pe: v6p + an early combine kernel in the v6 module; both bitwise v6), from the H100 P3c / M09 fixed-cost readings; branch campaign/eb-fc 6412a999 (b309a938 merged with eb-l4, cut to 988,470 B); check dec43c9c 1.880 (decode 1 x1.084); scored 1.8822 vs 1.8719; landed on master.",
+ "score_us": 7145.260245191903
 }
