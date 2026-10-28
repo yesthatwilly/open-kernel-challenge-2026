@@ -836,3 +836,23 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   levers for the next phase-A plan. VOID on a dropped required item, a check failure or a clock below 1800 MHz.
 - **Instrument:** gpunode06, one pool GPU, reps 20, ncu 2026.2.1 via nj_profile.py 635e9830; validation
   nj-moe-val-p3c hand-run on GPU 7 first (2 profiled reps, launch count 6; <= 5 min). ~4 GPU-min.
+
+## 2026-10-28T06:39Z: decode track: E2 merged into hopper-probe master; DEC-01 re-run and DEC-02 registered (R2)
+
+- **E2** (decode shim + judge-like inputs) is merged into master (fast-forward 06:25Z; takemyjob 2207160, staging
+  69fcce6 / 37ea89e). It needed two decode-only fixes: E3's profiled pass checks decode replays with written=static,
+  and the E1 eager check uses the pristine-copy pattern. The moe path is unchanged: moe dry runs are byte-identical, all
+  119 moe bundle members are identical, and the tests pass.
+- **dec01a (DEC-01 re-run; hand-run on GPU 7, ~255 s):** do the decode shims match the reference math and SGLang's API?
+  It runs on the frozen decode board (sha256 2fd3d945, e1fd3c00's bytes). PASS: rc 0, the shim self-test PASS at the
+  DEC-01 thresholds, 'API board-...: 38 call sites bound ... ok', the FA3 and GEMM lines present, no VOID, and GPU 7 clean
+  (no overlapping run). PASS writes queue/gates/dec01-pass; any miss blocks decode node work. The earlier dec01a and 11
+  more E2 runs overlapped other GPU-7 runs; their verdicts stand, their timings do not.
+- **DEC-02 x4** (c1daf58b, ced20a71, 8e3b9874, 5a33db71 = the board): is the decode node faithful to the judge?
+  - Design: one cold judge-shaped process per bytes, with the 13 tests, the 12 timed shapes at the judge's reps, and a
+    20-rep nsys pass at T=1 and T=32 (**the decode-layer T=1 timeline**).
+  - **V2:** >= 12/13 tests inside the judge's err/bound envelope per test index, and the PATH and canary lines inside
+    the judge's spread. **V3:** shim kernels within +-1 us of the judge profile, and the GEMM / FA3 names match.
+  - Decision: all four must pass. V2 fail -> stop decode node work. V3 fail -> arms next to a shimmed op stay
+    unresolved.
+  - ~12 min each on four pool GPUs, gated on dec01-pass. Full text: takemyjob queue-staged/registrations.md.
