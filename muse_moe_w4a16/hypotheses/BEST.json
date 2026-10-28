@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "426218dc889d45d0",
+ "job": "12d17a4696844630",
  "mode": "submit",
- "speedup": 1.734012522579515,
+ "speedup": 1.7344704014817074,
  "ci": [
-  1.7080023347408224,
-  1.7600227104182076
+  1.7084533454594817,
+  1.7604874575039329
  ],
- "commit": "2abc122e94e0577634882c36e44b69ab210cc829",
- "submission_blob": "5b96e76cdb39051da710f054972345f2814cdea2",
- "slug": "campaign-eb-s3",
+ "commit": "81c9802eda53706161102d7c6016d64be00c6c32",
+ "submission_blob": "2e5c3cbfc31a3e48d7d38d94963453d46a5e6c2f",
+ "slug": "campaign-eb-carrier",
  "result": null,
- "updated_at": "2026-10-28T0327Z",
- "master_slug": "campaign-eb-s3",
- "master_job": "426218dc889d45d0",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth S3 = Engine A v6 'S3-sched' (whole-record ownership, per-expert K2 blocks, co-resident K2 at T=1), routed at T=1 only; branch campaign/eb-s3 52251d20; check fd0e9271 1.7377; landed on master.",
- "score_us": 7755.7110025907
+ "updated_at": "2026-10-28T0552Z",
+ "master_slug": "campaign-eb-carrier",
+ "master_job": "12d17a4696844630",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth carrier = the S3 board + Engine A v4 pinned at classes 8/16 (H100 M456 R10 ties) + the CUDA combine pinned at T=128 on v4c (H100 M456 c128, +1% node); branch campaign/eb-carrier aa9bcb9b; check be4440e2 1.7457; scored 1.7345 vs 1.7340 (a tie inside the spread; the T=128 row x1.018); landed on master 81c9802e.",
+ "score_us": 7753.663590056849
 }

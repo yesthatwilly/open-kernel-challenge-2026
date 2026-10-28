@@ -1,0 +1,89 @@
+04.61, x1.075) | H-8 318.75 us (IQR 1.98, p10/p90 316.70/320.13, x1.020, FAIL) | H-32 327.36 us (IQR 2.40, p10/p90 325.73/329.79, x0.993, FAIL) | H-48 344.80 us (IQR 2.91, p10/p90 342.72/346.88, x0.943, FAIL) | H32 357.60 us (IQR 2.72, p10/p90 355.55/360.38, x0.909, FAIL) | H48 372.61 us (IQR 3.74, p10/p90 371.20/375.65, x0.872, FAIL) | H-116 317.15 us (IQR 2.05, p10/p90 315.23/318.56, x1.025) | H-16f 289.06 us (IQR 1.15, p10/p90 287.52/290.40, x1.124) | H-8f 303.78 us (IQR 1.92, p10/p90 302.46/305.57, x1.070) | H-116f 316.38 us (IQR 1.79, p10/p90 312.10/318.05, x1.027)
+[hybrid-moe] gate T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes) round 2 (graph baseline 5.50 us subtracted): master 325.09 us (IQR 1.28) | H-16 302.72 us (IQR 1.70, p10/p90 301.44/304.06, x1.074) | H-8 318.72 us (IQR 1.60, p10/p90 317.34/320.19, x1.020, FAIL) | H-32 327.65 us (IQR 1.38, p10/p90 326.53/329.60, x0.992, FAIL) | H-48 344.58 us (IQR 2.34, p10/p90 343.01/346.94, x0.943, FAIL) | H32 358.24 us (IQR 1.38, p10/p90 356.29/359.65, x0.907, FAIL) | H48 373.66 us (IQR 1.79, p10/p90 371.87/375.14, x0.870, FAIL) | H-116 317.31 us (IQR 1.38, p10/p90 316.16/319.71, x1.025) | H-16f 289.41 us (IQR 1.18, p10/p90 288.70/290.72, x1.123) | H-8f 303.65 us (IQR 1.18, p10/p90 302.82/305.63, x1.071) | H-116f 315.94 us (IQR 2.30, p10/p90 311.94/318.11, x1.029, FAIL)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 1 (graph baseline 5.50 us subtracted): master 362.82 us (IQR 2.05) | H-16 322.43 us (IQR 1.44, p10/p90 320.83/323.94, x1.125) | H-8 351.36 us (IQR 2.21, p10/p90 349.57/352.86, x1.033) | H-32 374.59 us (IQR 2.27, p10/p90 372.42/376.80, x0.969, FAIL) | H-48 369.63 us (IQR 3.39, p10/p90 367.58/372.35, x0.982, FAIL) | H32 393.12 us (IQR 2.27, p10/p90 391.20/395.39, x0.923, FAIL) | H48 388.13 us (IQR 3.14, p10/p90 385.98/391.36, x0.935, FAIL) | H-116 337.63 us (IQR 2.50, p10/p90 335.81/339.36, x1.075) | H-16f 311.39 us (IQR 1.50, p10/p90 310.02/312.29, x1.165) | H-8f 328.86 us (IQR 2.08, p10/p90 326.62/330.69, x1.103) | H-116f 330.18 us (IQR 3.04, p10/p90 325.98/332.45, x1.099)
+[hybrid-moe] gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 2 (graph baseline 5.54 us subtracted): master 361.66 us (IQR 2.30) | H-16 321.66 us (IQR 1.41, p10/p90 320.54/322.66, x1.124) | H-8 350.34 us (IQR 1.12, p10/p90 348.70/351.97, x1.032) | H-32 373.54 us (IQR 2.43, p10/p90 371.78/375.81, x0.968, FAIL) | H-48 368.58 us (IQR 1.98, p10/p90 366.98/370.98, x0.981, FAIL) | H32 393.22 us (IQR 2.53, p10/p90 391.04/394.66, x0.920, FAIL) | H48 387.30 us (IQR 1.82, p10/p90 385.18/388.67, x0.934, FAIL) | H-116 336.86 us (IQR 2.37, p10/p90 334.82/338.34, x1.074) | H-16f 310.75 us (IQR 1.63, p10/p90 309.66/312.32, x1.164) | H-8f 328.10 us (IQR 1.82, p10/p90 326.72/330.21, x1.102) | H-116f 330.02 us (IQR 2.75, p10/p90 326.30/332.32, x1.096)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 1 (graph baseline 5.50 us subtracted): master 410.27 us (IQR 2.02) | H-16 358.34 us (IQR 1.73, p10/p90 357.15/360.83, x1.145) | H-8 380.96 us (IQR 2.11, p10/p90 379.17/382.94, x1.077) | H-32 413.38 us (IQR 2.11, p10/p90 411.55/414.40, x0.992, FAIL) | H-48 412.10 us (IQR 0.96, p10/p90 411.14/413.34, x0.996, FAIL) | H32 433.95 us (IQR 2.27, p10/p90 432.29/436.00, x0.945, FAIL) | H48 433.92 us (IQR 1.79, p10/p90 431.97/435.52, x0.946, FAIL) | H-116 366.91 us (IQR 2.72, p10/p90 365.28/369.63, x1.118) | H-16f 336.45 us (IQR 2.08, p10/p90 335.49/338.78, x1.219) | H-8f 356.90 us (IQR 1.44, p10/p90 355.65/358.08, x1.150) | H-116f 363.30 us (IQR 2.56, p10/p90 359.84/365.15, x1.129)
+[hybrid-moe] gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 2 (graph baseline 5.50 us subtracted): master 410.08 us (IQR 2.66) | H-16 358.21 us (IQR 2.14, p10/p90 356.74/360.80, x1.145) | H-8 380.51 us (IQR 2.69, p10/p90 378.40/383.46, x1.078) | H-32 412.54 us (IQR 2.62, p10/p90 410.40/414.94, x0.994, FAIL) | H-48 411.49 us (IQR 2.30, p10/p90 409.86/414.21, x0.997, FAIL) | H32 433.22 us (IQR 2.91, p10/p90 431.10/435.87, x0.947, FAIL) | H48 432.58 us (IQR 3.65, p10/p90 430.94/436.77, x0.948, FAIL) | H-116 366.98 us (IQR 2.56, p10/p90 364.99/370.56, x1.117) | H-16f 336.58 us (IQR 1.98, p10/p90 335.10/338.43, x1.218) | H-8f 356.38 us (IQR 2.14, p10/p90 355.07/358.11, x1.151) | H-116f 363.20 us (IQR 2.69, p10/p90 360.51/367.46, x1.129)
+[w6m-fork] fork gate T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes) round 1 (graph baseline 5.50 us subtracted): H-16 302.43 us (IQR 2.34) | H-16f 289.06 us (IQR 1.15, p10/p90 287.52/290.40, x1.046)
+[w6m-fork] fork gate T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes) round 2 (graph baseline 5.50 us subtracted): H-16 302.72 us (IQR 1.70) | H-16f 289.41 us (IQR 1.18, p10/p90 288.70/290.72, x1.046)
+[w6m-fork] fork gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 1 (graph baseline 5.50 us subtracted): H-16 322.43 us (IQR 1.44) | H-16f 311.39 us (IQR 1.50, p10/p90 310.02/312.29, x1.035)
+[w6m-fork] fork gate T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes) round 2 (graph baseline 5.54 us subtracted): H-16 321.66 us (IQR 1.41) | H-16f 310.75 us (IQR 1.63, p10/p90 309.66/312.32, x1.035)
+[w6m-fork] fork gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 1 (graph baseline 5.50 us subtracted): H-16 358.34 us (IQR 1.73) | H-16f 336.45 us (IQR 2.08, p10/p90 335.49/338.78, x1.065)
+[w6m-fork] fork gate T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes) round 2 (graph baseline 5.50 us subtracted): H-16 358.21 us (IQR 2.14) | H-16f 336.58 us (IQR 1.98, p10/p90 335.10/338.43, x1.064)
+[w6m-fork] T=256 fork gate H-16f vs H-16: worst x1.035 (each round >= 1.01) -> PASS H-16f
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.074, H-8 x1.020, H-32 x0.968, H-48 x0.943, H32 x0.907, H48 x0.870, H-116 x1.025, H-16f x1.123, H-8f x1.070, H-116f x1.027 -> H-16f
+[w6m-fork] Q1 T=256 worst-round vs master: H-16 x1.074 H-8 x1.020 H-32 x0.968 H-48 x0.943 H32 x0.907 H48 x0.870 H-116 x1.025 H-16f x1.123 H-8f x1.070 H-116f x1.027 -> H-16f
+[w6m-fork] Q1 T=256 fork vs serial twin (worst..best round): H-16f/H-16 x1.035..x1.065, H-8f/H-8 x1.049..x1.068, H-116f/H-116 x1.002..x1.023; serial pick H-16
+[hybrid-moe] layer check T=256 H=-16f (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00426 (master 0.00387)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[w6m-fork] PATH T=128 = master | serial pick master | Q2 expect judged M=128 row +0.0 us vs eacf0722 (race mean 252.3->252.3)
+[w6m-fork] PATH T=256 = H-16f (FORK) | serial pick H-16 | Q2 expect judged M=256 row -15.4 us vs eacf0722 (race mean 327.6->312.3)
+[w6m-fork] decision lines end (prepare at 127.7 s)
+[hybrid-moe] ===== MOE HYBRID (T (128, 256)) SUMMARY (6.5 s; prepare at 127.7 s) =====
+[hybrid-moe] align kernel H=-16: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-8: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.36 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.29 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.29 s
+[hybrid-moe] align kernel H=-116: compiled + ran in 0.00 s
+[hybrid-moe] canary H=-16: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00428 (master 0.00389)
+[hybrid-moe] canary H=-8: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00428 (master 0.00389)
+[hybrid-moe] canary H=-32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00389)
+[hybrid-moe] canary H=-48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00389)
+[hybrid-moe] canary H=32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00389)
+[hybrid-moe] canary H=48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00531 (master 0.00389)
+[hybrid-moe] canary H=-116: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00428 (master 0.00389)
+[hybrid-moe] gate input T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes): local routes 201, distinct 16, hot experts 1 (122 rows, max 122), 16-row blocks 23
+[hybrid-moe] gate input T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes): local routes 194, distinct 23, hot experts 5 (100 rows, max 28), 16-row blocks 28
+[hybrid-moe] gate input T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes): local routes 162, distinct 27, hot experts 1 (49 rows, max 49), 16-row blocks 30
+[hybrid-moe] gate T=128 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x0.909, H-8 x0.870, H-32 x0.920, H-48 x0.877, H32 x0.777, H48 x0.755, H-116 x0.881, H-16f x0.978, H-8f x0.936, H-116f x0.878 -> master
+[hybrid-moe] gate input T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes): local routes 333, distinct 22, hot experts 4 (224 rows, max 155), 16-row blocks 34
+[hybrid-moe] gate input T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes): local routes 374, distinct 23, hot experts 7 (274 rows, max 82), 16-row blocks 38
+[hybrid-moe] gate input T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes): local routes 467, distinct 25, hot experts 8 (361 rows, max 143), 16-row blocks 43
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.074, H-8 x1.020, H-32 x0.968, H-48 x0.943, H32 x0.907, H48 x0.870, H-116 x1.025, H-16f x1.123, H-8f x1.070, H-116f x1.027 -> H-16f
+[hybrid-moe] layer check T=256 H=-16f (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00426 (master 0.00387)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] PATH CHOSEN T=128 = MASTER (fallback: no H wins every round (H-16 x0.909, H-8 x0.870, H-32 x0.920, H-48 x0.877, H32 x0.777, H48 x0.755, H-116 x0.881); layer us passes): master 270.3, H-16 292.4, H-8 290.8, H-32 293.6, H-48 302.4, H32 347.3, H48 357.7, H-116 306.1, H-16f 276.3, H-8f 281.1, H-116f 307.4)
+[hybrid-moe] PATH CHOSEN T=256 = HYBRID FORKED (hot wg on the fork stream || cold Engine A, join before the post-norm) H=-16 (hot > 16 rows at block 16); layer us passes): master 410.2, H-16 358.3, H-8 380.7, H-32 413.0, H-48 411.8, H32 433.6, H48 433.2, H-116 366.9, H-16f 336.5, H-8f 356.6, H-116f 363.2
+[w6m-fork] moe_fork_canary T=128 H-16f vs H-16: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=128 H-8f vs H-8: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=128 H-116f vs H-116: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-16f vs H-16: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-8f vs H-8: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-116f vs H-116: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] Q1 T=128 worst-round vs master: H-16 x0.909 H-8 x0.870 H-32 x0.920 H-48 x0.877 H32 x0.777 H48 x0.755 H-116 x0.881 H-16f x0.978 H-8f x0.936 H-116f x0.878 -> master
+[w6m-fork] Q1 T=128 fork vs serial twin (worst..best round): H-16f/H-16 x1.058..x1.107, H-8f/H-8 x1.026..x1.077, H-116f/H-116 x0.966..x0.997; serial pick master
+[w6m-fork] T=256 fork gate H-16f vs H-16: worst x1.035 (each round >= 1.01) -> PASS H-16f
+[w6m-fork] Q1 T=256 worst-round vs master: H-16 x1.074 H-8 x1.020 H-32 x0.968 H-48 x0.943 H32 x0.907 H48 x0.870 H-116 x1.025 H-16f x1.123 H-8f x1.070 H-116f x1.027 -> H-16f
+[w6m-fork] Q1 T=256 fork vs serial twin (worst..best round): H-16f/H-16 x1.035..x1.065, H-8f/H-8 x1.049..x1.068, H-116f/H-116 x1.002..x1.023; serial pick H-16
+[w6m-fork] PATH T=128 = master | serial pick master | Q2 expect judged M=128 row +0.0 us vs eacf0722 (race mean 252.3->252.3)
+[w6m-fork] PATH T=256 = H-16f (FORK) | serial pick H-16 | Q2 expect judged M=256 row -15.4 us vs eacf0722 (race mean 327.6->312.3)
+[w6m-fork] decision lines end (prepare at 127.7 s)
+[es1a] build 43.0 s: w13 regs 168 maxR 230 lmem 0 C75xx 0 serHGMMA 0 text b318211c=node; w2 regs 168 maxR 230 lmem 0 C75xx 0 serHGMMA 0 text 02ee0324=node
+[es1a] first launch T=128 judge p10: err 0, marker ok
+[es1a] check: 14 routings (judge p10/p50/p90 + extremes, T (128, 256)) vs fp32 exact dequant: worst rel-L2 0.00167 (<= 0.0075), untouched rows ok
+[es1a] hot half T=256 (us, read flush, wg/S worst round): p10 S 123.6 wg 110.3 x0.89, p50 S 157.5 wg 143.1 x0.91, p90 S 179.2 wg 170.5 x0.95; worst x0.89
+[es1a] hot half T=128 (us, read flush, wg/S worst round): p10 S 72.3 wg 59.7 x0.83, p50 S 98.9 wg 102.3 x1.03, p90 S 58.4 wg 47.4 x0.81; worst x0.81
+[es1a] route: T=128 master, T=256 H-16f (H-116 = Engine S hot half); prepare at 128.0 s
+[ea6] build 38.4 s (regs/lmem B/occ): K1m2 68/0/1 K1m1 71/0/1 K2m2 79/0/2 K2m1 72/0/2; MINB 2; grid 132; K2 co-resident at T=1: yes
+[ea6] canary (36 inputs, NaN h/y): v6 T1..8 clean (worst 0.00402); v6s T1..1 clean (worst 0.00402); master worst 0.00849; 18 bitwise repeats
+[ea6] kernel-only T=1 us (K2 plain): n2 v1K1 14.62 v1K2 13.28 v6K1 16.16 v6K2 10.34; n3 v1K1 25.31 v1K2 16.06 v6K1 21.57 v6K2 13.09
+[ea6] T=1 us n1..n5 r1: inc(v1) 20.8/28.0/39.7/46.8/59.5 | v6 18.2/26.9/35.5/44.2/52.5 | v6s 21.6/30.1/38.1/47.2/55.6
+[ea6] T=1 us per extra expert r1 (2>3/3>4/4>5/OLS2-5): inc 11.74/7.10/12.70/10.18 | v6 8.58/8.74/8.29/8.55 | v6s 7.97/9.12/8.42/8.56
+[ea6] T=1 us n1..n5 r2: inc(v1) 20.5/28.0/39.6/46.8/60.0 | v6 18.1/26.8/35.4/44.1/52.8 | v6s 21.5/30.1/38.2/47.0/55.8
+[ea6] T=1 us per extra expert r2 (2>3/3>4/4>5/OLS2-5): inc 11.62/7.17/13.22/10.32 | v6 8.61/8.74/8.67/8.68 | v6s 8.06/8.77/8.86/8.59
+[ea6] T=1 vs v1: v6 wr 1.077/1.078 floor margin +0.070@n2 Q | v6s wr 0.984/0.982 floor margin -0.042@n2 - -> v6
+[ea6] T=8 race skipped: class 8 PINNED to v4 (EA_PIN) -> incumbent
+[ea6] anatomy v6 n2 us: K1 ramp 3.84 rec 1.65 spread 3.33 | K2 vs K1 end: entry -9.7 wait +0.77 first +1.79, rec 1.88 tail 0.26 | early 100% span 24.8
+[ea6] anatomy v6s n2 us: K1 ramp 3.58 rec 1.61 spread 3.33 | K2 vs K1 end: entry +2.3 wait +3.58 first +5.89, rec 1.79 tail 0.26 | early 0% span 28.7
+[ea6] anatomy v6 n3 us: K1 ramp 3.84 rec 1.58 spread 4.61 | K2 vs K1 end: entry -16.6 wait +0.77 first +1.79, rec 1.69 tail 0.51 | early 100% span 34.3
+[ea6] anatomy v6s n3 us: K1 ramp 3.84 rec 1.54 spread 3.58 | K2 vs K1 end: entry +2.6 wait +4.10 first +6.40, rec 1.64 tail 0.51 | early 0% span 37.6
+[ea6] copy check v6 T=1: 8 replays on two states: PASS
+[ea6] route: T=1 v6 (v6 family); T=2..8 v4 (incumbent); stage 1.2 s, prepare at 120.8 s
+[engineA] PATH CHOSEN T=1 = ENGINE A v6
+[engineA] PATH CHOSEN T=2..16 = ENGINE A v4 PINNED (class 8/16)
+[engineA] PATH CHOSEN T=17..32 = ENGINE A v4c
+[engineA] PATH CHOSEN T=128 = ENGINE A v4c + CUDA combine PINNED
+[engineA] PATH CHOSEN T=256 = ENGINE A v4c
+[engineA] copy check: 40 replays on two states, T [1, 2, 17, 128, 256]: PASS
