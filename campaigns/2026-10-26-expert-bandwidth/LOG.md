@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1314Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1321Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -22,11 +22,10 @@ append-only, newest last.
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
-    prefill 1.4897 (223/561). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
+    prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
   - **Quota 1314Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 5 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
-    - Prefill scored run b2941ea23dc743a3 (13:14Z): final-near-ties-nolo (check 7db6fa1a 1.5055); land if > 1.4897.
     - Attention batch 2 (13:12Z; all on pins + onepass): pins-onepass 4cfddb59, diag-sw-gather-split-pinned 8a9a874c,
       diag-sw-fixed-anatomy 7f481040, diag-fa3-fixed-anatomy f1043d2c (four samples of the pins-onepass candidate).
     - moe + decode generator (phasec/moe-1028, phasec/dec-1028).
@@ -2047,3 +2046,9 @@ with the operator's go-ahead.
   stack-v64f and lo-pin-v64 are dropped (V64 lost with its module ON); w2st-pin-high-ft and lo-skip-phase stay as
   phase-C attribution checks.
 - scratchpad/phasec.py gained subprep / subrecord (the submit attempt is built from the check attempt).
+
+## 2026-10-28T1321Z: prefill scored 1.5008 and landed (rank 221/570)
+
+- Scored run b2941ea2: **1.5008** (CI 1.4783-1.5233) vs 1.4897 (+0.75%); master 350343bc; BEST.json + BEST.result.json
+  adbd3442. The deterministic final candidate (near-tie arms pinned, LO phase skipped) is now the prefill board row.
+- Today's boards now: moe 1.8941, decode 1.6470, bf16 1.2794, attention 1.6340, prefill 1.5008.
