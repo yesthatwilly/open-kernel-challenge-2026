@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1149Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1200Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,11 +23,10 @@ append-only, newest last.
   - **Boards:** moe **1.8822** (330/975; fc on L4); decode **1.6428** (345/854; fc on L4, 11:31Z); bf16 1.2740
     (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 349/1412. Today: moe 1.7340 -> 1.8822
     (S3 / carrier / L3 / L4 / fc); decode 1.5926 -> 1.6428 (L3 + v6 / L4 / fc).
-  - **Quota 1148Z:** decode 12 checks / 6 runs; moe 13 / 5; bf16, attention and prefill 20 / 10.
+  - **Quota 1159Z:** decode 12 checks / 5 runs; moe 13 / 4; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - X1v6 checks (11:48Z): moe 2e78be8b86844c30 (eb-x1v6 ea54b0ee, 989,618 B; bar 1.8822) and decode
-      cfdf6df3a6e44e85 (eb-x1v6d 133e4799, 988,749 B; bar 1.6428); scored run only if a v6-family arm routes at T=1
-      with no spill.
+    - X1v6 scored runs (11:59Z): moe 0b49b1aae6a04acb (check 1.906; land if > 1.8822) and decode 7352add6920f40e7
+      (check 1.646, borderline; land if > 1.6428).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1920,3 +1919,11 @@ with the operator's go-ahead.
 - **Stamp correction:** the 11:46Z entry above was first written with an estimated 1203Z heading and "1145Z" for the
   tick (real: 11:34:17Z, hypotheses/ticks/2026-10-28T113417Z.json); fixed from commit times. The churn DECISIONS
   notes 5d3ceec1 / cda01307 carry the estimated 1145Z / 1200Z stamps (real 11:34Z / 11:46Z).
+
+## 2026-10-28T1200Z: X1v6 checks: moe 1.906 (+1.3%), decode 1.646 (+0.2%); both sent as scored runs
+
+- **Moe 2e78be8b: 1.906** (CI 1.877-1.935) vs 1.8822: v6pe routed; `[ea6]` 72/72/78/82, no spill. Decode 1 ours 29.6
+  -> 29.0 us vs the fc check (30.7 -> 29.0 vs the board's scored run); verify 1 (T=8) 79.3 -> 78.8 us: X1 restricted to
+  v6 keeps the T=1 gain without X1's T=8 loss. Scored run **0b49b1aa** at 11:59Z.
+- **Decode cfdf6df3: 1.646** vs 1.6428 (+0.2%), flat vs the fc check: decode 1 ours x1.010 / x1.013. Borderline, sent
+  as scored run **7352add6** (6 runs left, no better decode candidate due today).
