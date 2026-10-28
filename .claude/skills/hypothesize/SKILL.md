@@ -57,8 +57,9 @@ the reading on finding one strong lead, not on writing several weak ones.
    `hypotheses/LESSONS.md` (cross-problem measured facts) and **FINDINGS.md** (learnings by area, open follow-ups, Do not try, where the
    best spends its time), then TASK.md (shapes, weights, floors, tests, rules), `baseline.py`
    (SGLang's pipeline: the named parts a hypothesis may touch), and master's `submission.py`
-   (what the next hypothesis will be built on). For `all`, spawn one subagent per problem with
-   this same procedure and the list of slugs already queued, so the batch does not overlap.
+   (what the next hypothesis will be built on). For `all`, spawn one subagent only per problem
+   that step 0 found real headroom in, with this same procedure and the list of slugs already
+   queued, so the batch does not overlap.
 2. **Choose ideas that pay and attribute.** Start from the triage's top rows and ask what
    measured gap explains them. Each hypothesis changes one named area, so a gain
    or loss can be pinned to it. Prefer, in order: (a) parity with SGLang's own path where the
@@ -89,8 +90,8 @@ the reading on finding one strong lead, not on writing several weak ones.
    flight, tensor-core path, dequant). A rewrite is judged on the replaced kernels' time against
    its Milestones, not on the headline; later stages use `--depends-on <previous stage>
    --stage N+1` and build on that code whatever its score. churnsubs runs rewrites ahead of
-   primaries and keeps 40% of each day's checks for them, so every `all` round mints at least
-   one rewrite per problem whose queue has none. Aim big: a whole-layer or whole-pipeline
+   primaries and keeps 40% of each day's checks for them, so a problem whose queue has no rewrite
+   gets one when a rewrite lead clears the value bar (never one minted only to fill the share). Aim big: a whole-layer or whole-pipeline
    overhaul (one fused or persistent kernel across stages, a new parallel decomposition, a
    different data layout) is in scope when the profile says the gap to the leaders is
    structural. Plan it as stages, each with a readable milestone and a fallback to the incumbent.
