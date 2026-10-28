@@ -63,7 +63,18 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
    files that pass lint, and any new DIAGNOSIS.md), recover, harvest (pools confirms, queues new
    ones), harvest-promotions, promote (merged gains + wrote their submit attempt files),
    reclassify --queue-confirms (backlog results on today's master, 3 per problem per day),
-   budget, index. `expire-holds` is not part of the tick: run `$C expire-holds --dry-run`, read
+   budget, index; `release-stale` runs after recover and moves zombie claims (claimed or implemented, no job
+   for 24 h) back to the queue as holds. The **freshness gate** runs in budget and in `claim`: a queued
+   primary is held with a typed `hold_kind` (`stale-board` when BEST moved more than `margin()` since its
+   unhold / review / mint, `stale-blob` when master's submission.py is no longer the blob it was judged on,
+   even if BEST barely moved, `no-value-case` when minted after the value bar without one). Companions,
+   confirms and rewrite stages on a rewrite parent are exempt; a file with an explicit non-master `base`
+   skips the blob check. A fresh adversarial review (`review-record`, proceed) re-queues a stale hold, and so
+   does `unhold` (it re-bases the gate on today's board); `unhold` refuses a no-value-case file unless
+   `--force`. Budget lists up to 2 stale holds per problem as `rereview` when checks would otherwise go
+   unspent: send those to the adversary in step 4. Typed holds not re-reviewed in 72 h expire (no claim:
+   they never ran). `budget --no-hold` reports `gated` without holding (index uses it);
+   `claim --skip-freshness` bypasses the gate deliberately. `expire-holds` is not part of the tick: run `$C expire-holds --dry-run`, read
    the list, and only then run it without `--dry-run` (it never expires holds that wait on the
    user, a standing answer, another run or a condition, `HOLD_PROTECT`).
    Exit 2 = refused (another tick holds the lock, or the main tree is not on master): stop and say
@@ -76,25 +87,39 @@ C="python3 -I $CLAUDE_PROJECT_DIR/.claude/skills/churnsubs/bin/churn.py"
    runs. It writes
    `<p>/hypotheses/DIAGNOSIS.md`; the next tick's intake commits it. Apply its "LESSONS edits"
    to `hypotheses/LESSONS.md` yourself, one `churn.py note <p> diagnosis "<edit and why>"` per
-   edit. Its Actions are what `/hypothesize <p>` mints first when you refill the queue.
+   edit, and append each line of its "Claims (proposed)" with `$C claim-add` (on master, main checkout). Its
+   Actions are what `/hypothesize <p>` mints first when you refill the queue.
 2. **Report the harvest** in one or two lines per result: slug → outcome, speedup and CI, the
-   attribution summary from its `.result.json`. Mention gains that were merged or are `unmerged`.
+   **mechanism verdict** (`mechanism:` in its frontmatter: `hit`, `miss`, `flat`, `no-base`) and the
+   attribution summary from its `.result.json`. Mention gains that were merged or are `unmerged`. Then
+   **record one CLAIMS line per result** (see "Claims and the shelf"); failed and rejected runs need none
+   unless they settled a mechanism.
 3. **Promotions.** For each entry in `promote`, run its `run` command verbatim, then
-   `$C record-submit <p> <slug> '<okc output>'`.
+   `$C record-submit <p> <slug> '<okc output>'`. A landing made outside churn (a campaign, by hand) is
+   registered with `$C register-landing <p> <job> --mechanism "<what landed> (<slug>)" --rows "<rows it owns>"`
+   on master: BEST.json with `result` (mode from the run record), BEST.result.json, a `[landed]` CLAIMS line
+   and a DECISIONS line, so `landed` and the adversary see it. It skips the claim when a `[landed]` line
+   already cites the job; `--no-claim` backfills BEST.json `result` only.
 4. **Adversarial review (Opus), one subagent per pick, in parallel.** Every hypothesis is
    attacked by a fresh Opus context before it is claimed; `claim` refuses anything whose
    frontmatter is not `review: proceed`. Confirms arrive as `review: proceed` (they test no new
-   idea). For each pick whose `review` is not `proceed`:
+   idea). For each pick whose `review` is not `proceed`, and each budget `rereview` item (a stale
+   hold: the adversary re-derives its value case on today's board; proceed re-queues it):
    - Gather its inputs: `$C landed <p>` (hypotheses already on master's kernel, with patch
-     paths), the hypothesis path, `<p>/hypotheses/FINDINGS.md`, `BEST.json`, the base
-     `submission.py` (master, or the parent's worktree for an A/B companion), and the other
-     queued/running slugs.
+     paths, `[landed]` claims included), the hypothesis path, `<p>/hypotheses/CLAIMS.md`,
+     `<p>/hypotheses/FINDINGS.md`, the active campaign's FINDINGS/DISTILL, `BEST.json` with the
+     file's freshness, the base `submission.py` (master, or the parent's worktree for an A/B
+     companion), and the other queued/running slugs. `python3 -I .claude/skills/churnsubs/bin/fill_prompt.py
+     adversary <p> <slug>` fills all of them and prints the prompt's path (under the git-ignored
+     `hypotheses/prompts/filled/`, never /tmp).
    - Spawn `Agent` with `subagent_type: general-purpose`, **`model: opus`**, and the prompt in
      `.claude/skills/churnsubs/ADVERSARY_PROMPT.md` with its `{PLACEHOLDERS}` filled in. The
      adversary's specific job: judge the justification, name what already-landed hypotheses
      confound it, and decide whether *this* hypothesis needs an A/B companion (the change with a
      landed hypothesis reverted or tuned differently, or a control isolating a sub-change) for
-     its one result to mean anything. It returns JSON only.
+     its one result to mean anything. It holds a pick whose mechanism has a newer `[refuted]` /
+     `[superseded]` claim, whose rows a `[landed]` claim owns, or whose board moved past the margin
+     since `best_at_mint` / its review without a re-derived value case. It returns JSON only.
    - Save the JSON to the scratchpad and run `$C review-record <p> <slug> <file>`. That writes
      `## Adversarial review` into the hypothesis, sets `review: proceed|hold` (hold → status
      hold with the reason), and **queues each companion** as a real hypothesis file via
@@ -151,6 +176,36 @@ last 2 hours, so the split never leaves a check unspent. When a problem has no e
 that is a shortfall to fix by minting one (`/hypothesize <p> --kind rewrite`), not by spending the
 share on primaries all day.
 
+## Claims and the shelf
+
+`<p>/hypotheses/CLAIMS.md` is the curated findings file: append-only, one line per claim, never
+regenerated (FINDINGS.md is, and prints the newest claim per mechanism at its top). Write claims only on
+master in the main checkout (`claim-add` and `register-landing` write there even from a worktree); never edit
+a line, append a newer one about the same mechanism instead. Each harvest records one line per result with
+`$C claim-add <p> --tag T --mechanism "<area>: <what changed> (<slug>)" --rows "<expected shapes>" --evidence
+"<job> (<p>/hypotheses/done/<outcome>/<file>.md)" [--reopen "<condition>"]`; the tag comes from the outcome
+and the mechanism verdict:
+
+| outcome | mechanism | tag |
+|---|---|---|
+| gain | hit | `landed` once promoted; `lead` when a confirm pooled it (2+ runs) and it is not on master; one run only: `shelf` |
+| gain | flat | `unresolved` (a draw: the predicted rows did not move) |
+| neutral | hit | `shelf` (stack only to >= 2.5% headline; FINDINGS lists the Shelf) |
+| neutral | flat | `unresolved` after one run (inside row noise); `refuted` once 2+ runs (a confirm) agree |
+| neutral | miss | `refuted`, with a `--reopen` rule |
+| regression | flat or miss | `refuted`, with a `--reopen` rule |
+| regression | hit | `unresolved` (its rows moved; the loss is elsewhere: name those rows in `--reopen`) |
+| any | no-base | `unresolved` (rows were not compared with a base) |
+
+A row hit from one run earns `shelf`, never `lead` (rows drift 1.5-2.5% per shape between runs). A rewrite
+stage is not refuted by one slow run: tag it `unresolved` with the next stage as its reopen rule. `within-ci`
+alone is no longer a Do-not-try: a neutral whose rows hit is shelf. Readers take the newest line per
+mechanism, and a line is about the same mechanism when it **starts with the same hypothesis slug or names it
+first in parentheses** (else only identical text supersedes), so always put the slug there.
+`hyp.py claims <p>` prints the newest line per mechanism; `hyp.py new` refuses to mint a
+`[refuted]`/`[superseded]` mechanism (it names the slug, or shares 2+ distinctive words with it) unless
+`--prior` says what differs.
+
 ## Judging and confirm reruns
 
 `classify` judges a run against the best on measured drift, not on overlap of okc's CIs (okc's
@@ -170,9 +225,10 @@ results without moving them.
 
 ## What to tell the user each tick
 
-Three lines unless something needs them: what was harvested (outcome per slug, and for a
-confirm the pooled verdict of its parent), what the adversary said (verdict per slug, companions
-queued), diagnoses written (strategy and top action), what was dispatched (slug, mode, job id),
+Three lines unless something needs them: what was harvested (outcome and mechanism verdict per
+slug, the CLAIMS tag recorded for it, and for a confirm the pooled verdict of its parent), what the
+adversary said (verdict per slug, companions queued, holds on claims or freshness), the freshness
+gate's holds (slug and `hold_kind`), diagnoses written (strategy and top action), what was dispatched (slug, mode, job id),
 and the budget line per problem (checks left / scored left /
 in flight / shortfall + reason). `needs_human` items and `unmerged` gains always get their own
 line with the file path.

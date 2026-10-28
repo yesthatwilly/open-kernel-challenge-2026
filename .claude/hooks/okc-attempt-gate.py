@@ -11,6 +11,11 @@ submission is gated by the worktree's own attempts/, not the main tree's.
 
 Reads the hook JSON on stdin, writes a permission decision as JSON on stdout. Anything that is
 not an okc check/submit command passes through untouched.
+
+Claims check (warn only, never blocks): when the attempt's slug and its Goal / What changed sections match a
+mechanism whose newest line in the main checkout's <problem>/hypotheses/CLAIMS.md is [refuted] or [superseded]
+(churn.claim_hits, the matcher hyp.py new refuses with), and the attempt file never says "reopen", the run is
+allowed through the normal permission flow with a warning naming those lines. Any error in it is ignored.
 """
 import json
 import os
@@ -37,6 +42,36 @@ def deny(reason):
         }
     }))
     sys.exit(0)
+
+
+def claims_warning(problem, attempts, names):
+    """Warn-only claims check (see the module doc); returns the warning text or None, never raises."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        if not os.path.exists(os.path.join(root, problem, "hypotheses", "CLAIMS.md")):
+            return None
+        os.environ["CHURN_REPO"] = root
+        sys.path.insert(0, os.path.join(root, ".claude", "skills", "churnsubs", "bin"))
+        import churn  # the same matcher hyp.py new refuses with (churn.claim_hits)
+        hits = []
+        for name in names:
+            with open(os.path.join(attempts, name), errors="replace") as fh:
+                text = fh.read()
+            if re.search(r"reopen", text, re.I):
+                continue
+            slug = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{4,6}Z-(check|submit)-", "", name)[:-3]
+            # only what the attempt says it changes, not the rules checklist or the result
+            body = " ".join(m.group(2) for m in re.finditer(r"^##\s*(goal|what changed[^\n]*|hypothesis|change)\s*\n(.*?)(?=^##\s|\Z)",
+                                                            text, re.I | re.M | re.S))
+            hits += [f"{name}: [{c['tag']}] {c['mechanism'][:140]} (CLAIMS.md:{c['line']}; {', '.join(w)})"
+                     for c, w in churn.claim_hits(problem, slug, "", body)]
+        return None if not hits else (
+            f"okc claims check (warning only, not blocking) for {problem}: the attempt matches a mechanism whose newest "
+            f"line in {problem}/hypotheses/CLAIMS.md is refuted or superseded, and the attempt file never says what "
+            "reopens it: " + "; ".join(hits[:4]) + ". If this is a re-run of that mechanism, add a 'Reopen:' line to the "
+            "attempt file saying which reopen condition is met.")
+    except Exception:
+        return None
 
 
 def repo_root(start):
@@ -123,6 +158,10 @@ def main():
             else:
                 fresh.append(name)
         if fresh:
+            warn = claims_warning(problem, attempts, fresh)
+            if warn:
+                print(json.dumps({"systemMessage": warn,
+                                  "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": warn}}))
             allow()
         hint = (f"okc {mode} refused for {problem}: no unconsumed attempt file in {attempts}. "
                 f"Every run needs its own file named <YYYY-MM-DDTHHMM[SS]Z>-{mode}-<slug>.md, modified in the "

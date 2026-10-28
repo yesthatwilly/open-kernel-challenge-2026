@@ -49,9 +49,42 @@ CONFIRM_MIN = 0.005        # an unproven result this far above the best earns on
 CONFIRM_SHARE = 0.25       # share of each day's checks kept for confirm reruns (user, 2026-10-25)
 CONFIRM_BACKLOG_PER_DAY = 3  # older unproven results queued for a confirm per problem per day
 HOLD_EXPIRE_H = 24.0       # a hold this old (not waiting on anything) moves to done/expired
+TYPED_HOLD_EXPIRE_H = 72.0  # a freshness hold (hold_kind) not re-reviewed this long moves to done/expired, no claim
+REREVIEW_PER_TICK = 2      # stale holds budget offers for a fresh adversary review when checks would go unspent
 # holds that wait on the user, a standing answer, another run or a condition never expire by age
-HOLD_PROTECT = re.compile(r"\buser\b|PENDING_USER|human|standing answer|by hand|\bwait|\bafter\b|\buntil\b|unhold|"
+# a screen verdict ("screen <date> ...") and a typed freshness hold (hold_kind) never expire either
+HOLD_PROTECT = re.compile(r"^screen |\buser\b|PENDING_USER|human|standing answer|by hand|\bwait|\bafter\b|\buntil\b|unhold|"
                           r"\bgate[sd]?\b|re-queue|requeue|once\b|harvests?\b|condition", re.I)
+VALUE_BAR_SINCE = "2026-10-28T145100Z"  # hyp.py's value bar (1a8e3c68): primaries minted later carry value_ev
+ROW_NOISE = 0.02           # per-shape drift of identical code, 1.5-2.5% (LESSONS.md, Measurement)
+CLAIM_TAGS = ["lead", "shelf", "unresolved", "node-only", "landed", "refuted", "superseded"]  # FINDINGS order
+CLAIM_RE = re.compile(r"^- \[(landed|lead|shelf|unresolved|node-only|refuted|superseded)\] (.+?) \| rows: (.*?) \| evidence: (.*?) "
+                      r"\| board: (.*?) \| blob: (.*?) \| reopen: (.*?) \| (\d{4}-\d{2}-\d{2}) (\w[\w-]*)$")
+CLAIM_FIELDS = ("tag", "mechanism", "rows", "evidence", "board", "blob", "reopen", "date", "source")
+CLAIMS_HEAD = """# {p} claims
+
+Curated findings for {p}: append-only, one line per claim, newest last. Written on master in the main
+checkout (`churn.py claim-add`, `register-landing`, expired holds), never by a regeneration. `churn.py index`
+prints the newest line per mechanism at the top of FINDINGS.md; a later line about the same mechanism
+supersedes an earlier one. Same mechanism = the line starts with the same hypothesis slug or names it first in
+parentheses (else only identical text), so put the slug there.
+
+Line: `- [tag] <mechanism> | rows: <row keys or all> | evidence: <job ids / commits / H100 run ids, with source
+path:line> | board: <problem board when measured> | blob: <short blob of submission.py when measured, or -> |
+reopen: <condition, or -> | <YYYY-MM-DD> <source: churn|campaign|h100|screen>`
+
+| tag | meaning | what readers do |
+|---|---|---|
+| landed | on master, via churn or a campaign | treat as lineage; it owns its rows |
+| lead | moved its rows, >= 2.5% headline-equivalent, not on master | check it first |
+| shelf | moved its rows, but below the bar (or one run only) | stack only when a set sums to >= 2.5% |
+| unresolved | inside row noise, or a route flipped | re-test only with more runs or pinned routes |
+| node-only | H100 only; transfer held, flipped or untested | a schedule change needs a production-shape check |
+| refuted | rows flat or lost, with enough runs | binding Do-not-try |
+| superseded | a later landing owns those rows | queued items that depend on it are held |
+
+<!-- claims below: append-only, newest last -->
+"""
 GLOBAL_TICK_CAP = 6
 SUBMIT_FLOOR = 1.0         # a check-proven gain is promoted with a scored run only if ci.low >= this
 STALE_H = 6.0              # queued this long: no longer counts as in flight
@@ -182,6 +215,9 @@ def problem_of(name):
 
 # ----------------------------------------------------------------------------- repo paths
 REPO = os.environ.get("CHURN_REPO") or run(["git", "rev-parse", "--show-toplevel"], check=False).strip() or os.getcwd()
+# the main checkout (claims and landings are written there, never into a worktree's branch)
+MAIN = os.path.dirname(run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=REPO, check=False).strip()
+                       or os.path.join(REPO, ".git"))
 WORKTREES = os.path.join(REPO, ".worktrees")
 LOCK = os.path.join(REPO, ".claude", "churn.lock")
 TEMPLATE = os.path.join(REPO, "ATTEMPT_TEMPLATE.md")
@@ -211,6 +247,160 @@ def load_best(p):
 def save_best(p, obj):
     json.dump(obj, open(best_path(p), "w"), indent=1)
     open(best_path(p), "a").write("\n")
+
+
+def best_result(p, best):
+    """BEST's trimmed result: best['result'], else hypotheses/BEST.result.json when it is the same run or bytes."""
+    for f in ([best.get("result"), rel(hdir(p, "BEST.result.json"))] if best else []):
+        if f and os.path.exists(os.path.join(REPO, f)):
+            rj = json.load(open(os.path.join(REPO, f)))
+            if f == best.get("result") or rj.get("job") in (best.get("job"), best.get("check_job")) \
+                    or _same_blob(rj.get("submission_blob"), best.get("submission_blob")):
+                return rj, f
+    return None, None
+
+
+def _same_blob(a, b):
+    a, b = str(a or ""), str(b or "")
+    return bool(a and b) and (a.startswith(b) or b.startswith(a))
+
+
+def _num(s):
+    m = re.search(r"\d+\.\d+|\d+", str(s if s is not None else "").replace(",", ""))
+    return float(m.group(0)) if m else None
+
+
+# ----------------------------------------------------------------------------- claims (CLAIMS.md)
+def claims_path(p, root=None):
+    return os.path.join(root or REPO, p, "hypotheses", "CLAIMS.md")
+
+
+KEBAB = r"[a-z0-9]+(?:-[a-z0-9]+)+"
+_SLUGS = {}
+
+
+def hyp_slugs(p, root=None):
+    """Every hypothesis slug of p, from the file names under queue, running, done/*, h100 and h100/done."""
+    d = os.path.join(root or REPO, p, "hypotheses")
+    if d not in _SLUGS:
+        subs = ["queue", "running", "h100", "h100/done"] + [f"done/{o}" for o in (os.listdir(os.path.join(d, "done")) if os.path.isdir(os.path.join(d, "done")) else [])]
+        _SLUGS[d] = {re.sub(r"^\d{4}-\d{2}-\d{2}T\d{4,6}Z-", "", f)[:-3] for s in subs for f in list_md(os.path.join(d, s))}
+    return _SLUGS[d]
+
+
+def _mkey(m, slugs=()):
+    """A claim's mechanism key: the hypothesis slug it starts with or first names in parentheses (so lines that
+    different writers word differently about one slug supersede each other), else its normalised text."""
+    t = " ".join(str(m).lower().split())
+    for x in (re.match(rf"({KEBAB})(?![\w-])", t), re.search(rf"\(({KEBAB})(?![\w-])", t)):
+        if x and x.group(1) in slugs:
+            return "slug:" + x.group(1)
+    return t
+
+
+def read_claims(p, root=None):
+    """Every well-formed CLAIMS.md line in file order, with its line number, verbatim text and mechanism key."""
+    f = claims_path(p, root)
+    res, slugs = [], hyp_slugs(p, root)
+    for i, line in enumerate(open(f).read().splitlines() if os.path.exists(f) else [], 1):
+        m = CLAIM_RE.match(line.rstrip())
+        if m:
+            c = dict(zip(CLAIM_FIELDS, m.groups()), line=i, text=line.rstrip())
+            res.append(dict(c, key=_mkey(c["mechanism"], slugs)))
+    return res
+
+
+def current_claims(p, root=None):
+    """The newest line per mechanism (a later line supersedes an earlier one), in first-seen order."""
+    cur = {}
+    for c in read_claims(p, root):
+        cur[c["key"]] = c
+    return list(cur.values())
+
+
+CLAIM_STOP = {"two", "one", "three", "four", "the", "and", "for", "with", "per", "all", "new", "fast", "low", "high", "stack",
+              "restack", "combo", "fix", "port", "gate", "tail", "plus", "only", "check", "submit", "into", "onto", "from",
+              "under", "over", "during", "after", "before", "next", "first", "last", "more", "less", "than", "larger",
+              "smaller", "both", "each", "every", "same", "single", "multi", "moved", "instead"}
+# dtypes, archs and launch words carry a digit but name no mechanism
+ID_STOP = {"fp4", "fp6", "fp8", "fp16", "fp32", "fp64", "bf16", "int4", "int8", "w4a16", "w8a8", "a16", "e4m3", "e5m2", "4bit", "8bit",
+           "sm80", "sm89", "sm90", "sm90a", "sm100", "h100", "h200", "b200", "a100", "cta", "1cta", "2cta", "x86", "cu12", "cuda12"}
+
+
+def claim_words(t):
+    return set(re.findall(r"[a-z0-9]+", str(t).lower()))
+
+
+def rows_overlap(a, b):
+    """Two row lists ('k=v k=v' keys or fnmatch patterns, comma-separated; 'all' or nothing = every row) share a row."""
+    sp = lambda s: [dict(t.split("=", 1) for t in r.split() if "=" in t) for r in re.split(r"[,;]", str(s or "")) if r.strip()] or [{}]
+    return any(all(fnmatch.fnmatch(x[k], y[k]) or fnmatch.fnmatch(y[k], x[k]) for k in x.keys() & y.keys()) for x in sp(a) for y in sp(b))
+
+
+def claim_hits(p, slug, area, change, tags=("refuted", "superseded"), hyps=None, rows=None):
+    """Current claims (tag in tags) on a mint's mechanism, as [(claim, why)]: the claim names the slug itself, or
+    shares 2+ distinctive words with it, or 1 identifier that is also in a slug the claim names or, when the mint's
+    rows are given (its expected shapes), sits on a row the claim's rows share (rows_overlap). Distinctive: a word
+    of the slug or area, or an identifier in the change (s2b, mc2, c320: letters and digits; not dtypes or archs like
+    fp8 / bf16 / sm90, not shape tokens like t128 / b16 / m64), that 1..cap of the problem's slugs + areas and claim
+    mechanisms use (cap: 4%, >= 3)."""
+    cl = current_claims(p)
+    docs = [claim_words(f"{h.get('slug')} {h.get('area')}") for h in (all_hyps(p) if hyps is None else hyps)] + [claim_words(c["mechanism"]) for c in cl]
+    df, cap = {}, max(3, len(docs) // 25)
+    for d in docs:
+        for w in d:
+            df[w] = df.get(w, 0) + 1
+    ok = lambda w: len(w) >= 3 and not w.isdigit() and w not in CLAIM_STOP and w not in ID_STOP and not re.fullmatch(r"[tbmnkw]\d+", w) \
+        and 1 <= df.get(w, 0) <= cap
+    ident = lambda w: re.search(r"\d", w) and re.search(r"[a-z]", w)
+    mine = {w for w in claim_words(f"{slug} {area}") if ok(w)} | {w for w in claim_words(change) if ident(w) and ok(w)}
+    s0 = re.sub(r"-\d+$", "", str(slug or "").strip().lower())
+    res = []
+    for c in cl:
+        if c["tag"] not in tags:
+            continue
+        named = re.findall(KEBAB, c["mechanism"].lower())
+        if s0.count("-") >= 1 and s0 in named:
+            res.append((c, [f"names {s0}"]))
+            continue
+        sw = mine & claim_words(c["mechanism"])
+        iw = {w for w in sw if ident(w)}
+        if len(sw) >= 2 or iw & claim_words(" ".join(n for n in named if n.count("-") >= 2)) \
+                or (iw and rows is not None and rows_overlap(rows, c["rows"])):
+            res.append((c, sorted(sw)))
+    return res
+
+
+def _claim_field(v):
+    return " ".join(str(v).replace("|", "/").split()) or "-"
+
+
+def append_claim(p, tag, mechanism, rows, evidence, board=None, blob=None, reopen=None, source="churn", root=None):
+    """Append one validated line to <main checkout>/<p>/hypotheses/CLAIMS.md (header first if new). Never stages
+    or commits. board defaults to the current BEST, blob to master's submission.py, the date to today UTC."""
+    root = root or MAIN
+    if tag not in CLAIM_TAGS:
+        raise ValueError(f"tag {tag} must be one of {CLAIM_TAGS}")
+    if not re.fullmatch(r"\w[\w-]*", str(source or "")):
+        raise ValueError(f"source {source!r} must be one word (churn|campaign|h100|screen)")
+    if board is None:
+        bf = os.path.join(root, p, "hypotheses", "BEST.json")
+        board = (json.load(open(bf)) if os.path.exists(bf) else {}).get("speedup")
+    board = f"{board:.4f}" if isinstance(board, (int, float)) else _claim_field(board if board is not None else "-")
+    if blob is None:
+        blob = git("rev-parse", "--short", f"HEAD:{p}/submission.py", cwd=root, check=False).strip() or "-"
+    line = (f"- [{tag}] {_claim_field(mechanism)} | rows: {_claim_field(rows)} | evidence: {_claim_field(evidence)} | board: {board} "
+            f"| blob: {_claim_field(blob)} | reopen: {_claim_field(reopen or '-')} | {now().strftime('%Y-%m-%d')} {source}")
+    if "-" in (_claim_field(mechanism), _claim_field(rows), _claim_field(evidence)) or not CLAIM_RE.match(line):
+        raise ValueError(f"malformed claim (mechanism, rows and evidence are required): {line}")
+    f = claims_path(p, root)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    if not os.path.exists(f):
+        open(f, "w").write(CLAIMS_HEAD.format(p=p))
+    text = open(f).read()
+    with open(f, "a") as fh:
+        fh.write(("" if text.endswith("\n") else "\n") + line + "\n")
+    return line, f
 
 
 # ----------------------------------------------------------------------------- frontmatter
@@ -539,10 +729,10 @@ def trim_result(job, status_json, p, h):
 def base_result_for(p, h, best):
     """The result the hypothesis should be compared against: same submission blob as its base."""
     blob = h.get("base_blob")
-    if best and blob and best.get("submission_blob") == blob and best.get("result"):
-        f = os.path.join(REPO, best["result"])
-        if os.path.exists(f):
-            return json.load(open(f)), best["result"]
+    if best and blob and best.get("submission_blob") == blob:
+        rj, f = best_result(p, best)
+        if rj:
+            return rj, f
     for o in OUTCOMES:
         d = hdir(p, "done", o)
         if not os.path.isdir(d):
@@ -564,17 +754,18 @@ def attribute(res, base, h):
     bmap = {x["key"]: x for x in (base or {}).get("shapes", [])}
     rows, gained, lost = [], [], []
     for x in res["shapes"]:
+        # no base row means no comparison: a ratio against SGLang is not a base (it read every row as gained)
         bx = bmap.get(x["key"])
-        b_speed = (bx or {}).get("speedup") or 1.0
-        b_us = ((bx or {}).get("median_ns") or x.get("baseline_ns") or 0) / 1000
+        b_speed = (bx or {}).get("speedup")
+        b_us = ((bx or {}).get("median_ns") or 0) / 1000
         delta = (x.get("speedup") or 0) / b_speed if b_speed else None
-        v = "flat"
+        v = "flat" if bx else "no-base"
         if delta is not None:
             if delta > 1 + 2 * noise:
                 v, _ = "gained", gained.append(x["key"])
             elif delta < 1 - 2 * noise:
                 v, _ = "lost", lost.append(x["key"])
-        rows.append({"key": x["key"], "weight": x.get("weight"), "base_us": round(b_us, 2),
+        rows.append({"key": x["key"], "weight": x.get("weight"), "base_us": round(b_us, 2) if bx else None,
                      "hyp_us": round((x.get("median_ns") or 0) / 1000, 2), "delta": round(delta, 4) if delta else None, "verdict": v})
 
     def grp(keys):
@@ -589,11 +780,13 @@ def attribute(res, base, h):
         summary.append("gained on " + grp(gained))
     if lost:
         summary.append("lost on " + grp(lost))
-    if not summary:
+    if not base:
+        summary = ["no base result: rows not compared"]
+    elif not summary:
         summary.append("no shape moved outside noise")
     hit = None
     exp = h.get("expected") or []
-    if isinstance(exp, list) and exp:
+    if base and isinstance(exp, list) and exp:
         ok = 0
         for e in exp:
             if not isinstance(e, dict):
@@ -606,8 +799,25 @@ def attribute(res, base, h):
                 if good in vs and ("lost" if good == "gained" else "gained") not in vs:
                     ok += 1
         hit = f"{ok}/{len([e for e in exp if isinstance(e, dict)])}"
+    mech, mrows = mechanism_of(rows, exp, bool(base))
     return {"base_result": (base or {}).get("_path"), "noise": round(noise, 4), "shapes": rows,
-            "summary": "; ".join(summary), "expected_hit": hit}
+            "summary": "; ".join(summary), "expected_hit": hit, "mechanism": mech, "mechanism_rows": mrows}
+
+
+def mechanism_of(rows, exp, has_base=True):
+    """The mechanism verdict, apart from the headline: hit (every predicted row moved its predicted way past
+    ROW_NOISE), miss (a predicted row moved the wrong way past it), flat (otherwise), no-base, or None when
+    nothing was predicted. Returns (verdict, "moved/predicted")."""
+    if not has_base:
+        return "no-base", None
+    pred = {(r["key"], str(e.get("direction") or "faster")): r for e in (exp if isinstance(exp, list) else []) if isinstance(e, dict)
+            and str(e.get("direction") or "faster") in ("faster", "slower")
+            for r in rows if fnmatch.fnmatch(r["key"], str(e.get("shapes") or "*")) and r.get("delta")}
+    if not pred:
+        return None, None
+    mv = [(r["delta"] - 1) * (1 if d == "faster" else -1) for (_, d), r in pred.items()]
+    moved = sum(1 for x in mv if x > ROW_NOISE)
+    return ("miss" if any(x < -ROW_NOISE for x in mv) else "hit" if moved == len(mv) else "flat"), f"{moved}/{len(mv)}"
 
 
 def classify(res, best, base):
@@ -865,6 +1075,7 @@ def _harvest_one(p, h, job, sj):
     if base:
         base["_path"] = base_path
     res["attribution"] = attribute(res, base, h) if res.get("shapes") else None
+    res["mechanism"] = (res["attribution"] or {}).get("mechanism")
     outcome, detail = classify(res, best, base)
     pooled = _pool_confirm(p, h, job, res, best) if h.get("kind") == "confirm" else None
     ddir = hdir(p, "done", outcome)
@@ -889,7 +1100,8 @@ def _harvest_one(p, h, job, sj):
     if s is not None:
         lines.append(f"- speedup {s:.4f}x, 95% CI [{ci[0]:.4f}, {ci[1]:.4f}], score {res.get('score_us')} µs vs SGLang {res.get('baseline_us')} µs")
     lines.append(f"- best at harvest: {json.dumps({k: best.get(k) for k in ('speedup', 'ci', 'job')} ) if best else 'none'}; base result: {base_path or 'SGLang (no base result)'}")
-    lines.append(f"- **outcome: {outcome}** ({detail})")
+    lines.append(f"- **outcome: {outcome}** ({detail})" + (f"; mechanism: {res['mechanism']}" if res.get("mechanism") else "")
+                 + (f" ({res['attribution']['mechanism_rows']} predicted rows past ±{ROW_NOISE * 100:.0f}%)" if (res.get("attribution") or {}).get("mechanism_rows") else ""))
     lines.append(f"- files: `{rel(rj)}`, `{rel(os.path.join(ddir, slug + '.patch'))}`; branch `{h.get('branch')}`")
     if pooled:
         lines.append(f"- confirm of `{h.get('confirm_of')}`: {pooled['note']}")
@@ -913,19 +1125,22 @@ def _harvest_one(p, h, job, sj):
         fu.append(f"- first failing case {json.dumps(res['first_failing'].get('case'))}: {res['first_failing'].get('message')}. Suggest `/hypothesize {p} \"fix {slug}: ...\"` with the fix as its own change.")
     elif outcome == "neutral" and detail == "unproven-vs-best":
         fu.append("- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.")
+    elif outcome == "neutral" and res.get("mechanism") == "hit":
+        fu.append("- shelf: every predicted row moved but the headline did not clear the bar; stack it with other row wins on one base (FINDINGS Shelf).")
     elif outcome == "neutral":
         fu.append(f"- {detail}: the change is not proven either way; a stacked hypothesis (`depends_on: {slug}`) that adds a further change in the same area is the only way to learn more.")
     elif outcome == "regression" and str(h.get("kind") or "") != "rewrite":
         fu.append("- record which shapes lost (Attribution) and do not retry this area in this form.")
     elif outcome == "gain":
-        fu.append("- candidate for promotion; stack further changes with `depends_on` once it lands.")
+        fu.append("- candidate for promotion; stack further changes with `depends_on` once it lands."
+                  + (" Gain not attributable to the mechanism (race/draw?): its predicted rows were flat." if res.get("mechanism") == "flat" else ""))
     set_section(new_md, "Follow-ups", "\n".join(fu) or "- none")
     promotion = ("pending" if outcome == "gain" and res.get("mode") != "submit" else ("onboard" if outcome == "gain" else None))
     if h.get("kind") == "confirm":
         promotion = "via-parent" if outcome == "gain" else None  # the parent carries the code and the promotion
     fm_set(new_md, stage="harvested", status="done", outcome=outcome, verdict_detail=detail,
            speedup=s, speedup_ci=ci if s is not None else None, harvested_at=ts(),
-           best_at_harvest=(best or {}).get("speedup"), promotion=promotion)
+           best_at_harvest=(best or {}).get("speedup"), promotion=promotion, mechanism=res.get("mechanism"))
     # carry the attempt file from the branch
     if h.get("attempt_file") and h.get("branch"):
         git("checkout", h["branch"], "--", f"{p}/attempts/{h['attempt_file']}", check=False)
@@ -1263,8 +1478,86 @@ def cmd_harvest_promotions(a):
     out({"ok": True, "promotions": done}, 0 if done else 1)
 
 
-def _eligible_queue(p):
-    items = []
+_HIST = {}
+
+
+def _at(path, t):
+    """The newest commit at or before epoch t that touched path (history cached per path)."""
+    if path not in _HIST:
+        _HIST[path] = [(c, int(ct)) for c, ct in (l.split() for l in git("log", "--format=%H %ct", "--", path, check=False).splitlines() if l.strip())]
+    return next((c for c, ct in _HIST[path] if ct <= t), None) if t else None
+
+
+def _then(p, t):
+    """(BEST speedup, master submission blob) as of epoch t, from git history."""
+    cb, cs = _at(f"{p}/hypotheses/BEST.json", t), _at(f"{p}/submission.py", t)
+    if (p, cb, cs) not in _HIST:
+        try:
+            b = json.loads(git("show", f"{cb}:{p}/hypotheses/BEST.json")).get("speedup") if cb else None
+        except Exception:
+            b = None
+        _HIST[(p, cb, cs)] = b, (git("rev-parse", f"{cs}:{p}/submission.py", check=False).strip() or None) if cs else None
+    return _HIST[(p, cb, cs)]
+
+
+def _fresh_ref(p, h):
+    """What a queued file's freshness is measured from: (what, stamp, board, blob) at its last unhold, else its
+    review, else its mint (frontmatter stamps first, git history for files older than the stamps)."""
+    what, kb, kl, kt = next(x for x in (("unhold", "unhold_best", "unhold_blob", "unhold_at"), ("review", "review_best", "review_blob", "review_at"),
+                                        ("mint", "best_at_mint", "mint_blob", "created")) if h.get(x[3]) or x[0] == "mint")
+    b0, l0 = _num(h.get(kb)), h.get(kl)
+    if b0 is None or not l0:
+        hb, hl = _then(p, _epoch(h.get(kt)))
+        b0, l0 = b0 if b0 is not None else hb, l0 or hl
+    return what, h.get(kt), b0, l0
+
+
+def _off_master(p, h):
+    """'chain' for a rewrite stage on a rewrite parent (it builds on the parent's branch: cmd_claim's
+    builds_on_parent), 'base' for an explicit non-master base (master's blob is not its base), else None."""
+    if h.get("base") and h["base"] != "master":
+        return "base"
+    dp = find_hyp(p, str(h["depends_on"]))[0] if h.get("depends_on") and h.get("kind") == "rewrite" else None
+    return "chain" if dp and read_hyp(dp).get("kind") == "rewrite" else None
+
+
+def freshness(p, h, best=None, blob=None):
+    """(hold_kind, why) when a queued primary is stale against today's board or master, or has no value case;
+    None when it may run. Measured from _fresh_ref. Companions, confirms and rewrite stages on a rewrite parent
+    ride on their parent and are exempt; a stack on an unfinished parent skips the blob check."""
+    kind = str(h.get("kind") or "")
+    if kind in ("confirm", "control") or kind.startswith("ab-"):
+        return None
+    off = _off_master(p, h)
+    if off == "chain":
+        return None
+    if h.get("value_ev") is None and str(h.get("created") or "") > VALUE_BAR_SINCE and not h.get("value_override"):
+        return "no-value-case", (f"minted {h.get('created')} after the value bar ({VALUE_BAR_SINCE}) with no value_ev; "
+                                 "re-mint it with hyp.py new, or `unhold --force` to override")
+    B = ((best if best is not None else load_best(p)) or {}).get("speedup") or 0
+    blob = blob or _master_blob(p)
+    what, at, b0, l0 = _fresh_ref(p, h)
+    moved = (B / b0 - 1 if b0 else 1.0) if B else 0.0
+    if abs(moved) > margin():
+        return "stale-board", (f"BEST {b0 or 0:.4f} at {what} {at}, {B:.4f} now ({moved * 100:+.2f}% > margin {margin() * 100:.2f}%); "
+                               "re-review on today's board (review-record re-queues it)")
+    if l0 and not off and not _same_blob(l0, blob):
+        # the base it was judged on is gone even when BEST barely moved (a campaign landing need not touch BEST)
+        return "stale-blob", (f"master submission.py {str(l0)[:10]} at {what} {at}, {blob[:10]} now (BEST {moved * 100:+.2f}%); "
+                              "re-review on master (review-record re-queues it)")
+    return None
+
+
+def _gate_hold(p, h, kind, why):
+    fm_set(h["_path"], status="hold", hold_kind=kind, hold_reason=f"{kind}: {why}")
+    log_decision(p, h["slug"], f"hold ({kind}, freshness gate): {why}")
+    git("commit", "-q", "-m", f"churn({p}): hold {h['slug']} ({kind})", "--", rel(h["_path"]), os.path.join("hypotheses", "DECISIONS.md"), check=False)
+
+
+def _eligible_queue(p, hold=True, gated=None):
+    """Queued hypotheses that may run now, in dispatch order. Stale or value-less primaries are left out and,
+    with hold, held with a typed hold_kind (freshness)."""
+    items, best, mblob = [], load_best(p), None
     for f in list_md(hdir(p, "queue")):
         h = read_hyp(os.path.join(hdir(p, "queue"), f))
         if h.get("status") != "queued":
@@ -1294,6 +1587,14 @@ def _eligible_queue(p):
             else:
                 if not where.startswith("done/") or where in ("done/regression", "done/failed", "done/rejected"):
                     continue
+        mblob = mblob or _master_blob(p)
+        g = freshness(p, h, best, mblob)
+        if g:
+            if gated is not None:
+                gated.append({"slug": h["slug"], "hold_kind": g[0], "why": g[1]})
+            if hold:
+                _gate_hold(p, h, *g)
+            continue
         items.append(h)
     # confirms settle results already paid for, so they go first; rewrites are the bigger bets and go
     # ahead of primaries at the same priority or below
@@ -1321,7 +1622,13 @@ def checks_today_by_kind(p, t=None):
     return r, c, o
 
 
-def budget_for(p, q, t=None):
+def _zombie(h):
+    """A claim with no job for LOST_H: its session died; it is not in flight (release-stale requeues it as a hold)."""
+    return h.get("stage") in ("claimed", "implemented") and not h.get("job") \
+        and time.time() - _epoch(h.get("implemented_at") or h.get("claimed_at")) > LOST_H * 3600
+
+
+def budget_for(p, q, t=None, hold=True):
     lim = q.get(p) or {}
     Lc = ((lim.get("checks") or {}).get("left")) or 0
     Ls = ((lim.get("scored") or {}).get("left")) or 0
@@ -1329,12 +1636,13 @@ def budget_for(p, q, t=None):
     running = running_hyps(p)
     inflight = [h for h in running if h.get("stage") == "dispatched" and h.get("job") and not h.get("stale")]
     Fc = sum(1 for h in inflight if h.get("mode") == "check")
-    F = len(inflight) + sum(1 for h in running if h.get("stage") in ("claimed", "implemented"))
+    F = len(inflight) + sum(1 for h in running if h.get("stage") in ("claimed", "implemented") and not _zombie(h))
     gains = [f for f in list_md(hdir(p, "done", "gain")) if read_hyp(os.path.join(hdir(p, "done", "gain"), f)).get("promotion") in (None, "pending", "merged")]
     G = len(gains)
     Ps = 0 if H <= 2 else max(G, 1 if Fc > 0 else 0)
     L = Lc + max(0, Ls - Ps)
-    Q = _eligible_queue(p)
+    gated = []
+    Q = _eligible_queue(p, hold, gated)
     need = L
     pace = need if H <= 2 else math.ceil(need / max(H - 1, 0.5))
     N = max(0, min(L, len(Q), PER_TICK_CAP, MAX_IN_FLIGHT - F, pace))
@@ -1386,13 +1694,21 @@ def budget_for(p, q, t=None):
     wake = int(max(300, min(3600, wake)))
     reason = None
     if N < min(L, pace) and len(Q) <= N:
-        reason = f"queue has {len(Q)} eligible hypotheses; {max(0, need - len(Q))} more could be absorbed today (run /hypothesize {p})"
+        reason = "queue empty: only leads clearing the value bar" if not Q else f"queue has {len(Q)} eligible hypotheses"
     elif MAX_IN_FLIGHT - F <= 0:
         reason = f"{F} in flight (cap {MAX_IN_FLIGHT})"
+    # freshness holds worth a fresh adversary review while checks would otherwise go unspent (best value case first)
+    rr = []
+    if L > len(Q):
+        st = [h for h in (read_hyp(os.path.join(hdir(p, "queue"), f)) for f in list_md(hdir(p, "queue")))
+              if h.get("status") == "hold" and h.get("hold_kind") in ("stale-board", "stale-blob")]
+        st.sort(key=lambda h: (-(_num(h.get("value_ev")) or 0), h.get("priority") or 3, str(h.get("created") or "")))
+        rr = [{"slug": h["slug"], "hold_kind": h.get("hold_kind"), "value_ev": h.get("value_ev"), "priority": h.get("priority")}
+              for h in st[:min(REREVIEW_PER_TICK, L - len(Q))]]
     return {"problem": p, "checks_left": Lc, "scored_left": Ls, "hours_to_reset": round(H, 2), "in_flight": F, "in_flight_checks": Fc,
             "gains_pending": G, "promotion_hold": Ps, "spendable": L, "queue": len(Q), "need": need, "pace": pace,
             "N": len(picks), "picks": [{"slug": h["slug"], "mode": m, "priority": h.get("priority"), "review": h.get("review"), "kind": h.get("kind"), "controls_for": h.get("controls_for")} for h, m in picks],
-            "shortfall": shortfall, "reason": reason, "wake_s": wake}
+            "shortfall": shortfall, "reason": reason, "wake_s": wake, "gated": gated, "rereview": rr}
 
 
 def cmd_budget(a):
@@ -1401,7 +1717,7 @@ def cmd_budget(a):
         q = json.load(open(a.quotas))
     else:
         q, _ = quotas()
-    plans = [budget_for(p, q, t) for p in ([problem_of(a.problem)] if a.problem else PROBLEMS)]
+    plans = [budget_for(p, q, t, not a.no_hold) for p in ([problem_of(a.problem)] if a.problem else PROBLEMS)]
     total = sum(x["N"] for x in plans)
     if total > GLOBAL_TICK_CAP:
         # trim round-robin from the largest
@@ -1413,15 +1729,16 @@ def cmd_budget(a):
     out({"ok": True, "plans": plans, "wake_s": wake, "dispatch_total": sum(x["N"] for x in plans)})
 
 
-def log_decision(p, slug, text):
+def log_decision(p, slug, text, root=None, stage=True):
     """Append one line to hypotheses/DECISIONS.md: every hold, deferral and judgement call, with why."""
-    path = os.path.join(REPO, "hypotheses", "DECISIONS.md")
+    path = os.path.join(root or REPO, "hypotheses", "DECISIONS.md")
     if not os.path.exists(path):
         open(path, "w").write("# Decisions\n\nAppend-only log of churnsubs judgement calls (holds, deferrals, merges by hand,\n"
                               "overrides of a reviewer) with the reason, newest last. Written by `churn.py note` and `hold`.\n\n")
     with open(path, "a") as f:
         f.write(f"- {ts()} `{p}` **{slug}**: {' '.join(str(text).split())}\n")
-    git("add", "--", rel(path))
+    if stage:
+        git("add", "--", rel(path))
 
 
 def cmd_archive_file(a):
@@ -1448,8 +1765,20 @@ def cmd_hold(a):
     path, where = find_hyp(p, a.slug)
     if not path or where != "queue":
         refuse(f"{a.slug} is not in {p}/hypotheses/queue")
-    fm_set(path, status="hold" if not a.unhold else "queued", hold_reason=None if a.unhold else (a.reason or "held"))
-    log_decision(p, a.slug, ("unhold: " if a.unhold else "hold: ") + (a.reason or ""))
+    if a.unhold:
+        # an unhold is a deliberate re-validation: the freshness gate measures from here, not from the review
+        h = read_hyp(path)
+        nv = h.get("hold_kind") == "no-value-case" or (h.get("value_ev") is None and str(h.get("created") or "") > VALUE_BAR_SINCE)
+        if nv and not a.force:
+            refuse(f"{a.slug} has no value case (minted after the value bar without value_ev): the gate would re-hold it. "
+                   "Re-mint it with hyp.py new, or pass --force to override the value bar for this file")
+        B = (load_best(p) or {}).get("speedup")
+        fm_set(path, status="queued", hold_reason=None, hold_kind=None, unhold_at=ts(), unhold_best=B, unhold_blob=_master_blob(p),
+               **({"value_override": ts()} if nv else {}))
+    else:
+        fm_set(path, status="hold", hold_reason=a.reason or "held")
+    log_decision(p, a.slug, ("unhold (freshness re-based on today's board" + ("; value bar overridden" if a.unhold and nv else "") + "): "
+                             if a.unhold else "hold: ") + (a.reason or ""))
     git("add", "--", rel(path))
     git("commit", "-q", "-m", f"churn({p}): {'unhold' if a.unhold else 'hold'} {a.slug}" + (f": {a.reason}" if a.reason and not a.unhold else ""), check=False)
     out({"ok": True, "slug": a.slug, "status": "queued" if a.unhold else "hold"})
@@ -1464,6 +1793,10 @@ def cmd_claim(a):
         h = read_hyp(path)
         if h.get("status") != "queued":
             refuse(f"{a.slug} status is {h.get('status')}")
+        g = None if a.skip_freshness else freshness(p, h)
+        if g:
+            _gate_hold(p, h, *g)
+            refuse(f"{a.slug} held by the freshness gate ({g[0]}): {g[1]}", hold_kind=g[0])
     else:
         Q = _eligible_queue(p)
         if not Q:
@@ -1568,7 +1901,8 @@ def _prepare_confirm(p, h, wt):
 
 
 def landed(p):
-    """Hypotheses whose code is in master's submission.py lineage, oldest first, with their patches."""
+    """Hypotheses whose code is in master's submission.py lineage, oldest first, with their patches, then the
+    campaign and hand landings CLAIMS.md records ([landed] lines that do not cite a churn promotion above)."""
     res = []
     for o in OUTCOMES:
         for f in list_md(hdir(p, "done", o)):
@@ -1579,9 +1913,26 @@ def landed(p):
             if subprocess.run(["git", "merge-base", "--is-ancestor", str(pc), "HEAD"], cwd=REPO).returncode == 0:
                 res.append({"slug": h.get("slug"), "area": h.get("area"), "outcome": o, "speedup": h.get("speedup"),
                             "promotion_commit": pc, "patch": rel(os.path.join(hdir(p, "done", o), f"{h['slug']}.patch")),
-                            "md": rel(h["_path"]), "change": str(h.get("change") or "")[:300]})
-    res.sort(key=lambda x: git("rev-list", "--count", x["promotion_commit"]).strip())
-    return res
+                            "md": rel(h["_path"]), "change": str(h.get("change") or "")[:300],
+                            "_t": int(git("show", "-s", "--format=%ct", str(pc), check=False).strip() or 0),
+                            "_ids": {str(pc)[:7], str(h.get("job") or "")[:8], str(h.get("submit_job") or "")[:8]} - {"", "None"}})
+    ids = set().union(*[x["_ids"] for x in res])
+    cur, lines = {}, {}
+    for c in read_claims(p):
+        cur[c["key"]] = c["tag"]
+        if c["tag"] == "landed":
+            lines[c["key"]] = c  # the newest [landed] line per mechanism
+    for c in lines.values():
+        if any(i in c["evidence"] for i in ids):
+            continue  # a churn promotion is listed above already
+        ct = [int(x) for x in (git("show", "-s", "--format=%ct", f"{tok}^{{commit}}", check=False).strip()
+                               for tok in re.findall(r"\b[0-9a-f]{7,12}\b", c["evidence"])) if x.isdigit()]
+        day = int(dt.datetime.strptime(c["date"], "%Y-%m-%d").replace(tzinfo=dt.timezone.utc).timestamp())
+        res.append({"slug": c["mechanism"], "area": None, "outcome": "landed", "speedup": _num(c["board"]), "promotion_commit": None,
+                    "patch": None, "md": f"{rel(claims_path(p))}:{c['line']}", "source": c["source"], "claim_now": cur[c["key"]],
+                    "change": f"rows: {c['rows']}; evidence: {c['evidence']}"[:300], "_t": max(ct) if ct else day + c["line"]})
+    res.sort(key=lambda x: x["_t"])
+    return [{k: v for k, v in x.items() if k not in ("_t", "_ids")} for x in res]
 
 
 def cmd_landed(a):
@@ -1636,13 +1987,16 @@ def cmd_review_record(a):
     if v.get("open_questions"):
         lines += ["### Open questions"] + [f"- {x}" for x in v["open_questions"]] + [""]
     set_section(path, "Adversarial review", "\n".join(lines))
-    upd = {"review": "hold" if verdict == "hold" else "proceed", "review_at": ts(), "review_companions": created or None}
+    upd = {"review": "hold" if verdict == "hold" else "proceed", "review_at": ts(), "review_companions": created or None,
+           "review_best": (load_best(p) or {}).get("speedup"), "review_blob": _master_blob(p)}
+    if verdict != "hold" and h.get("hold_kind") in ("stale-board", "stale-blob"):
+        upd.update(status="queued", hold_kind=None, hold_reason=None)  # re-reviewed on today's board: fresh again
     if verdict == "hold":
         upd.update(status="hold", hold_reason=f"adversarial review: {(v.get('summary') or '')[:160]}")
     fm_set(path, **upd)
     git("add", "--", rel(path), *[f"{p}/hypotheses/queue" for _ in [0]])
     git("commit", "-q", "-m", f"churn({p}): adversarial review of {a.slug} → {verdict}" + (f" (+{len(created)} companions)" if created else ""), check=False)
-    out({"ok": True, "slug": a.slug, "verdict": verdict, "status": "hold" if verdict == "hold" else h.get("status"), "companions": created})
+    out({"ok": True, "slug": a.slug, "verdict": verdict, "status": upd.get("status") or h.get("status"), "companions": created})
 
 
 def cmd_commit_impl(a):
@@ -1858,7 +2212,7 @@ def cmd_index(a):
         _write_if_changed(hdir(p, "INDEX.md"), "\n".join(lines) + "\n", changed)
         _write_if_changed(hdir(p, "FINDINGS.md"), _findings(p, hs, best), changed)
     try:
-        b = json.loads(subprocess.run([sys.executable, "-I", os.path.abspath(__file__), "budget"], capture_output=True, text=True, cwd=REPO).stdout or "{}")
+        b = json.loads(subprocess.run([sys.executable, "-I", os.path.abspath(__file__), "budget", "--no-hold"], capture_output=True, text=True, cwd=REPO).stdout or "{}")
         roll += ["", "## Today's budget", "", "| problem | checks left | scored left | in flight | eligible queue | dispatch now | shortfall | note |", "|---|---|---|---|---|---|---|---|"]
         for x in b.get("plans", []):
             roll.append(f"| {x['problem']} | {x['checks_left']} | {x['scored_left']} | {x['in_flight']} | {x['queue']} | {x['N']} | {x['shortfall']} | {x.get('reason') or ''} |")
@@ -1882,14 +2236,41 @@ def _write_if_changed(path, text, changed):
         changed.append(path)
 
 
+def _attr(p, h, cache={}):
+    """A done hypothesis's attribution with its mechanism verdict (computed for results harvested before it existed)."""
+    rjp = os.path.join(hdir(p, h["_where"]), f"{h['slug']}.result.json")
+    if rjp not in cache:
+        try:
+            at = json.load(open(rjp)).get("attribution") or {} if os.path.exists(rjp) else {}
+        except Exception:
+            at = {}
+        if at and "mechanism" not in at:
+            at["mechanism"], at["mechanism_rows"] = mechanism_of(at.get("shapes") or [], h.get("expected"), bool(at.get("base_result")))
+        cache[rjp] = at
+    return cache[rjp]
+
+
 def _findings(p, hs, best):
     L = [f"# {p} findings", "", f"Regenerated {ts()} by `churn.py index`. Read this before writing a hypothesis for {p}.", ""]
+    # curated claims first: CLAIMS.md is append-only and never regenerated, so nothing hand-written is lost here
+    B = (best or {}).get("speedup") or 0
+    L += ["## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)", ""]
+    cl = current_claims(p)
+    for tag in CLAIM_TAGS:
+        xs = [c for c in cl if c["tag"] == tag]
+        if xs:
+            L += [f"### {tag}", ""]
+            for c in xs:
+                b = _num(c["board"])
+                L.append(c["text"] + (f" (re-measure: measured on {b:.4f}, best now {B:.4f})" if tag in ("lead", "shelf", "unresolved") and b and B and b < B * (1 - margin()) else ""))
+            L.append("")
+    if not cl:
+        L += [f"- none yet: add one with `churn.py claim-add {p} --tag ... --mechanism ... --rows ... --evidence ...`", ""]
     L += ["## Current best", ""]
     if best:
         L.append(f"{best['speedup']:.4f}x [{best['ci'][0]:.4f},{best['ci'][1]:.4f}] from job `{best['job']}` ({best.get('mode')}), master commit `{(best.get('commit') or '')[:10]}`" + (f", hypothesis {best['slug']}" if best.get("slug") else ""))
-        rjp = os.path.join(REPO, best["result"]) if best.get("result") else None
-        if rjp and os.path.exists(rjp):
-            rj = json.load(open(rjp))
+        rj, _ = best_result(p, best)
+        if rj:
             L += ["", "Where the time goes (per scored shape, top kernels):", ""]
             for s in rj.get("shapes", []):
                 tk = ", ".join(f"{k[0]} {k[1]}µs {k[2]}%" for k in (s.get("top_kernels") or [])[:3])
@@ -1897,7 +2278,14 @@ def _findings(p, hs, best):
     else:
         L.append("none recorded yet (run `churn.py best-init`).")
     if os.path.exists(hdir(p, "DIAGNOSIS.md")):
-        L += ["", f"Today's clean-context diagnosis: `{p}/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list)."]
+        dfm = parse_fm(open(hdir(p, "DIAGNOSIS.md")).read())[0]
+        d0, at = _num(dfm.get("best")), dfm.get("diagnosed_at") or "?"
+        if d0 and B and abs(B / d0 - 1) <= margin():
+            L += ["", f"Clean-context diagnosis of {at}, written on board {d0:.4f} (today {B:.4f}, within the {margin() * 100:.2f}% margin, "
+                      f"so binding): `{p}/hypotheses/DIAGNOSIS.md` (ranked actions and its own Do-not-try list)."]
+        else:
+            L += ["", f"Diagnosis of {at}, written on board {d0 or '?'} (today {B:.4f}): historical, re-diagnose before minting from it "
+                      f"(`{p}/hypotheses/DIAGNOSIS.md`)."]
     by_area = {}
     for h in hs:
         if h["_where"].startswith("done/") and h["_where"] != "done/expired":
@@ -1907,14 +2295,12 @@ def _findings(p, hs, best):
         L.append(f"### {area}")
         for h in sorted(items, key=lambda h: str(h.get("created"))):
             s = h.get("speedup")
-            summ = ""
-            rjp = os.path.join(hdir(p, h["_where"]), f"{h['slug']}.result.json")
-            if os.path.exists(rjp):
-                try:
-                    summ = (json.load(open(rjp)).get("attribution") or {}).get("summary") or ""
-                except Exception:
-                    pass
-            L.append(f"- **{h['slug']}** → {h.get('outcome')} ({h.get('verdict_detail')})" + (f", {s:.4f}x" if isinstance(s, (int, float)) else "") + (f" — {summ}" if summ else "") + f". {str(h.get('change') or '')[:160]}")
+            at = _attr(p, h)
+            summ, mech = at.get("summary") or "", at.get("mechanism")
+            flag = " [gain not attributable to the mechanism (race/draw?)]" if h["_where"] == "done/gain" and mech == "flat" else ""
+            L.append(f"- **{h['slug']}** → {h.get('outcome')} ({h.get('verdict_detail')})" + (f", {s:.4f}x" if isinstance(s, (int, float)) else "")
+                     + (f", mechanism {mech}" + (f" {at['mechanism_rows']}" if at.get("mechanism_rows") else "") if mech else "") + flag
+                     + (f" — {summ}" if summ else "") + f". {str(h.get('change') or '')[:160]}")
         L.append("")
     # only follow-ups that say something: the generic per-outcome lines harvest writes repeat the outcome
     generic = re.compile(r"^(unproven-vs-best|within-ci|beats-base-not-best|regression)\b|^record which shapes lost|^candidate for promotion")
@@ -1927,10 +2313,17 @@ def _findings(p, hs, best):
                 fol.setdefault(text.replace(str(h["slug"]), "<slug>")[:220], []).append(h["slug"])
     L += ["## Open follow-ups", ""] + ([f"- {', '.join(s)}: {t}" for t, s in fol.items()] or ["- none"]) + [""]
     # measured dead ends: what ran and did not move, so a new idea must say what differs (hyp.py --prior)
-    dn = []
+    dn, shelf = [], []
     for h in hs:
         w, det = h["_where"], h.get("verdict_detail")
         if h.get("kind") == "confirm" or (h.get("kind") == "rewrite" and w != "done/rejected"):
+            continue
+        if w == "done/neutral" and not h.get("hand_landed") and not h.get("promotion_commit") and _attr(p, h).get("mechanism") == "hit":
+            # its predicted rows all moved: a row win below the headline bar, kept for stacking, not a dead end
+            s = h.get("speedup")
+            chg = re.sub(r"^(Built on master.*?\.|Stacked on .*?\.)(\s+|$)", "", " ".join(str(h.get("change") or "").split()))
+            shelf.append(f"- **{h['slug']}** [{h.get('area')}] {det}" + (f", {s:.4f}x" if isinstance(s, (int, float)) else "")
+                         + f", rows {_attr(p, h).get('mechanism_rows')} hit, job `{h.get('job')}`: {chg[:90]}")
             continue
         why = None
         if w in ("done/rejected", "done/regression") or det == "within-ci":
@@ -1938,10 +2331,13 @@ def _findings(p, hs, best):
         elif h.get("confirm_outcome") in ("neutral", "regression"):
             why = f"not confirmed (pooled {h.get('pooled_speedup')})"
         if why:
-            chg = re.sub(r"^(Built on master[^.]*\.|Stacked on [^.]*\.)\s*", "", " ".join(str(h.get("change") or "").split()))
+            chg = re.sub(r"^(Built on master.*?\.|Stacked on .*?\.)(\s+|$)", "", " ".join(str(h.get("change") or "").split()))
             dn.append(f"- **{h['slug']}** [{h.get('area')}] {w[5:]}, {why}: {chg[:90]}")
+    L += ["## Shelf (row wins below the headline bar; stack them)", "",
+          f"Neutral results whose predicted rows all moved past ±{ROW_NOISE * 100:.0f}% (one run each: the rows drift 1.5-2.5%, so re-measure on "
+          "today's master before stacking).", ""] + (shelf or ["- none"]) + [""]
     L += ["## Do not try (regressions, flat results, rejected)", "",
-          "Rewrite stages are exempt: a slow early stage is not a dead end.", ""] + (dn or ["- none"]) + [""]
+          "Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose predicted rows all moved are on the Shelf instead.", ""] + (dn or ["- none"]) + [""]
     nexp = sum(1 for h in hs if h["_where"] == "done/expired")
     L += ["## Queue and in flight", ""] + ([f"- {h['_where']}: {h['slug']} [{h.get('area')}] p{h.get('priority')} {h.get('status')}" for h in hs if h["_where"] in ("queue", "running")] or ["- empty"])
     L += ([f"- {nexp} stale holds expired to `done/expired/` (not run)"] if nexp else []) + [""]
@@ -2029,7 +2425,9 @@ def _expire_holds(a):
                 since = git("log", "-1", "--format=%ct", "--", rel(path), check=False).strip()
                 age_h = (time.time() - int(since)) / 3600 if since.isdigit() else 0
                 hr = str(h.get("hold_reason") or "")
-                if age_h > HOLD_EXPIRE_H and not HOLD_PROTECT.search(hr):
+                if h.get("hold_kind") and age_h > TYPED_HOLD_EXPIRE_H:
+                    why = f"{h['hold_kind']} hold not re-reviewed in {age_h:.0f} h: {hr[:120]}"
+                elif age_h > HOLD_EXPIRE_H and not HOLD_PROTECT.search(hr) and not h.get("hold_kind"):
                     why = f"hold expired after {age_h:.0f} h: {hr[:120]}"
             elif h.get("kind") == "confirm":
                 dp, where = find_hyp(p, str(h.get("confirm_of") or h.get("depends_on")))
@@ -2038,7 +2436,13 @@ def _expire_holds(a):
                     why = f"confirm no longer needed: parent is {where}, {parent.get('speedup')}x vs best {B}x"
             if not why:
                 continue
-            reasons.append({"problem": p, "slug": h.get("slug"), "why": why})
+            # a typed freshness hold never ran and settled nothing about its mechanism: no claim
+            tag = _expiry_tag(str(h.get("hold_reason") or "")) if h.get("status") == "hold" and not h.get("hold_kind") else None
+            # a claim that already names the slug (a seeded or screen line) keeps the verdict; a second line would supersede it
+            named = [c["line"] for c in current_claims(p) if h.get("slug") in re.findall(KEBAB, c["mechanism"].lower())] if tag else []
+            tag = None if named else tag
+            reasons.append({"problem": p, "slug": h.get("slug"), "why": why, "claim_tag": tag}
+                           | ({"claim": f"already recorded at CLAIMS.md:{named[-1]}"} if named else {}))
             if a.dry_run:
                 continue
             ddir = hdir(p, "done", "expired")
@@ -2048,10 +2452,136 @@ def _expire_holds(a):
             fm_set(new, status="done", outcome="expired", verdict_detail=why[:160], expired_at=ts())
             log_decision(p, h.get("slug"), f"expired: {why}")
             git("add", "--", rel(new))
+            if tag:
+                # the hold's verdict outlives the file: FINDINGS shows expired items only as a count. It never
+                # ran, so nothing was measured: board and blob are "-"
+                rows = ", ".join(str(e.get("shapes")) for e in (h.get("expected") or []) if isinstance(e, dict) and e.get("shapes")) or "all"
+                line, cf = append_claim(p, tag, f"{h.get('slug')} ({h.get('area')})", rows,
+                                        f"expired hold: {h.get('hold_reason')}; {rel(new)}; hypotheses/DECISIONS.md", board="-", blob="-",
+                                        reopen="stack only when a set sums to >= 2.5%" if tag == "shelf" else "-", root=REPO)
+                reasons[-1]["claim"] = line
+                git("add", "--", rel(cf))
     if reasons and not a.dry_run:
         git("commit", "-q", "-m", f"churn: expire {len(reasons)} stale queue items", "--",
             *[rel(hdir(p)) for p in PROBLEMS], os.path.join("hypotheses", "DECISIONS.md"), check=False)
     out({"ok": True, "dry_run": bool(a.dry_run), "expired": reasons}, 0 if reasons else 1)
+
+
+def _expiry_tag(reason):
+    """The CLAIMS tag an expiring hold's reason earns: superseded, refuted (STALE, killed), shelf (BELOW-BAR), or None."""
+    if re.search(r"supersed", reason, re.I) or (re.search(r"\bstale\b", reason, re.I) and re.search(r"(?<!never )\blanded\b", reason)):
+        return "superseded"
+    if re.search(r"\bstale\b|\bkilled\b|\bretire", reason, re.I):
+        return "refuted"
+    return "shelf" if re.search(r"below-bar", reason, re.I) else None
+
+
+def cmd_release_stale(a):
+    _locked(lambda: _release_stale(a), not a.dry_run)
+
+
+def _release_stale(a):
+    """Zombie claims (claimed or implemented, no job for LOST_H) go back to the queue as holds: their worktree is
+    removed when clean, the branch stays, and they stop counting as in flight."""
+    rel_, paths = [], []
+    for p in PROBLEMS:
+        for h in running_hyps(p):
+            if not _zombie(h):
+                continue
+            wt = os.path.join(WORKTREES, p, h["slug"])
+            dirty = os.path.isdir(wt) and bool(git("status", "--porcelain", cwd=wt, check=False).strip())
+            rel_.append({"problem": p, "slug": h["slug"], "stage": h.get("stage"), "claimed_at": h.get("claimed_at"),
+                         "worktree": "kept (uncommitted changes)" if dirty else ("removed" if os.path.isdir(wt) else "none")})
+            if a.dry_run:
+                continue
+            if os.path.isdir(wt) and not dirty:
+                git("worktree", "remove", wt, check=False)
+            new = os.path.join(hdir(p, "queue"), os.path.basename(h["_path"]))
+            git("mv", rel(h["_path"]), rel(new))
+            why = f"released {ts()}: zombie claim (stage {h.get('stage')} since {h.get('claimed_at')}, no job in {LOST_H:.0f} h); re-review to run it"
+            fm_set(new, status="hold", stage=None, hold_reason=why, released_at=ts())
+            log_decision(p, h["slug"], why)
+            git("add", "--", rel(new), rel(hdir(p, "running")))
+            paths += [rel(h["_path"]), rel(new)]
+    if rel_ and not a.dry_run:
+        git("commit", "-q", "-m", f"churn: release {len(rel_)} zombie claims", "--", *paths,
+            os.path.join("hypotheses", "DECISIONS.md"), check=False)
+    out({"ok": True, "dry_run": bool(a.dry_run), "released": rel_}, 0 if rel_ else 1)
+
+
+def _run_record(p, job):
+    """A run's full okc record: campaign runs archive, then churn's archive, then `okc status`."""
+    import glob
+    import gzip
+    for root in dict.fromkeys([MAIN, REPO]):
+        for pat in (f"campaigns/*/runs/{job}.json.gz", f"campaigns/*/runs/*.{job}.json.gz", f"{p}/hypotheses/archive/*/{job}.okc.json.gz"):
+            for f in sorted(glob.glob(os.path.join(root, pat))):
+                return json.load(gzip.open(f, "rt")), os.path.relpath(f, root)
+    sj = job_status(job)
+    return (sj, f"okc status {job}") if isinstance(sj, dict) and sj.get("result") else (None, None)
+
+
+def cmd_register_landing(a):
+    """Register a landing made outside churn (a campaign, by hand) on master in the main checkout: BEST.json with
+    `result`, BEST.result.json, a [landed] CLAIMS line and a DECISIONS line. Stages and commits nothing. The claim is
+    skipped with --no-claim or when a current [landed] line already cites the job; a new one needs --mechanism and --rows."""
+    p, job = problem_of(a.problem), _job_from(a.job)
+    sj, src = _run_record(p, job)
+    if not sj:
+        refuse(f"no run record for {job} (campaigns/*/runs, {p}/hypotheses/archive, okc status)")
+    r = sj.get("result") or {}
+    if not r.get("passed") or r.get("speedup") is None:
+        refuse(f"{job} did not pass or has no speedup (status {sj.get('status')}); not a landing")
+    cited = [c for c in current_claims(p, MAIN) if c["tag"] == "landed" and (job in c["evidence"] or job[:8] in c["evidence"])]
+    claim = not a.no_claim and not cited
+    if claim and not (a.mechanism and a.rows):
+        refuse(f"no [landed] claim cites {job} yet: pass --mechanism and --rows (the rows it owns), or --no-claim")
+    hp = lambda *x: os.path.join(MAIN, p, "hypotheses", *x)
+    cur = json.load(open(hp("BEST.json"))) if os.path.exists(hp("BEST.json")) else {}
+    s, same = r["speedup"], cur.get("job") == job
+    if not same and (cur.get("speedup") or 0) > s and not a.force:
+        refuse(f"{job} {s:.4f} is below BEST {cur['speedup']:.4f} ({cur.get('job')}); pass --force to register it anyway")
+    mode = a.mode or ("check" if sj.get("mode") == "check" else "submit")
+    blob = git("rev-parse", f"HEAD:{p}/submission.py", cwd=MAIN).strip()
+    commit = git("log", "-1", "--format=%H", "--", f"{p}/submission.py", cwd=MAIN).strip()
+    if same and cur.get("submission_blob"):
+        blob, commit = cur["submission_blob"], cur.get("commit") or commit  # the bytes BEST.json says the run measured
+    slug = a.slug or (cur.get("slug") if same else None) or f"landing-{job[:8]}"
+    tr = trim_result(job, sj, p, {"slug": slug, "mode": mode, "submission_blob": blob, "impl_commit": commit})
+    json.dump(tr, open(hp("BEST.result.json"), "w"), indent=1)
+    open(hp("BEST.result.json"), "a").write("\n")
+    nb = dict(cur) if same else {"problem": p, "job": job, "check_job": a.check_job, "mode": mode, "speedup": s, "ci": r.get("speedup_ci"),
+                                 "score_us": r.get("score_us"), "commit": commit, "submission_blob": blob, "slug": slug,
+                                 "master_slug": slug, "master_job": job}
+    nb.update(result=os.path.relpath(hp("BEST.result.json"), MAIN), updated_at=ts(),
+              note=a.note or nb.get("note") or f"registered by churn.py register-landing from {src}")
+    if a.check_job:
+        nb["check_job"] = a.check_job
+    json.dump(nb, open(hp("BEST.json"), "w"), indent=1)
+    open(hp("BEST.json"), "a").write("\n")
+    line, cf = None, None
+    if claim:
+        ev = f"job {job} ({src})" + (f", check {nb.get('check_job')}" if nb.get("check_job") else "") + f", master {str(nb.get('commit') or commit)[:10]}"
+        line, cf = append_claim(p, "landed", a.mechanism, a.rows, ev, board=s,
+                                blob=git("rev-parse", "--short", blob, cwd=MAIN, check=False).strip() or blob[:8], source=a.source)
+    log_decision(p, slug, f"register-landing: {job} {s:.4f}x ({mode}) from {src}, master {commit[:10]} blob {blob[:10]}"
+                 + (f" (was {cur.get('speedup')} {cur.get('job')})" if cur and not same else "") + (f"; {a.note}" if a.note else ""),
+                 root=MAIN, stage=False)
+    master = git("rev-parse", f"HEAD:{p}/submission.py", cwd=MAIN).strip()
+    warn = None if _same_blob(blob, master) else f"the run's blob {blob[:10]} is not master's {master[:10]}: master moved since this run"
+    out({"ok": True, "problem": p, "job": job, "speedup": s, "mode": mode, "source": src, "slug": slug, "claim": line,
+         "claim_skipped": None if claim else ("--no-claim" if a.no_claim else f"already cited by CLAIMS.md:{cited[0]['line']}"),
+         "warning": warn, "written": [os.path.relpath(x, MAIN) for x in (hp("BEST.json"), hp("BEST.result.json"), cf) if x] + ["hypotheses/DECISIONS.md"],
+         "committed": False, "note": "the run's bytes are taken to be master's submission.py at that blob (okc's content_hash is not a file hash)"})
+
+
+def cmd_claim_add(a):
+    p = problem_of(a.problem)
+    try:
+        line, f = append_claim(p, a.tag, a.mechanism, a.rows, a.evidence, a.board, a.blob, a.reopen, a.source)
+    except ValueError as e:
+        refuse(str(e))
+    out({"ok": True, "problem": p, "path": f, "line": line, "committed": False})
 
 
 DIAGNOSE_STARTED = os.path.join(REPO, ".claude", "diagnosis-started.json")
@@ -2101,7 +2631,7 @@ def cmd_classify(a):
 
 
 def cmd_tick(a):
-    """preflight → intake → recover → harvest → harvest-promotions → promote(plan) → budget → index."""
+    """preflight → intake → recover → release-stale → harvest → harvest-promotions → promote(plan) → budget → index."""
     me = [sys.executable, "-I", os.path.abspath(__file__)]
     report = {}
 
@@ -2122,6 +2652,7 @@ def cmd_tick(a):
         out({"ok": False, "report": report}, 2)
     sub("intake")
     rc = sub("recover")
+    sub("release-stale")
     sub("harvest")
     sub("harvest-promotions")
     pr = sub("promote")
@@ -2155,10 +2686,10 @@ def main():
     sp.add_parser("harvest-promotions").set_defaults(fn=cmd_harvest_promotions)
     x = sp.add_parser("promote"); x.add_argument("--problem"); x.set_defaults(fn=cmd_promote)
     x = sp.add_parser("record-submit"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("job"); x.set_defaults(fn=cmd_record_submit)
-    x = sp.add_parser("budget"); x.add_argument("--problem"); x.add_argument("--now"); x.add_argument("--quotas"); x.set_defaults(fn=cmd_budget)
+    x = sp.add_parser("budget"); x.add_argument("--problem"); x.add_argument("--now"); x.add_argument("--quotas"); x.add_argument("--no-hold", action="store_true", help="report freshness-gated items without holding them"); x.set_defaults(fn=cmd_budget)
     x = sp.add_parser("hold"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--reason"); x.set_defaults(fn=cmd_hold, unhold=False)
-    x = sp.add_parser("unhold"); x.add_argument("problem"); x.add_argument("slug"); x.set_defaults(fn=cmd_hold, unhold=True, reason=None)
-    x = sp.add_parser("claim"); x.add_argument("problem"); x.add_argument("slug", nargs="?"); x.add_argument("--mode"); x.add_argument("--skip-review", action="store_true"); x.set_defaults(fn=cmd_claim)
+    x = sp.add_parser("unhold"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("--force", action="store_true", help="override the value bar for a no-value-case file"); x.set_defaults(fn=cmd_hold, unhold=True, reason=None)
+    x = sp.add_parser("claim"); x.add_argument("problem"); x.add_argument("slug", nargs="?"); x.add_argument("--mode"); x.add_argument("--skip-review", action="store_true"); x.add_argument("--skip-freshness", action="store_true"); x.set_defaults(fn=cmd_claim)
     x = sp.add_parser("landed"); x.add_argument("problem"); x.set_defaults(fn=cmd_landed)
     x = sp.add_parser("review-record"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("json_file"); x.add_argument("--prompt", help="the filled adversary prompt, archived beside the review"); x.set_defaults(fn=cmd_review_record)
     x = sp.add_parser("note"); x.add_argument("problem"); x.add_argument("slug"); x.add_argument("text"); x.set_defaults(fn=cmd_note)
@@ -2173,6 +2704,13 @@ def main():
     sp.add_parser("tick").set_defaults(fn=cmd_tick)
     x = sp.add_parser("reclassify"); x.add_argument("--problem"); x.add_argument("--queue-confirms", action="store_true"); x.set_defaults(fn=cmd_reclassify)
     x = sp.add_parser("expire-holds"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(fn=cmd_expire_holds)
+    x = sp.add_parser("release-stale"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(fn=cmd_release_stale)
+    x = sp.add_parser("register-landing"); x.add_argument("problem"); x.add_argument("job"); x.add_argument("--slug"); x.add_argument("--check-job")
+    x.add_argument("--mode", choices=["check", "submit"], help="default: the run record's mode"); x.add_argument("--mechanism"); x.add_argument("--rows"); x.add_argument("--no-claim", action="store_true"); x.add_argument("--note"); x.add_argument("--source", default="campaign")
+    x.add_argument("--force", action="store_true", help="register a run below the current BEST"); x.set_defaults(fn=cmd_register_landing)
+    x = sp.add_parser("claim-add"); x.add_argument("problem"); x.add_argument("--tag", required=True, choices=CLAIM_TAGS); x.add_argument("--mechanism", required=True)
+    x.add_argument("--rows", required=True); x.add_argument("--evidence", required=True); x.add_argument("--board"); x.add_argument("--blob"); x.add_argument("--reopen")
+    x.add_argument("--source", default="churn"); x.set_defaults(fn=cmd_claim_add)
     sp.add_parser("diagnose-due").set_defaults(fn=lambda a: out({"ok": True, "diagnose": diagnose_due()}))
     x = sp.add_parser("diagnose-start"); x.add_argument("problem"); x.set_defaults(fn=cmd_diagnose_start)
     a = ap.parse_args()

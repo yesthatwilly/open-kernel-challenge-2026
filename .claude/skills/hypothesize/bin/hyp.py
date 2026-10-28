@@ -8,7 +8,10 @@
   hyp.py triage [P]          where the headline can still move, per row of the board's own run (cheap)
   hyp.py list [P]            queue / running / done / h100 per problem, one line each
   hyp.py lint FILE           same check churn.py intake applies
-  hyp.py context P           what a hypothesis author should read for P (paths, current best, the value bar)
+  hyp.py context P           what a hypothesis author should read for P (CLAIMS first, campaign, best, value bar)
+  hyp.py claims [P] [--tag T] [--match TEXT]   the newest CLAIMS.md line per mechanism (refuted, landed, shelf ...)
+  hyp.py h100-result P SLUG --run ID --verdict held|flipped|untested|null --note TEXT [--effect PCT]
+             files a node experiment's result: h100/ -> h100/done/, frontmatter, one CLAIMS line ([node-only] or [lead])
 
 The value bar (the user, 2026-10-28: "really really stringent on what it hypothesizes, because i cant
 get small ROI for the tokens this skill takes. i need it only producing the most promising leads"):
@@ -16,6 +19,10 @@ every hypothesis except the adversary's A/B companions states measured evidence,
 it works (--gain, %), the probability it delivers that (--p) and its cost. `new` refuses (exit 3) when
 gain < 2.5% for a check (one judge run's margin is ~1.24%), gain < 3% for the lever a diag / h100
 question sizes, or gain x p < 1.5%. Only an idea the user described (--user-requested) passes below it.
+`new` also refuses (exit 3) a mechanism whose newest CLAIMS.md line is [refuted] or [superseded] (churn.claim_hits:
+the claim names the slug, or shares 2+ distinctive words with its slug, area or change identifiers such as s2b / mc2,
+or 1 that is also in a slug the claim names) unless --prior says in 40+ characters what differs, and stamps
+mint_blob (master's submission.py blob) and best_at_mint (BEST) for churn's freshness gate.
 
 `new` only ever creates one new file and never commits; churnsubs commits it at its next intake.
 check and diag go to <P>/hypotheses/queue/; h100 goes to <P>/hypotheses/h100/ with status hold (a node
@@ -49,6 +56,11 @@ VALUE_MIN_LEVER = 3.0  # % headline of the lever a diag / h100 question sizes or
 VALUE_MIN_EV = 1.5     # % headline, gain x p
 FLOOR_MIN_US = 5.0     # practical floor of one call (a launch or two) when the speed of light is below it
 COMPANIONS = ("ab-revert", "ab-tune", "control")
+LOG_HEAD = 150         # lines of the active campaign's LOG.md a hypothesis author reads (Now block + latest verdicts)
+CLAIM_TAGS = ("landed", "lead", "shelf", "unresolved", "node-only", "refuted", "superseded")
+CLAIM_RE = churn.CLAIM_RE    # the CLAIMS.md line contract lives in churn.py
+CLAIMS_MARK = "<!-- claims below: append-only, newest last -->"
+TRANSFER = "per-SM cycles transfer to the judge H200; HBM rates do not"
 NUM_RE = re.compile(r"\d(\.\d+)?\s*(us|µs|ms|%|TB/s|GB/s|x\b|×|instr|cycles|regs|KB|MB|B\b)")
 SRC_RE = re.compile(r"\b[0-9a-f]{8,16}\b|runs/|research/|FINDINGS|LOG|DIAGNOSIS|LESSONS|profile|anatomy|ncu|nsys|gpunode06|\.md\b")
 
@@ -79,19 +91,119 @@ def folded(text):
     return ">\n" + "\n".join("  " + l for l in lines)
 
 
-def h100_hyps(p):
-    d = os.path.join(REPO, p, "hypotheses", "h100")
+def h100_hyps(p, done=False):
     res = []
-    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-        if f.endswith(".md"):
-            h = churn.read_hyp(os.path.join(d, f))
-            h["_where"] = "h100"
-            res.append(h)
+    for sub in ("h100", "h100/done") if done else ("h100",):
+        d = os.path.join(REPO, p, "hypotheses", sub)
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if f.endswith(".md"):
+                h = churn.read_hyp(os.path.join(d, f))
+                h["_where"] = sub
+                res.append(h)
     return res
 
 
+def scratch_dir():
+    """A git-ignored scratch directory in the repo (the node's /tmp is a small, nearly full tmpfs)."""
+    d = os.path.join(REPO, "hypotheses", "prompts", "filled")
+    os.makedirs(d, exist_ok=True)
+    if not os.path.exists(os.path.join(d, ".gitignore")):
+        open(os.path.join(d, ".gitignore"), "w").write("*\n")
+    return d
+
+
+def claims_path(p):
+    return os.path.join(REPO, p, "hypotheses", "CLAIMS.md")
+
+
+def read_claims(p):
+    """The newest CLAIMS.md line per mechanism (churn.current_claims: a later line about the same slug, or with the
+    same text, supersedes an earlier one)."""
+    return churn.current_claims(p)
+
+
+def matching_claims(p, slug, area, change, tags=("refuted", "superseded"), expected=None):
+    """churn.claim_hits over this problem's hypotheses, h100 ones included, on the rows of `expected`: [(claim, why)]."""
+    rows = ", ".join(str(e.get("shapes") or "*") for e in expected or [] if isinstance(e, dict)) or None
+    return churn.claim_hits(p, slug, area, change, tags, churn.all_hyps(p) + h100_hyps(p, done=True), rows)
+
+
+def claim_line(tag, mechanism, rows, evidence, board, blob, reopen, source):
+    f = lambda v: " ".join(str(v if v is not None else "-").replace("|", "/").split()) or "-"
+    line = (f"- [{tag}] {f(mechanism)} | rows: {f(rows)} | evidence: {f(evidence)} | board: {f(board)} | blob: {f(blob)} "
+            f"| reopen: {f(reopen)} | {dt.datetime.now(dt.timezone.utc):%Y-%m-%d} {source}")
+    assert CLAIM_RE.match(line), line
+    return line
+
+
+CLAIMS_HEADER = """# Claims: {p}
+
+Curated findings for {p}, one line each, written by agents on master in the main checkout and never
+regenerated (FINDINGS.md is; this file is not). Readers take the newest line per mechanism: a later line about
+the same mechanism supersedes an earlier one. `hyp.py claims {p}` prints that view.
+
+Tags: [landed] on master, owns its rows (lineage) · [lead] moved its rows, >= 2.5% headline-equivalent, not on
+master (check it first) · [shelf] moved its rows below the bar (stack only to >= 2.5%) · [unresolved] inside row
+noise or a route flipped (re-test only with more runs or pinned routes) · [node-only] H100 only, transfer held /
+flipped / untested (a schedule change needs a production-shape judge check) · [refuted] rows flat or lost
+(binding Do-not-try) · [superseded] a later landing owns those rows (queued items that depend on it are held).
+
+Line format: `- [tag] <mechanism> | rows: <row keys or 'all'> | evidence: <job ids / commits / H100 run ids, with
+source path:line> | board: <board speedup when measured> | blob: <short blob of submission.py, or '-'> |
+reopen: <condition, or '-'> | <YYYY-MM-DD> <source: churn|campaign|h100|screen>`
+
+"""
+
+
+def require_master_main():
+    """Claims are written on master in the main checkout: a worktree's copy lands on its branch."""
+    gd = subprocess.run(["git", "rev-parse", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"], capture_output=True,
+                        text=True, cwd=REPO).stdout.split()
+    if len(gd) < 3 or os.path.abspath(os.path.join(REPO, gd[0])) != os.path.abspath(os.path.join(REPO, gd[1])) or gd[2] != "master":
+        print(f"claims are written on master in the main checkout, not {REPO} ({' '.join(gd[2:]) or '?'})", file=sys.stderr)
+        sys.exit(2)
+
+
+def append_claim(p, line):
+    """Append one line to <p>/hypotheses/CLAIMS.md (created with its header when missing)."""
+    require_master_main()
+    f = claims_path(p)
+    head = getattr(churn, "CLAIMS_HEAD", None)  # churn.py's header when it has one, so both writers agree
+    text = open(f).read() if os.path.exists(f) else head.format(p=p) if head else CLAIMS_HEADER.format(p=p) + CLAIMS_MARK + "\n"
+    open(f, "w").write(text + ("" if text.endswith("\n") else "\n") + line + "\n")
+
+
+def active_campaign():
+    """campaigns/<dir> of the row of campaigns/INDEX.md whose status says active, or None."""
+    f = os.path.join(REPO, "campaigns", "INDEX.md")
+    for line in open(f) if os.path.exists(f) else []:
+        cells = [c.strip() for c in line.split("|")]
+        m = re.match(r"\[[^\]]*\]\(([^)/]+)/", cells[1]) if len(cells) > 3 else None
+        if m and re.search(r"\bactive\b", cells[2]) and not re.search(r"\b(closed|inactive)\b", cells[2]):
+            return f"campaigns/{m.group(1)}"
+    return None
+
+
+def diagnosis_info(p):
+    """DIAGNOSIS.md's date and board against today's: binding only while BEST is within margin() of its board."""
+    f = os.path.join(REPO, p, "hypotheses", "DIAGNOSIS.md")
+    if not os.path.exists(f):
+        return None
+    fm = churn.parse_fm(open(f).read())[0]
+    m = re.search(r"(\d+\.\d+)\s*x", str(fm.get("best") or ""))
+    then, now_ = (float(m.group(1)) if m else None), (churn.load_best(p) or {}).get("speedup")
+    moved = abs(now_ / then - 1) if then and now_ else None
+    hist = moved is None or moved > churn.margin()
+    return {"path": f"{p}/hypotheses/DIAGNOSIS.md", "diagnosed_at": str(fm.get("diagnosed_at")), "board_then": then,
+            "board_now": round(now_, 4) if now_ else None, "moved_pct": round(moved * 100, 2) if moved is not None else None,
+            "historical": hist,
+            "note": ("historical: written on another board; its Actions and Do-not-try are context, not binding. Check each "
+                     "against CLAIMS.md and triage before minting it" if hist else
+                     "current (board within margin): its Actions come first and its Do-not-try binds")}
+
+
 def unique_slug(p, slug):
-    taken = {h.get("slug") for h in churn.all_hyps(p) + h100_hyps(p)}
+    taken = {h.get("slug") for h in churn.all_hyps(p) + h100_hyps(p, done=True)}
     if slug not in taken:
         return slug
     n = 2
@@ -162,7 +274,7 @@ def cmd_new(a):
     if len(slug) < 3:
         print("slug too short", file=sys.stderr)
         sys.exit(2)
-    slug = unique_slug(p, slug)
+    asked, slug = slug, unique_slug(p, slug)
     expected = json.loads(a.expected) if a.expected else []
     if a.depends_on:
         dp, where = churn.find_hyp(p, a.depends_on)
@@ -170,10 +282,21 @@ def cmd_new(a):
             print(f"depends_on {a.depends_on} not found in {p}", file=sys.stderr)
             sys.exit(2)
     prior = check_prior(p, a)
+    hits = [] if a.kind in COMPANIONS else matching_claims(p, asked, a.area, a.change, expected=expected)
+    for c, w in hits:
+        print(f"CLAIMS.md:{c['line']} ({', '.join(w)}): {c['text']}", file=sys.stderr)
+    if hits and len((a.prior or "").partition(":")[2].strip()) < 40:
+        print(json.dumps({"ok": False, "claims": [c["text"] for c, _ in hits],
+                          "hint": "the newest claim on this mechanism is refuted/superseded: do not mint it, or say in "
+                                  "--prior '<slug>: ...' (40+ chars) what differs, e.g. the claim's reopen condition is met"}))
+        sys.exit(3)
     val = check_value(a)
     h100 = a.target == "h100" and a.kind not in COMPANIONS
     created = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    blob = subprocess.run(["git", "rev-parse", f"master:{p}/submission.py"], capture_output=True, text=True, cwd=REPO).stdout.strip()
+    best = (churn.load_best(p) or {}).get("speedup")
     fm = ["---", f"problem: {p}", f"slug: {slug}", f"created: {created}", "base: master",
+          f"mint_blob: {json.dumps(blob) if blob else 'null'}", f"best_at_mint: {round(best, 4) if best else 'null'}",
           f"area: {yaml_scalar(a.area)}", f"change: {folded(a.change)}"]
     if expected:
         fm.append("expected:")
@@ -228,7 +351,7 @@ def cmd_new(a):
     qdir = os.path.join(REPO, p, "hypotheses", "h100" if h100 else "queue")
     name = f"{created}-{slug}.md"
     text = "\n".join(fm) + "\n\n" + "\n".join(body)
-    tmp = tempfile.mkdtemp() if a.dry_run else None
+    tmp = tempfile.mkdtemp(prefix="dryrun-", dir=scratch_dir()) if a.dry_run else None
     path = os.path.join(tmp or qdir, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     open(path, "w").write(text)
@@ -239,6 +362,8 @@ def cmd_new(a):
         print(json.dumps({"ok": False, "errors": errs}))
         sys.exit(1)
     out = {"ok": True, "file": os.path.relpath(os.path.join(qdir, name), REPO), "slug": slug, "problem": p}
+    if hits:
+        out["claims"] = [c["text"] for c, _ in hits]
     if val:
         out.update(target=a.target, ev=val["ev"])
     if a.dry_run:
@@ -335,10 +460,10 @@ def cmd_triage(a):
 def cmd_list(a):
     probs = [problem_of(a.problem)] if a.problem else PROBLEMS
     for p in probs:
-        for h in churn.all_hyps(p) + h100_hyps(p):
+        for h in churn.all_hyps(p) + h100_hyps(p, done=True):
             s = h.get("speedup")
             ev = f" EV {h['value_ev']}%" if h.get("value_ev") is not None else ""
-            print(f"{p} {h['_where']:16} {h.get('slug'):40} [{h.get('area')}] p{h.get('priority')} {h.get('outcome') or h.get('status')}"
+            print(f"{p} {h['_where']:16} {h.get('slug'):40} [{h.get('area')}] p{h.get('priority')} {h.get('outcome') or h.get('h100_verdict') or h.get('status')}"
                   + (f" {s:.4f}x" if isinstance(s, (int, float)) else "") + ev)
 
 
@@ -352,10 +477,28 @@ def cmd_context(a):
     p = problem_of(a.problem)
     hd = os.path.join(REPO, p, "hypotheses")
     best = churn.load_best(p)
-    diag = [f"{p}/hypotheses/DIAGNOSIS.md"] if os.path.exists(os.path.join(hd, "DIAGNOSIS.md")) else []
+    diag = diagnosis_info(p)
+    camp = active_campaign()
+    cfiles = [f for f in (f"{camp}/FINDINGS.md", f"{camp}/DISTILL.md", f"{camp}/research/h100-findings.md")
+              if camp and os.path.exists(os.path.join(REPO, f))]
+    claims = read_claims(p)
+    first = [f"{p}/hypotheses/CLAIMS.md"] if os.path.exists(claims_path(p)) else []
+    first += [f"{p}/hypotheses/FINDINGS.md", "hypotheses/LESSONS.md"] + cfiles
+    first += [diag["path"]] if diag and not diag["historical"] else []
     print(json.dumps({
         "problem": p,
-        "read_first": diag + [f"{p}/hypotheses/FINDINGS.md", f"{p}/TASK.md", f"{p}/baseline.py", f"{p}/submission.py", "rules/technical-rules.llms.txt"],
+        "read_first": first + [f"{p}/TASK.md", f"{p}/baseline.py", f"{p}/submission.py", "rules/technical-rules.llms.txt"],
+        "claims": {"newest_per_mechanism": dict(collections.Counter(c["tag"] for c in claims)),
+                   "check": f"hyp.py claims {p} [--tag refuted] [--match '<mechanism words>']",
+                   "rule": "never mint a [refuted]/[superseded] mechanism without saying what differs; rows a [landed] claim "
+                           "owns are lineage; mint from [lead] and from [shelf] stacks that sum to >= 2.5%"} if claims
+                  else "no CLAIMS.md lines yet",
+        "campaign": {"dir": camp, "read": cfiles,
+                     "log": f"the top {LOG_HEAD} lines of {camp}/LOG.md (the Now block: boards, in-flight work, the "
+                            "latest kills and verdicts); grep the rest for this problem's name only when needed",
+                     "focus": "DISTILL §3 (kills, traps, reopen rules) and §4.4 (verdicts on queued items); h100-findings: "
+                              f"grep {p.replace('muse_', '')}; {TRANSFER}"} if camp else None,
+        "diagnosis": diag,
         "triage": f"hyp.py triage {p}",
         "value_bar": {"check_min_gain_pct": VALUE_MIN_GAIN, "lever_min_gain_pct": VALUE_MIN_LEVER, "min_ev_pct": VALUE_MIN_EV,
                       "judge_margin_pct": round(churn.margin() * 100, 2)},
@@ -365,8 +508,57 @@ def cmd_context(a):
         "h100": [h.get("slug") for h in h100_hyps(p)],
         "done": [(h.get("slug"), h.get("outcome")) for h in churn.all_hyps(p) if h["_where"].startswith("done/")],
         "areas_hint": churn.AREAS_HINT,
-        "submission_at_master": subprocess.run(["git", "rev-parse", "--short", f"HEAD:{p}/submission.py"], capture_output=True, text=True, cwd=REPO).stdout.strip(),
+        "submission_at_master": subprocess.run(["git", "rev-parse", "--short", f"master:{p}/submission.py"], capture_output=True, text=True, cwd=REPO).stdout.strip(),
     }, indent=1))
+
+
+def cmd_claims(a):
+    """The newest claim per mechanism, grouped by tag; --match keeps those whose mechanism shares a word with TEXT."""
+    for p in [problem_of(a.problem)] if a.problem else PROBLEMS:
+        mw = {w for w in churn.claim_words(a.match or "") - churn.CLAIM_STOP if len(w) >= 3}
+        cs = [c for c in read_claims(p) if (not a.tag or c["tag"] in a.tag) and (not a.match or mw & churn.claim_words(c["mechanism"]))]
+        print(f"== {p}: {len(cs)} claim(s){' matching ' + repr(a.match) if a.match else ''} ({os.path.relpath(claims_path(p), REPO)})")
+        for c in sorted(cs, key=lambda c: (CLAIM_TAGS.index(c["tag"]), c["line"])):
+            print(f"  :{c['line']:<4} {c['text']}")
+
+
+def cmd_h100_result(a):
+    """File a node experiment's result: frontmatter, a `## H100 result` section, h100/ -> h100/done/, one CLAIMS line."""
+    p = problem_of(a.problem)
+    d = os.path.join(REPO, p, "hypotheses", "h100")
+    m = [f for f in sorted(os.listdir(d)) if f.endswith(f"-{a.slug}.md")] if os.path.isdir(d) else []
+    if not m:
+        print(f"no {p}/hypotheses/h100/*-{a.slug}.md (done ones are in h100/done/)", file=sys.stderr)
+        sys.exit(2)
+    if len(a.note.strip()) < 20:
+        print("--note: what was measured, 20+ chars (numbers, node vs judge)", file=sys.stderr)
+        sys.exit(2)
+    src, dst = os.path.join(d, m[-1]), os.path.join(d, "done", m[-1])
+    h = churn.read_hyp(src)
+    tag = "lead" if a.verdict == "held" and (a.effect or 0) >= VALUE_MIN_GAIN else "node-only"
+    rows = ", ".join(str(e.get("shapes")) for e in h.get("expected") or [] if isinstance(e, dict)) or "all"
+    reopen = "-" if tag == "lead" else {
+        "flipped": f"only with a production-shape judge check of a changed schedule ({TRANSFER})",
+        "held": f"stack it to >= {VALUE_MIN_GAIN}% headline, or re-measure on the judge ({TRANSFER})"}.get(
+        a.verdict, f"a production-shape judge check before any build relies on it ({TRANSFER})")
+    sec = [f"- **Run:** {a.run}", f"- **Transfer verdict:** {a.verdict}" + (f"; effect {a.effect}% headline" if a.effect is not None else ""),
+           f"- **Note:** {a.note.strip()}", f"- **Caveat:** {TRANSFER}.", f"- **Claim:** [{tag}]"]
+    mk = lambda n: claim_line(tag, a.mechanism or f"{h.get('area')} ({h.get('slug')})", rows,
+                              f"H100 {a.run}, transfer {a.verdict}: {a.note.strip()} ({os.path.relpath(dst, REPO)}:{n})",
+                              f"{a.board:.4f}" if a.board else "-", a.blob or "-", reopen, "h100")
+    line = mk(1)  # validates the line before anything is written
+    if a.dry_run:
+        print(json.dumps({"ok": True, "dry_run": True, "file": os.path.relpath(dst, REPO), "claim": line}))
+        return
+    require_master_main()
+    churn.fm_set(src, status="done", h100_run=a.run, h100_verdict=a.verdict, h100_effect=a.effect, claim=tag,
+                 h100_at=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ"))
+    churn.set_section(src, "H100 result", "\n".join(sec))
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    os.replace(src, dst)
+    line = mk(open(dst).read().split("\n").index("## H100 result") + 1)
+    append_claim(p, line)
+    print(json.dumps({"ok": True, "file": os.path.relpath(dst, REPO), "claim": line}))
 
 
 def main():
@@ -399,6 +591,21 @@ def main():
     x = sp.add_parser("list"); x.add_argument("problem", nargs="?"); x.set_defaults(fn=cmd_list)
     x = sp.add_parser("lint"); x.add_argument("file"); x.set_defaults(fn=cmd_lint)
     x = sp.add_parser("context"); x.add_argument("problem"); x.set_defaults(fn=cmd_context)
+    x = sp.add_parser("claims"); x.add_argument("problem", nargs="?")
+    x.add_argument("--tag", action="append", choices=CLAIM_TAGS, help="keep only this tag (repeatable)")
+    x.add_argument("--match", help="keep claims whose mechanism shares a word (3+ chars) with TEXT")
+    x.set_defaults(fn=cmd_claims)
+    x = sp.add_parser("h100-result"); x.add_argument("problem"); x.add_argument("slug")
+    x.add_argument("--run", required=True, help="hopper-probe run id or queue job")
+    x.add_argument("--verdict", required=True, choices=["held", "flipped", "untested", "null"],
+                   help="judge transfer: held, flipped, untested (node only), null (no effect on the node)")
+    x.add_argument("--note", required=True, help="what was measured: node numbers and, when checked, the judge's")
+    x.add_argument("--effect", type=float, help="headline %% it is worth on the judge (held >= 2.5 files a [lead])")
+    x.add_argument("--mechanism", help="claim mechanism (default: '<area> (<slug>)')")
+    x.add_argument("--board", type=float, help="the judge board speedup when a judge check measured it")
+    x.add_argument("--blob", help="short blob of the submission.py bytes it was measured on")
+    x.add_argument("--dry-run", action="store_true", help="print the claim line; change nothing")
+    x.set_defaults(fn=cmd_h100_result)
     a = ap.parse_args()
     a.fn(a)
 

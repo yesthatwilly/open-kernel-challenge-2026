@@ -5,14 +5,21 @@ can be interpreted, and if not, what extra run(s) would make it interpretable.
 
 Read, in this order (all paths relative to {REPO}; read-only, change nothing):
 1. {HYP_MD} — the hypothesis (frontmatter + body). The `change` paragraph is what will be built.
-2. {FINDINGS} — learnings by area, where the current best spends its time, do-not-retry list.
-3. {BEST_JSON} — the current best result on master's lineage (job, speedup, CI).
-4. The hypotheses already landed on master's submission.py, oldest first, with their patches:
+2. {CLAIMS} — the curated claims, one line per finding, tagged [landed] [lead] [shelf] [unresolved]
+   [node-only] [refuted] [superseded]; the newest line per mechanism is the current one. Claims that share a
+   distinctive word with this hypothesis (a pre-filter; read the whole file anyway):
+{CLAIM_HITS}
+3. {FINDINGS} — learnings by area, where the current best spends its time, do-not-retry list.
+4. The active campaign's findings: {CAMPAIGN}. Its landings, kills and H100 transfer readings are not in
+   churn's own files (most of master's recent submission.py commits are campaign landings).
+5. {BEST_JSON} — the current best result on master's lineage (job, speedup, CI). The hypothesis's freshness:
+   {FRESHNESS}
+6. The hypotheses already landed on master's submission.py, oldest first, with their patches:
    {LANDED_JSON}
-5. {BASE_SUBMISSION} — the kernel the hypothesis will be built on (its base).
-6. {PROBLEM}/baseline.py — SGLang's own pipeline (the named parts), {PROBLEM}/TASK.md — shapes,
+7. {BASE_SUBMISSION} — the kernel the hypothesis will be built on (its base).
+8. {PROBLEM}/baseline.py — SGLang's own pipeline (the named parts), {PROBLEM}/TASK.md — shapes,
    weights, floors, correctness bounds, timing method, rules.
-7. Other hypotheses in flight or queued for this problem (slugs; do not duplicate them): {OTHER_SLUGS}
+9. Other hypotheses in flight or queued for this problem (slugs; do not duplicate them): {OTHER_SLUGS}
 
 Answer these, adversarially:
 A. **Justification.** Is the stated mechanism plausible on this hardware for these shapes? Does
@@ -36,6 +43,15 @@ C. **Interference and A/B.** Decide specifically whether an additional run is wa
    path from the landed list, applied in reverse) or what to tune, and what stays.
 D. **Rules.** Flag anything in the change that could break the competition rules (precision,
    caching derived from inputs, every-key attention, host syncs, work outside the timed call).
+E. **Claims and freshness (a hold, not a note).** Hold when (i) the mechanism's newest claim is
+   [refuted] or [superseded] and the hypothesis does not show that claim's `reopen` condition is met;
+   (ii) a [landed] claim (or a campaign landing in step 4) already owns the rows it targets with a
+   different mechanism, so it is built on a base that no longer exists; (iii) the board moved past the
+   margin since `best_at_mint` / the last review (the freshness line in step 5) and the value case
+   (`value_gain`, `expected`) was not re-derived on today's rows. A [shelf] mechanism proceeds only as part
+   of a stack whose rows sum to >= 2.5% headline; an [unresolved] one only with the extra runs or pinned
+   routes its `reopen` names; a [node-only] one only when the change is per-SM work (per-SM cycles transfer
+   to the judge H200; HBM rates do not). Cite the CLAIMS.md line numbers you relied on.
 
 If the hypothesis has `kind: rewrite`, it replaces a whole subsystem over several staged runs and
 is judged on the replaced kernels' own time against the incumbent and the speed-of-light floor (its
@@ -58,6 +74,7 @@ Return ONLY a JSON object, no prose around it, with this schema:
  "confounders": ["one line per landed hypothesis that confounds, with why", ...],
  "interference": "your reasoning for C: why companions are or are not needed",
  "rules_flags": ["...", ...],
+ "freshness": "E: the claims (CLAIMS.md:N) and board/blob movement you checked, and what they decided",
  "companions": [
    {"slug": "<parent-slug>-ab-revert-<x>", "kind": "ab-revert" | "ab-tune" | "control",
     "area": "...", "change": "a paragraph implementable from the parent's branch without asking",
@@ -66,5 +83,6 @@ Return ONLY a JSON object, no prose around it, with this schema:
  ],
  "open_questions": ["...", ...]
 }
-`hold` only when the hypothesis is unjustifiable, duplicates a landed/do-not-retry item, or would
-break a rule. Prefer `proceed` with sharp notes over a timid `hold`.
+`hold` only when the hypothesis is unjustifiable, duplicates a landed/do-not-retry item, fails E, or
+would break a rule. Prefer `proceed` with sharp notes over a timid `hold`. Put a one-line reason in
+`summary` that starts with the E clause when E decided it (e.g. "E(i): CLAIMS.md:23 refuted ...").

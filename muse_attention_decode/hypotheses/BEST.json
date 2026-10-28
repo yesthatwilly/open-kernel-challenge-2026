@@ -11,8 +11,8 @@
  "commit": "26498226d86d00463a052d170384d55fbb91659f",
  "submission_blob": "2eb03f76ceefa9bf81e28616ced3b33be3a70443",
  "slug": "sliding-verify-s2b-b17-32-bar103",
- "result": null,
- "updated_at": "2026-10-27T062000Z",
+ "result": "muse_attention_decode/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-28T171015Z",
  "master_slug": "sliding-verify-s2b-b17-32-bar103",
  "master_job": "4e386647edd845f7",
  "note": "registered by hand 2026-10-27: s2b with the B=17..32 gate bar lowered to 1.03 (B=2..16 stays 1.05); branch hyp/attn-sw17-bar103; check 4e695fa0 1.6129; landed on master."

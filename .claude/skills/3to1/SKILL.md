@@ -25,7 +25,14 @@ and pick the default.
    compare it with `report.py` and the campaign scratchpad's `rowcmp2.py`, and fill the attempt file's result. Add at
    most 10 lines to the LOG per run.
    - **A check beats its board:** send a scored run of the same bytes (a new attempt file plus the rules checklist).
-   - **A scored run beats the board:** land the file on master as `<problem>/submission.py` and log it.
+   - **A scored run beats the board:** land the file on master as `<problem>/submission.py` and log it. Then run
+     `python3 -I .claude/skills/churnsubs/bin/churn.py register-landing <problem> <job> --mechanism "<what landed>
+     (<lever or slug>)" --rows "<the row keys it owns>"` on master (BEST.json with `result`, BEST.result.json, a
+     `[landed]` CLAIMS line and a DECISIONS line), so churn's lineage and the adversary see the landing. Name the
+     rows it actually moved, never `all` unless it did; `--no-claim` when a `[landed]` line already records it.
+   - **A campaign learns a fact** (a kill, a close, an H100 transfer held or flipped): append one line to
+     `<problem>/hypotheses/CLAIMS.md` with `churn.py claim-add <problem> --tag refuted|superseded|shelf|unresolved|node-only
+     --mechanism ... --rows ... --evidence "<job/run> (LOG.md:<line>)" --reopen ...`, on master in the main checkout.
    - Register campaign scored runs in churn's BEST.json before any churn run on that problem.
 3. **Act for the phase.**
    - **Day start** (the first tick at or after 00:00Z with no phase-A workflow running today):
@@ -53,7 +60,9 @@ and pick the default.
      - Use at most 3 agents.
    - **Phase C** (18:00Z-24:00Z): **spend every remaining check on every problem.**
      - Count each problem's checks left and fill them: churn-queued hypotheses, cheap diagnostic questions, rungs.
-     - When the queues are shallower than the checks left, run `/hypothesize <p>`.
+     - Run `/hypothesize <p>` only to mint leads that clear the value bar; an unspent check beats a weak lead.
+       Prepare-only diagnostic checks with a pre-registered decision rule (`--target diag`) and checks reserved for
+       campaign rungs (e.g. size-trim verification) still count as spending and stay in phase C.
      - A cheap question is fine; re-rolling identical bytes is not.
      - By ~23:00Z, write tomorrow's phase-A plan in the LOG: the levers, the workflow scope, and what tonight's checks
        answered.

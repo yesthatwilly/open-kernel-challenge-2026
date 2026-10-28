@@ -1,0 +1,67 @@
+# muse_prefill_layer claims
+
+Curated findings for muse_prefill_layer: one line per mechanism. Agents append here on master in the main checkout (never
+inside a worktree). No tool regenerates this file; FINDINGS.md prints it verbatim. Raw evidence stays where it is
+(`done/`, `campaigns/*/runs/`, hopper-probe `runs/`). Spec: `hypotheses/FINDINGS-MODEL-REVIEW-2026-10-28.md` §3.
+Seeded 2026-10-28 from git log, BEST.json, DECISIONS, DISTILL §3.1/§3.4, the campaign LOG, the H100 ledger and the
+FINDINGS Do-not-try list.
+
+Tags (what readers do):
+- `landed`: on master, via churn or a campaign. Lineage; it owns its rows.
+- `lead`: moved its rows, >= 2.5% headline-equivalent, not on master. Check it first.
+- `shelf`: moved its rows (or is estimated to), below the bar. Stack only when a set sums to >= 2.5% on one base.
+- `unresolved`: inside row noise, or a route flipped. Re-test only with more runs or pinned routes.
+- `node-only`: H100 only; the line says whether the judge transfer held, flipped or is untested. A schedule change
+  needs a production-shape judge check (LOG:1859-1860).
+- `refuted`: rows flat or lost with enough runs. Binding Do-not-try until its reopen condition holds.
+- `superseded`: a later landing owns those rows. Queued items that depend on it are held.
+
+Rules:
+- Append only, newest last. A later line about the same mechanism supersedes an earlier one (readers take the newest
+  line per mechanism). To change a claim, append a new line; never edit or delete one. Same mechanism = the line
+  starts with the same hypothesis slug or names it first in parentheses (else only identical text), so put the slug there.
+- A row hit from a single run earns `shelf`, not `lead` (rows drift 1.5-2.5% per shape between runs, LESSONS:12-15).
+- The FINDINGS render marks a line "re-measure" when its board is more than margin() below today's BEST.
+
+Line format (one line; fields separated by ` | `; no `|` inside a field):
+`- [tag] <mechanism> | rows: <row keys or all> | evidence: <job ids / commits / H100 run ids, with source path:line> | board: <board at the time> | blob: <short blob of muse_prefill_layer/submission.py measured, or -> | reopen: <condition, or -> | <YYYY-MM-DD> <source: churn|campaign|h100|screen>`
+- rows: the judge's shape keys, partial keys allowed (`layer=sliding load=verify_1`, moe `load=decode_1`).
+- board: this problem's board speedup when the finding was made (4 decimals).
+- blob: the measured submission.py bytes (for `landed`, master's); `-` when nothing was measured.
+- Paths: LOG, DISTILL = `campaigns/2026-10-26-expert-bandwidth/{LOG,DISTILL}.md`; H100, KSTEP =
+  `campaigns/2026-10-26-expert-bandwidth/research/{h100-findings,kstep-schedule-2026-10-27}.md`; DECISIONS, LESSONS =
+  `hypotheses/{DECISIONS,LESSONS}.md`; FINDINGS = `muse_prefill_layer/hypotheses/FINDINGS.md` at d38e7cd4 (it is regenerated, so
+  its line numbers drift; the job id is the stable key); done/ and archive/ are under `muse_prefill_layer/hypotheses/`.
+
+Machine parse: `^- \[(landed|lead|shelf|unresolved|node-only|refuted|superseded)\] (.+?) \| rows: (.*?) \| evidence: (.*?) \| board: (.*?) \| blob: (.*?) \| reopen: (.*?) \| (\d{4}-\d{2}-\d{2}) (\w[\w-]*)$`
+
+<!-- claims below: append-only, newest last -->
+- [superseded] Marlin / Triton-NVFP4-era expert and align variants (Marlin block_size_m 48 at turn_1 and local-rows block-m; Triton w13 fused silu epilogue, persistent grid and unmasked loads at first_turn; Triton turn_4 persistent + local align; silu-mul local rows / sorted; local parallel align at first_turn; align remap on the side stream; SGLang-32 align + pre-norm restack; FA3 contiguous KV gather) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: 0606f849d2f441ad, 108231906a30407e, b2259479e57e4196, 5d9ddbbaaffd4599, aeda8b5a523642b1, c2f3e9d8297f4a18, 9528eed511b04f33, 374efc72c4d14856, 40f21883155b47eb, 9cfd4f58d24044b2 (neutral), 75bbf278dd9e430e, 8e9943ec1b004b0f (regressions) (FINDINGS:218-221, 224-229, 238, 239); the rega engine and the two-phase align own these rows since 23c1d5fa / a1a5497d / 1932a9c4 | board: 1.0744 | blob: 8507f9e9 | reopen: - | 2026-10-25 churn
+- [refuted] persistent multi-row norm boundaries and multi-token Triton MoE pre / post norm | rows: all | evidence: 46afe489e2754c83 1.0716, 3fb4e7237a604fa3 1.0714 vs 1.0744 (FINDINGS:222, 223) | board: 1.0744 | blob: cab1f9ab | reopen: - | 2026-10-25 churn
+- [landed] rega: the register-A swap-AB wgmma NVFP4 grouped GEMM (moe s4 port) for w13 + w2 at T<=4096, then at first_turn with N=128 | rows: load=turn_1, load=turn_4, load=first_turn | evidence: promotes 23c1d5fa (2910b2fb4b744865 1.3275), a1a5497d (07a069bc69ba42a8 1.4060) | board: 1.4060 | blob: c2e3e595 | reopen: - | 2026-10-25 churn
+- [landed] two-phase (chunk-count + prefix-place) MoE align on every rega class, including first_turn | rows: load=turn_1, load=turn_4, load=first_turn | evidence: promote 1932a9c4 (4e6f815a8dd945ba 1.4458) | board: 1.4458 | blob: a2fe2a75 | reopen: - | 2026-10-25 churn
+- [landed] FA3 on full-attention layers fed by a gated contiguous-KV Triton gather (per-class timing gate) | rows: layer=full | evidence: promote 020566aa (1cc92a43b8be40f8 1.4587) | board: 1.4587 | blob: 9fb1f7c4 | reopen: - | 2026-10-25 churn
+- [refuted] rega kernel schedule rewrites: two-warpgroup ping-pong consumers, E4M3 scale expansion moved to the producer warps | rows: load=turn_1, load=turn_4, load=first_turn | evidence: 5fbaec9a075543d4 1.4478, 6be2a8d3cf7d489f 1.4538 vs 1.4587 (FINDINGS:230, 231); ping-pong x1.18-1.53 slower (DECISIONS:401) | board: 1.4587 | blob: 762afd24 | reopen: - | 2026-10-25 churn
+- [refuted] qkv_gate output-gate columns split onto the side stream under attention | rows: load=turn_1, load=turn_4 | evidence: b8b8536c4ed74d78 1.4512 vs 1.4587 (FINDINGS:232) | board: 1.4587 | blob: 19661e64 | reopen: - | 2026-10-25 churn
+- [landed] pre-expert norm fused into the rega row gather (combo-a), then combo-b: norm-gather + two-CTA/SM low-class re-gate (the low-class rega-lo arm never routes on the judge; its phase is skipped since 350343bc) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: promotes 33aa4083 (9bfc488c36c84924 1.4605), 61ce79bb (73b40cd13fdf4bb0 1.4677, hand-landed) | board: 1.4677 | blob: f4751fc0 | reopen: - | 2026-10-25 churn
+- [refuted] PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2) | rows: load=turn_1, load=turn_4 | evidence: 8e4685f303c143a8 1.4622 vs 1.4677 (FINDINGS:233) | board: 1.4677 | blob: 1834ae36 | reopen: - | 2026-10-26 churn
+- [refuted] slab multicast across a 2-CTA cluster in rega (mc4 / mc2 / bm256): the ingest-cap premise is false (mc2 cut issued L2 bytes 24-39% and ran 1.31-1.81x slower) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: 0ca60bb7, a6f60630 (DISTILL:185, 439); LOG:599, 645 | board: 1.4677 | blob: - | reopen: a stage anatomy (experts-rega-stage-anatomy-diag) shows ingest-bound stages | 2026-10-26 campaign
+- [refuted] rega persistent schedule rebalancing: round-rotated item order, expert groups heaviest first, an atomic work counter (the ingest cap is partly shared; stages / CTA max/min 928/896) | rows: load=turn_1, load=turn_4 | evidence: d00770b6caef4445 1.4664: bit-exact, all classes OFF, span cycles max/mean 1.06-1.13 (LOG:1148-1150; FINDINGS:234); DECISIONS:419-420 | board: 1.4677 | blob: 7625a6d5 | reopen: - | 2026-10-27 churn
+- [refuted] rega wgmma N buckets at 16-row granularity (fine-N): ON at the high class in-prepare (pop 0.961 / 0.969, random 0.920), but the judge's warm-L2 profile shows 1096.6 vs 1098.5 us at sliding turn_4 | rows: load=turn_4, load=first_turn | evidence: c951d9168cd546bb 1.4573 (LOG:1169-1173; FINDINGS:235); fine-N-high + fast-silu held (LOG:1177) | board: 1.4677 | blob: 33168720 | reopen: - | 2026-10-27 churn
+- [landed] fast silu in the rega w13 epilogue (__fdividef; w13 alone x0.917-0.944, output error x0.996-1.003 of master's vs fp64) | rows: all | evidence: check 21911eb694ce467c 1.4949, scored ec3bd01859574bf1 1.4889 (LOG:1179-1188); promote 9fbde72c | board: 1.4889 | blob: 42ded471 | reopen: - | 2026-10-27 churn
+- [refuted] Triton o-proj GEMM at 200 < T <= 4096 (cuBLAS o is 20 us in isolation; the 39.7 us in the layer profile is not the kernel choice) | rows: load=turn_1, load=turn_4 | evidence: af3b0d0d84834ee9 1.4863, every Triton tile x1.15-1.45 slower (LOG:1279-1280; FINDINGS:236) | board: 1.4889 | blob: ffa750b4 | reopen: - | 2026-10-27 campaign
+- [refuted] rega w2 epilogue with cp.async.bulk stores (arm b; TMA contention) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: 665c32dd8c794c0b 1.5010, arm b slower everywhere x1.00-1.05 (LOG:1240-1241); DECISIONS:424 | board: 1.4889 | blob: - | reopen: - | 2026-10-27 campaign
+- [landed] rega w2 early gs / sid loads (arm a) routed at the low class (pop / random x0.975; rega-lo guard x0.966-0.968) | rows: load=turn_1 | evidence: 59eb665f162a4ac9 1.4986, confirm 8716d98c405f417d 1.4994, scored 99767cf374bb4688 1.4897 (LOG:1266-1285; FINDINGS:237 is this line); land 95af1c5f | board: 1.4897 | blob: 11a08b3f | reopen: - | 2026-10-27 campaign
+- [refuted] rega-lo V64 at the low class pinned on the judge's own routing (finding erased from FINDINGS by c3c14a4d, restored here) | rows: load=turn_1 | evidence: 546f6386; check 56752c8d (lo-pin-v64-fsilu) 1.4776 vs 1.4897 with V64 + fast silu ON [PINNED]; the gate alone kept master (guard 1.009) (LOG:2061) | board: 1.4897 | blob: - | reopen: a different low-class kernel, not V64 / V32 | 2026-10-28 campaign
+- [landed] final near-ties pinned: fa3c contig-varlen at turn_4 / turn_1, w2st arm a at high / ft, the never-routed LO phase skipped (~40 s shorter prepare); deterministic final-rerun bytes | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check 7db6fa1a 1.5055 (vs same-code checks 1.4986 / 1.4994), scored b2941ea23dc743a3 1.5008 (LOG:2039-2042, 2056-2070); land 350343bc | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-28 campaign
+- [refuted] slab multicast at the low class with the full 128-route slab (experts-rega-low-2cta-fullslab-mc2) | rows: load=turn_1 | evidence: DECISIONS:415: mc2 never landed (1.31-1.81x slower), DISTILL 3.1 retire, REGA_LO_SKIP on master | board: 1.5008 | blob: - | reopen: a stage anatomy shows ingest-bound stages | 2026-10-28 screen
+- [refuted] mc2 x bm256 wide tile stack at high / ft (experts-rega-mc2-bm256-stack-high-ft) | rows: load=turn_4, load=first_turn | evidence: DECISIONS:416: mc2 and bm256 both slower, DISTILL retire | board: 1.5008 | blob: - | reopen: a stage anatomy shows ingest-bound stages | 2026-10-28 screen
+- [refuted] PDL chain re-gate with IQR slack (experts-rega-pdl-chain-regate-iqr-slack) | rows: load=turn_1, load=turn_4 | evidence: DECISIONS:417: parent on Do-not-try (8e4685f3); the module predates fsilu / w2st | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] pre-attention q/k norm + RoPE + FP8 cache store fused into one Triton kernel (front-qknorm-rope-fp8-store-fusion-restack), est ~0.5%, stack-only | rows: all | evidence: DECISIONS:418 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [refuted] expert groups heaviest first in the rega persistent schedule (experts-rega-lpt-group-order) | rows: load=turn_1, load=turn_4 | evidence: DECISIONS:419: rotation cut the imbalance but missed its gate; round-rotated is Do-not-try | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [refuted] atomic work-counter item scheduler for rega (experts-rega-dynamic-item-scheduler) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: DECISIONS:420: stages per CTA max/min 928/896, the imbalance premise fails | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] prepare-only rega stage anatomy (experts-rega-stage-anatomy-diag), 0% headline by itself; it is the revival test for mc2 / bm256 | rows: all | evidence: DECISIONS:421; DISTILL:185, 431 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [refuted] rega epilogue with warpgroup-local barriers and bulk stores (experts-rega-epilogue-wg-local-bulk-store) | rows: all | evidence: DECISIONS:424: w2st arm a landed; the bulk store is arm b, which lost (665c32dd) | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen

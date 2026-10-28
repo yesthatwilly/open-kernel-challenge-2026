@@ -439,3 +439,8 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150031Z `muse_attention_decode` **sliding-decode1-ph-push-merge**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%, high risk
 - 2026-10-28T150032Z `muse_attention_decode` **attn-fast-math-epilogues**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%
 - 2026-10-28T150032Z `muse_attention_decode` **combo-tail-onepass-push-fastepi**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.6%; onepass on Do-not-try
+- 2026-10-28T171015Z `muse_attention_decode` **sliding-verify-s2b-b17-32-bar103**: register-landing: 4e386647edd845f7 1.6340x (submit) from campaigns/2026-10-26-expert-bandwidth/runs/4e386647edd845f7.json.gz, master 26498226d8 blob 2eb03f76ce
+- 2026-10-28T171015Z `muse_bf16_proj` **phasec-pc-lt-qkv128-readflush**: register-landing: 3e3ffc5afc57433b 1.2794x (submit) from campaigns/2026-10-26-expert-bandwidth/runs/3e3ffc5afc57433b.json.gz, master 62da2d9e80 blob a36f33927c
+- 2026-10-28T171015Z `muse_decode_layer` **phasec-dec-pin16-v4c**: register-landing: 83f0c00eb3644e1c 1.6551x (submit) from campaigns/2026-10-26-expert-bandwidth/runs/83f0c00eb3644e1c.json.gz, master ec3c4dcbb1 blob b04cdf5cf5
+- 2026-10-28T171015Z `muse_moe_w4a16` **campaign-eb-x1v6**: register-landing: 0b49b1aae6a04acb 1.8941x (submit) from campaigns/2026-10-26-expert-bandwidth/runs/0b49b1aae6a04acb.json.gz, master 2ec8090fab blob 54068229a8
+- 2026-10-28T171015Z `muse_prefill_layer` **phasec-final-near-ties-nolo**: register-landing: b2941ea23dc743a3 1.5008x (submit) from campaigns/2026-10-26-expert-bandwidth/runs/b2941ea23dc743a3.json.gz, master 350343bcf2 blob c63801e7a1

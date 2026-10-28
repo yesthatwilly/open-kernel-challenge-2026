@@ -12,10 +12,19 @@ optimizer is at proposing one to itself.
 
 ## Read
 
+- `{PROBLEM}/hypotheses/CLAIMS.md` first (`hyp.py claims {PROBLEM}` prints the newest line per mechanism): the
+  curated findings, tagged [landed] (on master, owns its rows) [lead] [shelf] (moved its rows below the bar)
+  [unresolved] [node-only] (H100 only) [refuted] [superseded]. A [refuted]/[superseded] mechanism is dead unless
+  its `reopen` condition is met; do not re-derive what a claim already settles.
+- The active campaign (the `status: active` row of `campaigns/INDEX.md`; `hyp.py context {PROBLEM}` names it):
+  its `FINDINGS.md`, `DISTILL.md` §3 (kills, traps, reopen rules) and §4.4, the top 150 lines of `LOG.md`, and
+  `research/h100-findings.md` for this problem (per-SM cycles transfer to the judge H200; HBM rates do not). Most
+  of master's recent submission.py commits are campaign landings that churn's done/ files never saw.
 - `{PROBLEM}/hypotheses/FINDINGS.md` (current best, per-shape profile vs SGLang and SoL, by area,
   open follow-ups, Do not try), `{PROBLEM}/hypotheses/INDEX.md`, `{PROBLEM}/TASK.md`.
 - `hypotheses/LESSONS.md` (cross-problem) and this problem's lines in `hypotheses/DECISIONS.md`.
-- Every `{PROBLEM}/hypotheses/REWRITE_READ_*.md`, and the previous `DIAGNOSIS.md` if present.
+- Every `{PROBLEM}/hypotheses/REWRITE_READ_*.md`, and the previous `DIAGNOSIS.md` if present (historical:
+  written on its own `best:` board; check its claims against today's BEST before repeating them).
 - For the claims you make, the hypothesis files under `{PROBLEM}/hypotheses/done/*/` (including
   their `## Adversarial review` and `## Attribution` sections) and their `.result.json`.
 - `rules/technical-rules.llms.txt` before recommending anything near a rule.
@@ -72,10 +81,20 @@ One of **pivot** | **refactor** | **targeted**, and why in one sentence.
 - `<slug>`(s): the mechanism and the measured reason it is dead. Rewrite stages are not dead ends
   because a stage was slow.
 
+## Claims (proposed; churnsubs appends them to CLAIMS.md with `churn.py claim-add`)
+- [tag] <mechanism> | rows: <row keys or 'all'> | evidence: <job ids / commits, with source path:line> | board: <board when measured> | blob: <short blob or -> | reopen: <condition, or -> | <YYYY-MM-DD> churn
+
 ## LESSONS edits (proposed; churnsubs applies them)
 - retire | merge | correct: `<the line, quoted>` → why (slug or file evidence).
 ```
 
+Every finding that settles a mechanism goes under **Claims** as one line in exactly that format, not in prose
+only: a dead end is [refuted] with its `reopen` rule, a mechanism a later landing made moot is [superseded], a
+row win too small to land alone is [shelf] (say which stack it belongs to), a row move inside run-to-run drift
+(1.5-2.5% per shape) or across a route flip is [unresolved]. One run's row hit earns [shelf], never [lead].
+Do not repeat a claim CLAIMS.md already holds unless you change its tag.
+
 ## Return
 
-Under 120 words: the path, the strategy, the top action, and the most important Do-not-try entry.
+Under 120 words: the path, the strategy, the top action, the most important Do-not-try entry, and the
+number of proposed claims by tag.

@@ -11,8 +11,8 @@
  "commit": "ec3c4dcbb101c204b6b525d6498fb0b07eab658e",
  "submission_blob": "b04cdf5cf59b340758028e29ece6a0c5925f2c5b",
  "slug": "phasec-dec-pin16-v4c",
- "result": null,
- "updated_at": "2026-10-28T1346Z",
+ "result": "muse_decode_layer/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-28T171015Z",
  "master_slug": "phasec-dec-pin16-v4c",
  "master_job": "83f0c00eb3644e1c",
  "note": "registered by hand 2026-10-28: phase-C variant dec-pin16-v4c (campaign expert-bandwidth, branch phasec/dec-1028) = the 1.6470 X1v6 decode board with Engine A v4c pinned at T=9..16 (the race flipped v4 / v4c 6:4 across today's runs; the layer prefers v4c there); check 86edd970 1.6599; scored 1.6551 vs 1.6470; landed on master."

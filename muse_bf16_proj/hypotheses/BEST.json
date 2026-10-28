@@ -12,8 +12,8 @@
  "commit": "62da2d9e805bd0a710a40eaa6e30439360a4f068",
  "submission_blob": "a36f33927c06500cbba267d7e0be2235eb8cd716",
  "slug": "phasec-pc-lt-qkv128-readflush",
- "result": null,
- "updated_at": "2026-10-28T1302Z",
+ "result": "muse_bf16_proj/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-28T171015Z",
  "master_slug": "phasec-pc-lt-qkv128-readflush",
  "master_job": "3e3ffc5afc57433b",
  "note": "registered by hand 2026-10-28: phase-C variant pc-lt-qkv128-readflush (campaign expert-bandwidth, branch phasec/bf16-1028 92b717c2) = the 1.274 board with the qkv m=128 cuBLASLt plan ranked and gated under the judge's read flush; check 0c9095e2 1.2844; scored 1.2794 vs 1.2740; landed on master."

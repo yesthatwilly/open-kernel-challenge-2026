@@ -50,3 +50,6 @@ Reply with ONLY a JSON object:
 {"verdict": "dispatch" | "dispatch-with-fixes" | "hold", "fixes": ["..."], "rules_ok": true|false,
  "residual_risk": "one line", "hold_reason": "only if hold"}
 `hold` only for a rules problem you cannot fix minimally, or a build that cannot work as written.
+Do not write `{PROBLEM}/hypotheses/CLAIMS.md`: the main thread records one claim per harvested run with
+`churn.py claim-add`. When a hold or a fix shows the mechanism itself cannot pay on these shapes (not
+just this build), say so in `residual_risk` or `hold_reason` in one sentence that can become that claim.
