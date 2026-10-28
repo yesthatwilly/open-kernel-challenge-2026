@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1708Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1717Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -42,9 +42,8 @@ append-only, newest last.
       each dispatch.
     - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope check 7284659f read
       **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
-    - Trim verification checks dispatched 17:08Z (reserved; no scored runs, behaviour-identical bytes): moe
-      trim-moe **2864f0f4** (eb-trim 742f3209, 827,317 B) and decode trim-docstrip-decode **6985e7f4**
-      (eb-trimd 8cb23d1f, 893,346 B). PASS (tests + PATH lines = the board's) -> phase A bases on them.
+    - **Phase-A bases, verified on the judge:** moe campaign/eb-trim 742f3209 (827,317 B; check 2864f0f4 1.8873
+      PASS) and decode campaign/eb-trimd 8cb23d1f (893,346 B; check 6985e7f4 1.6452 PASS).
     - `phaseA-1029-panel` attn-fixed (wf_c53b5c8a-873; at its final spec 17:07Z): both designs back by 15:34Z ((1) "swf": one cluster
       launch per sliding-verify step with in-kernel pre-attention on the board's wgmma window tile body; (2)
       full verify B=1 off FA3 via the window kernel at window 0); judge, red team and final spec running.
@@ -2212,3 +2211,14 @@ with the operator's go-ahead.
     rewritten.
   - Campaign landings never reach churn's BEST.json `result` or `landed()` lineage (its review:
     hypotheses/FINDINGS-MODEL-REVIEW-2026-10-28.md).
+
+## 2026-10-28T1717Z: both trim checks PASS; phase A bases on campaign/eb-trim (moe) and campaign/eb-trimd (decode)
+
+- moe trim-moe **2864f0f4: 1.8873** [1.859, 1.916] vs board 1.8941: 5/5, PATH decisions identical (only race
+  timings differ), rows within noise, prepare 109.1 s (board 126.6 s).
+- decode trim-docstrip-decode **6985e7f4: 1.6452** [1.620, 1.670] vs board 1.6551 (today's same-code range
+  1.634-1.660): 13/13. 13 of 14 PATH decisions are identical; the c320d piece-A race drew c320t, today's 9-of-10
+  winner. Rows within 1-5% noise, prepare 118.7 s.
+- No scored runs: the bytes are behaviour-identical. Room for phase A: moe 162 KB, decode 96.7 KB. build.py's
+  docstring strip (8cb23d1f) is proven on the judge. Runs archived in runs/; attempts on each branch.
+- Checks left: moe 6, decode 4 (the reservations are now spent); attention keeps 2 reserved for the attn-fixed panel.
