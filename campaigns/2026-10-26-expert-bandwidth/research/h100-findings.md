@@ -291,3 +291,368 @@ Runs `runs/20261027-184017-gpunode06` and `-184020`; fitted with the harvest scr
   - K9-config headline x1.3310 / 1.3384 vs the board's x1.2950 / 1.3004 (+2.8%).
 - **Prepare:** warm prepare 120-141 s vs the board's ~34 s (the v6 build is 32 s plus its canary, race and copy check).
   Cold behaviour and deadline effects are read from the Q3 cold isolated runs.
+
+## 2026-10-28T0328Z: the moe-track program, PRE-REGISTERED (R2) and queued
+
+- Harness: takemyjob 3d1dfd2 (merge of hopper/nj-moe 5f53c70: E1 + E1b, E3, E4); bundle nodejudge, nodejudge.py 8866e311; moe board.py PINNED to 498afbd8 (a copy, not the master link: master moved to the S3 bytes b464bd4b at 2abc122e, which route v6 at T=8 on the node).
+- **Queued** (the user approved, ~03:25Z): m00 r1/r2, m456 c8/c16/c32/c128 r1/r2, m08t8 r1/r2, m1 b0..b6, p3. m456 and m08t8 wait for queue/gates/m00-accepted (written by hand after reading M00).
+- **Held, not queued:** m07 and m08t1 (T=1 is now Engine A v6 on the board, so v1-at-T=1 arms are superseded), m03c (X0b: fork-knob arms vs master flip sign node -> judge; needs a judge carrier).
+
+The staged registrations follow verbatim (queue-staged/registrations.md):
+
+
+### m00 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M00 [10 GPU-min, needs E1+E3, judge: no]: is the forced-arm A/B exact and sensitive? A = as raced (the base), B = every timed-shape flag re-set to its raced value, C = serial H-16 at T=256, D = Engine A v4 at T=128; same/same2 = identity arms (two, to tell a base-position bias from arm noise)
+- **Expected effect:** B (raced) vs A: 12/12 row points (6 shapes x 2 replicates) within +-0.3% and >= 11/12 CIs covering 1; the same, separately, for same vs A, for same2 vs A, and for same2 vs same (abstat.py inproc --base same --arm same2); C verify 32 in x0.88-0.96 (races predict x0.91-0.94; GPU 7 integration run x0.922); D verify 16 below 1 (~-1.5%; GPU 7 x0.973); identical kernel lists for B/same/same2 vs A. Integration history: before 10-28 02:05Z the base was the only party captured without a prior eager call and an identity arm read x1.0102 RESOLVED at verify 1 (run 20261027-185629); with the base given the same eager call the identity rows read x0.998-1.000, headline x0.9993 (run 20261027-190516); same2 checks that the fix holds at 300 reps
+- **Decision rule:** accept E1 (the in-process instrument) only if all hold, every party ran with 0 check failures and no R1 void, and both replicates exited rc 0; then (and only then) the orchestrator writes queue/gates/m00-accepted, which releases 31-34; the B/identity spread sets the in-process MDE (R6); a resolved identity row voids in-process arm readings on that row until explained
+- **Metric:** R3a per row + headline vs the base; also same2 vs same (abstat.py inproc --base same --arm same2); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm same2** (of board):  -- second identity arm
+- **Arm raced** (of board): post `{"ea.on.1": {"$expr": "base['ea']['on'][1]"}, "ea.on.8": {"$expr": "base['ea']['on'][8]"}, "ea.on.16": {"$expr": "base['ea']['on'][16]"}, "ea.on.32": {"$expr": "base['ea']['on'][32]"}, "ea.on.128": {"$expr": "base['ea']['on'][128]"}, "ea.on.256": {"$expr": "base['ea']['on'][256]"}, "hm.on.128": {"$expr": "base['hm']['on'][128]"}, "hm.on.256": {"$expr": "base['hm']['on'][256]"}, "hm.fon.128": {"$expr": "base['hm']['fon'][128]"}, "hm.fon.256": {"$expr": "base['hm']['fon'][256]"}, "hm.cold": {"$expr": "base['hm']['cold']"}, "hm.cold_bits.128": {"$expr": "base['hm']['cold_bits'][128]"}, "hm.cold_bits.256": {"$expr": "base['hm']['cold_bits'][256]"}, "wg_on_128": {"$expr": "base['wg_on_128']"}, "wg_on_256": {"$expr": "base['wg_on_256']"}, "wg_pdl": {"$expr": "base['wg_pdl']"}, "w2_mode": {"$expr": "base['w2_mode']"}, "w13_mode": {"$expr": "base['w13_mode']"}, "d32_align": {"$expr": "base['d32_align']"}, "d32_post_norm": {"$expr": "base['d32_post_norm']"}, "ea.g2_t": {"$expr": "dict(base['ea']['g2_t'])"}, "ea.cmb_t": {"$expr": "dict(base['ea']['cmb_t'])"}}` -- M00-B: every timed-shape flag set to its raced value
+- **Arm h256serial** (of board): post `{"hm.on.256": -16, "hm.fon.256": false}` -- M00-C: serial H-16 at T=256
+- **Arm v4t128** (of board): post `{"hm.on.128": 0, "hm.fon.128": false, "ea.on.128": "v4"}` -- M00-D: Engine A v4 at T=128
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m00-r1.json`, seed 4545804740698577694, job `queue/pending/30-h100-m00-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m00-r2.json`, seed 3568204243879638241, job `queue/pending/30-h100-m00-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m07 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M07 [5 GPU-min, needs E1, judge: J0 carrier]: does K1's w2 prefetch cut decode 1? pf_t[1] is a max-active-experts threshold (prefetch only when n_act <= pf_t[1]), so at k in {2, 3} the program's pf_t {2,3,4,8} are two behaviours: pf2 (prefetch at k=2 only) and pf3 (= pf4 = pf8, prefetch at both). Controls pdl=0 and v4; split by 2 vs 3 distinct local experts (E1b k_local [2, 3])
+- **Expected effect:** trade-off arm (R8: changes prefetch / L2 use): pf arms within +-2% of v1; a gain, if any, larger at k=2
+- **Decision rule:** +2% or more in both replicates: send to the J0 carrier, pin only at +1.5% or more judge-side; every pf arm at +0.5% or less: close prefetch for moe and decode
+- **Metric:** R3a decode 1 row per arm vs v1 (abstat.py inproc --base v1) and vs the base, strata k = 2 / 3; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 400, shapes decode 1; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm v1** (of board): post `{"ea.on.1": "v1"}` -- v1 pinned (the raced class-1 pick, 23/23 node)
+- **Arm pf2** (of board): post `{"ea.on.1": "v1", "new:ea.pf_t": {"$expr": "{1: 2}"}}` -- v1 + K1 w2 prefetch when n_act <= 2 (pf_t[1] = 2 is a max-active threshold): on at k=2, OFF at k=3 (its k=3 stratum is a pre-registered null vs v1)
+- **Arm pf3** (of board): post `{"ea.on.1": "v1", "new:ea.pf_t": {"$expr": "{1: 3}"}}` -- v1 + K1 w2 prefetch when n_act <= 3: on at k=2 and k=3 (stands for pf3/pf4/pf8, identical at k<=3)
+- **Arm pdl0** (of board): post `{"ea.on.1": "v1", "ea.pdl": 0}` -- control: v1 with K2's PDL off
+- **Arm v4** (of board): post `{"ea.on.1": "v4"}` -- control: Engine A v4 at T=1
+- **Routing control decode 1:** {"k_local": [2, 3], "method": "construct"}
+- **Pre-registered:** pf2's k=3 stratum is a null (prefetch off there): it must read within the MDE of v1, else the arm reading is void until explained; pf2's effect is read on its k=2 stratum, pf3's on both
+- **Pre-registered:** pf4 and pf8 are not run: at k <= 3 they are the same kernel arguments' behaviour as pf3 (threshold met)
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m07-r1.json`, seed 4079379381259440351, job `queue/pending/31-h100-m07-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m07-r2.json`, seed 2852634887404032162, job `queue/pending/31-h100-m07-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m456-c8 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M456 [16 GPU-min for all four classes, needs E1, judge: carrier for arms above 1%]: which engine, cw, K2 grid and combine win the Engine A class of T=8 (verify 1)? every arm forces the whole class
+- **Expected effect:** same-bytes arms (R8: the sign transfers): spread within ~+-1.5% of the raced pick; X0a/X0b: v4 >= v1 and v4 ~ v4c on the node at T=8 (the judge favours v4 by ~5% at T=8), v4 >= v4c at T=16 by ~0.7%
+- **Decision rule:** pin a class's best arm at +0.5% or more in both replicates; ties: R10 (pin v4 at classes 8 and 16); change K2 or the combine only at +0.8% or more; arms above 1% go to the carrier
+- **Metric:** R3a verify 1 row per arm vs the base and arm vs arm (abstat.py inproc); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes verify 1; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm c8v1** (of board): post `{"ea.on.2..8": "v1"}` -- T=8 class: v1
+- **Arm c8v4** (of board): post `{"ea.on.2..8": "v4"}` -- T=8 class: v4
+- **Arm c8v4c7** (of board): post `{"ea.on.2..8": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=8 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112)
+- **Arm c8v4c9** (of board): post `{"ea.on.2..8": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 144}` -- T=8 class: v4c cw9 (cap EA_PDL_BITS.v4c = 144)
+- **Arm c8v4k2** (of board): post `{"ea.on.2..8": "v4", "new:ea.g2_t.8": {"$expr": "base['ea']['grid'] // EA_CTAS_PER_SM"}}` -- T=8 class: v4, K2 on one CTA per SM
+- **Arm c8v4tri** (of board): post `{"ea.on.2..8": "v4", "new:ea.cmb_t.8": 0}` -- T=8 class: v4, Triton combine
+- **Pre-registered:** the base's class-8 engine is raced at prepare and can differ between replicates (class 8 flips v1/v4 in ~40% of prepares): the decision is arm vs arm (every arm forces the class), and the base's PATH CHOSEN / FLAGS line is stated per replicate
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m456-c8-r1.json`, seed 2032779984247594520, job `queue/pending/32-h100-m456-c8-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m456-c8-r2.json`, seed 934202439948931335, job `queue/pending/32-h100-m456-c8-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m456-c16 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M456 [16 GPU-min for all four classes, needs E1, judge: carrier for arms above 1%]: which engine, cw, K2 grid and combine win the Engine A class of T=16 (decode 16)? every arm forces the whole class
+- **Expected effect:** same-bytes arms (R8: the sign transfers): spread within ~+-1.5% of the raced pick; X0a/X0b: v4 >= v1 and v4 ~ v4c on the node at T=8 (the judge favours v4 by ~5% at T=8), v4 >= v4c at T=16 by ~0.7%
+- **Decision rule:** pin a class's best arm at +0.5% or more in both replicates; ties: R10 (pin v4 at classes 8 and 16); change K2 or the combine only at +0.8% or more; arms above 1% go to the carrier
+- **Metric:** R3a decode 16 row per arm vs the base and arm vs arm (abstat.py inproc); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes decode 16; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm c16v4** (of board): post `{"ea.on.9..16": "v4"}` -- T=16 class: v4
+- **Arm c16v4c7** (of board): post `{"ea.on.9..16": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=16 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112)
+- **Arm c16v4c8** (of board): post `{"ea.on.9..16": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 128}` -- T=16 class: v4c cw8 (cap EA_PDL_BITS.v4c = 128)
+- **Arm c16v4c9** (of board): post `{"ea.on.9..16": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 144}` -- T=16 class: v4c cw9 (cap EA_PDL_BITS.v4c = 144)
+- **Arm c16v4c11** (of board): post `{"ea.on.9..16": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 176}` -- T=16 class: v4c cw11 (cap EA_PDL_BITS.v4c = 176)
+- **Arm c16v3** (of board): post `{"ea.on.9..16": "v3"}` -- T=16 class: v3
+- **Arm c16v4k2** (of board): post `{"ea.on.9..16": "v4", "new:ea.g2_t.16": {"$expr": "base['ea']['grid'] // EA_CTAS_PER_SM"}}` -- T=16 class: v4, K2 on one CTA per SM
+- **Pre-registered:** the base's class-16 engine is raced at prepare and can differ between replicates (class 8 flips v1/v4 in ~40% of prepares): the decision is arm vs arm (every arm forces the class), and the base's PATH CHOSEN / FLAGS line is stated per replicate
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m456-c16-r1.json`, seed 1394946176265187079, job `queue/pending/32-h100-m456-c16-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m456-c16-r2.json`, seed 3920564090368528973, job `queue/pending/32-h100-m456-c16-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m456-c32 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M456 [16 GPU-min for all four classes, needs E1, judge: carrier for arms above 1%]: which engine, cw, K2 grid and combine win the Engine A class of T=32 (decode 32)? every arm forces the whole class
+- **Expected effect:** same-bytes arms (R8: the sign transfers): spread within ~+-1.5% of the raced pick; X0a/X0b: v4 >= v1 and v4 ~ v4c on the node at T=8 (the judge favours v4 by ~5% at T=8), v4 >= v4c at T=16 by ~0.7%
+- **Decision rule:** pin a class's best arm at +0.5% or more in both replicates; ties: R10 (pin v4 at classes 8 and 16); change K2 or the combine only at +0.8% or more; arms above 1% go to the carrier
+- **Metric:** R3a decode 32 row per arm vs the base and arm vs arm (abstat.py inproc); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes decode 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm c32v4c6** (of board): post `{"ea.on.17..32": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 96}` -- T=32 class: v4c cw6 (cap EA_PDL_BITS.v4c = 96)
+- **Arm c32v4c7** (of board): post `{"ea.on.17..32": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=32 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112)
+- **Arm c32v4c9** (of board): post `{"ea.on.17..32": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 144}` -- T=32 class: v4c cw9 (cap EA_PDL_BITS.v4c = 144)
+- **Arm c32v4c11** (of board): post `{"ea.on.17..32": "v4c"}`; cap `{"EA_PDL_BITS.v4c": 176}` -- T=32 class: v4c cw11 (cap EA_PDL_BITS.v4c = 176)
+- **Arm c32v4** (of board): post `{"ea.on.17..32": "v4"}` -- T=32 class: v4
+- **Arm c32v4ck2** (of board): post `{"ea.on.17..32": "v4c", "new:ea.g2_t.32": {"$expr": "base['ea']['grid'] // EA_CTAS_PER_SM"}}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=32 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112), K2 on one CTA per SM
+- **Arm c32v4ctri** (of board): post `{"ea.on.17..32": "v4c", "new:ea.cmb_t.32": 0}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=32 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112), Triton combine
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m456-c32-r1.json`, seed 3439729908768725824, job `queue/pending/32-h100-m456-c32-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m456-c32-r2.json`, seed 2956738619624274360, job `queue/pending/32-h100-m456-c32-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m456-c128 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M456 [16 GPU-min for all four classes, needs E1, judge: carrier for arms above 1%]: which engine, cw, K2 grid and combine win the Engine A class of T=128 (verify 16)? every arm forces the whole class
+- **Expected effect:** same-bytes arms (R8: the sign transfers): spread within ~+-1.5% of the raced pick; X0a/X0b: v4 >= v1 and v4 ~ v4c on the node at T=8 (the judge favours v4 by ~5% at T=8), v4 >= v4c at T=16 by ~0.7%
+- **Decision rule:** pin a class's best arm at +0.5% or more in both replicates; ties: R10 (pin v4 at classes 8 and 16); change K2 or the combine only at +0.8% or more; arms above 1% go to the carrier
+- **Metric:** R3a verify 16 row per arm vs the base and arm vs arm (abstat.py inproc); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes verify 16; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm c128v4c7** (of board): post `{"ea.on.128": "v4c", "hm.on.128": 0, "hm.fon.128": false}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=128 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112)
+- **Arm c128v4c9** (of board): post `{"ea.on.128": "v4c", "hm.on.128": 0, "hm.fon.128": false}`; cap `{"EA_PDL_BITS.v4c": 144}` -- T=128 class: v4c cw9 (cap EA_PDL_BITS.v4c = 144)
+- **Arm c128v4c11** (of board): post `{"ea.on.128": "v4c", "hm.on.128": 0, "hm.fon.128": false}`; cap `{"EA_PDL_BITS.v4c": 176}` -- T=128 class: v4c cw11 (cap EA_PDL_BITS.v4c = 176)
+- **Arm c128v4** (of board): post `{"ea.on.128": "v4", "hm.on.128": 0, "hm.fon.128": false}` -- T=128 class: v4
+- **Arm c128v4ck2** (of board): post `{"ea.on.128": "v4c", "hm.on.128": 0, "hm.fon.128": false, "new:ea.g2_t.128": {"$expr": "base['ea']['grid'] // EA_CTAS_PER_SM"}}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=128 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112), K2 on one CTA per SM
+- **Arm c128v4ccuda** (of board): post `{"ea.on.128": "v4c", "hm.on.128": 0, "hm.fon.128": false, "new:ea.cmb_t.128": 1}`; cap `{"EA_PDL_BITS.v4c": 112}` -- T=128 class: v4c cw7 (cap EA_PDL_BITS.v4c = 112), CUDA combine (cmb_t=1)
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m456-c128-r1.json`, seed 2947383060488994142, job `queue/pending/32-h100-m456-c128-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m456-c128-r2.json`, seed 2391619555393727555, job `queue/pending/32-h100-m456-c128-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m03c (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M03c [10 GPU-min, needs E1+E3, judge: carrier]: which cold-half knob shortens the T=256 fork? H-16f with cold_bits[256] = cw<<4 for cw 7/9/11, cold v3, WG PDL off; controls H-16 serial and H-8f; nsys pass gives each half's time and the overlap
+- **Expected effect:** trade-off arms (R8: the fork's SM partition / bytes): cw arms within +-1.5% of H-16f; E3 (moe-prof) shows the cold half holding the SMs for 163 of 343 us of the hot path, so cold-half knobs can move the row; X0b: the node overstates the fork's gain (x1.084 node vs x1.036 judge)
+- **Decision rule:** pin at +0.8% or more in both replicates, and only if the cold half is on the critical path (E3 diff); a judge carrier reading before any pin (trade-off arm)
+- **Metric:** R3a verify 32 row per arm vs the base (H-16f) + E3 critical path per arm (nj_profile.py diff); MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 300, shapes verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm h16fcw7** (of board): post `{"hm.on.256": -16, "hm.fon.256": true, "hm.cold_bits.256": 112}` -- H-16f, cold half cost-weighted cw7 (cold_bits[256] = 112)
+- **Arm h16fcw9** (of board): post `{"hm.on.256": -16, "hm.fon.256": true, "hm.cold_bits.256": 144}` -- H-16f, cold half cost-weighted cw9 (cold_bits[256] = 144)
+- **Arm h16fcw11** (of board): post `{"hm.on.256": -16, "hm.fon.256": true, "hm.cold_bits.256": 176}` -- H-16f, cold half cost-weighted cw11 (cold_bits[256] = 176)
+- **Arm h16fv3** (of board): post `{"hm.on.256": -16, "hm.fon.256": true, "hm.cold": "v3"}` -- H-16f, cold half on Engine A v3
+- **Arm h16fwgpdl0** (of board): post `{"hm.on.256": -16, "hm.fon.256": true, "wg_pdl": false}` -- H-16f, WG PDL off
+- **Arm h16** (of board): post `{"hm.on.256": -16, "hm.fon.256": false}` -- control: serial H-16
+- **Arm h8f** (of board): post `{"hm.on.256": -8, "hm.fon.256": true}` -- control: H-8f
+- **Pre-registered:** the base runs hm.cold_bits.256 = 0 (plain v4 cold split, cw0) at T=256 in every non-ncu board run (only ncu prepares read 112): h16fcw7/9/11 each CHANGE it (0 -> 112/144/176); none equals the board
+- **Pre-registered:** an E3 PROFILE FIDELITY FAIL (tol 3%) on a party marks that party's critical path unusable; the 'cold half on the critical path' clause is then read from the parties that pass, and no pin rests on a failing party's split
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m03c-r1.json`, seed 2340456597447584653, job `queue/pending/33-h100-m03c-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m03c-r2.json`, seed 2884765605473563054, job `queue/pending/33-h100-m03c-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m08t1 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M08+P2 T=1 [26 GPU-min with m08t8, needs E1b+E3, judge: no]: is the T=1 expert cost fixed (a) or per expert (b)? k in {0,1,2,3,4,6,8} local experts, ~200 reps per k; arms v1, v1+pf8 (prefetch at every k), v4, v3; nsys pass over every k (K1, K2, combine, gaps)
+- **Expected effect:** E1 GPU 7 reading: board T=1 fit t = 11.3 + 10.81 k us (integration run k 1..4: 14.6 + 9.97 k); a should transfer ~1:1 and b at x0.69-0.97 (judge 10.3 us per expert)
+- **Decision rule:** a(T=1) >= 12 us: S3 becomes fixed-cost work (fusion or a persistent T<=8 kernel, >= 1% headline); b >= 9.28 us per expert (1.3x the ring rate) concentrated in one kernel: S3 becomes a streaming engine; the arm with the smallest b is the class-1 pin candidate
+- **Metric:** BY_K fit t = a + b*k per party; R3a per k stratum; E3 kernel split per k; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 1400, shapes decode 1; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm t1v1** (of board): post `{"ea.on.1": "v1"}`
+- **Arm t1v1pf8** (of board): post `{"ea.on.1": "v1", "new:ea.pf_t": {"$expr": "{1: 8}"}}`
+- **Arm t1v4** (of board): post `{"ea.on.1": "v4"}`
+- **Arm t1v3** (of board): post `{"ea.on.1": "v3"}`
+- **Routing control decode 1:** {"k_local": [0, 1, 2, 3, 4, 6, 8], "method": "construct"}
+- **Pre-registered:** BY_K fit t = a + b*k is reported twice, on all k and on k >= 1 (k=0 has no local route: never drawn by the judge, all-zero reference, high leverage on a); the decision reads the k >= 1 fit
+- **Pre-registered:** t1v1pf8 sets pf_t[1] = 8 (a max-active threshold), so its prefetch is on at every k in the range and its fit spans one regime (audit 10-28: pf_t[1] = 4 would switch it off at k = 6, 8)
+- **Pre-registered:** E3 fidelity: T=1 rows are ~11-100 us and nsys adds 1.5-5% on short rows. A PROFILE FIDELITY FAIL (tol 3%) marks that party x k kernel split unusable; the 'b concentrated in one kernel' clause is read only from k strata whose split passes, and with fewer than 3 passing k >= 1 strata it is undecided and the decision rests on BY_K (a, b) alone
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m08t1-r1.json`, seed 24378362869959566, job `queue/pending/34-h100-m08t1-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m08t1-r2.json`, seed 3000658969699471195, job `queue/pending/34-h100-m08t1-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m08t8 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M08+P2 T=8 [26 GPU-min with m08t1, needs E1b+E3, judge: no]: is the T=8 expert cost fixed or per expert? k in {0,2,...,14} local experts, 13 local routes for k 2..12 (the harness clamps L to [k, T*min(topk, k)]: L = 0 at k=0 and L = 14 at k=14), ~200 reps per k; arms v1, v4, v4c (whole class 2..8); nsys pass over every k
+- **Expected effect:** E1 GPU 7 reading: board T=8 fit t = 15.9 + 10.21 k us at 13 routes; b at x0.69-0.97 on the judge
+- **Decision rule:** as m08t1: a >= 12 us -> fixed-cost work; b >= 9.28 us per expert in one kernel -> streaming engine; the smallest-b arm is the class-8 pin candidate (with M456)
+- **Metric:** BY_K fit t = a + b*k per party; R3a per k stratum; E3 kernel split per k; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 1600, shapes verify 1; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm same** (of board):  -- in-process null (R5): identity arm, no overrides
+- **Arm c8v1** (of board): post `{"ea.on.2..8": "v1"}`
+- **Arm c8v4** (of board): post `{"ea.on.2..8": "v4"}`
+- **Arm c8v4c** (of board): post `{"ea.on.2..8": "v4c"}`
+- **Routing control verify 1:** {"k_local": [0, 2, 4, 6, 8, 10, 12, 14], "local_routes": 13, "method": "construct"}
+- **Pre-registered:** the decision reads the BY_K fit on k 2..12 (fixed L = 13); k=0 (L=0, never drawn by the judge, all-zero reference) and k=14 (L=14) are reported apart, and the all-k fit is shown for reference
+- **Pre-registered:** E3 fidelity: as m08t1 (a FAIL marks that party x k split unusable; the one-kernel clause needs >= 3 passing strata in k 2..12, else the decision rests on BY_K alone)
+- **Pre-registered:** the in-process MDE per row is at least M00's identity spread on that row (max of |same-1|, |same2-1|, |same2/same-1|): an arm reading inside it is unresolved whatever its interval
+- **Pre-registered:** every arm is read against the identity arm `same` (captured like every arm) as well as against the base: a pin or a close needs both readings to agree in sign and clear the MDE (GPU 7 smoke 20261027-194606: `same` read x1.0072 RESOLVED vs the base at verify 1 on 16 pairs, so a base-capture offset is not excluded)
+- **Pre-registered:** R11/R1: a row with any check failure on the arm or its base, or a shape the clock monitor voided, is VOID (arms.txt / abstat inproc print VOID); a headline with a void row is VOID
+- **Pre-registered:** R4: the runner cannot pin a GPU (gpus=1 takes any free pool GPU); each replicate's GPU is read from its CUDA_VISIBLE_DEVICES line, and a replicate that landed on its sibling's GPU is re-run (new job, same config)
+- **Replicate 1:** config `configs/m08t8-r1.json`, seed 4499152488654165744, job `queue/pending/34-h100-m08t8-r1.job` (staged in queue-staged/)
+- **Replicate 2:** config `configs/m08t8-r2.json`, seed 4058921836810187547, job `queue/pending/34-h100-m08t8-r2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b0 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 warm-up (not a block, never analysed): builds board, copy and SGLang into the env's warm caches so b1-b3 are WARM for both processes
+- **Expected effect:** both processes pass; the copy's prepare may be cold (~110 s)
+- **Decision rule:** none (prerequisite of b1)
+- **Metric:** none; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches WARM, reps 4, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Replicate 1:** config `configs/m1-b0.json`, seed 202610281000, job `queue/pending/35-h100-m1-b0.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b1 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 1/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order AB, caches WARM
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches WARM, reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b1.json`, seed 202610281001, job `queue/pending/35-h100-m1-b1.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b2 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 2/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order BA, caches WARM
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches WARM, reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b2.json`, seed 202610281002, job `queue/pending/35-h100-m1-b2.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b3 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 3/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order AB, caches WARM
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches WARM, reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b3.json`, seed 202610281003, job `queue/pending/35-h100-m1-b3.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b4 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 4/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order BA, caches COLD
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches COLD (fresh_build), reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b4.json`, seed 202610281004, job `queue/pending/35-h100-m1-b4.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b5 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 5/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order AB, caches COLD
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches COLD (fresh_build), reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b5.json`, seed 202610281005, job `queue/pending/35-h100-m1-b5.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### m1-b6 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** M1 block 6/6 [25 GPU-min for 6 blocks, needs none, judge: no]: how noisy are isolated runs and how often do races flip? board vs a byte-identical copy, one judge-shaped process each (SGLang + it), order BA, caches COLD
+- **Expected effect:** null: block log-ratio ~0; with E4's X0a, class 8 flips ~36-43% of prepares, class 16 ~7-9%, the rest 0
+- **Decision rule:** the 6 blocks set the isolated MDE (R6); an order or GPU effect above 0.2% makes AB/BA + GPU balancing mandatory; flip rates reported with the 7 earlier runs and X0a's 23
+- **Metric:** R3b mean block log-ratio, t-interval, over the 6 m1 blocks (abstat.py iso --blocks-from ... --metric paired, and --metric raw: each process's raw replay median); PATH CHOSEN per process; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, isolated processes, caches COLD (fresh_build), reps 100, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes copy:** `snap/copy-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Bytes sglang:** `baseline.py` sha256 `4fc48bd9cdfd749863c93a2dbf4e556e0c38fb04acc4fa48a53ef34cbf6c92a1`
+- **Pre-registered:** the block table records each process's prepare_s and PATH CHOSEN; a WARM block in which either process prepared for more than 60 s is not warm and is reported apart, not pooled with b1-b3
+- **Pre-registered:** blocks run strictly in sequence b0 -> b1 -> ... -> b6 (requires= on the previous block's done file), so no two prepares overlap; b0 only warms the caches
+- **Pre-registered:** deviation: the program's GPU sequence 1,3,4,5,6,1 cannot be pinned through the runner (gpus=1 takes any pool GPU); each block's GPU is read from its CUDA_VISIBLE_DEVICES line
+- **Replicate 1:** config `configs/m1-b6.json`, seed 202610281006, job `queue/pending/35-h100-m1-b6.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
+
+### p3 (registered 2026-10-28T02:57Z; status: STAGED, not queued)
+
+- **Question:** P3 [40 GPU-min, needs P1 PASS (runs/20261027-182246-gpunode06), judge: no]: what limits each production kernel (Engine A, hot, align, combine, post-norm)? ncu SOL, memory, occupancy, launch, warp-state and scheduler sections, --clock-control none, on an arm PINNED to the node/judge majority paths (under ncu the board's own prepare races pick differently)
+- **Expected effect:** Engine A K1/K2 and the wgmma hot half memory-bound at the larger T; combine / post-norm / align latency-bound
+- **Decision rule:** classify each kernel memory-, consumer- or latency-bound; one ledger finding per kernel naming its lever
+- **Metric:** ncu section metrics per kernel per shape (prof/ncu.csv), reps 0..5 of each shape's seeded draws; MDE 0.30% per row, 0.25% headline (R6, provisional); strata: distinct_local
+- **Instrument:** gpunode06, 1 GPU per replicate, one process, caches WARM, reps 20, shapes decode 1, decode 16, decode 32, verify 1, verify 16, verify 32; void below 1800 MHz or on throttle (R1)
+- **Bytes board:** `snap/board-498afbd8e73d.py` sha256 `498afbd8e73de786e57b31d96cba41e2d04eeb3772cec3017bb5d2994b94c2fe` (frozen from /home/user/git/musespark/muse_moe_w4a16/submission.py)
+- **Arm pinned** (of board): post `{"ea.on.1": "v1", "ea.on.2..8": "v4", "ea.on.9..16": "v4", "ea.on.17..32": "v4c", "hm.on.128": 0, "hm.fon.128": false, "ea.on.128": "v4c", "hm.on.256": -16, "hm.fon.256": true, "hm.cold": "v4", "hm.cold_bits.128": 112, "hm.cold_bits.256": 0, "wg_on_128": false, "wg_on_256": true, "wg_pdl": true, "w2_mode": "atomic", "w13_mode": "atomic", "d32_align": 1, "d32_post_norm": 1, "ea.cmb_t.1": 1, "ea.cmb_t.8": 1, "ea.cmb_t.16": 1, "ea.cmb_t.32": 1, "ea.on.256": false}` -- node / judge majority paths, literal (X0a: class 8 tie-pinned v4)
+- **Pre-registered:** audit 10-28 blocker, resolved: every prepare-time flag is pinned to production's literal value; GPU 7 ncu validation runs/20261027-195015-gpunode06 (all 6 shapes) shows the pinned arm's 6 FLAGS lines and 6 GRAPH lines (kernel lists, topology, pdl_edges) byte-identical to the production board's in runs/20261027-191006-gpunode06; the first P3 job re-checks this (its FLAGS / GRAPH lines are compared with production before any ncu.csv reading enters the ledger)
+- **Pre-registered:** deviation: one replicate, because this is characterisation, not an A/B
+- **Replicate 1:** config `configs/p3.json`, seed 2186850503301014679, job `queue/pending/36-h100-p3.job` (staged in queue-staged/)
+- **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
+
