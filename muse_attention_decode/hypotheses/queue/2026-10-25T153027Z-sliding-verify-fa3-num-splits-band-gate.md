@@ -55,7 +55,8 @@ priority: 2
 kind: primary
 controls_for: null
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: sliding verify B=2..32 on s2b kernels, FA3 not called"
 ---
 
 # sliding-verify-fa3-num-splits-band-gate
