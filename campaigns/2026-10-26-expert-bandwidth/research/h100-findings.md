@@ -656,3 +656,17 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
 - **Replicate 1:** config `configs/p3.json`, seed 2186850503301014679, job `queue/pending/36-h100-p3.job` (staged in queue-staged/)
 - **Results:** (append below with run dirs, PATH CHOSEN of every party, clock, R3a / R3b tables; never edit the lines above)
 
+
+## 2026-10-28T03:41Z: M00 result: E1 (in-process A/B) NOT accepted; m456 / m08t8 stay gated
+
+- Run dirs: r1 runs/20261027-203851-gpunode06 (GPU 1), r2 runs/20261027-203854-gpunode06 (GPU 3). Both rc 0; all parties
+  passed. Clock 1830 MHz flat, no throttle.
+- **Fails the registered rule on CI coverage.** CIs covering 1, out of 12 row points: raced 8/12, same 7/12, same2 7/12
+  (the rule needs >= 11/12). Points within +-0.3%: raced 12/12, same 10/12, same2 11/12.
+- **Identity spread per row:** d1 0.31, d16 0.18, d32 0.28, v1 0.42, v16 0.43, v32 0.13 (%). That puts the in-process
+  per-row MDE at about 0.45%, not 0.30%. The headline identity reads x0.9996-1.0006, so the 0.25% headline MDE holds.
+  The bootstrap CI is within-capture only.
+- **Sensitivity holds.** C verify 32 x0.919 / x0.921 (predicted 0.88-0.96). D verify 16 x0.968 / x0.964 (below 1;
+  larger than the -1.5% predicted).
+- **Gate not written** (takemyjob 04e8ace). m1 and p3 run as queued. Re-registering m456 / m08t8 at a 0.45% per-row MDE
+  is the user's call.

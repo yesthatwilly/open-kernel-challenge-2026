@@ -1598,3 +1598,11 @@ with the operator's go-ahead.
 - The expected headline gain is about +0.25%, inside the scored spread. Keep fdc618f9 as the decode carry-over base for
   the next T=1 lever (the consumer, 1.57 us/record against the 1.25-1.41 floors). Not approved yet; awaiting the user.
 - Also archived fd0e92717ec0400e.json.gz (the S3 moe check, left untracked by 873b1103).
+
+## 2026-10-28T0342Z: M00 failed its acceptance rule; gate not written
+
+- E1 fails on CI coverage: the identity arms cover 1 in only 7/12 rows (the rule needs >= 11/12). The identity spread is
+  up to 0.43% per row, so the in-process MDE is about 0.45% per row; the 0.25% headline MDE holds. The C and D arms
+  resolve as predicted. Details are in research/h100-findings.md and takemyjob 04e8ace.
+- m456 x8 and m08t8 x2 stay pending behind the unwritten gate. m1 (b0 done, b1 running) and p3 proceed. Re-registering
+  at a 0.45% MDE is the user's call. The window closes at ~07:05Z; restore the node board.py link then.
