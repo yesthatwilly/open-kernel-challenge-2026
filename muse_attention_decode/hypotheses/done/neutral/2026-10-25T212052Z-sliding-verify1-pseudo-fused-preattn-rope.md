@@ -71,10 +71,10 @@ kind: primary
 controls_for: null
 prior: "full-decode1-sk-two-level-fused-preattn: that fold was on full decode_1 (weight 16, no RoPE, one new row, gained 22.4->21.6 within CI); this folds RoPE pre-attention for 8 query tokens and 8 new K/V rows into the TOK=8 PSEUDO kernel on sliding verify_1 (weight 46, 0.70%/us). Queued sliding-decode-sk-s3-fused-preattn-rope does the TOK=1 decode case only"
 review: proceed
-status: running
+status: done
 review_at: 2026-10-25T212856Z
 review_companions: null
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-28T145301Z
 base_sha: 47926f5e7d8a192184e21177901be2034d2d4930
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -93,6 +93,13 @@ attempt_file: 2026-10-28T150622Z-check-sliding-verify1-pseudo-fused-preattn-rope
 prepared_at: 2026-10-28T150622Z
 job: 7284659f6c4d4035
 dispatched_at: 2026-10-28T150631Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.6190529213777576
+speedup_ci: [1.5947671275570912, 1.6433387151984238]
+harvested_at: 2026-10-28T151719Z
+best_at_harvest: 1.6339575246416982
+promotion: null
 ---
 
 # sliding-verify1-pseudo-fused-preattn-rope
@@ -167,3 +174,35 @@ Checked against `git -C .worktrees/muse_attention_decode/sliding-verify1-pseudo-
 - [x] Two judge states: the owner CTA writes only cache_loc rows of the state passed in; `_alt_check` two-state capture-once replay runs before routing.
 
 Lint (`okc_lint.py ... --problem muse_attention_decode`): `OK with warnings`. There are 0 errors. The warnings are all pre-existing `host-sync` lines in prepare-time code outside kernel_fn's call graph, plus the new section's own prepare-time syncs (`_sv1_case`, `_sv1_validate`, `_sv1_gate_b1`) and one pre-existing `dtype` warning at L7646. `python3 -I -m py_compile`: OK (`__pycache__` removed).
+
+## Result
+
+- job `7284659f6c4d4035` (check), status done, passed True, tests 16/16
+- speedup 1.6191x, 95% CI [1.5948, 1.6433], score 2326.2364992955327 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.6339575246416982, "ci": [1.6094481617720726, 1.6584668875113235], "job": "4e386647edd845f7"}; base result: SGLang (no base result)
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/sliding-verify1-pseudo-fused-preattn-rope.result.json`, `muse_attention_decode/hypotheses/done/neutral/sliding-verify1-pseudo-fused-preattn-rope.patch`; branch `hyp/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 20.75 | 10.87 | 1.9097 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 31.73 | 15.77 | 2.0117 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 27.07 | 15.74 | 1.72 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 201.6 | 104.77 | 1.9242 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 30.88 | 16.86 | 1.8311 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 385.02 | 190.59 | 2.0202 | gained |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 22.72 | 13.4 | 1.6956 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 36.32 | 30.07 | 1.208 | gained |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 28.8 | 19.2 | 1.5002 | gained |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 205.62 | 162.71 | 1.2637 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 34.3 | 27.81 | 1.2336 | gained |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 390.48 | 302.22 | 1.292 | gained |
+
+gained on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full decode_1, decode_16, decode_32, verify_1, verify_16, verify_32. Expected hit: 1/5. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: sliding-verify1-pseudo-fused-preattn-rope`) that adds a further change in the same area is the only way to learn more.
+

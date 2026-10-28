@@ -1,0 +1,968 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 2eb03f76..7e7938b3 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -1843,6 +1843,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         return _C320_FN(data)
+     if _SW_ROUTE and _sw_gate(cfg):  # import-time frozen route, config-only: sliding verify B=2..32 [sw s2b wgmma + fast merge: pdl pair or in-kernel ticket]
+         return _sw_forward(data)
++    if _SV1_ROUTE and _sv1_gate(cfg):  # import-time frozen route, config-only: sliding verify B=1 [sv1 FUSED PSEUDO], one launch
++        return _sv1_forward(data)
+     batch, length = cfg["batch"], cfg["q_len"]
+     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
+     tokens = batch * length
+@@ -9407,6 +9409,939 @@ def _sw_setup() -> None:
+ 
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# Sliding verify B=1 FUSED PSEUDO (module muse_sv1_fused_v1, kernel splitkv_attn_sv1_kernel, log tag [sv1]).
++# DIAGNOSIS action 3(ii): the B=1 sliding verify route is [_pre_attention_kernel + PSEUDO splitkv_attn_sk_kernel];
++# this folds the pre-attention into the PSEUDO kernel so the step is ONE launch, as skF does for full decode B>1.
++# Its own module (this file's helper head + a copy of the stream-K kernel template with one extra template flag
++# FUSED): the landed _EXT2 PSEUDO instantiations are untouched. FUSED = true (TOK 8, B == 1 only):
++# (a) a segment's first tile carries pseudo-row r's raw bf16 q row (2 KB) of qkv into a per-stage slot (cp.async,
++#     with the tile); the consuming CTA applies _pre_attention_kernel's ROPE=True, PAIRED=False query math (scaleless
++#     RMSNorm with its eps, interleaved GPT-J RoPE pair (2i, 2i+1) at positions[r] * inv_freq[i], e4m3) and builds
++#     the MMA A fragments. The (cos, sin) of the 8 rows x 32 pairs are computed once per CTA in the prologue.
++# (b) every CTA whose tile range holds any of the 8 new keys (token m = key seq - 8 + m, the last keys of pseudo-rows
++#     m..7) builds the 8 new K rows (RMSNorm, RoPE, / k_scale, e4m3) and V rows (/ v_scale, e4m3) from qkv into smem
++#     in the prologue, and writes them over the landed ring stage after cp_wait, before that tile's S MMA (one
++#     barrier); the stale cache slots its cp.async read are never used. Exactly one CTA (CTA gx - 1, the owner of
++#     pseudo-row 7's last tile = flat tile T - 1, checked on the host) stores the 8 rows to k_cache / v_cache.
++# Route: sliding verify, window 2048, q_len 8, page 1, tp8, B == 1 (config-only). Gated at B=1 x 80000 against
++# kernel_fn's routed [pre-attn + PSEUDO] on interleaved cold-L2 graph replays (route at >= _SV1_GATE), after a
++# self-check and before a two-state replay check. Any miss keeps [pre-attn + PSEUDO] with one PATH CHOSEN line.
++# ---------------------------------------------------------------------------------------------
++
++_SV1_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void sv1_attn(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table, torch::Tensor cache_seqlens,
++              torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor inv_freq, torch::Tensor k_scale,
++              torch::Tensor v_scale, torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc,
++              torch::Tensor ws_ml, torch::Tensor ticket, torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++              double score_scale, double eps, int64_t grid, bool two);
++std::vector<int64_t> sv1_attrs(bool two);
++"""
++
++# The helper head (everything before the stream-K kernel template; built with SK_PSEUDO so load_prefix_pseudo has
++# its body) + the FUSED copy of the template.
++_SV1_CUDA = "#include <cuda_fp8.h>\n" + _SKF_HEAD + r"""
++// ---- sliding verify B=1 FUSED PSEUDO (module muse_sv1_fused_v1): splitkv_attn_sv1_kernel ----
++constexpr int QRAW = HQ * D * 2;  // one token's bf16 q slice of qkv (2 KB)
++constexpr int SV1_R = 8;          // pseudo-rows at B = 1 (FUSED is B == 1 only)
++
++// FUSED layout: the PSEUDO layout (Lay<STAGES, PS_MAXR, true>) with a raw bf16 q slot per stage, plus the RoPE
++// table of the 8 pseudo-rows and the 8 built new K / V rows.
++template <int STAGES>
++struct LayF {
++  static constexpr int RING = 0;
++  static constexpr int QR = RING + STAGES * STAGE_BYTES;      // bf16 [STAGES][HQ][D], raw qkv q rows
++  static constexpr int IDX = QR + STAGES * QRAW;              // int32 [2][MB_TOK]
++  static constexpr int ACC = IDX + 2 * MB_TOK * 4;            // f32 [WARPS][G][D]
++  static constexpr int ML = ACC + WARPS * G * D * 4;          // f32 [WARPS][G][2]
++  static constexpr int SEQ = ML + WARPS * G * 2 * 4;          // int32 [PS_MAXR]
++  static constexpr int TP = SEQ + PS_MAXR * 4;                // int32 [PS_MAXR + 1] (+pad)
++  static constexpr int FLAG = TP + (PS_MAXR + 4) * 4;         // int32 [4]
++  static constexpr int LO = FLAG + 16;                        // int32 [PS_MAXR]
++  static constexpr int ROPE = LO + PS_MAXR * 4;               // float2 [SV1_R][D / 2]: (cos, sin)
++  static constexpr int NEWR = ROPE + SV1_R * (D / 2) * 8;     // e4m3 [2][SV1_R][ROW]: new K rows, then new V rows
++  static constexpr int BYTES = NEWR + 2 * SV1_R * ROW;
++};
++static_assert(LayF<4>::ROPE % 8 == 0 && LayF<4>::NEWR % 16 == 0 && LayF<4>::QR % 16 == 0, "LayF alignment");
++static_assert(2 * (LayF<4>::BYTES + 1024) <= 233472, "LayF: 2 CTAs per SM");
++
++__device__ __forceinline__ float warp_sum(float v) {
++#pragma unroll
++  for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++  return v;
++}
++__device__ __forceinline__ uint32_t e4m3_byte(float x) {
++  return static_cast<uint32_t>(__nv_cvt_float_to_fp8(x, __NV_SATFINITE, __NV_E4M3));
++}
++// Accurate sin / cos of an fp32 angle, |a| < 105615 (positions * inv_freq here: inv_freq <= 1, positions ~1e5 at most):
++// CUDA's own sinf / cosf fast path written out (3-constant Cody-Waite reduction by pi/2 with fma, the Cephes minimax
++// kernels on [-pi/4, pi/4], quadrant swap), so the Payne-Hanek slow path and its local-memory frame are not compiled in.
++__device__ __forceinline__ void rope_sincos(float a, float& sn, float& cs) {
++  const float jf = rintf(a * 0.636619772f);
++  const int j = static_cast<int>(jf);
++  float r = fmaf(-jf, 1.5707962512969971e+00f, a);
++  r = fmaf(-jf, 7.5497894158615964e-08f, r);
++  r = fmaf(-jf, 5.3903029534742384e-15f, r);
++  const float r2 = r * r;
++  float ps = fmaf(fmaf(-1.95152959e-4f, r2, 8.33216087e-3f), r2, -1.66666546e-1f);
++  ps = fmaf(ps * r2, r, r);
++  float pc = fmaf(fmaf(fmaf(2.44331571e-5f, r2, -1.38873163e-3f), r2, 4.16666457e-2f), r2, -5.0e-1f);
++  pc = fmaf(pc, r2, 1.0f);
++  const float s0 = (j & 1) ? pc : ps;
++  const float c0 = (j & 1) ? ps : pc;
++  sn = (j & 2) ? -s0 : s0;
++  cs = ((j + 1) & 2) ? -c0 : c0;
++}
++
++// A copy of splitkv_attn_sk_kernel with one extra template flag FUSED (only FUSED = true is instantiated here;
++// FUSED = false compiles the landed PSEUDO kernel, whose instantiations stay in _EXT2). FUSED: no e4m3 q input, the
++// kernel reads qkv / positions / inv_freq / cache_loc, kc / vc are written (owner CTA only).
++template <int STAGES, bool TICKET, bool TWO = false, bool PSEUDO = true, int TOK = 8, bool FUSED = true>
++__global__ void __launch_bounds__(THREADS, 2)
++splitkv_attn_sv1_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * 8, HQ, D]; unused when FUSED
++                        uint8_t* __restrict__ kc,               // e4m3 [rows, ROW]; FUSED: 8 new rows stored
++                        uint8_t* __restrict__ vc,               // e4m3 [rows, ROW]; FUSED: 8 new rows stored
++                        const int* __restrict__ page_table, int64_t pt_stride,
++                        const int* __restrict__ seqlens, int B,
++                        const int64_t* __restrict__ positions,  // [B * 8] (FUSED)
++                        const int64_t* __restrict__ cache_loc,  // [B * 8] (FUSED)
++                        const float* __restrict__ inv_freq,     // [D / 2] (FUSED)
++                        const float* __restrict__ k_scale, const float* __restrict__ v_scale, float score_scale,
++                        const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
++                        __nv_bfloat16* __restrict__ out,        // bf16 [B * 8, HQ * D]
++                        float* __restrict__ ws_acc,             // f32 [grid + R, HQ, D]
++                        float* __restrict__ ws_ml,              // f32 [grid + R, 2, HQ]
++                        int* __restrict__ ticket,               // int32 [>= R], 0 between launches
++                        int* __restrict__ gticket,              // int32 [>= R * 32], 0 between launches (TWO)
++                        float* __restrict__ gacc,               // f32 [R * 32, HQ, D] group slots (TWO)
++                        float* __restrict__ gml,                // f32 [R * 32, 2, HQ] (TWO)
++                        float eps) {
++  static_assert(!FUSED || (PSEUDO && TOK == 8 && TICKET), "FUSED: sliding verify pseudo-rows, ticket merge");
++  using S = typename std::conditional<FUSED, LayF<STAGES>,
++      typename std::conditional<PSEUDO, Lay<STAGES, PS_MAXR, true>, Lay<STAGES>>::type>::type;
++  constexpr int QSLOT = FUSED ? QRAW : QBYTES;  // bytes of one stage's query slot
++  extern __shared__ __align__(128) uint8_t smem[];
++  uint8_t* ring = smem + S::RING;
++  uint8_t* qr = smem + S::QR;
++  int* idx_s = reinterpret_cast<int*>(smem + S::IDX);
++  float* acc_s = reinterpret_cast<float*>(smem + S::ACC);
++  float* ml_s = reinterpret_cast<float*>(smem + S::ML);
++  int* seq_s = reinterpret_cast<int*>(smem + S::SEQ);
++  int* tp_s = reinterpret_cast<int*>(smem + S::TP);
++  int* flag_s = reinterpret_cast<int*>(smem + S::FLAG);
++  int* lo_s = reinterpret_cast<int*>(smem + S::LO);  // PSEUDO only (no storage otherwise: never read)
++  const float NEG_INF = __int_as_float(0xff800000u);
++
++  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
++  const int bx = blockIdx.x;
++  const int R = PSEUDO ? B * TOK : B;  // rows of the flat tile space
++  if constexpr (PSEUDO) load_prefix_pseudo<TOK>(seqlens, B, seq_s, lo_s, tp_s, reinterpret_cast<int*>(acc_s));
++  else load_prefix(seqlens, B, seq_s, tp_s);
++  const int T = tp_s[R];
++  if (T <= 0) return;  // uniform
++  // Effective grid min(gridDim.x, T): below it every CTA owns >= 1 tile, so CTAs c_lo..c_hi of a
++  // request all hold a segment (the ticket count and the merge rely on it). CTAs above it exit.
++  const int gx = min(static_cast<int>(gridDim.x), T);
++  if (bx >= gx) return;  // uniform
++  const int t0 = range_start(bx, T, gx);
++  const int N = range_start(bx + 1, T, gx) - t0;  // tiles of this CTA, one flat pipeline
++  if (N <= 0) return;  // uniform
++  const int nblk = (N + MB_TILES - 1) / MB_TILES;
++  const float ksv = __ldg(k_scale);
++  const float scale = score_scale * ksv;  // sm_scale * qk_scale_factor * log2(e) * k_scale
++  const float vs = __ldg(v_scale);
++
++  // Request holding global tile gt: the largest b with tp_s[b] <= gt (gt < Ttot).
++  auto find_req = [&](int gt) {
++    int lo = 0, hi = R - 1;
++    while (lo < hi) {
++      const int mid = (lo + hi + 1) >> 1;
++      if (tp_s[mid] <= gt) lo = mid; else hi = mid - 1;
++    }
++    return lo;
++  };
++  // Page indices of block k (flat tiles 16k .. 16k+15) into buffer k & 1: thread -> tile tid / 16,
++  // tokens (tid % 16) * 4 .. +4. Positions past the request end (or past the range) zero-filled.
++  auto issue_meta = [&](int k) {
++    const int buf = k & 1;
++    const int tl = tid >> 4;
++    const int e0 = (tid & 15) * 4;
++    const int n = k * MB_TILES + tl;
++    int b = 0, pos = 0, seq = 0;
++    if (n < N) {
++      const int gt = t0 + n;
++      b = find_req(gt);
++      pos = (gt - tp_s[b]) * TILE + e0;
++      seq = seq_s[b];
++    }
++    int prb = b, plo = 0;  // page-table row, first key of the request's range
++    if constexpr (PSEUDO) { prb = TOK == 8 ? (b >> 3) : b / TOK; plo = lo_s[b]; }
++    const int* prow = page_table + (int64_t)prb * pt_stride;
++#pragma unroll
++    for (int j = 0; j < 4; ++j) {
++      const bool ok = pos + j < seq;
++      cp_async4(smem_u32(idx_s + buf * MB_TOK + tl * TILE + e0 + j), ok ? prow + plo + pos + j : prow, ok ? 4 : 0);
++    }
++  };
++  // Tile nn (issued in order 0, 1, 2, ...) into ring stage nn % STAGES, as kernel A: thread ->
++  // token tid / 4, 16-byte chunks 2 * (tid % 4) + {0, 1} of its K row and V row, chunk c stored
++  // at c ^ (token % 8). A segment's first tile also brings the row's query into its q slot (FUSED: the
++  // raw bf16 q row of qkv, 128 threads x 16 B; else the e4m3 query, 64 threads x 16 B).
++  int p_b = find_req(t0);
++  auto issue_tile = [&](int nn) {
++    const int gt = t0 + nn;
++    while (gt >= tp_s[p_b + 1]) ++p_b;
++    const int lt = gt - tp_s[p_b];
++    const int st = nn % STAGES;
++    uint8_t* stp = ring + st * STAGE_BYTES;
++#ifdef SK_FULLLINE
++    // sk-full-line-gather: thread -> 16-byte chunk c = tid % 8 of tokens tid / 8 and tid / 8 + 32, so
++    // one warp-wide cp.async covers 4 whole 128-byte K (or V) lines. Same swizzled stage image
++    // (chunk c of token tt at c ^ (tt % 8)), same 4 x 16-byte copies per thread per tile.
++    const int c = tid & 7;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int tt = (tid >> 3) + 32 * j;
++      const bool ok = lt * TILE + tt < seq_s[p_b];
++      const int64_t row = ok ? (int64_t)idx_s[((nn / MB_TILES) & 1) * MB_TOK + (nn % MB_TILES) * TILE + tt] : 0;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(stp + dst), kc + row * ROW + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(stp + TILE * ROW + dst), vc + row * ROW + c * 16, ok ? 16 : 0);
++    }
++#else
++    const int tt = tid >> 2;
++    const bool ok = lt * TILE + tt < seq_s[p_b];
++    const int64_t row = ok ? (int64_t)idx_s[((nn / MB_TILES) & 1) * MB_TOK + (nn % MB_TILES) * TILE + tt] : 0;
++    const uint8_t* ks = kc + row * ROW;
++    const uint8_t* vsrc = vc + row * ROW;
++#pragma unroll
++    for (int j = 0; j < 2; ++j) {
++      const int c = (tid & 3) * 2 + j;
++      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
++      cp_async16(smem_u32(stp + dst), ks + c * 16, ok ? 16 : 0);
++      cp_async16(smem_u32(stp + TILE * ROW + dst), vsrc + c * 16, ok ? 16 : 0);
++    }
++#endif
++    if ((nn == 0 || lt == 0) && tid < QSLOT / 16) {
++      if constexpr (FUSED)
++        cp_async16(smem_u32(qr + st * QRAW + tid * 16),
++                   reinterpret_cast<const uint8_t*>(qkv + (int64_t)p_b * qkv_stride) + tid * 16, 16);
++      else
++        cp_async16(smem_u32(qr + st * QBYTES + tid * 16), q + (int64_t)p_b * QBYTES + tid * 16, 16);
++    }
++  };
++
++  // Prologue: block 0's indices (waited), then tiles 0 .. STAGES-2; block 1 rides tile 0's group.
++  issue_meta(0);
++  cp_commit();
++  if constexpr (FUSED) {
++    // While block 0's indices are in flight (B == 1: pseudo-row r is token r):
++    // (1) the RoPE table: warp r -> pseudo-row r, lane i -> pair i: (cos, sin) of positions[r] * inv_freq[i]
++    //     (fp32 product, as _pre_attention_kernel).
++    {
++      float sn, cs;
++      rope_sincos(__fmul_rn(static_cast<float>(positions[warp]), __ldg(inv_freq + lane)), sn, cs);
++      reinterpret_cast<float2*>(smem + S::ROPE)[warp * (D / 2) + lane] = make_float2(cs, sn);
++    }
++    // (2) the 8 new K / V rows, if this CTA's range holds any new key (new key m sits at local position
++    //     cnt_j - j - 1 + m of pseudo-row j >= m, i.e. in row j's tiles from (cnt_j - j - 1) / 64 on) or it is the
++    //     owner (CTA gx - 1: B == 1, so flat tile T - 1 is pseudo-row 7's last tile), which also stores them.
++    //     Job jb -> token m = jb >> 2, kv head jb & 1, k (bit 1 clear) or v; a lane per RoPE pair (2 dims).
++    const bool owner = bx == gx - 1;
++    bool need = owner;
++#pragma unroll 1
++    for (int j = 0; j < SV1_R; ++j) {
++      const int cnt = seq_s[j];
++      const int nf = max(cnt - j - 1, 0);
++      if (cnt > 0 && tp_s[j] + nf / TILE < t0 + N && tp_s[j + 1] - 1 >= t0) need = true;
++    }
++    if (need) {  // uniform
++      uint8_t* new_s = smem + S::NEWR;
++#pragma unroll 1
++      for (int jb = warp; jb < 4 * SV1_R; jb += WARPS) {
++        const int m = jb >> 2, kh = jb & 1;
++        const bool is_v = (jb & 2) != 0;  // warp-uniform
++        const __nv_bfloat16* src = qkv + (int64_t)m * qkv_stride + ((is_v ? HQ + HKV : HQ) + kh) * D + lane * 2;
++        const float2 x = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(src));
++        float f0, f1;
++        if (is_v) {
++          f0 = x.x / vs;
++          f1 = x.y / vs;
++        } else {
++          const float r = 1.f / sqrtf(warp_sum(x.x * x.x + x.y * x.y) / D + eps);
++          const float e = x.x * r, o = x.y * r;
++          float sn, cs;
++          rope_sincos(__fmul_rn(static_cast<float>(positions[m]), __ldg(inv_freq + lane)), sn, cs);
++          f0 = (e * cs - o * sn) / ksv;
++          f1 = (e * sn + o * cs) / ksv;
++        }
++        const uint16_t pk = static_cast<uint16_t>(e4m3_byte(f0) | (e4m3_byte(f1) << 8));
++        *reinterpret_cast<uint16_t*>(new_s + (is_v ? SV1_R * ROW : 0) + m * ROW + kh * D + lane * 2) = pk;
++        if (owner) *reinterpret_cast<uint16_t*>((is_v ? vc : kc) + (cache_loc[m] * HKV + kh) * D + lane * 2) = pk;
++      }
++    }
++  }
++  cp_wait<0>();
++  __syncthreads();  // also publishes the RoPE table and the new rows
++#pragma unroll
++  for (int j = 0; j < STAGES - 1; ++j) {
++    if (j < N) {
++      issue_tile(j);
++      if (j % MB_TILES == 0 && j / MB_TILES + 1 < nblk) issue_meta(j / MB_TILES + 1);
++    }
++    cp_commit();
++  }
++
++  const int g = warp & 1;             // kv head
++  const int slice = (warp >> 1) * 16; // token slice of each tile
++  const int quad = lane >> 2, qi = lane & 3;
++  uint32_t qa[4][2];
++  float m_i = NEG_INF, l_i = 0.f;
++  float acc[8][4];
++  int c_b = find_req(t0);
++  bool seg_head = false;  // the current segment began at its request's first tile
++
++  for (int n = 0; n < N; ++n) {
++    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
++    __syncthreads();        // visible to all; every warp is done with tile n - 1's stage
++    {
++      const int nn = n + STAGES - 1;
++      if (nn < N) {
++        issue_tile(nn);
++        if (nn % MB_TILES == 0 && nn / MB_TILES + 1 < nblk) issue_meta(nn / MB_TILES + 1);
++      }
++      cp_commit();  // always, so the group count stays uniform
++    }
++    const int gt = t0 + n;
++    while (gt >= tp_s[c_b + 1]) ++c_b;
++    const int lt = gt - tp_s[c_b];
++    const int nt_b = tp_s[c_b + 1] - tp_s[c_b];
++    const int cseq = seq_s[c_b];
++    const int st = n % STAGES;
++    if (n == 0 || lt == 0) {
++      seg_head = lt == 0;
++      if constexpr (FUSED) {
++        // q build (as skF, plus RoPE): this thread's row (head g*G+quad), columns qi*4 + 16*s + {0..3} = RoPE
++        // pairs qi*2 + 8*s and qi*2 + 8*s + 1; the 4 lanes of a quad hold the whole 64-wide row (2-step shuffle).
++        // Two passes over the smem slot (sum of squares, then scale + rotate + cast).
++        const __nv_bfloat16* qs = reinterpret_cast<const __nv_bfloat16*>(qr + st * QRAW) + (g * G + quad) * D + qi * 4;
++        float ss = 0.f;
++#pragma unroll
++        for (int s = 0; s < 4; ++s) {
++          const uint2 raw = *reinterpret_cast<const uint2*>(qs + s * 16);
++          const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.x));
++          const float2 b2 = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.y));
++          ss += a.x * a.x + a.y * a.y + b2.x * b2.x + b2.y * b2.y;
++        }
++        ss += __shfl_xor_sync(0xffffffffu, ss, 1);
++        ss += __shfl_xor_sync(0xffffffffu, ss, 2);
++        const float rn = 1.f / sqrtf(ss / D + eps);
++        const float2* rt = reinterpret_cast<const float2*>(smem + S::ROPE) + c_b * (D / 2) + qi * 2;
++#pragma unroll
++        for (int s = 0; s < 4; ++s) {
++          const uint2 raw = *reinterpret_cast<const uint2*>(qs + s * 16);
++          const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.x));
++          const float2 b2 = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&raw.y));
++          const float2 r0 = rt[8 * s], r1 = rt[8 * s + 1];  // (cos, sin)
++          const float e0 = a.x * rn, o0 = a.y * rn, e1 = b2.x * rn, o1 = b2.y * rn;
++          const uint32_t w = e4m3_byte(e0 * r0.x - o0 * r0.y) | (e4m3_byte(e0 * r0.y + o0 * r0.x) << 8) |
++                             (e4m3_byte(e1 * r1.x - o1 * r1.y) << 16) | (e4m3_byte(e1 * r1.y + o1 * r1.x) << 24);
++          e4m3x4_to_f16x2x2(w, qa[s][0], qa[s][1]);
++        }
++      } else {
++        const uint8_t* qrow = qr + st * QBYTES + (g * G + quad) * D + qi * 4;
++#pragma unroll
++        for (int s = 0; s < 4; ++s)
++          e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
++      }
++      m_i = NEG_INF;
++      l_i = 0.f;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
++    }
++    if constexpr (FUSED) {
++      // New keys in this tile (B == 1: pseudo-row j = c_b; new key m <= j at local position nf + m, nf = cseq - j - 1):
++      // the built rows overwrite the landed stage (its cp.async read the stale slots), then one barrier before
++      // the S MMA. Uniform condition; thread -> (m = tid / 16, 16-byte chunk tid % 8 of K (tid % 16 < 8) or V).
++      const int nf = cseq - c_b - 1;
++      const int lo_t = lt * TILE;
++      if (max(nf, lo_t) <= min(cseq - 1, lo_t + TILE - 1)) {
++        if (tid < 16 * SV1_R) {
++          const int m = tid >> 4, part = tid & 15;
++          const int lp = nf + m;
++          if (m <= c_b && lp >= lo_t && lp < lo_t + TILE) {
++            const int tt = lp - lo_t, c = part & 7;
++            const bool isv = part >= 8;
++            *reinterpret_cast<uint4*>(ring + st * STAGE_BYTES + (isv ? TILE * ROW : 0) + tt * ROW + ((c ^ (tt & 7)) << 4)) =
++                *reinterpret_cast<const uint4*>(smem + S::NEWR + (isv ? SV1_R * ROW : 0) + m * ROW + c * 16);
++          }
++        }
++        __syncthreads();
++      }
++    }
++    const uint8_t* Ks = ring + st * STAGE_BYTES;
++    const uint8_t* Vs = Ks + TILE * ROW;
++
++    float s[2][4];
++#pragma unroll
++    for (int nb = 0; nb < 2; ++nb) {
++      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
++      const int tt = slice + nb * 8 + quad;
++      const uint8_t* kr = Ks + tt * ROW + qi * 4;
++#pragma unroll
++      for (int ks = 0; ks < 4; ++ks) {
++        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
++        uint32_t b0, b1;
++        e4m3x4_to_f16x2x2(w, b0, b1);
++        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
++      }
++    }
++    const int pos0 = lt * TILE + slice + qi * 2;
++    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
++    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
++    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
++    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
++    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
++    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
++    const float m_new = fmaxf(m_i, mx);
++    const float m_use = m_new == NEG_INF ? 0.f : m_new;
++    const float alpha = ex2(m_i - m_use);
++    x0 = ex2(x0 - m_use);
++    x1 = ex2(x1 - m_use);
++    x2 = ex2(x2 - m_use);
++    x3 = ex2(x3 - m_use);
++    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);
++    m_i = m_new;
++#pragma unroll
++    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
++    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
++
++    const int tv = slice + qi * 2;
++    const int vlc = g * 4 + (quad >> 1);
++    const int voff = (quad & 1) * 8;
++    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
++    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
++    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
++    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
++#pragma unroll
++    for (int hw = 0; hw < 2; ++hw) {
++      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
++      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
++      uint32_t r0[4], r1[4];
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
++      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
++#pragma unroll
++      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
++    }
++
++    if (n == N - 1 || lt == nt_b - 1) {
++      // Segment end (uniform over the CTA): merge the four warps of each kv head in smem.
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
++      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
++      const int rw = warp * G + quad;
++      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
++      float* ar = acc_s + rw * D;
++#pragma unroll
++      for (int nb = 0; nb < 8; ++nb) {
++        ar[(qi * 2) * 8 + nb] = acc[nb][0];
++        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
++      }
++      __syncthreads();
++      const int h = tid >> 4, d0 = (tid & 15) * 4;
++      const int hg = h / G, r = h % G;
++      float mw[4];
++      float M = NEG_INF;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
++      const float Mu = M == NEG_INF ? 0.f : M;
++      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
++      float L = 0.f;
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        const int wr = (hg + 2 * j) * G + r;
++        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
++        L += wt * ml_s[wr * 2 + 1];
++        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
++        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
++      }
++      const bool whole = seg_head && lt == nt_b - 1;  // this CTA is the request's only segment
++      if (TICKET && whole) {
++        finalize_store(o, L, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++      } else {
++        const int64_t slot = (int64_t)bx + c_b;
++        *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
++        if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
++        if (TICKET && TWO) {
++          // Two-level ticket. CTAs c_lo..c_hi hold request c_b's segments (nseg of them); group
++          // size Gs = ceil(sqrt(nseg)), group gi = (c - c_lo) / Gs, ngrp = ceil(nseg / Gs) <= 32.
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          const int nseg = c_hi - c_lo + 1;
++          int Gs = 1;
++          while (Gs * Gs < nseg) ++Gs;
++          const int gi = (bx - c_lo) / Gs;
++          const int ngrp = (nseg + Gs - 1) / Gs;
++          const int g_lo = c_lo + gi * Gs;
++          const int g_hi = min(c_hi, g_lo + Gs - 1);
++          __threadfence();  // release: this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = ticket_arrive(gticket + c_b * 32 + gi) == g_hi - g_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last arrival of group gi
++            __threadfence();  // acquire: every group member's partial is visible
++            float4 om;
++            float Lm, Mm;
++            merge_range(ws_acc, ws_ml, g_lo + c_b, g_hi + c_b, h, d0, om, Lm, Mm);
++            if (tid == 0) gticket[c_b * 32 + gi] = 0;  // all members arrived: clean for the next launch
++            if (ngrp == 1) {
++              finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            } else {
++              const int64_t gs = (int64_t)c_b * 32 + gi;
++              *reinterpret_cast<float4*>(gacc + (gs * HQ + h) * D + d0) = om;
++              if ((tid & 15) == 0) { gml[gs * 2 * HQ + h] = Mm; gml[gs * 2 * HQ + HQ + h] = Lm; }
++              __threadfence();  // release: the group slot is visible before the second-level ticket
++              __syncthreads();
++              if (tid == 0) flag_s[1] = ticket_arrive(ticket + c_b) == ngrp - 1 ? 1 : 0;
++              __syncthreads();
++              if (flag_s[1]) {  // uniform: the last group of request c_b
++                __threadfence();  // acquire
++                float4 of;
++                float Lf, Mf;
++                merge_range(gacc, gml, c_b * 32, c_b * 32 + ngrp - 1, h, d0, of, Lf, Mf);
++                finalize_store(of, Lf, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++                if (tid == 0) ticket[c_b] = 0;  // every group has arrived: clean for the next launch
++              }
++            }
++          }
++        } else if (TICKET) {
++          const int c_lo = tile_owner(tp_s[c_b], T, gx);
++          const int c_hi = tile_owner(tp_s[c_b + 1] - 1, T, gx);
++          __threadfence();  // this CTA's partial is visible device-wide before the ticket
++          __syncthreads();
++          if (tid == 0) flag_s[0] = atomicAdd(ticket + c_b, 1) == c_hi - c_lo ? 1 : 0;
++          __syncthreads();
++          if (flag_s[0]) {  // uniform: the last segment of request c_b to finish
++            __threadfence();
++            float4 om;
++            float Lm;
++            merge_slots(ws_acc, ws_ml, c_b, c_lo, c_hi, h, d0, om, Lm);
++            finalize_store(om, Lm, vs, c_b, h, d0, qkv, qkv_stride, out, eps);
++            if (tid == 0) ticket[c_b] = 0;  // every segment has arrived: clean for the next launch
++          }
++        }
++      }
++    }
++  }
++  cp_wait<0>();  // the trailing groups are empty; drain anyway
++}
++
++using Sv1Fn = void (*)(const uint8_t*, uint8_t*, uint8_t*, const int*, int64_t, const int*, int, const int64_t*,
++                       const int64_t*, const float*, const float*, const float*, float, const __nv_bfloat16*, int64_t,
++                       __nv_bfloat16*, float*, float*, int*, int*, float*, float*, float);
++
++// two = false: <4 stages, ticket, PSEUDO, FUSED> (variant 4's twin); true: two-level ticket (variant 5's twin).
++Sv1Fn sv1_pick(bool two) {
++  if (two) return splitkv_attn_sv1_kernel<4, true, true, true, 8, true>;
++  return splitkv_attn_sv1_kernel<4, true, false, true, 8, true>;
++}
++void sv1_prepare(bool two) {
++  static bool done[2] = {false, false};  // no device state
++  if (!done[two ? 1 : 0]) {
++    C10_CUDA_CHECK(cudaFuncSetAttribute(reinterpret_cast<const void*>(sv1_pick(two)),
++                                        cudaFuncAttributeMaxDynamicSharedMemorySize, LayF<4>::BYTES));
++    done[two ? 1 : 0] = true;
++  }
++}
++
++}  // namespace
++
++void sv1_attn(torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table, torch::Tensor cache_seqlens,
++              torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor inv_freq, torch::Tensor k_scale,
++              torch::Tensor v_scale, torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, torch::Tensor ws_acc,
++              torch::Tensor ws_ml, torch::Tensor ticket, torch::Tensor gticket, torch::Tensor gacc, torch::Tensor gml,
++              double score_scale, double eps, int64_t grid, bool two) {
++  const int B = static_cast<int>(cache_seqlens.size(0));
++  const int R = B * 8;
++  TORCH_CHECK(B == 1, "sv1_attn: FUSED is batch 1 only");
++  TORCH_CHECK(grid >= 1 && ws_acc.size(0) >= grid + R && ws_ml.size(0) >= grid + R, "sv1_attn: workspace");
++  TORCH_CHECK(ticket.numel() >= R && ticket.scalar_type() == at::kInt, "sv1_attn: ticket");
++  if (two) {
++    TORCH_CHECK(grid <= 1024, "sv1_attn: two-level ticket needs grid <= 1024 (<= 32 groups)");
++    TORCH_CHECK(gticket.numel() >= R * 32 && gticket.scalar_type() == at::kInt, "sv1_attn: gticket");
++    TORCH_CHECK(gacc.size(0) >= R * 32 && gml.size(0) >= R * 32 && gacc.scalar_type() == at::kFloat
++                && gml.scalar_type() == at::kFloat, "sv1_attn: group slots");
++  }
++  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && page_table.scalar_type() == at::kInt, "sv1_attn: dtypes");
++  TORCH_CHECK(positions.scalar_type() == at::kLong && positions.is_contiguous() && positions.numel() >= R,
++              "sv1_attn: positions");
++  TORCH_CHECK(cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() >= R,
++              "sv1_attn: cache_loc");
++  TORCH_CHECK(inv_freq.scalar_type() == at::kFloat && inv_freq.is_contiguous() && inv_freq.numel() >= D / 2,
++              "sv1_attn: inv_freq");
++  TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat, "sv1_attn: scales");
++  TORCH_CHECK(page_table.stride(1) == 1 && k_cache.is_contiguous() && v_cache.is_contiguous() && out.is_contiguous(),
++              "sv1_attn: layout");
++  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.stride(1) == 1 && qkv_stride % 8 == 0 &&
++              reinterpret_cast<uintptr_t>(qkv.data_ptr()) % 16 == 0 && qkv.size(0) >= R &&
++              qkv.size(1) >= (HQ + 2 * HKV + HQ) * D, "sv1_attn: qkv layout");
++  sv1_prepare(two);
++  auto stream = at::cuda::getCurrentCUDAStream();
++  Sv1Fn fn = sv1_pick(two);
++  fn<<<static_cast<unsigned>(grid), THREADS, LayF<4>::BYTES, stream>>>(
++      nullptr, reinterpret_cast<uint8_t*>(k_cache.data_ptr()), reinterpret_cast<uint8_t*>(v_cache.data_ptr()),
++      page_table.data_ptr<int>(), page_table.stride(0), cache_seqlens.data_ptr<int>(), B,
++      positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), inv_freq.data_ptr<float>(),
++      k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), static_cast<float>(score_scale),
++      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
++      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(),
++      ticket.data_ptr<int>(), gticket.data_ptr<int>(), gacc.data_ptr<float>(), gml.data_ptr<float>(),
++      static_cast<float>(eps));
++  C10_CUDA_KERNEL_LAUNCH_CHECK();
++}
++
++// {binaryVersion, ptxVersion, numRegs, localSizeBytes, maxThreadsPerBlock, dynamic smem, CTAs/SM}
++std::vector<int64_t> sv1_attrs(bool two) {
++  sv1_prepare(two);
++  cudaFuncAttributes a;
++  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(sv1_pick(two))));
++  int occ = 0;
++  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, sv1_pick(two), THREADS, LayF<4>::BYTES));
++  return {static_cast<int64_t>(a.binaryVersion), static_cast<int64_t>(a.ptxVersion), static_cast<int64_t>(a.numRegs),
++          static_cast<int64_t>(a.localSizeBytes), static_cast<int64_t>(a.maxThreadsPerBlock),
++          static_cast<int64_t>(LayF<4>::BYTES), static_cast<int64_t>(occ)};
++}
++"""
++
++_SV1_EXT = None                     # the FUSED module; None keeps [pre-attn + PSEUDO] at B=1
++_SV1_ROUTE = MappingProxyType({})   # {1: (two, grid spec)} once gated and replay-checked; frozen at import
++_SV1_GATE = 1.03                    # [pre-attn + PSEUDO] / [FUSED] needed in the interleaved timings
++# Start deadlines on the import clock (_IMPORT_T0); this phase runs last, so a late import skips it (and keeps
++# [pre-attn + PSEUDO]) instead of pushing the earlier phases past their own deadlines.
++_SV1_BUILD_BY, _SV1_CHECK_BY, _SV1_GATE_BY, _SV1_REPLAY_BY = 400.0, 440.0, 455.0, 470.0
++_SV1_LABELS = {False: "<4 stages, ticket, PSEUDO, FUSED>", True: "<4 stages, two-level ticket, PSEUDO, FUSED>"}
++
++
++def _sv1_gate(cfg) -> bool:
++    """Config-only predicate: sliding verify (window 2048, q_len 8, page 1, tp8, RoPE) at batch 1, routed at import."""
++    return (bool(_SV1_ROUTE) and _SV1_EXT is not None and cfg["batch"] == 1 and cfg["window"] == _PS_WINDOW
++            and cfg["q_len"] == 8 and cfg["page_size"] == 1 and cfg["num_q_heads"] == 16
++            and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64 and bool(cfg["rope_theta"]))
++
++
++def _sv1_ok_to_start(name: str, by: float) -> bool:
++    now = time.perf_counter() - _IMPORT_T0
++    ok = now <= by
++    _say(f"[sv1] phase {name}: {'starting' if ok else 'SKIPPED (deadline)'} (import clock {now:.0f} s, "
++         f"deadline {by:.0f} s)")
++    return ok
++
++
++def _build_sv1():
++    """Compile muse_sv1_fused_v1 at import, sm_90a only (TORCH_CUDA_ARCH_LIST=9.0a, restored after; -std=c++20,
++    -lineinfo; SK_PSEUDO for the head's pseudo prefix, SK_FULLLINE when the live stage-2 module uses that gather)."""
++    t0 = time.perf_counter()
++    full = _SK_GATHER.startswith("full-line")
++    flags = ["-O3", "-lineinfo", "-std=c++20", "-DSK_PSEUDO=1"] + (["-DSK_FULLLINE=1"] if full else [])
++    name = "muse_sv1_fused_v1" + ("_fl1" if full else "")
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils.cpp_extension import load_inline
++        _say(f"[sv1] building {name}: TORCH_CUDA_ARCH_LIST=9.0a, extra {flags}")
++        ext = load_inline(
++            name=name,
++            cpp_sources=_SV1_CPP,
++            cuda_sources=_SV1_CUDA,
++            functions=["sv1_attn", "sv1_attrs"],
++            extra_cuda_cflags=flags,
++            verbose=False,
++        )
++    except Exception as e:
++        _say(f"[sv1] load_inline ({name}) failed after {time.perf_counter() - t0:.1f}s: {str(e)[-1500:]!r}")
++        return None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    _say(f"[sv1] load_inline ({name}) compiled in {time.perf_counter() - t0:.1f}s")
++    return ext
++
++
++def _sv1_launch(data: Inputs, grid: int, two: bool) -> torch.Tensor:
++    """splitkv_attn_sv1_kernel: the whole B=1 sliding verify step (pre-attention, attention, merge, norm-gate) in one
++    launch; workspace from grid and shapes only; the shared self-resetting PSEUDO tickets."""
++    cfg = data["config"]
++    hq, d = cfg["num_q_heads"], cfg["head_dim"]
++    qkv = data["qkv"].reshape(8, -1)
++    device = qkv.device
++    ws_acc = torch.empty((grid + 8, hq, d), dtype=torch.float32, device=device)
++    ws_ml = torch.empty((grid + 8, 2, hq), dtype=torch.float32, device=device)
++    out = torch.empty((1, 8, hq * d), dtype=torch.bfloat16, device=device)
++    ng = 8 * 32 if two else 1
++    gacc = torch.empty((ng, hq, d), dtype=torch.float32, device=device)
++    gml = torch.empty((ng, 2, hq), dtype=torch.float32, device=device)
++    _SV1_EXT.sv1_attn(data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], data["positions"],
++                      data["cache_loc"], _inv_freq(cfg["rope_theta"], d, device), data["k_scale"], data["v_scale"],
++                      qkv, qkv.stride(0), out, ws_acc, ws_ml, _ps_ticket(device), _ps_gticket(device), gacc, gml,
++                      cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, grid, two)
++    return out
++
++
++def _sv1_forward(data: Inputs) -> torch.Tensor:
++    two, spec = _SV1_ROUTE[1]
++    return _sv1_launch(data, _ps_grid(spec, 8, _sm_count(data["qkv"].device)), two)
++
++
++def _sv1_owner_check(lens, grid) -> bool:
++    """Host check of the ownership the kernel relies on (B=1): pseudo-row 7's last tile is the flat tile T - 1, exactly
++    one CTA of the effective grid min(grid, T) holds it in its stream-K range, and that CTA is gx - 1 (= tile_owner).
++    lens are seq_lens (cache_seqlens = lens + 8)."""
++    seq = lens[0] + 8
++    tp = [0]
++    for j in range(8):
++        sp = max(seq - 7 + j, 0)
++        tp.append(tp[-1] + (sp - max(sp - _PS_WINDOW, 0) + 63) // 64)
++    T = tp[-1]
++    if T <= 0 or tp[8] == tp[7]:
++        return False
++    gx = min(grid, T)
++    starts = [c * T // gx for c in range(gx + 1)]
++    owners = [c for c in range(gx) if starts[c] <= T - 1 < starts[c + 1]]
++    return owners == [gx - 1] == [(T * gx - 1) // T]
++
++
++def _sv1_case(tag, lens, kv_scale, two, grid, gen) -> bool:
++    """One synthetic B=1 sliding verify case. The same inputs run twice: master _pre_attention_kernel + the landed
++    PSEUDO kernel (twin variant) on cloned caches, and the FUSED kernel on the originals; each launch announced
++    before and synced + confirmed after. Checks: cache_loc[m] == page_table[0, seq - 8 + m] and one owner CTA; the
++    FUSED output vs the FP32 windowed causal reference with RoPE (< 2e-2) and vs the master pair (< 3e-2); the 8
++    new k / v rows vs _pre_attention_kernel's by rel L2 (< 2e-2, never bytewise); every other cache byte unchanged."""
++    dev = torch.device("cuda")
++    data = _ps_synthetic(lens, kv_scale, gen, dev)
++    seq = int(lens[0]) + 8
++    loc = data["cache_loc"]
++    owned = (bool(torch.equal(data["page_table"][0, seq - 8:seq].long(), loc))
++             and _sv1_owner_check(lens, grid))
++    if not owned:
++        _say(f"[sv1] {tag}: ownership (cache_loc[m] == page_table[0, seq - 8 + m], one owner CTA gx - 1) FAIL")
++        return False
++    data2 = dict(data)
++    data2["k_cache"], data2["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
++    v = 5 if two else 4
++    _say(f"[sv1] {tag}: launching _pre_attention_kernel (master reference, cloned caches)")
++    q, qkv = _ps_prepare_q(data2)
++    torch.cuda.synchronize()
++    _say(f"[sv1] {tag}: launching splitkv_attn_sk_kernel{_SK_LABELS[v]} (master reference) grid {grid}")
++    out2 = _ps_launch(data2, q, qkv, v, grid)
++    torch.cuda.synchronize()
++    _say(f"[sv1] {tag}: launching splitkv_attn_sv1_kernel{_SV1_LABELS[two]} grid {grid}")
++    out3 = _sv1_launch(data, grid, two)
++    torch.cuda.synchronize()
++    _say(f"[sv1] {tag}: splitkv_attn_sv1_kernel returned")
++    e_ref, fin = _rel_l2(out3, _ps_reference(data, lens))
++    e_m, fin2 = _rel_l2(out3, out2.float())
++    ok = fin and fin2 and e_ref < 2e-2 and e_m < 3e-2
++    rows_ok = True
++    for name in ("k_cache", "v_cache"):
++        a = data[name].view(torch.uint8).view(-1, ROW_BYTES)
++        b = data2[name].view(torch.uint8).view(-1, ROW_BYTES)
++        e_row, fin_row = _rel_l2(a[loc].view(FP8).float(), b[loc].view(FP8).float())
++        a, b = a.clone(), b.clone()
++        a[loc] = 0
++        b[loc] = 0
++        same = bool(torch.equal(a, b))
++        _say(f"[sv1] {tag}: {name} new rows rel L2 {e_row:.2e}, finite {fin_row}, other rows unchanged {same}")
++        rows_ok = rows_ok and fin_row and e_row < 2e-2 and same
++    ok = ok and rows_ok
++    _say(f"[sv1] {tag}: out vs fp32 ref {e_ref:.2e}, vs master pair {e_m:.2e}, finite {fin and fin2} -> "
++         f"{'ok' if ok else 'FAIL'}")
++    return ok
++
++
++def _sv1_validate(two_r: bool, grid_r: int) -> "str | None":
++    """Image / attrs (regs, local bytes, CTAs/SM next to the landed PSEUDO twins; local > 0 is refused), canary, and
++    the self-check cases (B=1 lens 1, 7, 8, 60, 63, 1980, 2047, 2048, 2055, 80000; kv 1 and 0.25; grids 3 / p4 / p8 /
++    SM and the routed one). None on success, else the reason B=1 stays on [pre-attn + PSEUDO]."""
++    dev = torch.device("cuda")
++    sms = _sm_count(dev)
++    cap = tuple(torch.cuda.get_device_capability())
++    for two in (False, True):
++        a = list(_SV1_EXT.sv1_attrs(two))
++        ref = list(_EXT2.sk_attrs(5 if two else 4))
++        _say(f"[sv1] splitkv_attn_sv1_kernel{_SV1_LABELS[two]}: binaryVersion {a[0]}, ptxVersion {a[1]}, regs {a[2]}, "
++             f"local {a[3]} B, dyn smem {a[5]} B, {a[6]} CTAs/SM (landed PSEUDO twin: regs {ref[2]}, local {ref[3]} B, "
++             f"dyn smem {ref[5]} B, {ref[6]} CTAs/SM)")
++        if a[0] != 90:
++            return f"cubin version is not 90 ({_SV1_LABELS[two]})"
++        if a[3] > 0:
++            return f"local memory {a[3]} B ({_SV1_LABELS[two]}): refused"
++        if a[6] < 1:
++            return f"{_SV1_LABELS[two]} cannot launch (0 CTAs/SM)"
++        if a[6] < 2:
++            _say(f"[sv1] WARNING: {_SV1_LABELS[two]} does not reach 2 CTAs/SM (performance, not correctness)")
++    if cap != (9, 0):
++        return f"device capability {cap}"
++    gen = torch.Generator(device="cuda").manual_seed(9753)
++    p4, p8 = _ps_grid("p4", 8, sms), _ps_grid("p8", 8, sms)
++    cases = (
++        ("canary lens 3 grid 3", [3], 1.0, False, 3),
++        ("lens 1 two-level grid p4", [1], 1.0, True, p4),
++        ("lens 7 kv 0.25 grid 3", [7], 0.25, False, 3),
++        ("lens 8 two-level grid p8", [8], 1.0, True, p8),
++        ("lens 60 (new keys straddle a tile) grid 3", [60], 1.0, False, 3),
++        ("lens 63 kv 0.25 two-level grid SM", [63], 0.25, True, sms),
++        ("lens 1980 (straddle, < window) two-level grid p4", [1980], 1.0, True, p4),
++        ("lens 2047 kv 0.25 grid p8", [2047], 0.25, False, p8),
++        ("lens 2048 two-level grid 3", [2048], 1.0, True, 3),
++        ("lens 2055 grid SM", [2055], 1.0, False, sms),
++        ("lens 80000 grid p4", [80000], 1.0, False, p4),
++        ("lens 80000 kv 0.25 two-level grid p8", [80000], 0.25, True, p8),
++        ("lens 80000 two-level grid SM", [80000], 1.0, True, sms),
++        ("lens 80000 kv 0.25 grid 3", [80000], 0.25, False, 3),
++        (f"lens 80000 routed variant grid {grid_r}", [80000], 1.0, two_r, grid_r),
++    )
++    for tag, lens, kv_scale, two, grid in cases:
++        if not _sv1_case(tag, lens, kv_scale, two, grid, gen):
++            return f"self-check {tag}"
++    left = int(_ps_ticket(dev).abs().sum().item()) + int(_ps_gticket(dev).abs().sum().item())
++    _say(f"[sv1] PSEUDO tickets (both levels) after the self-check: sum {left}")
++    if left:
++        return "tickets not reset"
++    return None
++
++
++def _sv1_gate_b1(gen, flush, sms: int, two: bool, spec: str):
++    """B=1 x 80000: kernel_fn's routed [pre-attn + PSEUDO] against [FUSED] at the routed variant and grid spec (and,
++    printed only, FUSED at every grid spec p4 / p8 / SM), eager correctness first, then interleaved cold-L2 graph
++    replays with the empty graph subtracted. Returns (route?, the line with both numbers)."""
++    dev = torch.device("cuda")
++    lens = [80000]
++    data = _ps_synthetic(lens, 1.0, gen, dev)
++    cfg = data["config"]
++    if not _ps_gate(cfg) or _sv1_gate(cfg):
++        return False, "kernel_fn's B=1 path is not [pre-attn + PSEUDO] at the gate shape"
++    v = 5 if two else 4
++    inc = f"[pre-attn + PSEUDO {_SK_LABELS[v]} grid {spec}]"
++    _say(f"[sv1-gate] B=1: launching kernel_fn incumbent {inc} (eager correctness run)")
++    out = kernel_fn(data)
++    torch.cuda.synchronize()
++    err, fin = _rel_l2(out, _ps_reference(data, lens))
++    _say(f"[sv1-gate] B=1: incumbent returned, rel L2 {err:.2e}, finite {fin}")
++    if not (fin and err < 2e-2):
++        return False, "incumbent failed its correctness check"
++    fns, names = [lambda: kernel_fn(data)], [inc]
++    for sp in ["p4", "p8", "sm"] + ([spec] if spec not in ("p4", "p8", "sm") else []):
++        g = _ps_grid(sp, 8, sms)
++        name = f"[FUSED {_SV1_LABELS[two]} grid {g} ({sp})]"
++        _say(f"[sv1-gate] B=1: launching {name} (eager correctness run)")
++        out = _sv1_launch(data, g, two)
++        torch.cuda.synchronize()
++        err, fin = _rel_l2(out, _ps_reference(data, lens))
++        _say(f"[sv1-gate] B=1: {name} returned, rel L2 {err:.2e}, finite {fin}")
++        if not (fin and err < 2e-2):
++            if sp == spec:
++                return False, f"FUSED grid {spec} failed its correctness check"
++            continue
++        fns.append(lambda g=g: _sv1_launch(data, g, two))
++        names.append(name)
++        if sp == spec:
++            routed = len(fns) - 1
++    _say(f"[sv1-gate] B=1: timing {len(fns)} paths interleaved (graph replays, cold L2, empty graph subtracted)")
++    ts = _interleaved_us(fns, flush)
++    for name, t in zip(names, ts):
++        _say(f"[sv1-gate] B=1 x 80000: {name}: {t:7.1f} us")
++    t_inc, t_f = ts[0], ts[routed]
++    ratio = t_inc / t_f if t_f > 0 else 0.0
++    win = ratio >= _SV1_GATE
++    line = (f"{inc} {t_inc:.1f} us vs [FUSED grid {spec}] {t_f:.1f} us -> {ratio:.3f}x "
++            f"({'>=' if win else '<'} {_SV1_GATE:.2f}x)")
++    _say(f"[sv1-gate] B=1 x 80000: {line} -> {'ROUTE' if win else 'below the gate: pre-attn + PSEUDO'}")
++    del data, out
++    torch.cuda.empty_cache()
++    return win, line
++
++
++def _sv1_setup() -> None:
++    """Build, validate, gate and replay-check the B=1 FUSED PSEUDO route; set _SV1_ROUTE (frozen) once. Any miss keeps
++    kernel_fn's [pre-attn + PSEUDO] at B=1; nothing here raises. Re-zeroes the shared tickets afterwards."""
++    global _SV1_EXT, _SV1_ROUTE
++    dev = torch.device("cuda")
++    t_all = time.perf_counter()
++    route, why, line = {}, None, ""
++    try:
++        if _EXT2 is None or not _PS_BUILT or 1 not in _PS_ROUTE:
++            why = "B=1 is not on the PSEUDO route (nothing to fold into)"
++        elif not _sv1_ok_to_start("build", _SV1_BUILD_BY):
++            why = "build deadline"
++        else:
++            _SV1_EXT = _build_sv1()
++            if _SV1_EXT is None:
++                why = "build failed"
++        if why is None:
++            v, spec = _PS_ROUTE[1]
++            two = v == 5
++            sms = _sm_count(dev)
++            if not _sv1_ok_to_start("checks", _SV1_CHECK_BY):
++                why = "check deadline"
++            else:
++                try:
++                    why = _sv1_validate(two, _ps_grid(spec, 8, sms))
++                except Exception as e:
++                    why = f"self-check raised {e!r}"
++            if why is None:
++                if not _sv1_ok_to_start("gate", _SV1_GATE_BY):
++                    why = "gate deadline"
++                else:
++                    gen = torch.Generator(device="cuda").manual_seed(4242)
++                    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++                    win, line = _sv1_gate_b1(gen, flush, sms, two, spec)
++                    del flush
++                    torch.cuda.empty_cache()
++                    if not win:
++                        why = f"not >= {_SV1_GATE:.2f}x: {line}"
++            if why is None:
++                if not _sv1_ok_to_start("replay", _SV1_REPLAY_BY):
++                    why = "replay deadline"
++                else:
++                    route[1] = (two, spec)
++                    _SV1_ROUTE = MappingProxyType(dict(route))  # live for the replay check through kernel_fn
++                    gen = torch.Generator(device="cuda").manual_seed(4343)
++                    sets = _alt_sets([80000])
++                    mp = max(max(s) for s in sets) + 8 + 37
++                    try:
++                        why = _alt_check("[sv1] replay B=1", lambda l: _ps_synthetic(l, 1.0, gen, dev, max_pages=mp),
++                                         _ps_reference, sets, gate=_sv1_gate)
++                    except Exception as e:
++                        why = f"replay raised {e!r}"
++                    if why is not None:
++                        route.clear()
++    except Exception as e:
++        route.clear()
++        why = f"setup raised {e!r}"
++    finally:
++        _SV1_ROUTE = MappingProxyType(dict(route))  # frozen: kernel_fn only reads it
++        if not _SV1_ROUTE:
++            _SV1_EXT = None
++        try:
++            _rezero_tickets()
++        except Exception as e:
++            _say(f"[sv1] ticket re-zero raised: {e!r}")
++        _say(f"[sv1] total setup {time.perf_counter() - t_all:.1f} s (import clock "
++             f"{time.perf_counter() - _IMPORT_T0:.0f} s)")
++    if _SV1_ROUTE:
++        two, spec = _SV1_ROUTE[1]
++        _say(f"PATH CHOSEN: sliding verify B=1 [sv1 FUSED PSEUDO]: one launch {_SV1_LABELS[two]} grid {spec} ({line})")
++    else:
++        _say(f"PATH CHOSEN: sliding verify B=1 [sv1 FUSED PSEUDO]: pre-attn + PSEUDO (fallback: {why})")
++
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -9526,6 +10461,14 @@ if torch.cuda.is_available():
+         _SW_ROUTE = MappingProxyType({})
+         _SW_EXT = None
+         _say(f"PATH CHOSEN: sliding verify B=2..32 [sw s2b wgmma + fast merge]: master (fallback: setup raised {_e!r})")
++    # Sliding verify B=1 FUSED PSEUDO [sv1] after every other route is final (it gates against kernel_fn's real B=1 path
++    # and replay-checks the final kernel_fn); its own start deadlines skip it on a late import.
++    try:
++        _sv1_setup()
++    except Exception as _e:  # never raise at import: B=1 sliding verify keeps [pre-attn + PSEUDO]
++        _SV1_ROUTE = MappingProxyType({})
++        _SV1_EXT = None
++        _say(f"PATH CHOSEN: sliding verify B=1 [sv1 FUSED PSEUDO]: pre-attn + PSEUDO (fallback: setup raised {_e!r})")
+     # Decision lines re-printed last: the judge keeps a 16 KB log tail, which the gates' timing lines would otherwise fill.
+     print(f"[paths] {len(_PATH_LINES)} decision lines, re-printed (stream-K K/V gather: {_SK_GATHER}):", flush=True)
+     for _ln in _PATH_LINES:

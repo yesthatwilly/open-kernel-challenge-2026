@@ -1,0 +1,120 @@
+aunching splitkv_attn_sv1_kernel<4 stages, two-level ticket, PSEUDO, FUSED> grid 132
+[sv1] lens 63 kv 0.25 two-level grid SM: splitkv_attn_sv1_kernel returned
+[sv1] lens 63 kv 0.25 two-level grid SM: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 63 kv 0.25 two-level grid SM: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 63 kv 0.25 two-level grid SM: out vs fp32 ref 1.64e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 1980 (straddle, < window) two-level grid p4: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 1980 (straddle, < window) two-level grid p4: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, PSEUDO> (master reference) grid 32
+[sv1] lens 1980 (straddle, < window) two-level grid p4: launching splitkv_attn_sv1_kernel<4 stages, two-level ticket, PSEUDO, FUSED> grid 32
+[sv1] lens 1980 (straddle, < window) two-level grid p4: splitkv_attn_sv1_kernel returned
+[sv1] lens 1980 (straddle, < window) two-level grid p4: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 1980 (straddle, < window) two-level grid p4: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 1980 (straddle, < window) two-level grid p4: out vs fp32 ref 1.62e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 2047 kv 0.25 grid p8: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 2047 kv 0.25 grid p8: launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO> (master reference) grid 64
+[sv1] lens 2047 kv 0.25 grid p8: launching splitkv_attn_sv1_kernel<4 stages, ticket, PSEUDO, FUSED> grid 64
+[sv1] lens 2047 kv 0.25 grid p8: splitkv_attn_sv1_kernel returned
+[sv1] lens 2047 kv 0.25 grid p8: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2047 kv 0.25 grid p8: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2047 kv 0.25 grid p8: out vs fp32 ref 1.67e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 2048 two-level grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 2048 two-level grid 3: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, PSEUDO> (master reference) grid 3
+[sv1] lens 2048 two-level grid 3: launching splitkv_attn_sv1_kernel<4 stages, two-level ticket, PSEUDO, FUSED> grid 3
+[sv1] lens 2048 two-level grid 3: splitkv_attn_sv1_kernel returned
+[sv1] lens 2048 two-level grid 3: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2048 two-level grid 3: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2048 two-level grid 3: out vs fp32 ref 1.67e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 2055 grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 2055 grid SM: launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO> (master reference) grid 132
+[sv1] lens 2055 grid SM: launching splitkv_attn_sv1_kernel<4 stages, ticket, PSEUDO, FUSED> grid 132
+[sv1] lens 2055 grid SM: splitkv_attn_sv1_kernel returned
+[sv1] lens 2055 grid SM: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2055 grid SM: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 2055 grid SM: out vs fp32 ref 1.65e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 80000 grid p4: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 80000 grid p4: launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO> (master reference) grid 32
+[sv1] lens 80000 grid p4: launching splitkv_attn_sv1_kernel<4 stages, ticket, PSEUDO, FUSED> grid 32
+[sv1] lens 80000 grid p4: splitkv_attn_sv1_kernel returned
+[sv1] lens 80000 grid p4: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 grid p4: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 grid p4: out vs fp32 ref 1.64e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 80000 kv 0.25 two-level grid p8: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 80000 kv 0.25 two-level grid p8: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, PSEUDO> (master reference) grid 64
+[sv1] lens 80000 kv 0.25 two-level grid p8: launching splitkv_attn_sv1_kernel<4 stages, two-level ticket, PSEUDO, FUSED> grid 64
+[sv1] lens 80000 kv 0.25 two-level grid p8: splitkv_attn_sv1_kernel returned
+[sv1] lens 80000 kv 0.25 two-level grid p8: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 kv 0.25 two-level grid p8: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 kv 0.25 two-level grid p8: out vs fp32 ref 1.65e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 80000 two-level grid SM: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 80000 two-level grid SM: launching splitkv_attn_sk_kernel<4 stages, two-level ticket, PSEUDO> (master reference) grid 132
+[sv1] lens 80000 two-level grid SM: launching splitkv_attn_sv1_kernel<4 stages, two-level ticket, PSEUDO, FUSED> grid 132
+[sv1] lens 80000 two-level grid SM: splitkv_attn_sv1_kernel returned
+[sv1] lens 80000 two-level grid SM: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 two-level grid SM: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 two-level grid SM: out vs fp32 ref 1.65e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 80000 kv 0.25 grid 3: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 80000 kv 0.25 grid 3: launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO> (master reference) grid 3
+[sv1] lens 80000 kv 0.25 grid 3: launching splitkv_attn_sv1_kernel<4 stages, ticket, PSEUDO, FUSED> grid 3
+[sv1] lens 80000 kv 0.25 grid 3: splitkv_attn_sv1_kernel returned
+[sv1] lens 80000 kv 0.25 grid 3: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 kv 0.25 grid 3: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 kv 0.25 grid 3: out vs fp32 ref 1.72e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] lens 80000 routed variant grid 64: launching _pre_attention_kernel (master reference, cloned caches)
+[sv1] lens 80000 routed variant grid 64: launching splitkv_attn_sk_kernel<4 stages, ticket, PSEUDO> (master reference) grid 64
+[sv1] lens 80000 routed variant grid 64: launching splitkv_attn_sv1_kernel<4 stages, ticket, PSEUDO, FUSED> grid 64
+[sv1] lens 80000 routed variant grid 64: splitkv_attn_sv1_kernel returned
+[sv1] lens 80000 routed variant grid 64: k_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 routed variant grid 64: v_cache new rows rel L2 0.00e+00, finite True, other rows unchanged True
+[sv1] lens 80000 routed variant grid 64: out vs fp32 ref 1.67e-03, vs master pair 0.00e+00, finite True -> ok
+[sv1] PSEUDO tickets (both levels) after the self-check: sum 0
+[sv1] phase gate: starting (import clock 337 s, deadline 455 s)
+[sv1-gate] B=1: launching kernel_fn incumbent [pre-attn + PSEUDO <4 stages, ticket, PSEUDO> grid p8] (eager correctness run)
+[sv1-gate] B=1: incumbent returned, rel L2 1.68e-03, finite True
+[sv1-gate] B=1: launching [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 32 (p4)] (eager correctness run)
+[sv1-gate] B=1: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 32 (p4)] returned, rel L2 1.68e-03, finite True
+[sv1-gate] B=1: launching [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 64 (p8)] (eager correctness run)
+[sv1-gate] B=1: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 64 (p8)] returned, rel L2 1.68e-03, finite True
+[sv1-gate] B=1: launching [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 132 (sm)] (eager correctness run)
+[sv1-gate] B=1: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 132 (sm)] returned, rel L2 1.68e-03, finite True
+[sv1-gate] B=1: timing 4 paths interleaved (graph replays, cold L2, empty graph subtracted)
+/opt/sglang/lib/python3.12/site-packages/torch/cuda/graphs.py:630: UserWarning: The CUDA Graph is empty. This usually means that the graph was attempted to be captured on wrong device or stream. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/cuda/CUDAGraph.cpp:249.)
+  super().capture_end_pre()
+[gate] empty-graph baseline 2.9 us (subtracted)
+[sv1-gate] B=1 x 80000: [pre-attn + PSEUDO <4 stages, ticket, PSEUDO> grid p8]:    15.3 us
+[sv1-gate] B=1 x 80000: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 32 (p4)]:    18.8 us
+[sv1-gate] B=1 x 80000: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 64 (p8)]:    16.4 us
+[sv1-gate] B=1 x 80000: [FUSED <4 stages, ticket, PSEUDO, FUSED> grid 132 (sm)]:    15.8 us
+[sv1-gate] B=1 x 80000: [pre-attn + PSEUDO <4 stages, ticket, PSEUDO> grid p8] 15.3 us vs [FUSED grid p8] 16.4 us -> 0.934x (< 1.03x) -> below the gate: pre-attn + PSEUDO
+[sv1] total setup 37.2 s (import clock 337 s)
+PATH CHOSEN: sliding verify B=1 [sv1 FUSED PSEUDO]: pre-attn + PSEUDO (fallback: not >= 1.03x: [pre-attn + PSEUDO <4 stages, ticket, PSEUDO> grid p8] 15.3 us vs [FUSED grid p8] 16.4 us -> 0.934x (< 1.03x))
+[paths] 30 decision lines, re-printed (stream-K K/V gather: full-line (sk-full-line-gather, SK_FULLLINE)):
+PATH CHOSEN: stream-K K/V gather: full-line (sk-full-line-gather; canary + stage-2 self-check passed)
+PATH CHOSEN: full decode streamk+ticket v2
+PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode <4 stages, ticket, PSEUDO> grid p8 (best printed variant >= 1.05x faster than FA3)
+PATH CHOSEN: sliding verify B=2..16: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: sliding verify B=17..32: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=2..16: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=17..64: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no two-level variant)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged
+[slide] PATH CHOSEN: sliding B=1 PERHEAD ON: 2 clusters x C=16, one kv head each
+[slide] PATH CHOSEN: sliding cluster v2 PERHEAD 2 x C=16 B=1 (fp8qk)
+[slide] PATH CHOSEN: sliding master Triton B=2..16 (C=8 off by gate)
+[slide] PATH CHOSEN: sliding cluster v2 C=4 B=17..32 (fp8qk)
+[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)
+PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 19.1 us net vs cluster C=4 22.1 us net vs Triton 26.1 us net (cluster C=4 / pair 1.156x; pass 1 1.173x) (>= 1.03x vs master incumbent)
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 V1 21.63 us vs two-level 23.84 us, ratio 0.907; the chain line below names the routed variant)
+PATH CHOSEN: full decode_1 [chain]: V4 (A+C+D) (V4 19.68 us vs V0 23.84 us head to head, ratio 0.826 (<= 0.98); pass 1: V0 23.78, V1 21.25, V2 21.15, V3 19.46, V4 19.30 us); import clock 257 s
+PATH CHOSEN: full decode_1 [c320-combine-onepass]: ONEPASS combine on V4 (h2h 19.42 -> 17.09 us, inc/cand 1.137 vs margin 1.01; readout V3 19.10->17.66, V4 19.14->16.96 us (V4 ratio 1.128))
+PATH CHOSEN: full decode_1 [c320-pdl-early-trigger]: V4 EARLY trigger, PDL combine 16 warps (h2h 17.09 -> 16.86 us, inc/cand 1.013 vs margin 1.01; readout V4 inc 17.15, V4 late 17.15, V4 early nw16 16.90, V4 early nw8 19.10 us (ratio 1.015))
+PATH CHOSEN: full decode_1 [chain final]: V4 [c320_attn_kernel<320, true, EARLY> + c320_combine_kernel<320, 16, true, ONEPASS>]; onepass True, early trigger True; import clock 257 s
+PATH CHOSEN: sliding verify_32 pre-attention SV32 [B tiled]: route (pre 4.4 vs 5.8 us, step 30.0 vs 30.8 us, ratio 0.971)
+PATH CHOSEN: sliding verify B=2..16 [sw s2b]: pre-attn + kernel<SPLIT> + PDL sw_combine_kernel grid sm (GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.1/24.6 us: pdl grid 132 1.180x/1.160x; pdl grid 128 1.139x/1.139x; quick: master 24.6 us vs best pdl grid 132 (sm) 21.1 us (merge +2.8 us)))
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=2..16 (master 24.6 us): pdl best grid 132 (sm) 21.1 us = pre-attn + kernel 18.3 + merge +2.8 (kernel alone 14.8, combine alone 7.3); tk best grid 128 (8b) 41.1 us = pre-attn + kernel 18.9 + merge +22.1 (kernel alone 15.9, combine alone 6.8); ticket-only tail at grid 128 +0.7 us (DIAG)
+PATH CHOSEN: sliding verify B=17..32 [sw s2b]: master's routed path (GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.4/30.1 us: pdl grid 264 1.017x/1.013x; pdl grid 132 1.044x/1.023x; quick: master 30.2 us vs best pdl grid 264 (2sm) 29.5 us (merge +4.6 us)): master kept)
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=17..32 (master 30.2 us): pdl best grid 264 (2sm) 29.5 us = pre-attn + kernel 24.9 + merge +4.6 (kernel alone 21.8, combine alone 8.6); tk best grid 128 (4b) 42.8 us = pre-attn + kernel 27.1 + merge +15.7 (kernel alone 23.7, combine alone 6.6); ticket-only tail at grid 264 +2.0 us (DIAG)
+PATH CHOSEN: sliding verify B=1 [sw s2b]: not gated (PSEUDO / master route above unchanged)
+PATH CHOSEN: sliding verify B=1 [sv1 FUSED PSEUDO]: pre-attn + PSEUDO (fallback: not >= 1.03x: [pre-attn + PSEUDO <4 stages, ticket, PSEUDO> grid p8] 15.3 us vs [FUSED grid p8] 16.4 us -> 0.934x (< 1.03x))
