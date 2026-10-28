@@ -1657,3 +1657,14 @@ with the operator's go-ahead.
 - Lesson: an H100 per-SM reading that clears its MDE in both replicates (c128, +1.0%) carried to the judge with the
   same sign and a larger size on its row. The R10 ties bought determinism, not score.
 
+
+## 2026-10-28T06:09Z: H100 m07 / m03c / m08t1 harvested: close prefetch; no T=256 pin; T=1 is fixed-cost work
+
+- **m07:** the K1 w2 prefetch at T=1 is 2-3% slower at k=2 and 3 (+0.7-1.4 us/call): closed for moe and decode
+  (decode's board does not use it).
+- **m03c:** no cold-half knob beats the T=256 fork (best +0.39%, inside the MDE); the cold half blocks the hot path
+  for ~170 of ~342 us and every knob trades blocking for path time. No carrier.
+- **m08t1 (k >= 1 fits):** v1 13.5-13.9 + 10.4 k us; v4 21.2 + 9.35 k; per-expert cost splits w13 : w2 ~2 : 1. So the
+  T=1 lever is fixed cost (~14 us/call on the H100: launches, maps, PDL edges, combine), not a streaming engine.
+  Correction: m08t8's 05:32Z "streaming engine at T=8" skipped the one-kernel clause; corrected to not indicated.
+- Next-plan input (phase A): a fixed-cost T<=8 path (fused K1/K2/combine or a persistent kernel) is the T=1 lever.
