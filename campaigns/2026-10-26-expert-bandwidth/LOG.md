@@ -2354,3 +2354,4 @@ with the operator's go-ahead.
   - Building eb-v4x256b now: fork-stream fix + v4cxs-alone routing on moe, then on decode's fork.
   - The moe v4x sanitizer runs were VOID: the copy check runs out of memory under compute-sanitizer and falls back to master. Fuzz passed 6/6.
 - The workflow cap is CPUs-2 = 2 per workflow, so the lanes are being split into separate workflows: t1 runs as wf_aca4e81a-ce1, and t256 will be relaunched after its designers finish.
+- 2026-10-28T2245Z: scored 787a2815 read **1.9253** [1.896, 1.954]: a tie with af154932 inside the margin, but it is now the board's run, with verify_32 at 297.1 us. Landed on master and registered.

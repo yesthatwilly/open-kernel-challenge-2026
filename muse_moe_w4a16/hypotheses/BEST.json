@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "af154932df744959",
- "check_job": null,
+ "job": "787a28152682498d",
+ "check_job": "c04363bbe0ae4e0a",
  "mode": "submit",
- "speedup": 1.9250482782306033,
+ "speedup": 1.9253462749617603,
  "ci": [
-  1.8961725540571441,
-  1.9539240024040623
+  1.896466080837334,
+  1.9542264690861864
  ],
- "score_us": 6986.058558677349,
- "commit": "37a5921a777207d64cc6146d5e6ddd527baf0f40",
- "submission_blob": "1567c99da9b350d11ddb11492906bce4c51d33e0",
- "slug": "landing-af154932",
- "master_slug": "landing-af154932",
- "master_job": "af154932df744959",
+ "score_us": 6984.9772868867985,
+ "commit": "a72163730f3722f3b11725105e02354563f43bb5",
+ "submission_blob": "a131412e54259a7346afa2cd8dea7a9314a8ac92",
+ "slug": "landing-787a2815",
+ "master_slug": "landing-787a2815",
+ "master_job": "787a28152682498d",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T214752Z",
- "note": "registered by churn.py register-landing from okc status af154932df744959"
+ "updated_at": "2026-10-28T223922Z",
+ "note": "a tie with af154932 (1.9250) inside the margin; verify_32 304.7 -> 297.1/300.9 us; landed so master = the board's bytes"
 }
