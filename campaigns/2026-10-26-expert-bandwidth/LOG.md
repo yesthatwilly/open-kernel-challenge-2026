@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1301Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1303Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -27,7 +27,6 @@ append-only, newest last.
   - **In flight:**
     - Attention generator resumed for a second batch (pins + sk-onepass restack, gather-split pinned, window-kernel and
       FA3 fixed-cost anatomies); 9 attention checks left.
-    - bf16 scored run 3e3ffc5afc57433b (12:58Z): pc-lt-qkv128-readflush (check 0c9095e2 1.2844); land if > 1.274.
     - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
@@ -2011,3 +2010,8 @@ with the operator's go-ahead.
   1.610-1.626 on board routing.
 - For tomorrow's phase A: a decode-portable attention fixed-cost rewrite (window kernel ~7 us of 14.6 us at B=16; FA3's
   22 us at small B), sized by these numbers.
+
+## 2026-10-28T1303Z: bf16 scored 1.2794 and landed (qkv m=128 read-flush plan; rank 438/1236)
+
+- Scored run 3e3ffc5a: **1.2794** (CI 1.2602-1.2986) vs 1.2740 (+0.42%); master 62da2d9e; BEST.json + BEST.result.json
+  db9c6fd5. The first board gain from a phase-C variant batch.
