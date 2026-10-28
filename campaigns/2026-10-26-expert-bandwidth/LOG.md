@@ -26,7 +26,7 @@ append-only, newest last.
     1.2794.
   - **Quota 1314Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 5 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
-    - Prefill scored run b2941ea23dc743a3 (13:15Z): final-near-ties-nolo (check 7db6fa1a 1.5055); land if > 1.4897.
+    - Prefill scored run b2941ea23dc743a3 (13:14Z): final-near-ties-nolo (check 7db6fa1a 1.5055); land if > 1.4897.
     - Attention batch 2 (13:12Z; all on pins + onepass): pins-onepass 4cfddb59, diag-sw-gather-split-pinned 8a9a874c,
       diag-sw-fixed-anatomy 7f481040, diag-fa3-fixed-anatomy f1043d2c (four samples of the pins-onepass candidate).
     - moe + decode generator (phasec/moe-1028, phasec/dec-1028).
@@ -2041,7 +2041,7 @@ with the operator's go-ahead.
 
 - **final-near-ties-nolo 7db6fa1a: 1.5055** (fa3c contig-varlen pinned at turn_4 / turn_1, w2st arm a pinned at high /
   ft, LO phase skipped): above the 1.4897 board and above two same-code board checks (1.4986 / 1.4994); every pin
-  routed. Scored run **b2941ea2** at 13:15Z.
+  routed. Scored run **b2941ea2** at 13:14Z.
 - lo-pin-v64-fsilu 1.4776: V64 pinned at the low class loses on the judge's routing (FINDINGS do-not-try added).
   fa3c-turn4-bar098 1.4807, fa3c-pin-turns-b 1.4907 (tie), diag-lo-conc-curve 1.4838. The contingent variants:
   stack-v64f and lo-pin-v64 are dropped (V64 lost with its module ON); w2st-pin-high-ft and lo-skip-phase stay as
