@@ -2328,3 +2328,7 @@ with the operator's go-ahead.
   - Jobs (no new packaging): moe-iso A/B of the new v4x board vs the 1.8941 bytes; a sanitizer run on the v4x classes; the odd/skew fuzz; the filler.
   - The swf and decode-kernel probes are not run (they need packaging).
 - 2158Z: attention had 1 check left (miscounted as 0): swf S1b (attn-swf 05e314b6) dispatched now as 89add1cc5468453d instead of at 00:00Z.
+- 2201Z: **v4x decode 1fd2c931 PASS 1.669** vs board 1.6551 (+0.84%, unproven on one run).
+  - Routes: 8 v4xs, 16 v4xd (s within 0.002), 32 v4cxs, plus the T=128 cold half on v4cxs. 13/13 tests, routing recheck held.
+  - **Scored run 31e9a69aac344675 sent** (the board keeps the best run).
+  - Tooling note: the attempt-gate claims warning matched a stale 10-25 attempt file in that worktree, not the new one. It is warn-only; fix its file selection later.
