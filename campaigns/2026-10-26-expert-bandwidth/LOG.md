@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1210Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1239Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,12 +23,11 @@ append-only, newest last.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
     1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
-  - **Quota 1159Z:** decode 12 checks / 5 runs; moe 13 / 4; bf16, attention and prefill 20 / 10.
+  - **Quota 1239Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 16 / 10; bf16 and prefill 20 / 10.
   - **In flight:**
-    - Agents preparing phase-C check variants (pins of small-margin races, gate bars, planning diagnostics; one commit
-      per variant, MANIFEST.jsonl + attempt drafts): bf16 on phasec/bf16-1028 (.worktrees/pc-bf16) and attention on
-      phasec/attn-1028 (.worktrees/pc-attn). Prefill (and moe / decode) next. Dispatch with
-      `scratchpad/phasec.py prep|record` around a bare `okc check` (the attempt gate stays in force).
+    - Attention pin checks (12:37Z, phasec/attn-1028): sw-pin-verify-all 1306b615, sw-pin-b17-off 2ab18645,
+      sw-pin-b17-on cb4fe7c4, sw-pin-b2-sm 8a87e3ea. Then the attention diagnostics (7 single + diag-all).
+    - Variant generators: bf16 (phasec/bf16-1028) and prefill (phasec/prefill-1028) running; moe / decode next.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1946,3 +1945,16 @@ with the operator's go-ahead.
   row), gate-bar moves, and prepare-only diagnostics for tomorrow's rewrites. Dispatch spreads over the afternoon and
   phase C; each gets a fresh attempt file at dispatch (scratchpad/phasec.py, f1b62f14).
 - bf16 and attention generators started (12:0xZ); prefill when one returns (<= 3 agents).
+
+## 2026-10-28T1239Z: attention batch ready (12 variants); four pin checks dispatched; prefill generator started
+
+- Agent (288k tokens), phasec/attn-1028 tip 64d30f23 (manifest + drafts): 4 pins, 7 diagnostics, diag-all.
+- **The 1.634 attention board was a lucky draw on two flipping gates** (logs of 4e386647, ba8c8a61, bfb0457c, aa9fc860):
+  B=17..32 sliding verify routed only on the board (row 10 27.10 us vs 27.79-28.34 kept on master); the B=2..16 grid
+  fell back to 8b once (row 8 20.10 vs 19.40-19.75 us). sw-pin-verify-all is the deterministic final-rerun candidate
+  (expected ~1.63 every time).
+- A lead on the do-not-try list: sk-onepass-verify1-timing-fix had row 6 (sliding verify 1, weight 46) at 12.7-12.8 us
+  vs 13.9 on the board (~0.8% of the score); its neutral totals were confounded by losing both flips. Default taken
+  (no user question): restack it on the pins as a new variant once the pin checks are read.
+- Dispatched 12:37Z: sw-pin-verify-all **1306b615**, sw-pin-b17-off **2ab18645**, sw-pin-b17-on **cb4fe7c4**,
+  sw-pin-b2-sm **8a87e3ea**. The prefill generator started (phasec/prefill-1028).
