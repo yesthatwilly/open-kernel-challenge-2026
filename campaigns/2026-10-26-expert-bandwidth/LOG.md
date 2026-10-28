@@ -1903,5 +1903,7 @@ with the operator's go-ahead.
   vs a 1.9 us floor; full verify main loop vs FA3), which also runs in decode's weakest verify rows (FA3 main is 152 /
   288 us of the 467 / 701 us decode verify 16 / 32 full rows). It goes into tomorrow's phase-A candidate list as a
   decode-portable attention rewrite. The attention queue's verify items are stale against measured DIAGs.
-- Bookkeeping flagged: muse_attention_decode BEST.result.json holds a8d64777 (a 0.0023 check), not the board job
-  4e386647.
+- Bookkeeping: every problem's BEST.result.json was stale (attention a8d64777, moe 5e7d5532, decode 3c3181b1, bf16
+  366189f0; prefill had none). Regenerated from each BEST.json job with churn.py's trim_result (455d7284, 44c0baa8).
+  Lesson: a hand registration in BEST.json must also rewrite BEST.result.json (churn attributes against it);
+  `churn.py best-init` is not the tool for that (it re-seeds BEST.json from the highest local record, checks included).
