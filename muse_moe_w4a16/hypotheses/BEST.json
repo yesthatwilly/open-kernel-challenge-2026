@@ -1,19 +1,19 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "e2827c9e800549cd",
+ "job": "0b49b1aae6a04acb",
  "mode": "submit",
- "speedup": 1.8821567778513866,
+ "speedup": 1.8941065766324314,
  "ci": [
-  1.8539244261836159,
-  1.9103891295191573
+  1.865694977982945,
+  1.9225181752819178
  ],
- "commit": "52ab6fdef632a539c591666e633bf495f5bb82d6",
- "submission_blob": "959e053de61bea2578f0c1ed61851e021d52174c",
- "slug": "campaign-eb-fc",
+ "commit": "2ec8090fab89fe5c5d424bf3a58b17883e78c6bf",
+ "submission_blob": "54068229a891bad6bce6aca68961ecb2181d983e",
+ "slug": "campaign-eb-x1v6",
  "result": null,
- "updated_at": "2026-10-28T1107Z",
- "master_slug": "campaign-eb-fc",
- "master_job": "e2827c9e800549cd",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth fc = the L4 board + Engine A v6's T=1 fixed-cost arms raced against v6 (v6p: FAST K1/K2 instances with consumer-staged B and a 32-bit record split; v6pe: v6p + an early combine kernel in the v6 module; both bitwise v6), from the H100 P3c / M09 fixed-cost readings; branch campaign/eb-fc 6412a999 (b309a938 merged with eb-l4, cut to 988,470 B); check dec43c9c 1.880 (decode 1 x1.084); scored 1.8822 vs 1.8719; landed on master.",
- "score_us": 7145.260245191903
+ "updated_at": "2026-10-28T1207Z",
+ "master_slug": "campaign-eb-x1v6",
+ "master_job": "0b49b1aae6a04acb",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth X1v6 = the fc moe board + X1 (x preloaded once per 128-k kq with one ldmatrix.x4) at ea6's call site only (eak::consume<DQ, XB = 0> elsewhere, so v1-v4 are unchanged); branch campaign/eb-x1v6 ea54b0ee; check 2e78be8b 1.906; scored 1.8941 vs 1.8822; landed on master.",
+ "score_us": 7100.181249521
 }
