@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1250Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1253Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,13 +23,14 @@ append-only, newest last.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
     1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
-  - **Quota 1250Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 17 / 10; prefill 20 / 10.
+  - **Quota 1253Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 9 / 10; bf16 8 / 10; prefill 20 / 10.
   - **In flight:**
     - Attention diagnostics (12:49Z): diag-sw-perb-floor 15606a81, diag-sw-keys-sweep 0017ccea, diag-sw-gather-split
       7745d256, diag-fa3-verify-ctx-sweep e8aac4b8, diag-fa3-verify-gather-split 6f1b1e8c, diag-fa3-verify-perb-floor
       cc388d94, diag-gather-floor de2770ab.
-    - bf16 checks (12:46Z, phasec/bf16-1028): pc-pin-rpdl-all-khalf bcc4babe, pc-diag-pattern bf87ac81, pc-ouns-cl4
-      5ff48999. Nine more bf16 variants ready (manifest order).
+    - bf16 checks (12:51-12:52Z, the other nine bf16 variants): pc-diag-anatomy b22542a0, pc-diag-roofline 7167d8d3,
+      pc-diag-reducetail bd2520a9, pc-diag-nearby 9d005818, pc-diag-cosched 05336b03, pc-lt-qkv128-readflush 0c9095e2,
+      pc-diag-wave 46728895, pc-diag-ceiling 25438639, pc-b12-cw4-pooler-o b4ca8b22.
     - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
@@ -1981,3 +1982,12 @@ with the operator's go-ahead.
 - The seven attention diagnostics (window kernel and FA3 full-verify anatomy for tomorrow's attention rewrite) went
   out at 12:49Z. scratchpad/phasec.py gained `result` (fills the attempt, archives the run; c51db4eb).
 - Attention left: 9 checks. Next attention variants: pins + the sk-onepass verify-1 row (the ~0.8% lead) once built.
+
+## 2026-10-28T1253Z: first three bf16 checks below the board; the other nine dispatched
+
+- pc-pin-rpdl-all-khalf 1.2671, pc-diag-pattern 1.2692, pc-ouns-cl4 1.2713, all under the 1.274 board (the board looks
+  like the top of a ~1.267-1.274 spread). No scored runs.
+- **pc-diag-pattern answers its question:** a tile-contiguous weight repack speeds the swap-AB m <= 32 GEMMs by 2.1-3.4%
+  under the read flush (tiled / orig 0.966 / 0.979 / 0.978 at m = 8 / 16 / 32; 3.72 -> 3.86 TB/s). Below the 0.95 bar
+  for a same-day routed repack; a small decode-portable lever to stack later.
+- The remaining nine bf16 variants went out at 12:51-12:52Z. bf16 left: 8 checks.
