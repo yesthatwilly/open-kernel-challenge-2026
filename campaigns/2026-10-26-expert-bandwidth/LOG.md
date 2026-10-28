@@ -2,23 +2,27 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0016Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0045Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
-  - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`). **H100/H200: on hold since the operator's 2122Z stop; no GPU runs
-    by any path** (hopper-probe, hopper-queue, agents) until they say.
+  - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
+  - **H100 (gpunode06) RESUMED by the user at ~0035Z** (verbatim: "can we simultaneously juggle submitting all the h100
+    stuff? or create a subagent to deploy to gpunode06 to use the h100 over the next few hours. or at least juts an agent
+    that deploys all the already-existing h100 tests"). One agent redeploys: node check, nodejudge setup, fuzz fillers
+    released, runner restarted, the 10-27 2114-2121Z results harvested into `research/h100-findings.md`. **H200
+    (gpunode26) stays held.** The S3 build gets node validation (moe-iso A/B, memcheck, fuzz) before its judge check.
   - **Decode board 1.5926 since 0014Z** (e1fd3c00, the pinned trim; rank 347/823; overall 352/1369).
   - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
     (441/901), prefill 1.4897 (199/538); overall 353/1369. Quota: 10 scored / 20 checks on every problem.
   - **In flight:**
-    - decode check **314cca3c51604c23**: pins round 2 (campaign/eb-pin2 e8f8134b, 925,194 B): Engine A T=2..8 v4,
-      unpooler T=9..16 master, qkv_gate + o T=17..32 swap-AB, T=256 pool cell. All are e1fd3c00's own picks. Scored
-      run only if it beats 1.5926.
+    - **H100 redeploy agent** (gpunode06 only; see the policy bullet).
     - workflow **wf_9a2a0ee6-8bc** (s3-expert-streaming): S3 design panel x3 (max) -> judge (max) -> build on
       `campaign/eb-s3` (from eb-s1a 26994217 = the moe board bytes) -> 2 audits -> fix (high). It returns a
       check-ready commit; the main thread dispatches the moe check. Predicted ~1.4M tokens.
-  - **Next:** harvest 314cca3c (all four pins routed? rows at e1fd3c00's draw?); S3's moe check when the workflow
-    returns. Phase B once decode's reasonable checks are spent. Quota 0015Z: decode 9 scored / 20 checks; others 10 / 20.
+  - **Decode base for the next decode builds: campaign/eb-pin2 e8f8134b** (pins round 2: check 314cca3c 1.5883, all
+    four pins routed, a tie, so not scored).
+  - **Next:** when S3's build lands, queue its node validation, then its moe judge check; harvest the H100 queue at
+    each tick. Phase B once decode's reasonable checks are spent. Quota: decode 9 scored / 19 checks; others 10 / 20.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
@@ -1474,3 +1478,17 @@ with the operator's go-ahead.
   in every archived decode run. Printing it last (as moe does) would make those races auditable.
 - e8f8134b reviewed here (the generated diff is the pin lines only; lint, cuda_syntax, build --check ok) -> decode
   check 314cca3c51604c23 (attempt 3304c19d on eb-pin2).
+
+## 2026-10-28T0045Z: pins round 2 check: 1.5883, all four pins routed (tie); H100 resumed by the user
+
+- **314cca3c51604c23 passed, 1.5883** [1.565, 1.612] vs the 1.5926 board: -0.27%, inside the band. All four pins
+  routed (ENGINE A v4 PINNED at T=8; unpooler MASTER PINNED at T=9..16; qkv_gate / o SWAP-AB PINNED at T=17..32; pool
+  PINNED at T=256), every check clean. Per-row speedups x0.964-x1.018 vs e1fd3c00. The unpinned Engine A race at
+  T=17..32 flipped (v4 -> v4c); SGLang drew slow at T=128/256. No scored run on a tie: **e8f8134b is the decode base**
+  for the next decode builds. Archived runs/314cca3c51604c23.json.gz; attempt 76cf6af1 on eb-pin2.
+- **The user, ~0035Z:** "can we simultaneously juggle submitting all the h100 stuff? or create a subagent to deploy
+  to gpunode06 to use the h100 over the next few hours. or at least juts an agent that deploys all the already-existing
+  h100 tests". Found: all 23 queued H100 jobs finished by 2121Z (K9 / big-T / sanitizer / sweep / soak / board-flip /
+  ladder replicates), unharvested; only the two moe fuzz fillers (H100) and two H200 jobs were held; the
+  x5-h100-program's judged experiments were never queued (its E1 / E2 enabler builds were cut off mid-edit; their
+  edits sit uncommitted in takemyjob). One agent now redeploys gpunode06 and harvests; H200 stays held.
