@@ -1,0 +1,106 @@
+tio 0.77
+[sw-gate] B=2..16 round 2: pdl grid 128 (8b) median 21.7 us IQR 0.5 vs master median 24.7 us IQR 0.7 -> master / it 1.140x, IQR ratio 0.68
+[sw] phase B=2..16 final rounds: 0.0 s (import clock now 308 s)
+[sw-gate] B=2..16: pdl grid 132 (sm): rounds 1.169x / 1.155x (need both >= 1.05), IQR bound met, vs master rel L2 6.74e-03 (< 0.03), error word 0, tickets clear True -> ROUTE
+[sw-gate] B=2..16: pdl grid 128 (8b): rounds 1.134x / 1.140x (need both >= 1.05), IQR bound met, vs master rel L2 6.59e-03 (< 0.03), error word 0, tickets clear True -> ROUTE
+[sw] phase gate B=2..16: 0.1 s (import clock now 308 s)
+[sw] GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.1/24.7 us: pdl grid 132 1.169x/1.155x; pdl grid 128 1.134x/1.140x; quick: master 24.5 us vs best pdl grid 132 (sm) 21.1 us (merge +2.9 us))
+[sw] phase gate B=17..32: starting (import clock 308 s, deadline 430 s)
+[sw-gate] B=17..32 (B=32 x 80000): master's routed path (kernel_fn, sw route off) rel L2 vs fp32 7.62e-03, finite True; candidate pre-attention: SV32 tiled (as kernel_fn)
+[sw-gate] B=17..32: launching grid 64 (2b) pdl: kernel<SPLIT> + PDL sw_combine_kernel (eager correctness run)
+[sw-gate] B=17..32: grid 64 (2b) pdl returned: rel L2 vs fp32 7.33e-03, vs master 9.70e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 64 (2b) tk: kernel<TICKET> (in-kernel merge) (eager correctness run)
+[sw-gate] B=17..32: grid 64 (2b) tk returned: rel L2 vs fp32 7.33e-03, vs master 9.70e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 128 (4b) pdl: kernel<SPLIT> + PDL sw_combine_kernel (eager correctness run)
+[sw-gate] B=17..32: grid 128 (4b) pdl returned: rel L2 vs fp32 5.86e-03, vs master 8.51e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 128 (4b) tk: kernel<TICKET> (in-kernel merge) (eager correctness run)
+[sw-gate] B=17..32: grid 128 (4b) tk returned: rel L2 vs fp32 5.86e-03, vs master 8.51e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 256 (8b) pdl: kernel<SPLIT> + PDL sw_combine_kernel (eager correctness run)
+[sw-gate] B=17..32: grid 256 (8b) pdl returned: rel L2 vs fp32 4.72e-03, vs master 7.71e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 256 (8b) tk: kernel<TICKET> (in-kernel merge) (eager correctness run)
+[sw-gate] B=17..32: grid 256 (8b) tk returned: rel L2 vs fp32 4.72e-03, vs master 7.71e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 132 (sm) pdl: kernel<SPLIT> + PDL sw_combine_kernel (eager correctness run)
+[sw-gate] B=17..32: grid 132 (sm) pdl returned: rel L2 vs fp32 5.71e-03, vs master 8.51e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 132 (sm) tk: kernel<TICKET> (in-kernel merge) (eager correctness run)
+[sw-gate] B=17..32: grid 132 (sm) tk returned: rel L2 vs fp32 5.71e-03, vs master 8.51e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 264 (2sm) pdl: kernel<SPLIT> + PDL sw_combine_kernel (eager correctness run)
+[sw-gate] B=17..32: grid 264 (2sm) pdl returned: rel L2 vs fp32 4.66e-03, vs master 7.79e-03, finite True, error word 0, tickets clear True -> ok
+[sw-gate] B=17..32: launching grid 264 (2sm) tk: kernel<TICKET> (in-kernel merge) (eager correctness run)
+[sw-gate] B=17..32: grid 264 (2sm) tk returned: rel L2 vs fp32 4.66e-03, vs master 7.79e-03, finite True, error word 0, tickets clear True -> ok
+[sw] phase B=17..32 quick pass: starting (import clock 308 s, deadline 430 s)
+[sw-gate] B=17..32 quick pass (7 reps, cold L2, empty graph 3.0 us subtracted): master 30.0 us (IQR 1.1)
+[sw-gate] B=17..32: grid 64 (2b): pdl 43.1 us (0.695x, merge +2.4 us); tk 53.5 us (0.560x, merge +12.8 us); pre-attn + kernel<SPLIT> 40.7 us; kernel alone 37.0 us; combine alone 6.1 us; ticket-only tail +0.7 us (DIAG), merge_head +12.2 us
+[sw-gate] B=17..32: grid 128 (4b): pdl 30.4 us (0.986x, merge +3.1 us); tk 42.8 us (0.701x, merge +15.5 us); pre-attn + kernel<SPLIT> 27.3 us; kernel alone 23.9 us; combine alone 6.6 us; ticket-only tail +0.6 us (DIAG), merge_head +14.9 us
+[sw-gate] B=17..32: grid 132 (sm): pdl 29.6 us (1.013x, merge +3.3 us); tk 45.6 us (0.657x, merge +19.3 us); pre-attn + kernel<SPLIT> 26.3 us; kernel alone 22.6 us; combine alone 6.8 us; ticket-only tail +2.1 us (DIAG), merge_head +17.2 us
+[sw-gate] B=17..32: grid 256 (8b): pdl 29.8 us (1.005x, merge +4.5 us); tk 64.5 us (0.465x, merge +39.2 us); pre-attn + kernel<SPLIT> 25.3 us; kernel alone 22.1 us; combine alone 7.8 us; ticket-only tail +1.6 us (DIAG), merge_head +37.6 us
+[sw-gate] B=17..32: grid 264 (2sm): pdl 29.7 us (1.008x, merge +5.0 us); tk 69.9 us (0.429x, merge +45.1 us); pre-attn + kernel<SPLIT> 24.7 us; kernel alone 21.5 us; combine alone 8.7 us; ticket-only tail +2.1 us (DIAG), merge_head +43.0 us
+[sw] phase B=17..32 quick pass: 0.1 s (import clock now 308 s)
+[sw] phase B=17..32 final rounds: starting (import clock 308 s, deadline 460 s)
+[sw-gate] B=17..32 round 1: pdl grid 132 (sm) median 29.4 us IQR 0.5 vs master median 30.4 us IQR 0.9 -> master / it 1.034x, IQR ratio 0.61
+[sw-gate] B=17..32 round 1: pdl grid 264 (2sm) median 29.3 us IQR 0.5 vs master median 30.4 us IQR 0.9 -> master / it 1.038x, IQR ratio 0.61
+[sw-gate] B=17..32 round 2: pdl grid 132 (sm) median 29.5 us IQR 1.0 vs master median 30.2 us IQR 0.7 -> master / it 1.024x, IQR ratio 1.36
+[sw-gate] B=17..32 round 2: pdl grid 264 (2sm) median 29.7 us IQR 0.7 vs master median 30.2 us IQR 0.7 -> master / it 1.018x, IQR ratio 1.00
+[sw] phase B=17..32 final rounds: 0.0 s (import clock now 308 s)
+[sw-gate] B=17..32: pdl grid 132 (sm): rounds 1.034x / 1.024x (need both >= 1.03), IQR bound met, vs master rel L2 8.51e-03 (< 0.03), error word 0, tickets clear True -> no
+[sw-gate] B=17..32: pdl grid 264 (2sm): rounds 1.038x / 1.018x (need both >= 1.03), IQR bound met, vs master rel L2 7.79e-03 (< 0.03), error word 0, tickets clear True -> no
+[sw] phase gate B=17..32: 0.2 s (import clock now 308 s)
+[sw] GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.4/30.2 us: pdl grid 132 1.034x/1.024x; pdl grid 264 1.038x/1.018x; quick: master 30.0 us vs best pdl grid 132 (sm) 29.6 us (merge +3.3 us)): master kept
+[sw] phase two-state replay checks: starting (import clock 308 s, deadline 480 s)
+[sw] replay B=2..16 state A: eager warm-up on a side stream
+[sw] replay B=2..16 state B: eager warm-up on a side stream
+[sw] replay B=2..16: warm-ups returned
+[sw] replay B=2..16 state A: capturing
+[sw] replay B=2..16 state B: capturing
+[sw] replay B=2..16 step 0: launching state A graph
+[sw] replay B=2..16 step 0: state A rel L2 6.48e-03, finite True -> ok
+[sw] replay B=2..16 step 1: launching state B graph
+[sw] replay B=2..16 step 1: state B rel L2 4.65e-03, finite True -> ok
+[sw] replay B=2..16 step 2: launching state A graph (refilled)
+[sw] replay B=2..16 step 2: state A rel L2 4.47e-03, finite True -> ok
+[sw] replay B=2..16 step 3: launching state B graph (refilled)
+[sw] replay B=2..16 step 3: state B rel L2 4.55e-03, finite True -> ok
+[sw] replay B=2..16 step 4: launching state A graph (refilled)
+[sw] replay B=2..16 step 4: state A rel L2 4.58e-03, finite True -> ok
+[sw] replay B=2..16 step 5: launching state B graph (refilled)
+[sw] replay B=2..16 step 5: state B rel L2 4.49e-03, finite True -> ok
+[sw] after the replay checks: error word 0
+[sw] phase two-state replay checks: 0.1 s (import clock now 308 s)
+[sw] total setup 42.7 s (import clock 308 s)
+PATH CHOSEN: sliding verify B=2..16 [sw s2b]: pre-attn + kernel<SPLIT> + PDL sw_combine_kernel grid sm (GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.1/24.7 us: pdl grid 132 1.169x/1.155x; pdl grid 128 1.134x/1.140x; quick: master 24.5 us vs best pdl grid 132 (sm) 21.1 us (merge +2.9 us)))
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=2..16 (master 24.5 us): pdl best grid 132 (sm) 21.1 us = pre-attn + kernel 18.2 + merge +2.9 (kernel alone 14.7, combine alone 7.5); tk best grid 128 (8b) 40.8 us = pre-attn + kernel 19.3 + merge +21.5 (kernel alone 16.0, combine alone 6.4); ticket-only tail at grid 128 +0.8 us (DIAG)
+PATH CHOSEN: sliding verify B=17..32 [sw s2b]: master's routed path (GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.4/30.2 us: pdl grid 132 1.034x/1.024x; pdl grid 264 1.038x/1.018x; quick: master 30.0 us vs best pdl grid 132 (sm) 29.6 us (merge +3.3 us)): master kept)
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=17..32 (master 30.0 us): pdl best grid 132 (sm) 29.6 us = pre-attn + kernel 26.3 + merge +3.3 (kernel alone 22.6, combine alone 6.8); tk best grid 128 (4b) 42.8 us = pre-attn + kernel 27.3 + merge +15.5 (kernel alone 23.9, combine alone 6.6); ticket-only tail at grid 256 +1.6 us (DIAG)
+PATH CHOSEN: sliding verify B=1 [sw s2b]: not gated (PSEUDO / master route above unchanged)
+[paths] 29 decision lines, re-printed (stream-K K/V gather: full-line (sk-full-line-gather, SK_FULLLINE)):
+PATH CHOSEN: stream-K K/V gather: full-line (sk-full-line-gather; canary + stage-2 self-check passed)
+PATH CHOSEN: full decode streamk+ticket v2
+PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode <4 stages, ticket, PSEUDO> grid p8 (best printed variant >= 1.05x faster than FA3)
+PATH CHOSEN: sliding verify B=2..16: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: sliding verify B=17..32: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=2..16: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=17..64: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no two-level variant)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged
+[slide] PATH CHOSEN: sliding B=1 PERHEAD ON: 2 clusters x C=16, one kv head each
+[slide] PATH CHOSEN: sliding cluster v2 PERHEAD 2 x C=16 B=1 (fp8qk)
+[slide] PATH CHOSEN: sliding master Triton B=2..16 (C=8 off by gate)
+[slide] PATH CHOSEN: sliding cluster v2 C=4 B=17..32 (fp8qk)
+[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)
+PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 19.1 us net vs cluster C=4 22.2 us net vs Triton 26.0 us net (cluster C=4 / pair 1.164x; pass 1 1.175x) (>= 1.03x vs master incumbent)
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 V1 21.70 us vs two-level 24.06 us, ratio 0.902; the chain line below names the routed variant)
+PATH CHOSEN: full decode_1 [chain]: V4 (A+C+D) (V4 19.33 us vs V0 24.06 us head to head, ratio 0.803 (<= 0.98); pass 1: V0 23.81, V1 21.38, V2 21.22, V3 19.10, V4 19.04 us); import clock 264 s
+PATH CHOSEN: full decode_1 [c320-combine-onepass]: ONEPASS combine on V4 (h2h 19.07 -> 16.86 us, inc/cand 1.131 vs margin 1.01; readout V3 19.07->17.50, V4 19.20->16.83 us (V4 ratio 1.141))
+PATH CHOSEN: full decode_1 [c320-pdl-early-trigger]: incumbent trigger kept (h2h 16.93 -> 16.80 us, inc/cand 1.008 vs margin 1.01; readout V4 inc 16.38, V4 late 16.38, V4 early nw16 16.48, V4 early nw8 18.69 us (ratio 0.994))
+PATH CHOSEN: full decode_1 [chain final]: V4 [c320_attn_kernel<320, true> + c320_combine_kernel<320, 16, true, ONEPASS>]; onepass True, early trigger False; import clock 265 s
+PATH CHOSEN: sliding verify_32 pre-attention SV32 [B tiled]: route (pre 4.5 vs 5.9 us, step 29.8 vs 31.0 us, ratio 0.963)
+PATH CHOSEN: sliding verify B=2..16 [sw s2b]: pre-attn + kernel<SPLIT> + PDL sw_combine_kernel grid sm (GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.1/24.7 us: pdl grid 132 1.169x/1.155x; pdl grid 128 1.134x/1.140x; quick: master 24.5 us vs best pdl grid 132 (sm) 21.1 us (merge +2.9 us)))
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=2..16 (master 24.5 us): pdl best grid 132 (sm) 21.1 us = pre-attn + kernel 18.2 + merge +2.9 (kernel alone 14.7, combine alone 7.5); tk best grid 128 (8b) 40.8 us = pre-attn + kernel 19.3 + merge +21.5 (kernel alone 16.0, combine alone 6.4); ticket-only tail at grid 128 +0.8 us (DIAG)
+PATH CHOSEN: sliding verify B=17..32 [sw s2b]: master's routed path (GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.4/30.2 us: pdl grid 132 1.034x/1.024x; pdl grid 264 1.038x/1.018x; quick: master 30.0 us vs best pdl grid 132 (sm) 29.6 us (merge +3.3 us)): master kept)
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=17..32 (master 30.0 us): pdl best grid 132 (sm) 29.6 us = pre-attn + kernel 26.3 + merge +3.3 (kernel alone 22.6, combine alone 6.8); tk best grid 128 (4b) 42.8 us = pre-attn + kernel 27.3 + merge +15.5 (kernel alone 23.9, combine alone 6.6); ticket-only tail at grid 256 +1.6 us (DIAG)
+PATH CHOSEN: sliding verify B=1 [sw s2b]: not gated (PSEUDO / master route above unchanged)
+[diag] sw-perb-floor: grid sm, cold L2: B=2 kernel 7.7 us = 35.2x floor 0.22 (0.14 TB/s), step 18.4 (sw); B=4 kernel 8.3 us = 19.0x floor 0.44 (0.25 TB/s), step 16.4 (sw); B=8 kernel 11.1 us = 12.7x floor 0.87 (0.38 TB/s), step 17.5 (sw)
+[diag] sw-perb-floor: B=16 kernel 14.6 us = 8.3x floor 1.75 (0.58 TB/s), step 20.8 (sw); B=24 kernel 18.9 us = 7.2x floor 2.62 (0.67 TB/s), step 33.3 (master); B=32 kernel 23.2 us = 6.6x floor 3.50 (0.72 TB/s), step 30.7 (master)
+[diag] sw-perb-floor: done in 0.1 s (import clock 308 s)
