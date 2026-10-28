@@ -87,8 +87,48 @@ def cmd_record(wt, tag, problem, slug, job):
     print(f"recorded {slug} -> {job} in {rel}")
 
 
+def cmd_result(wt, tag, problem, slug, job, text):
+    """Fill the attempt file's result, archive the run into the campaign runs dir (main checkout), commit."""
+    import gzip, shutil
+    att = dispatched(wt, problem, slug)
+    if not att:
+        sys.exit("no attempt file")
+    att = att[-1]
+    rec = json.loads(subprocess.check_output(["okc", "status", job, "--json"], text=True))
+    r = rec.get("result") or {}
+    ci = r.get("speedup_ci") or [None, None]
+    head = (f"- **{r.get('status')}: {r.get('speedup', 0):.4f}** (CI {ci[0]:.4f}-{ci[1]:.4f}), passed {r.get('passed')}, "
+            f"job {job}. " if r.get("speedup") else f"- **{r.get('status')}** job {job}. ")
+    s = open(att).read()
+    m = re.search(r"^## Result[^\n]*\n", s, re.M)
+    body = head + text.strip() + "\n"
+    if m:
+        rest = s[m.end():]
+        nxt = re.search(r"^## ", rest, re.M)
+        end = m.end() + (nxt.start() if nxt else len(rest))
+        s = s[:m.end()] + body + s[end:]
+    else:
+        s = s.rstrip("\n") + "\n\n## Result (after the run)\n" + body
+    open(att, "w").write(s)
+    main = subprocess.check_output(["git", "-C", wt, "worktree", "list", "--porcelain"], text=True).split("\n")[0].split(" ", 1)[1]
+    dest = os.path.join(main, CAMP, "runs")
+    with gzip.open(os.path.join(dest, f"{job}.json.gz"), "wt") as f:
+        json.dump(rec, f)
+    for p in glob.glob(os.path.join(wt, problem, "profiles", f"submission.{job}.*")):
+        ext = p.rsplit(".", 1)[1]
+        if ext == "json":
+            with open(p, "rb") as fi, gzip.open(os.path.join(dest, f"{job}.profile.json.gz"), "wb") as fo:
+                shutil.copyfileobj(fi, fo)
+        else:
+            shutil.copy(p, os.path.join(dest, f"{job}.profile.{ext}"))
+    git(wt, "add", os.path.relpath(att, wt))
+    git(wt, "commit", "-q", "-m", f"attempts: phasec {tag} {slug} {job}: {r.get('speedup', 0):.4f}\n\n"
+        "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>")
+    print(f"{slug} {job} {r.get('speedup', 0):.4f} archived to runs/")
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if not a:
         sys.exit(__doc__)
-    {"list": cmd_list, "prep": cmd_prep, "record": cmd_record}[a[0]](*a[1:])
+    {"list": cmd_list, "prep": cmd_prep, "record": cmd_record, "result": cmd_result}[a[0]](*a[1:])
