@@ -49,7 +49,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-round-rotated-schedule: that is a static rotation of the same item walk; this replaces the walk with an atomic work counter, so the bucket-cost spread, the aliasing and the partial last round are all balanced at run time"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: stages/CTA max/min 928/896, imbalance premise fails"
 ---
 
 # experts-rega-dynamic-item-scheduler

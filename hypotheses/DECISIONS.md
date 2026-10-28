@@ -417,3 +417,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-pdl-chain-regate-iqr-slack**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: parent on Do-not-try; module predates fsilu/w2st
 - 2026-10-28T150029Z `muse_prefill_layer` **front-qknorm-rope-fp8-store-fusion-restack**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%, stack-only
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-lpt-group-order**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: rotation cut imbalance but gate missed; round-rotated on Do-not-try
+- 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-dynamic-item-scheduler**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: stages/CTA max/min 928/896, imbalance premise fails
