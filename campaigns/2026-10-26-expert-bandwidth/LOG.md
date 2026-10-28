@@ -2280,3 +2280,4 @@ with the operator's go-ahead.
   - **The run FAILED timing:** the verify_32-full routing recheck at repetition 8 ("token 88 dropped expert 22 ... 3.21e-02 above its 9th best (> 0.03)").
   - The same base without the probe passed: trim 6985e7f4, board 83f0c00e.
   - An investigator is checking probe side effects vs a latent T=256 routing hazard (/home/user/git-scratch-c24a6e/decode-recheck-diag.md). If latent, the board's final held-out rerun is at risk.
+- 2048Z: attn diag-swf-rungs (diag-swf-chain + diag-swf-merge, one check; campaign/attn-rung-swf 62713ae5, audited) dispatched as 296ec797b8294f4c.
