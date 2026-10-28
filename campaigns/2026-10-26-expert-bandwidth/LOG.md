@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1321Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1324Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -24,11 +24,14 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1314Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 5 / 10; bf16 8 / 9; prefill 10 / 9.
+  - **Quota 1324Z:** decode 8 checks / 5 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
   - **In flight:**
-    - Attention batch 2 (13:12Z; all on pins + onepass): pins-onepass 4cfddb59, diag-sw-gather-split-pinned 8a9a874c,
-      diag-sw-fixed-anatomy 7f481040, diag-fa3-fixed-anatomy f1043d2c (four samples of the pins-onepass candidate).
-    - moe + decode generator (phasec/moe-1028, phasec/dec-1028).
+    - moe checks (13:23Z, phasec/moe-1028): moe-diag-v4c-t32 71c2f8d5, moe-pin8-v6 16c33848, moe-pin16-v4c d9cc48e8,
+      moe-hyb128-h16f 1d36bf74, moe-diag-v4-fixed a7a013ba, moe-pin-all 756a928f. Conditional: moe-v4c-cw8 / cw9 /
+      moe-pin32-v4 (only if moe-diag-v4c-t32 shows >= 1% at T=24 and 32 in both rounds).
+    - decode checks (13:23Z, phasec/dec-1028): dec-pin-all 6a06de53, dec-pin16-v4c 86edd970, dec-b12p-pdl0 d6baf196,
+      dec-diag-anat-t8-t32 62ae54a2. **Not yet sent (okc rate limit):** dec-diag-v4c-cw (its attempt file is written,
+      unconsumed, valid to 15:23Z), dec-pin16-v4, dec-b12p-pdl1. Conditional: dec-v4c-cw8 / cw9.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -2052,3 +2055,16 @@ with the operator's go-ahead.
 - Scored run b2941ea2: **1.5008** (CI 1.4783-1.5233) vs 1.4897 (+0.75%); master 350343bc; BEST.json + BEST.result.json
   adbd3442. The deterministic final candidate (near-tie arms pinned, LO phase skipped) is now the prefill board row.
 - Today's boards now: moe 1.8941, decode 1.6470, bf16 1.2794, attention 1.6340, prefill 1.5008.
+
+## 2026-10-28T1324Z: moe + decode batches dispatched (10 of 13); okc rate limit hit; attention batch 2 read
+
+- Agent (409k tokens): phasec/moe-1028 (tip 449fd5b5) and phasec/dec-1028 (tip 2be4d548), 9 variants each. Moe routed
+  the same way in all 9 of today's runs (only v6pe vs v6p at T=1 is close; the T=128 hybrid lost at x0.94-0.95).
+  Decode flipped in four places: Engine A at T=9..16 (v4 6 runs, v4c 4; the board drew v4c), b12p pdl (8:2), c320t
+  (9:1), PERHEAD (9:1). moe-pin-all / dec-pin-all are the deterministic final-rerun candidates.
+- **okc allows at most 10 submissions a minute** ("too many submissions; retry in a minute" after fast retries): the
+  13 back-to-back dispatches stopped at 10. Pace batches at <= 9 a minute.
+- Attention batch 2: pins-onepass 1.6265 (four samples of the base average ~1.623; the board's 1.634 stays). The
+  window path's fixed cost is ~9-10 us of the ~21 us sliding-verify step (kernel alone 7.6 us at K=8 vs a 2.1 us null
+  kernel; the separate combine 5.6-5.9 us), and it is not gather-bound (scattered = sequential). FA3's fixed cost is
+  ~15 us (num_splits=1 and precomputed scheduler metadata save ~2.2 us each). These size tomorrow's attention rewrite.
