@@ -40,9 +40,10 @@ kind: primary
 controls_for: null
 prior: "combo-b-normgather-two-cta-low-regate: its V64/V32 narrow slabs split popular experts under the 1.86x-skew guard (V64 1.035, V32 1.321) and gated OFF; this keeps the full 128-route slab (one chunk per expert) with 2 stages per CTA and multicast to stay under the ingest cap"
 review: proceed
-status: queued
+status: hold
 review_at: 2026-10-25T212524Z
 review_companions: null
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 never landed (1.31-1.81x slower); DISTILL 3.1 retire; REGA_LO_SKIP on master"
 ---
 
 # experts-rega-low-2cta-fullslab-mc2
