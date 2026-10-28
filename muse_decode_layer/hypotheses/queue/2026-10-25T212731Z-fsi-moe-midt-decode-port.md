@@ -82,7 +82,8 @@ prior: "marlin-two-stream-halves-port: that split the experts across two streams
 rewrite_stage: 2
 replaces: Marlin w13 + act_and_mul + Marlin w2 + post-expert combine (_post_norm_combine_kernel at T<32, SGLang fused_post_expert_norm_weighted_sum at T=32) at 9 <= tokens <= 32 (decode_16, decode_32)
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: Engine A v4c at T=9..32"
 ---
 
 # fsi-moe-midt-decode-port
