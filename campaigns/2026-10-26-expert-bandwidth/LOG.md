@@ -1736,3 +1736,12 @@ with the operator's go-ahead.
 - Workflow wf_5e31da3c-b6f ports L3 into eak::consume / consume2 (v1, v4, v6) on campaign/eb-l3, with a SASS gate on
   gpunode06. Audit, fix, then the decode carry-over (campaign/eb-l3d). The moe check follows; the eac sweep measures L3
   per cell on the H100 meanwhile.
+
+## 2026-10-28T08:17Z: L3 lands big on the judge: moe check 1.8286 (+5.4%); scored run and decode checks in flight; L4 port started
+
+- L3 (code-only paired scale decode, from the eac microbenchmark's SASS census) is ported into eak::consume / consume2
+  on campaign/eb-l3. Moe check f2100f49: **1.8286** (CI 1.8011-1.8560) vs the 1.7345 board, with every row up 2.3-7.1%.
+  Scored run 261cfe56 is in flight.
+- Decode: L3 + v6 (eb-l3d-s3d) check 31e0aad5 and L3 alone (eb-l3d) check 7f9712c4 are in flight.
+- eac replicates: L4 (the pair add on the FMA pipe) is a further +6.6% at T=8 in the bench, so the L4 port workflow
+  wf_caac665e-9ed is building on top of L3. The repack is closed; reuse does not fit v4's registers.

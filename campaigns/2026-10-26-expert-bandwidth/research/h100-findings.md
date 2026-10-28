@@ -944,3 +944,19 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
     not change, so R1 reads the median clock.
 - New bundle 7b486156. The validation is re-run before the gate (takemyjob d018dc8). Its indicative 3-rep ratios are
   not decision data.
+
+## 2026-10-28T08:17Z: eac results (two replicates agree to 4 decimals) + the L3 port on the judge: moe 1.8286 (+5.4%)
+
+- eac r1 (GPU 1, with sanitizers) and r2 (GPU 3): 42 timed cells, 0 failures, DQX ok, every null in band. Ratios are
+  baseline / arm in cycles per record per SM:
+  - **L3** x1.119 (T=8) / x1.097 (T=16): PORT;
+  - **L4** (L3 with the pair add on IMAD) x1.193 / x1.114: PORT, +6.6% over L3 at T=8;
+  - **X1** x1.037 (and +3.7% over L3): PORT;
+  - **X2+L3** x1.064 over L3 at T=1: a candidate, but it forfeits co-residency;
+  - **repack F: CLOSE**; **reuse r=2/4** x1.05-1.06 at T=8, but over v4's 96-register cap and SPILL at T=16: not
+    portable as is.
+- **Judge transfer:** L3 ported into the production consumers (campaign/eb-l3; SASS -2.00 per step, bit-identical) read
+  **1.8286** (CI 1.8011-1.8560) vs 1.7345. Every expert row is up 2.3-7.1%; verify 32 gains least because its hot half
+  is wgmma. **The bench's x1.12 became +5-7% per row on the judge.** A scored run is in flight (261cfe56).
+- Decode L3 checks in flight: 31e0aad5 (L3 + v6 at T=1) and 7f9712c4 (L3 on the board's code). The L4 port runs as
+  workflow wf_caac665e-9ed, then its decode carry-over.
