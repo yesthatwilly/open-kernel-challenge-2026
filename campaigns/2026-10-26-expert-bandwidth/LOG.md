@@ -24,7 +24,7 @@ append-only, newest last.
     **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
     prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6470 (+3.4%); bf16 1.2740 ->
     1.2794.
-  - **Quota 1337Z:** decode 2 checks / 4 runs; moe 7 / 4; attention 1 / 10; bf16 8 / 9; prefill 10 / 9.
+  - **Quota 1337Z:** decode 5 checks / 4 runs; moe 7 / 4; attention 5 / 10; bf16 8 / 9; prefill 15 / 9.
   - **In flight:**
     - Decode scored run 83f0c00eb3644e1c (13:36Z): dec-pin16-v4c (check 86edd970 1.6599; v4c pinned at T=9..16); land
       if > 1.6470.
