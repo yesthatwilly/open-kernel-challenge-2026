@@ -1725,3 +1725,14 @@ with the operator's go-ahead.
 - Open (the user's call, not blocking): reopen decode node work with forced judge picks, prepare outside nsys and a
   faster shim (new registration). Decode stays on judge checks: the moe-side T=1 wins (L3, fixed-cost cuts) port to
   decode through eb-s3d.
+
+## 2026-10-28T07:45Z: eac built (SASS census: L3 folds, -2.0 ALU instr/step); L3 production port started in parallel
+
+- eac bundle (takemyjob ad21352, build/eac.tgz edfcd243; musespark campaign/eb-eac ac83f06a): 50 cells, emulator PASS.
+  The census matches P3b's production body within 0.13 per step.
+- Per step at T=8: baseline 22.59; **L3 20.59 (ALU 12.44 -> 10.44)**; r2 21.84, r4 21.54; x1 22.09; x1+L3 20.09; the
+  uniform-scale ceiling 18.40. At T=16: baseline 23.59, L3 21.59, and r2 / r4 SPILL at the 96-register cap of
+  (288,2) / (320,2).
+- Workflow wf_5e31da3c-b6f ports L3 into eak::consume / consume2 (v1, v4, v6) on campaign/eb-l3, with a SASS gate on
+  gpunode06. Audit, fix, then the decode carry-over (campaign/eb-l3d). The moe check follows; the eac sweep measures L3
+  per cell on the H100 meanwhile.
