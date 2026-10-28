@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1134Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1203Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -25,7 +25,8 @@ append-only, newest last.
     (S3 / carrier / L3 / L4 / fc); decode 1.5926 -> 1.6428 (L3 + v6 / L4 / fc).
   - **Quota 1132Z:** decode 13 checks / 6 runs; moe 14 / 5; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Nothing (phase B starting).
+    - Agent building X1 for the v6 family only (T=1; XB = 0 default, XB = 1 at the v6 / FAST call sites) on
+      campaign/eb-x1v6 (from eb-fc, moe) and campaign/eb-x1v6d (from eb-fcd-s3d, decode), with a CPU SASS check.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1888,3 +1889,19 @@ with the operator's go-ahead.
   1.6428 (+3.2%: pinned trim, L3 + v6, L4, fc). Consumer-side ALU cuts found by the H100 eac bench (L3, L4)
   transferred; the schedule change (X1) did not; the T=1 fixed-cost cut (fc) transferred at ~1-2 us per call.
 - Phase B starts (no decode build ready or due within 2 h).
+
+## 2026-10-28T1203Z: phase B: X1-for-v6 building; two attention churn picks held by the adversary (stale queue)
+
+- X1 for the v6 family only (T=1, stacked on fc; v1-v4 keep L4's code) is building for moe and decode.
+- One churn tick (1145Z), one pick at a time, no diagnoses (token budget). Both attention picks were held by their Opus
+  reviews (~230k tokens together):
+  - `sliding-verify-wgmma-window-s2b-fast-merge`: a duplicate already on master (ea24b53c); its DIAG shows the ticket
+    merge losing to the PDL combine (merge_head +17.6-45 us vs +2.9-5.2 us). Added to attention FINDINGS do-not-try.
+  - `full-verify-wgmma-s7-split-combine`: bounded by s6's DIAG; the no-ticket kernel would be ~179 / 367 us at B=16 /
+    32 against FA3 main 148.6 / 285.9 us, so it cannot route.
+- Both reviewers point at the same lever: the attention **main loop / window kernel** (sliding verify 14.6 us at B=16
+  vs a 1.9 us floor; full verify main loop vs FA3), which also runs in decode's weakest verify rows (FA3 main is 152 /
+  288 us of the 467 / 701 us decode verify 16 / 32 full rows). It goes into tomorrow's phase-A candidate list as a
+  decode-portable attention rewrite. The attention queue's verify items are stale against measured DIAGs.
+- Bookkeeping flagged: muse_attention_decode BEST.result.json holds a8d64777 (a 0.0023 check), not the board job
+  4e386647.
