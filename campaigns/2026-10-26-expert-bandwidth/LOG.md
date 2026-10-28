@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0126Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0139Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -1516,3 +1516,11 @@ with the operator's go-ahead.
   the job's tmp backup), so setup and the runner ship the committed harness.
 - Two workflows build the enablers (top block); predicted ~2-2.5M tokens. The judged program is saved verbatim as
   `research/h100-program-2026-10-27.md`.
+
+## 2026-10-28T0139Z: today's moe board re-proven on the H100
+
+- Queued at 0127Z on the clean harness: sweep (32 held-out shapes), 2 checked soaks, 4 cold board runs, all on the
+  CURRENT board 498afbd8 (the 10-27 proving used ab46fbb7). **All passed** (headlines x1.3705 sweep, x1.3927 / 1.3922
+  soaks, x1.3907-1.4028 cold board). On the node the T=128 hybrid race picks master (314-319 vs H-16 ~344 us); T=256
+  picks H-16. Ledger: research/h100-findings.md.
+- Workflows at 0138Z: S3 judge running (3 designs in); moe enablers E1 / E3 / E4 building (1 of 3 returned); E2 building.

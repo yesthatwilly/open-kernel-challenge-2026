@@ -214,3 +214,20 @@ Reading:
 - `runs/20261027-142513-gpunode06` (nodejudge-e1-validate, GPU 7) started at 21:25:27Z, after the 21:22Z hold. It died at
   once with `python: command not found`, because the concurrent `clean` was removing the env. `INDEX.tsv` lists it as
   DONE rc=0, but no GPU work ran.
+
+## 2026-10-28T0139Z: re-proving of the CURRENT moe board 498afbd8 (10-28, committed harness 0c0bc56, bundle nodejudge 01:23:22Z)
+
+Queued by the main thread after the runner restart (runner pid 1400704 from 01:24Z), gpunode06, warm caches unless noted.
+
+| job | verdict | headline vs SGLang on this GPU | run dir (`runs/…-gpunode06`) |
+|---|---|---|---|
+| 25-sweep-b498 (32 held-out shapes) | board passed=True | x1.3705 [1.3499, 1.4237] | 20261027-182831 |
+| 26-soak-b498-1 / -2 (1000 reps/shape, every replay checked) | passed=True / passed=True | x1.3927 / x1.3922 | -182834 / -182836 |
+| 30-board-flips-b498-1..4 (cold judge-like prepare) | all passed=True | x1.4028 / 1.3907 / 1.3932 / 1.3966 (spread 0.87%) | -182918 / -182921 / -183032 / -183114 |
+| 90-fuzz-odd / -skew (fillers) | passed=True / passed=True | (fuzz shapes) | -182439 / -182442 |
+
+- Races on the node, cold runs: `[hybrid-moe] T=128 = MASTER` (master 314.5-319.0 us vs H-16 343.6-344.1), `T=256 = HYBRID
+  FORKED H=-16` (H-16 390-392 vs master 401-402). The T=128 pick is the opposite of the judge's (H-16): the known
+  node / judge disagreement on that race. The full flip table and the replay-check counts are left to E4's parser.
+- **Read:** the current board passes every proving job the old board passed (sweep, soaks, fuzz, cold runs). No new
+  end-game correctness risk found for the final held-out rerun.
