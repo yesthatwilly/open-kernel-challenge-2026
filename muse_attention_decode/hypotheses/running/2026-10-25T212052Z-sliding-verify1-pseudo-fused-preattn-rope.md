@@ -80,7 +80,7 @@ base_sha: 47926f5e7d8a192184e21177901be2034d2d4930
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 branch: hyp/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope
 worktree: .worktrees/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope
-mode: null
+mode: check
 restack_of: merge-perkvhead-v3chain-sv32-tiled
 stale_base: null
 implemented_at: 2026-10-28T150621Z
@@ -89,6 +89,8 @@ submission_sha256: 368304ce28e7eba549f470074d2ec91cdca6493d7a4b10b3f7b66553d8460
 norm_sha256: f3d236e5225affd8c4eb1f5a6f2e0111788b83bcc9ac81c9e71f203866aba478
 submission_blob: 7e7938b33b2d532aab7c1f0989f5b95081eee05d
 lint_warnings: 101
+attempt_file: 2026-10-28T150622Z-check-sliding-verify1-pseudo-fused-preattn-rope.md
+prepared_at: 2026-10-28T150622Z
 ---
 
 # sliding-verify1-pseudo-fused-preattn-rope
