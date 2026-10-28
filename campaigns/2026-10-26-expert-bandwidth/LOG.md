@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1239Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1248Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,11 +23,13 @@ append-only, newest last.
   - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6470** (344/855; X1v6 on fc, 12:06Z); bf16
     1.2740 (441/1228), attention 1.6340 (472/933), prefill 1.4897 (223/561); overall 348/1417. Today: moe 1.7340 ->
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
-  - **Quota 1239Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 16 / 10; bf16 and prefill 20 / 10.
+  - **Quota 1248Z:** decode 12 checks / 5 runs; moe 13 / 4; attention 16 / 10; bf16 17 / 10; prefill 20 / 10.
   - **In flight:**
     - Attention pin checks (12:37Z, phasec/attn-1028): sw-pin-verify-all 1306b615, sw-pin-b17-off 2ab18645,
       sw-pin-b17-on cb4fe7c4, sw-pin-b2-sm 8a87e3ea. Then the attention diagnostics (7 single + diag-all).
-    - Variant generators: bf16 (phasec/bf16-1028) and prefill (phasec/prefill-1028) running; moe / decode next.
+    - bf16 checks (12:46Z, phasec/bf16-1028): pc-pin-rpdl-all-khalf bcc4babe, pc-diag-pattern bf87ac81, pc-ouns-cl4
+      5ff48999. Nine more bf16 variants ready (manifest order).
+    - Prefill generator running (phasec/prefill-1028); moe / decode generators next.
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1958,3 +1960,14 @@ with the operator's go-ahead.
   (no user question): restack it on the pins as a new variant once the pin checks are read.
 - Dispatched 12:37Z: sw-pin-verify-all **1306b615**, sw-pin-b17-off **2ab18645**, sw-pin-b17-on **cb4fe7c4**,
   sw-pin-b2-sm **8a87e3ea**. The prefill generator started (phasec/prefill-1028).
+
+## 2026-10-28T1248Z: bf16 batch ready (12 variants); three bf16 checks dispatched
+
+- Agent (396k tokens), phasec/bf16-1028 tip 3b67a433: 1 pin (all four R-PDL router classes + khalf on: the only
+  decision that flipped between the board's two identical-byte runs was R-PDL m=32, 5.62 vs 6.26 us), 2 small arms
+  (cluster-dim-4 unpooler slice; qkv m=128 Lt plan under the read flush; CW=4 b12 runner-ups), and 8 prepare-only
+  diagnostics sharing one block (weight-pattern repack, per-row anatomy under read / write flush and warm L2, roofline,
+  split-K reduce tail, nearby-m correctness, router + pooler co-scheduling for decode, wave quantization, L2 ceiling).
+  Per-row noise between identical bytes is 1-5%, so single-row effects under ~3-5% are unreadable from one check.
+- Dispatched 12:46Z: pc-pin-rpdl-all-khalf **bcc4babe**, pc-diag-pattern **bf87ac81**, pc-ouns-cl4 **5ff48999**. The
+  judge ran six of our checks at once.
