@@ -41,7 +41,8 @@ kind: primary
 controls_for: null
 prior: "sliding-decode1-cluster-per-kvhead: it split the C=16 cluster per kv head (+9.9% on sliding decode_1); per-kvhead C=8 clusters and the Spread cluster scheduling policy were never timed"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5%"
 ---
 
 # sliding-decode1-perkvhead-launch-select
