@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0112Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A (day start 0000Z).** updated: 2026-10-28T0126Z (date -u), session 0605b7cc.
   - **The user, 2026-10-27 ~2355Z:** `/loop the Phase A overhaul.  get prepared now, and wait for the zulu reset for any
     queued work etc.` Prep ran before 00:00Z; nothing that spends quota went out before the reset.
   - Policy: the 3:1 rhythm (`campaigns/DAILY-RHYTHM.md`).
@@ -13,8 +13,9 @@ append-only, newest last.
     - Enablers: workflows h100-moe-enablers wf_9d19c8b4-aa4 (E1 + E1b, E3, E4 -> hopper/nj-moe) and
       h100-decode-enablers wf_efbfae22-bd4 (E2 + E2b, DEC-01 -> hopper/nj-e2), in takemyjob worktrees under
       `~/git/.takemyjob-wt/`; GPU 7 for their validations. The interrupted WIP is on hopper/nj-base (da05b87, 5df90e5).
-    - Runner tree reset to the committed harness 0c0bc56; `hopper-probe setup gpunode06 nodejudge` running since 0112Z;
-      then rebuild build/nodejudge.tgz (board 498afbd8), release the fuzz fillers, restart the runner on GPUs 1/3/4/5/6.
+    - Runner tree reset to the committed harness 0c0bc56. Setup rc 0 (0122Z, 689 s; venv-cu130 torch 2.14.1+cu130).
+      Bundle nodejudge rebuilt (harness 02df40ec, moe board 498afbd8, decode board 2fd3d945). **Runner live since 0124Z**
+      (pid 1400704, poll 300 s; GPU 7 reserved); the fuzz fillers pass on 498afbd8 (first pair 0126Z).
     - The S3 build gets node validation (moe-iso A/B, fuzz; memcheck is VOID on 80 GB) before its judge check.
   - **Decode board 1.5926 since 0014Z** (e1fd3c00, the pinned trim; rank 347/823; overall 352/1369).
   - **Boards at 0000Z:** decode 1.5920 (348/822), moe 1.7225 (440/943), bf16 1.2740 (412/1189), attention 1.6340
