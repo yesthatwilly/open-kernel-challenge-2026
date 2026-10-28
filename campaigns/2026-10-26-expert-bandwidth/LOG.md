@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1013Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1026Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -23,10 +23,10 @@ append-only, newest last.
   - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode **1.6262** (351/849; L3 + v6, 10:01Z); bf16 1.2740,
     attention 1.6340, prefill 1.4897; overall 355/1410. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3);
     decode 1.5926 (the pinned trim, 00:16Z) -> 1.6262 (L3 + v6).
-  - **Quota 1011Z:** decode 15 checks / 8 runs; moe 16 / 7; bf16, attention and prefill 20 / 10.
+  - **Quota 1024Z:** decode 15 checks / 7 runs; moe 16 / 6; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - L4 checks (dispatched 10:11Z): moe 7607a1c39e134a4f (campaign/eb-l4 1b24750f; scored run if > 1.8249) and decode
-      0576191d3d544bf9 (campaign/eb-l4d-s3d 95ab5fb1; scored run if > 1.6262).
+    - L4 scored runs (sent 10:24Z): moe 427a6f289e6745ac (eb-l4 bytes, check 1.887; land if > 1.8249) and decode
+      3a68058a0f0a4eab (eb-l4d-s3d bytes, check 1.638; land if > 1.6262).
     - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
       (research/fc-designs-2026-10-28/), then build on campaign/eb-fc (fast-forwarded to eb-l3), audit and fix.
   - **Next:**
@@ -1769,3 +1769,14 @@ with the operator's go-ahead.
   969,407 B); ea6_emul passes.
 - Checks: moe **7607a1c39e134a4f** (974,764 B; bar 1.8249) and decode **0576191d3d544bf9** (bar 1.6262), both 10:11Z.
   Watch the prepare logs for v6's MINB 2 / co-residency at 80 registers.
+
+## 2026-10-28T1026Z: L4 checks: moe 1.887 (+3.2% over L3), decode 1.638 (flat over L3); both sent as scored runs
+
+- **Moe 7607a1c3: 1.887** (CI 1.858-1.915) vs the L3 check's 1.8286 and the 1.8249 board; the same PATH CHOSEN lines as
+  f2100f49; v6 regs 79/72/79/83, MINB 2, K2 co-resident. Scored run 427a6f28 sent at 10:24Z.
+- **Decode 0576191d: 1.638** (CI 1.614-1.663): +0.7% over the board, +0.04% over the L3 + v6 check. Our times improved
+  on 9 of 12 rows (up to x1.05 at decode 32), but the SGLang baseline also ran faster. Two race picks differ from
+  adb9c343 (the v4 / v4c split at T=9..16, b12p pdl); both arms are validated.
+- Decode scored run 3a68058a sent anyway (borderline): the bytes are the board's plus a bit-identical consumer cut;
+  decode has 7 scored runs left; the final rerun uses the board row's bytes. The override of the pre-registered
+  PATH condition is noted in the attempt file.
