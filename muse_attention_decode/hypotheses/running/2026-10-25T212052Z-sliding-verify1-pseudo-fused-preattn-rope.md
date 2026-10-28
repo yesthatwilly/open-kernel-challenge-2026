@@ -71,9 +71,18 @@ kind: primary
 controls_for: null
 prior: "full-decode1-sk-two-level-fused-preattn: that fold was on full decode_1 (weight 16, no RoPE, one new row, gained 22.4->21.6 within CI); this folds RoPE pre-attention for 8 query tokens and 8 new K/V rows into the TOK=8 PSEUDO kernel on sliding verify_1 (weight 46, 0.70%/us). Queued sliding-decode-sk-s3-fused-preattn-rope does the TOK=1 decode case only"
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-25T212856Z
 review_companions: null
+stage: claimed
+claimed_at: 2026-10-28T145301Z
+base_sha: 47926f5e7d8a192184e21177901be2034d2d4930
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope
+worktree: .worktrees/muse_attention_decode/sliding-verify1-pseudo-fused-preattn-rope
+mode: null
+restack_of: merge-perkvhead-v3chain-sv32-tiled
+stale_base: null
 ---
 
 # sliding-verify1-pseudo-fused-preattn-rope
