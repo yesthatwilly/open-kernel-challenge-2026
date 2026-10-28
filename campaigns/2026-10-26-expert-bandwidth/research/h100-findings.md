@@ -791,3 +791,18 @@ The staged registrations follow verbatim (queue-staged/registrations.md):
   their bytes do (8192 vs 4096 rows), so no single kernel carries 9.28 us per expert. **Corrected decision for T=8:
   fixed-cost work indicated (a >= 12 us, unchanged); streaming engine not indicated.** The v4 class-8 pin is unaffected
   (it rests on m456-c8 and R10). The 05:32Z entry stays as written; this line supersedes its streaming-engine clause.
+
+## 2026-10-28T06:11Z: M09 registered (R2): T=1 cost per local expert on the current board (v6 vs v1 vs v4)
+
+- **Question:** on the current moe board (81c9802e = S3 + carrier pins; bytes frozen at make time), what are Engine A
+  v6's fixed cost a and per-expert cost b at T=1 (fit over k >= 1), against v1 and v4 forced, and where does a sit
+  (K1, K2, combine, launch gaps, PDL waits; nsys per k)? k in {0,1,2,3,4,6,8}. Arms: same, t1v6 (forces v6), t1v1, t1v4.
+- **Expected:** b(v6) ~9.3-9.8 us/expert (the H100 HBM floor, ~9.4 us per 28.3-MB expert, hides v6's judge-side slope
+  gain of 8.5-9.0 vs ~10); a(v6) ~10-12.5 us (co-resident K2 + PDL cut 1-4 us vs v1's 13.5-13.9); most of a in K1's
+  prologue, the K1->K2 edge and the combine.
+- **Decision rule:** a(v6, k >= 1) >= 12 us: a fixed-cost T<=8 path (fused K1/K2/combine or a persistent kernel) is the
+  T=1 lever for the next phase-A plan, sized by the E3 split. a(v6) < 12 us: fixed-cost work at T=1 is closed for v6,
+  and the T=1 lever is the consumer (the eac sweep). No pin (judge: no).
+- **Metric / instrument:** as m08t1: BY_K per party, R3a per k at the 0.45% MDE vs the base and vs same, E3 split per
+  k (fidelity tol 3%); gpunode06, one pool GPU per replicate (R4), reps 1400, 28 profiled; void below 1800 MHz or on a
+  check failure. Jobs 39-h100-m09t1v6-r1/r2, prio after P3b; spec nj-exp check rc 0. ~8 GPU-min in total.
