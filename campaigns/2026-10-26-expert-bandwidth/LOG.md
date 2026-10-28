@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0552Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0605Z (date -u), session 0605b7cc.
   - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
     hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
     `/loop H100 autonomous program ...`.
@@ -30,8 +30,13 @@ append-only, newest last.
       be4440e2 **1.7457**; scored 12d17a46 **1.7345** (beats 1.7340 by 0.0005, a tie; T=128 row x1.018 again).
       **Landed on master 81c9802e: moe board 1.7345, rank 452/962.** BEST.json -> 12d17a46.
     - Released m07, m03c, m08t1 at 05:44Z (registered 02:57Z): m07, m03c and m08t1-r1 done; harvest pending.
-  - **In flight:** the P3 audit workflow wf_01ce0f10-ce0 (task wp2zeukc3, at synthesis), which drafts P3b; a subagent
-    harvesting m07 / m03c / m08t1 (m08t1-r2 was still on the H100 at 05:48Z).
+    - P3 audit done (research/p3-audit-2026-10-28.md): 25-27 instr/step; the ALU floor ~1,750 cycles/record is 71-75%
+      of the H200 consumer-alone 2,421 (transfers); H100 waits do not. P3b registered with its harness patch
+      (takemyjob 0f463b2).
+  - **In flight:** P3b's GPU-7 validation (37-h100-p3b-val, queued 06:04Z; P3b itself on PASS); the consumer
+    microbenchmark workflow wf_e58bb60c-e1f (task wu3k8ufbz: design x3 -> judge -> build -> audit -> fix; branch
+    campaign/eb-eac, probe package probes/eac); subagents harvesting m07 / m03c / m08t1 and merging the decode track
+    (hopper/nj-e2 -> master; DEC-01 re-run + DEC-02 staged for registration).
   - **Next:**
     - P3b capture.
     - A consumer-only microbenchmark (r = 1/2/4 x T = 1/8/16 x layout; x in registers), then port the winners to moe and
