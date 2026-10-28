@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0550Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, H100 autonomous program.** updated: 2026-10-28T0548Z (date -u), session 0605b7cc.
   - **The user, ~0530Z:** "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8
     hours". Corrected mid-turn: **"at MOST the next 8"**. The hard stop is **13:40Z at the latest**. It runs as a self-paced
     `/loop H100 autonomous program ...`.
@@ -1631,7 +1631,7 @@ with the operator's go-ahead.
   streaming engine at T=8.
 - Not built; the carrier needs the user's go-ahead. The H100 is idle again; P3b waits on the audit workflow.
 
-## 2026-10-28T05:50Z: moe carrier check 1.7457 beats the 1.7340 board; scored run sent; m07 / m03c / m08t1 released
+## 2026-10-28T05:48Z: moe carrier check 1.7457 beats the 1.7340 board; scored run sent; m07 / m03c / m08t1 released
 
 - Carrier build ff6b525b (workflow wf_f3616fc7-521) passed its audit; both minor findings applied in aa9bcb9b (skip
   v6's T=8 race only when the class-8 pin took; the prepare citation). 962,450 B, sha256 d01f5b75.
