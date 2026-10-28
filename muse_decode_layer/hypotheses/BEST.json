@@ -1,19 +1,19 @@
 {
  "problem": "muse_decode_layer",
- "job": "e1fd3c00c83045dc",
+ "job": "adb9c3436aad4e1d",
  "mode": "submit",
- "speedup": 1.592635173653721,
+ "speedup": 1.626239868763187,
  "ci": [
-  1.568745646048915,
-  1.6165247012585267
+  1.6018462707317391,
+  1.6506334667946345
  ],
- "score_us": 14203.064439488653,
- "commit": "d6c1a9b106a1c53ffb1e5bc8bdb4b3a3e650b1ea",
- "submission_blob": "dc0b246abe6c8239cf3b56591bfbe6ec95d6e7df",
- "slug": "campaign-eb-pin128",
+ "score_us": 13909.571665589247,
+ "commit": "622b97bb03b71fa3867e8d15205e23a02c1bdc87",
+ "submission_blob": "f34ed1729b8d49f620aea9bf51c9fa53b2eea69e",
+ "slug": "campaign-eb-l3d-s3d",
  "result": null,
- "updated_at": "2026-10-28T0014Z",
- "master_slug": "campaign-eb-pin128",
- "master_job": "e1fd3c00c83045dc",
- "note": "registered by hand 2026-10-28: campaign expert-bandwidth pinned trim = the trim (eb-sp-trim 01c67655: never-compiled code out of decode's build, 924,352 B) + HC_PIN {128: -16, 256: -16} and HCG_PIN -16 (eb-pin128 3dd55e25); checks ced20a71 1.5758 (trim), 8e3b9874 1.5722 (pin128), 5a33db71 1.5847 (pin-both); landed on master."
+ "updated_at": "2026-10-28T1003Z",
+ "master_slug": "campaign-eb-l3d-s3d",
+ "master_job": "adb9c3436aad4e1d",
+ "note": "registered by hand 2026-10-28: campaign expert-bandwidth decode L3 + v6 = the s3d decode port (Engine A v6 at T=1 on the pinned trim + eb-pin2 pins, campaign/eb-s3d a78c2515) + L3, the paired scale decode in Engine A's dq2 consumers (the moe 1.8249 change, bit-identical); branch campaign/eb-l3d-s3d 754876fc; check 31e0aad5 1.637 (L3 alone 7f9712c4 1.624); scored 1.6262 vs 1.5926; landed on master."
 }
