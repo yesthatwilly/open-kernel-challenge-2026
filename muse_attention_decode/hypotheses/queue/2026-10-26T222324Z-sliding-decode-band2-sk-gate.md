@@ -33,7 +33,8 @@ kind: primary
 controls_for: null
 prior: "restack-sliding-decode-sk-window-on-cluster-master: it gated only band 3 because band 2's pair tied Triton (16.2 vs 16.3 us net); this gates band 2 only on top of the whole-line remap, under the existing 1.05x-vs-Triton rule"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.5% (p~0.4), cheap stacker at most"
 ---
 
 # sliding-decode-band2-sk-gate
