@@ -36,7 +36,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-pingpong-consumers-all-t: that changed the consumer schedule and measured only end-to-end kernel time; this changes nothing on the timed path and times each stage component separately"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR 0% (diagnostic only; DISTILL names it as the mc2/bm256 revival test)"
 ---
 
 # experts-rega-stage-anatomy-diag
