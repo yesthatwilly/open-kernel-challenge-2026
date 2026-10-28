@@ -20,13 +20,11 @@ append-only, newest last.
   - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
     mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
     the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode 1.5926 (361/829; a scored run of L3 + v6 is in flight);
-    bf16 1.2740, attention 1.6340, prefill 1.4897. Today so far: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249
-    (L3); decode 1.5926 (the pinned trim, 00:16Z).
-  - **Quota 0959Z:** decode 16 checks / 8 runs; moe 17 / 7; bf16, attention and prefill 20 / 10.
+  - **Boards:** moe **1.8249** (372/965; L3, 08:18Z); decode **1.6262** (351/849; L3 + v6, 10:01Z); bf16 1.2740,
+    attention 1.6340, prefill 1.4897; overall 355/1410. Today: moe 1.7340 (S3 / v6) -> 1.7345 (carrier) -> 1.8249 (L3);
+    decode 1.5926 (the pinned trim, 00:16Z) -> 1.6262 (L3 + v6).
+  - **Quota 1001Z:** decode 16 checks / 8 runs; moe 17 / 7; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Decode scored run adb9c3436aad4e1d: the bytes of check 31e0aad5 (1.637, L3 + v6, campaign/eb-l3d-s3d). Land it on
-      master if it beats 1.5926.
     - Workflow wf_3bea73e9-fc3 (task w0audtqs6), the L4 port's second run: build (continuing the eb-l4 edits) with a
       SASS gate on gpunode06 (CPU only), audit, fix, then the decode carry-over on a new campaign/eb-l4d-s3d.
     - Workflow wf_8f182a05-5e7 (task wmh70j0nx), the v6 T=1 fixed cost's second run: a judge over the two saved designs
@@ -1752,3 +1750,11 @@ with the operator's go-ahead.
   T=1; the 20 PATH CHOSEN lines equal 678f6e9c's). **Scored run adb9c3436aad4e1d sent at 09:54Z.**
 - Both workflows that the 08:20Z session limit stopped were relaunched at 09:58Z: L4 port (wf_3bea73e9-fc3) and the v6
   fixed cost (wf_8f182a05-5e7, judge onward; the designs were saved from the dead run's transcripts).
+
+## 2026-10-28T1004Z: decode L3 + v6 scored 1.6262 and landed (new board; rank 351/849, was 361)
+
+- Scored run adb9c343: **1.6262** (CI 1.6018-1.6506) vs 1.5926 (+2.1%); master 622b97bb; BEST.json -> adb9c343
+  (ca145bb9). Overall rank 355/1410.
+- Same routing as the check (the 20 PATH CHOSEN lines are equal; copy checks PASS); rows x0.964-1.028 against the check.
+- Both Engine A consumer gains (L3) are now on both boards. Next decode candidates: L4 (eb-l4d-s3d) and the T=1 fixed
+  cost, both building.
