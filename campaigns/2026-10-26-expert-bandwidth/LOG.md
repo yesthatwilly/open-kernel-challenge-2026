@@ -2,7 +2,7 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1208Z (date -u), session 0605b7cc.
+- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1210Z (date -u), session 0605b7cc.
   - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
     3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
   - **User bullets carried forward (verbatim):**
@@ -25,7 +25,10 @@ append-only, newest last.
     1.8941 (+9.2%: S3 / carrier / L3 / L4 / fc / X1v6); decode 1.5926 -> 1.6470 (+3.4%: L3 + v6 / L4 / fc / X1v6).
   - **Quota 1159Z:** decode 12 checks / 5 runs; moe 13 / 4; bf16, attention and prefill 20 / 10.
   - **In flight:**
-    - Nothing.
+    - Agents preparing phase-C check variants (pins of small-margin races, gate bars, planning diagnostics; one commit
+      per variant, MANIFEST.jsonl + attempt drafts): bf16 on phasec/bf16-1028 (.worktrees/pc-bf16) and attention on
+      phasec/attn-1028 (.worktrees/pc-attn). Prefill (and moe / decode) next. Dispatch with
+      `scratchpad/phasec.py prep|record` around a bare `okc check` (the attempt gate stays in force).
   - **Next:**
     - **Phase B** (decode's phase-A builds are done; none due within 2 h): moe > bf16 > attention > prefill, decode-
       portable first, <= 3 agents. First picks: X1 for v6 only (T=1 stacked on fc; moe and decode), and the churn
@@ -1934,3 +1937,12 @@ with the operator's go-ahead.
 - BEST.json and BEST.result.json registered together (0698acc5). v6pe routed at T=1 in both.
 - Size margins left: moe 382 B and decode 51 B under the 990,000 B budget (decode after build.py's comment strip):
   the next change on either file must cut first.
+
+## 2026-10-28T1210Z: phase B/C plan: variant batches per problem instead of churn picks
+
+- 85 checks remain today (bf16 / attention / prefill 20 each, moe 13, decode 12). Churn costs two agents per pick and
+  its attention queue is stale (two holds), so each problem gets one agent that prepares ~12 distinct, cheap,
+  meaningful variants of its board: pins of small-margin or flipping races (a win is a gain and a deterministic board
+  row), gate-bar moves, and prepare-only diagnostics for tomorrow's rewrites. Dispatch spreads over the afternoon and
+  phase C; each gets a fresh attempt file at dispatch (scratchpad/phasec.py, f1b62f14).
+- bf16 and attention generators started (12:0xZ); prefill when one returns (<= 3 agents).
