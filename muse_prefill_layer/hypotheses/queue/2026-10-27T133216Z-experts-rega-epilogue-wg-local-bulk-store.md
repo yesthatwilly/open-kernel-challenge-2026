@@ -53,7 +53,8 @@ kind: primary
 controls_for: null
 prior: "experts-rega-pingpong-consumers-all-t: that forced a half-stage offset between the two warpgroups inside the k loop with per-stage named barriers and ran 1.18-1.47x slower; this keeps master's k loop (lockstep, variant A) and only drops the CTA-wide epilogue syncs and the synchronous store loop, so the warpgroups decouple only at item ends and only as far as the stage ring allows"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w2st arm a landed; bulk store is arm b which lost (665c32dd)"
 ---
 
 # experts-rega-epilogue-wg-local-bulk-store

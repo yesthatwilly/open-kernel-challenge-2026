@@ -421,3 +421,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150029Z `muse_prefill_layer` **experts-rega-stage-anatomy-diag**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR 0% (diagnostic only; DISTILL names it as the mc2/bm256 revival test)
 - 2026-10-28T150029Z `muse_prefill_layer` **front-routing-pdl-launch-diet-stack**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~1%; parent not landed
 - 2026-10-28T150029Z `muse_prefill_layer` **routing-triton-hilo-sum-topk-localids**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.2%, stack-only
+- 2026-10-28T150030Z `muse_prefill_layer` **experts-rega-epilogue-wg-local-bulk-store**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: w2st arm a landed; bulk store is arm b which lost (665c32dd)
