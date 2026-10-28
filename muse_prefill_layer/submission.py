@@ -4210,6 +4210,9 @@ FA3C_CLASSES = (
     ("turn_4 b4 L753 ctx80000", 4, 753, "agentic", 80000, 0.97),
     ("turn_1 b1 L753 ctx80000", 1, 753, "fixed", 80000, 0.97),
 )
+# phasec fa3c-pin-turns-b: these classes route this mode whenever it passed the self-check and was timed,
+# whatever the bar says (the GATE line still prints the bar's own pick). Every other class is gated as before.
+FA3C_PIN = {"turn_4 b4 L753 ctx80000": "B", "turn_1 b1 L753 ctx80000": "B"}
 # prepare()'s correctness cases: (batch, lens, q_len).
 FA3C_CHECKS = (
     ("b1 ctx3000 L753", (3000,), 753),
@@ -4470,15 +4473,18 @@ def _fa3c_setup(state, device, t_start):
                     cand = {m: med[m] for m in ("B", "C") if m in med}
                     best = min(cand, key=cand.get) if cand else None
                     pick = best if best is not None and cand[best] <= bar * a else "A"
+                    pin, pin_txt = FA3C_PIN.get(name), ""
+                    if pin is not None and pin in cand:
+                        pin_txt, pick = f" [PINNED {pin}; bar alone -> {pick}]", pin
                     fmt = lambda m: f"{med[m]:.1f}" if m in med else "n/a"
                     lines.append(f"{FA3C_TAG} GATE {name}: paged {a:.1f} us, contig-varlen {fmt('B')} us, "
                                  f"contig-batched {fmt('C')} us (gather alone {fmt('gather')} us; bar {bar:g} x paged"
-                                 f"{'' if best is None else f', best/paged {cand[best] / a:.3f}'}) -> {pick}")
+                                 f"{'' if best is None else f', best/paged {cand[best] / a:.3f}'}) -> {pick}{pin_txt}")
                     print(lines[-1], flush=True)
                     if pick != "A":
                         # Route key from the config only; the buffers are this state's, shaped by the class's width.
                         route[_fa3c_key(batch, length, width)] = (pick, width, bufs[0], bufs[1])
-                    chosen.append(f"{name}: {pick}")
+                    chosen.append(f"{name}: {pick}{' [PINNED]' if pin_txt else ''}")
                 except Exception as e:
                     lines.append(f"{FA3C_TAG} GATE {name}: raised {e!r:.300} -> A")
                     print(lines[-1], flush=True)
@@ -4877,6 +4883,9 @@ REGA_LO_START_DEADLINE_S = 185.0   # no LO build once prepare() has used this ma
 REGA_LO_GATE_DEADLINE_S = 250.0    # no candidate step (check, gate, diag), and no switch away from master, after this
 REGA_LO_RANDOM_RATIO = 0.95     # ON only at <= this x master's low-class rega block on the random routing ...
 REGA_LO_GUARD_RATIO = 1.00      # ... AND <= this on the popularity guard routing (never slower under skew)
+# phasec lo-skip-phase: no LO build, checks or gate; the low class keeps master's rega_kernel<G, false>, the arm
+# every logged board-era LO gate kept (guard 1.03-1.04 > 1.00). Saves the phase's ~40 s of prepare().
+REGA_LO_SKIP = True
 REGA_LO_ALTERNATIONS = 11       # interleaved cold-L2 alternations per gate routing (>= 9)
 REGA_LO_GUARD_ROUTES = 1350     # guard target: local routes at T=753 (judge turn_1 ~1314-1359, about 1.8x random)
 REGA_LO_DIAG_MULTS = (1.2, 1.5)  # print-only SKEW CURVE points, x the random routing's local routes
@@ -5631,6 +5640,9 @@ def _rega_lo_phase(state, weights, device, t_start):
         used = time.perf_counter() - t_start
         if not state.get("rega_ok", {}).get("low", False):
             off = "the low class is not on rega (master's gate / setup), so there is nothing to replace"
+        elif REGA_LO_SKIP:
+            off = ("LO PINNED OFF (phasec lo-skip-phase): no LO build / checks / gate; master's low class, as "
+                   "every logged board-era LO gate kept")
         elif used > REGA_LO_START_DEADLINE_S:
             off = f"LO SKIPPED: prepare already used {used:.0f}s > {REGA_LO_START_DEADLINE_S:.0f}s LO start deadline"
         else:
@@ -6473,6 +6485,9 @@ REGA_W2ST_TAG = "[rega-w2st]"
 REGA_W2ST_ORDER = ("low", "high", "ft")     # fsilu's gate order: low (the measured gain) first, ft (costliest) last
 REGA_W2ST_RATIO = 0.99                      # w2 alone, a / master, every round, both L2 modes, pop + random
 REGA_W2ST_GUARD_RATIO = 1.00                # low only: a / master on rega-lo's guard routing, every round + mode
+# phasec w2st-pin-high-ft: in these classes arm a routes whenever it is exact (torch.equal y) and its two-state
+# replay check passes; the timing gate still runs and prints what it alone would have decided.
+REGA_W2ST_PIN = ("high", "ft")
 REGA_W2ST_EXACT_KINDS = ("random", "skewed", "one")   # + the judge-like pop routing
 REGA_W2ST_SENTINEL = -3.0                   # y prefill: unwritten rows must match master's too
 REGA_W2ST_STEP_DEADLINE_S = REGA_FSILU_STEP_DEADLINE_S   # no class step after this (prepare() seconds)
@@ -6650,9 +6665,12 @@ def _rega_w2st_class(state, device, cls, weights, lines, t_start, info):
         gate += (f"; guard {g_kind} <= {REGA_W2ST_GUARD_RATIO} every round, cold+warm: max "
                  f"x{max(g, default=0.0):.3f} {'pass' if g_ok else 'MISS'}")
         ok = ok and g_ok
+    pinned = cls in REGA_W2ST_PIN
+    if pinned:
+        gate += f" [PINNED a; timing alone {'pass' if ok else 'MISS'}]"
     lines.append(gate)
     print(lines[-1], flush=True)
-    if not ok:
+    if not ok and not pinned:
         return False, "timing gate missed"
     # 4. two-state replay check with arm a ON for this class
     why = late("replay check")
@@ -6741,7 +6759,8 @@ def _rega_w2st_phase(state, weights, device, t_start, info):
         for cls in REGA_FSILU_CLASSES:
             why = verdict.get(cls, off or "class not on rega")
             ok = bool(state["rega_w2st_ok"].get(cls, False))
-            chosen = "w2st a (early gs/sid loads)" if ok else "master's w2"
+            chosen = ("w2st a (early gs/sid loads)" + (" [PINNED]" if cls in REGA_W2ST_PIN else "")) if ok \
+                else "master's w2"
             lines.append(f"{REGA_W2ST_TAG} PATH CHOSEN {cls}: {chosen}" + ("" if ok else f" ({why[:160]})")
                          + f"; which {1 if ok else 0} ok {ok}"
                          + (f" rega_low_variant {v}" if cls == "low" else "")
