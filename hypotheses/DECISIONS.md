@@ -431,3 +431,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-28T150030Z `muse_decode_layer` **marlin-hot-cold-two-class-bsm-t128-t256**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: hotcold landed (H=-16)
 - 2026-10-28T150031Z `muse_decode_layer` **wg2-occ2-b256-decode-port**: hold: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.4%; Marlin premise gone
 - 2026-10-28T150031Z `muse_attention_decode` **sliding-verify-fa3-num-splits-band-gate**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: sliding verify B=2..32 on s2b kernels, FA3 not called
+- 2026-10-28T150031Z `muse_attention_decode` **combo-sk-full-line-c320-tail**: hold: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: full-line gather + c320 onepass landed; early trigger measured, not routed

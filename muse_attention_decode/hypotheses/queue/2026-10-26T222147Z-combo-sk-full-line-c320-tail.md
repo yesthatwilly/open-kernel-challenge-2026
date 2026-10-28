@@ -42,7 +42,8 @@ kind: primary
 controls_for: null
 prior: "merge-perkvhead-v3chain-sv32-tiled: same base (1.5360 check); this stacks three small unmeasured changes on disjoint rows (sk gather mapping on full decode B>=2, c320 combine and PDL trigger on full decode_1) for a same-day submit"
 review: required
-status: queued
+status: hold
+hold_reason: "screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: full-line gather + c320 onepass landed; early trigger measured, not routed"
 ---
 
 # combo-sk-full-line-c320-tail
