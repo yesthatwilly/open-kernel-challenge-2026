@@ -53,12 +53,12 @@ evidence: >
   27f0b9af 1.5362 (board)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T191802Z
 review_companions: null
 review_best: 1.536215653197081
 review_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T191802Z
 base_sha: 80cc831d226d5a172f5b894f4e4810edc893a9d2
 base_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
@@ -77,6 +77,14 @@ attempt_file: 2026-10-29T194011Z-check-experts-rega-a5b-desc-splitcommit.md
 prepared_at: 2026-10-29T194012Z
 job: da80fdb9bed749a3
 dispatched_at: 2026-10-29T194021Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.579232671320759
+speedup_ci: [1.5555441812509476, 1.6029211613905703]
+harvested_at: 2026-10-29T194713Z
+best_at_harvest: 1.536215653197081
+promotion: pending
+mechanism: null
 ---
 
 # experts-rega-a5b-desc-splitcommit
@@ -209,3 +217,31 @@ OK with warnings: muse_prefill_layer/submission.py
 ```
 
 py_compile OK; __pycache__ removed. Diff: 1 file, +498 / -196 (muse_prefill_layer/submission.py).
+
+## Result
+
+- job `da80fdb9bed749a3` (check), status done, passed True, tests 5/5
+- speedup 1.5792x, 95% CI [1.5555, 1.6029], score 245311.4775519447 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.536215653197081, "ci": [1.5131724183991246, 1.559258887995037], "job": "27f0b9af04604842"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.result.json
+- **outcome: gain** (gain)
+- files: `muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json`, `muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.patch`; branch `hyp/muse_prefill_layer/experts-rega-a5b-desc-splitcommit`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 709.56 | 661.91 | 1.0109 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1067.11 | 1030.83 | 1.006 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2077.81 | 1936.06 | 1.0265 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3533.58 | 3491.54 | 1.0109 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11052.78 | 11160.68 | 1.042 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10545.85 | 10326.33 | 1.0213 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14570.54 | 14556.85 | 1.0065 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18087.08 | 17600.87 | 0.9979 | flat |
+
+gained on full first_turn. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
