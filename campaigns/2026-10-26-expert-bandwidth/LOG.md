@@ -2602,3 +2602,6 @@ with the operator's go-ahead.
 - bf16 b12 uc1_g1 at pooler m8 (0.827-0.837) and qkv m8 (0.928): churn pooled the two checks (gain-pooled), landed, scored 1.2839 [1.265, 1.303]. Rank 525. Next: pooler m16 routable (judge diag 0.923-0.936) and the decode dense-GEMM port (CLAIMS:97).
 - decode wh5ds 35cc220c 1.6968 (+0.38%, below CONFIRM_MIN): routed both classes, layer gate .933-.952; T=16 ea4x drew d again. [shelf] rider for the 10-30 decode stack.
 - **Tonight's H100-derived landings: prefill 1.501 -> 1.572, moe 1.952 -> 1.975, bf16 1.279 -> 1.284.**
+
+## 2026-10-29 2144Z — user (owner-confirmed, via openclaw): continue H100 work; Engine A run approved on GPU 3
+- "continue the work you can on the h100s eligible for use. [... this approves the Engine A encoding run: hopper-probe run gpunode06 --gpus 3 nodejudge-ee-*]". The ea-enc lane resumed on GPU 3 (njenc ee-val/r1/r2/ncu/ncub). pfexp lane running on GPU 5. Eligible GPUs: 1, 3, 4, 5, 6 (0/2 overheat; 7 reserved/refused).
