@@ -2587,3 +2587,8 @@ with the operator's go-ahead.
   4. **bf16:** tonight's b12 uc1 check; if it routes, port bulk12 m>=8 to decode's dense GEMMs (CLAIMS:97 shelf, re-sized at real escape density).
   5. **prefill:** full-layer FA3 exp-split (pfexp lane, resumes when tokens allow); rega high class sits at tensor 79% (next lever outside the tile).
 - **Rules carried:** H100 window to 10-30 ~14:00Z (gpunode06; GPUs 0/2 overheat; GPU 7 refused by policy); up to 5-6 lanes but pace tokens (the 5-hour limit hit at ~20:36Z); at the window end stop the runner, clean nodejudge + venvs, remove /tmp/USER-hopper.
+
+## 2026-10-29 2125Z — fa3ws read: warp specialization slower (ptxas C7513 serialized every wgmma); bf16 check bced57b4 in flight
+- research/h100-fa3ws-1029.md (takemyjob hopper/fa3ws-1029 16c06a0; GPU 4; fa3ws-venv removed). WS e2e 1.13x (v16) / 1.16x (v32) of master vs the gate's 0.82-0.83: ptxas C7513 put a wait-for-zero after every HGMMA in every WS kernel (no QK/softmax/PV overlap), even with FA3's exact intra-WG order. Loads-only hits the ceiling (121.8 / 235.0 us); math-only 180.8 / 340.0 vs the gate's 120.8 / 232.6. Error unchanged (1.67e-3; judge 0.027/0.028 vs 0.083/0.085). Rule: no better than the gate -> no check, no port. The pre-registered question (does WORKING overlap make math ~1.3x faster?) stays open: next step is finding what triggers C7513.
+- 10-30 plan item 3 adjusts: start from the gate kernel (e2e 0.82-0.84 on the node) and attack its math with a non-WS form (two interleaved QK chains) or a C7513-free WS build.
+- bf16 b12 uc1 check **bced57b4** dispatched (node GPU 6: pooler m8 0.774, qkv m8 0.764 routed; judge projection 0.939/0.906 vs the 0.95 gate; judge check_implementation passed 10 shapes on the node).
