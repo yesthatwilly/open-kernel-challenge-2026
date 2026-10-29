@@ -100,11 +100,20 @@ evidence: >
   0.238%/us, verify_16 0.076%/us, verify_32 0.044%/us
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T155002Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+stage: claimed
+claimed_at: 2026-10-29T155002Z
+base_sha: e18a2af19d9a60bde63f1ca29903b996d02a80a5
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify
+worktree: .worktrees/muse_attention_decode/fa3-metadata-fold-preattn-full-verify
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # fa3-metadata-fold-preattn-full-verify
