@@ -15,7 +15,7 @@ confirm_of: full-verify-paged-gather-gate-kernel-r2
 confirm_of_job: 184991095dff4d50
 review: proceed
 status: running
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T224342Z
 base_sha: 37649103a331b49c92b219f1c9d06caaf5d82fc9
 base_blob: 0f7d6195263717e5dff426814b77ed679a083408
@@ -32,6 +32,8 @@ submission_blob: 0039c56e69b9ce34892424ff02ed8cbd68224630
 lint_warnings: 105
 attempt_file: 2026-10-29T224344Z-check-full-verify-paged-gather-gate-kernel-r2-cf.md
 prepared_at: 2026-10-29T224344Z
+job: a47caf0724de40ad
+dispatched_at: 2026-10-29T224359Z
 ---
 
 # full-verify-paged-gather-gate-kernel-r2-cf
