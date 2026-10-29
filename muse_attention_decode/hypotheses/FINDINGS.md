@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T223319Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T224335Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -197,6 +197,7 @@ Diagnosis of 2026-10-25T203356Z, written on board 1.5295 (today 1.6340): histori
 
 ### full-layer verify attention (FA3 call at verify_16 / verify_32)
 - **full-verify-paged-gather-gate-kernel** → neutral (within-ci), 1.6154x — gained on sliding verify_1; lost on full decode_32; sliding verify_16. Replace master's FA3 call on the full-attention verify rows at B=16 and B=32 (q_len 8, paged FP8 KV, ctx ~80000) with the H100-validated gate kernel from takemy
+- **full-verify-paged-gather-gate-kernel-r2** → neutral (unproven-vs-best), 1.6422x — gained on full verify_16, verify_32; lost on sliding decode_1; full decode_32. Same change as full-verify-paged-gather-gate-kernel (restacked from its patch), with the one build fix its judge run needed: _FVG_FLAGS used -std=c++17, and the
 
 ### launch overhead
 - **splitkv-pdl-attn-to-combine** → neutral (within-ci), 1.3929x — lost on full decode_32. Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B (splitkv_combine_kernel), full decode 1 < batch <= 64. (1) In splitkv
@@ -373,5 +374,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 hold
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 hold
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 hold
-- running: full-verify-paged-gather-gate-kernel-r2 [full-layer verify attention (FA3 call at verify_16 / verify_32)] p1 running
+- queue: full-verify-paged-gather-gate-kernel-r2-cf [full-layer verify attention (FA3 call at verify_16 / verify_32)] p1 queued
 - 17 stale holds expired to `done/expired/` (not run)

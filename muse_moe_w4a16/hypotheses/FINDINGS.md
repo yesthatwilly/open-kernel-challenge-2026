@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T223319Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T224335Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -56,6 +56,7 @@ Regenerated 2026-10-29T223319Z by `churn.py index`. Read this before writing a h
 - [landed] v4x256c: W6-M fork stream at priority 0, never the capture stream (_rt_fork_stream/_rt_fork_pick), plus v4cxs qualifying alone on the T=256 cold half | rows: load=verify_32 | evidence: job dceed39d08a14c73 (okc status dceed39d08a14c73), check 03d2c99e043a4a6a, master a96fae0582 | board: 1.9502 | blob: a90ff05c | reopen: - | 2026-10-29 campaign
 - [landed] stack2: v6pe2 two-wave ea6 K2 at T=1 + EPLF stream-K fix-up with fixed roles (routed at T16) + v4x-routes robust class-128 routing | rows: load=decode_1 load=decode_16 load=verify_16 | evidence: job 8418677e467d4fb7 (okc status 8418677e467d4fb7), check 456d90673f4346d1, master 9d66b13def | board: 1.9521 | blob: 691018b5 | reopen: - | 2026-10-29 campaign
 - [landed] hot half wh5ds at T=256 (A3 + A5b codes/scales + per-stage descriptor + split commit, wh exact-N/ring) in wg_kernel<G,14>, routed by isolated-pair race + fork no-loss gate (hothalf-wh-a5b-port) | rows: load=verify_32 | evidence: check 54b70249868f468b 1.9827 (verify_32 291.1 -> 274.4 us; pair m 115.1 -> wh5ds 92.8 us; forked kfn .887-.953); scored a5318a1f98984a5f 1.9748 [1.945, 2.004]; H100 hh2/hh3 | board: 1.9748 | blob: 37ea90fc | reopen: - | 2026-10-29 churn
+- [landed] Engine A dq2 with lossless A4b code re-encoding (E4) / + A5b packed scales (E5), raced per T class (engine-a-a4b-a5b-encodings-race) | rows: load=decode_1, load=decode_8, load=decode_16, load=decode_32, load=verify_16, load=verify_32 | evidence: check 702f1004b45f4bfa 2.0646 (per class E/m: T1 E4/E4 0.967, T8 0.960, T16 0.953, T32 0.951, T128 E5 0.955, T256 E4 0.974; exact); scored 24f183ff300949f2 2.0201 [1.990, 2.050]; H100 consume-only 4-10% (research/h100-ea-enc-1029.md) | board: 2.0201 | blob: c6e41c9a | reopen: - | 2026-10-29 churn
 
 ### refuted
 
