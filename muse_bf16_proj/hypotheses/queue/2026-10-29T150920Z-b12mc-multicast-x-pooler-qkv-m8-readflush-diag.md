@@ -126,8 +126,12 @@ instrument: >
   into the 16 KB log tail; the judge's own rows of the unchanged timed path are the board-noise
   control
 user_requested: true
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-29T151743Z
+review_companions: null
+review_best: 1.279360358306445
+review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
@@ -157,3 +161,28 @@ Prepare-only diagnostic. kernel_fn, every routing flag and every state key the t
 ## Risk
 
 Risk: cluster-wide empty barriers couple the 4 ranks, so the slowest CTA paces its cluster (the uc arm keeps that coupling, so mc/uc isolates multicast). The read-flush gate has under-predicted the judge at m=8 before (b12r gate 0.938 vs judge 0.984): a LEAD needs the judge check to confirm. The future check must build the tensor map per call (x's address varies) on the host, inside graph capture; this diag uses a fixed x buffer. Compile adds ~30-60 s to the 10-minute run budget.
+
+## Adversarial review
+
+Reviewed 2026-10-29T151743Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** E passes: CLAIMS.md:50 [refuted] b12x names exactly this as its reopen (x multicast once per 2-4 CTA cluster, read-flush gate <= 0.95); board unmoved (a36f3392, 1.2794). Buildable, but as written the run is probably unreadable: the pooler cases (r8, r16) very likely cannot co-schedule 32 four-CTA clusters at 1 CTA/SM on the judge, and the rule checks REFUTE (mc/uc) before LEAD, killing a real win from the 2D TMA boxes alone. Fix both in the build; no extra runs.
+
+### Justification
+Plausible for qkv, weakly backed for pooler. b12 at m=1 judges 0.84 on pooler (17.7 -> 14.8 us, 3834ceec); the m=8 incumbent is swap-AB Triton at 19.0 us (board 3e3ffc5a, floor 14.0). WEAKEST LINK: the L2 hot-spotting story. Per-CTA rotation cut readers per x line from 128 to 4 and moved qkv m=8 17.1 -> 14.5 us but pooler m=8 only 25.3 -> 24.5 (0acdca48 -> 2980f57a), so most of pooler's ~5.8 us excess is not hot-spotting. The likelier lever is replacing 256 16-B cp.async pieces per chunk with tensor-map boxes, which BOTH mc and uc do. mc/uc also confounds fewer TMA issues (uc 128/CTA vs mc 32/CTA; DISTILL:263 30-50 ns each) with fewer L2 reads. m=32 rows (10 of the 26.6 elasticity points) are extrapolated and hit DISTILL 3.4's N>=32 mma.sync trap (b12x pooler m=32 55.6 vs 24.8 us); without them gain ~2.9%. Risk slip: b12r 0.938 vs 0.984 was a WRITE-flush gate; no read-flush gate-vs-judge pair exists at m>=8; at m=1 read flush under-predicted qkv/o by 4-5 points. DESIGN CHECK (must fix): pooler <32,8192,8,1> is 1 CTA/SM, 128 CTAs, cluster 4, needs 32 co-resident clusters; judge reports MaxActiveClusters 62 for cl=4 at 2/SM (ouns) and 30 for cl=8 at 2/SM (router), so 1/SM gives <= ~31 four-CTA clusters: pooler m=8/16 would print 'skipped' and the run ends INVALID. qkv (MINB=2, 36 clusters vs ~62) is fine. Barrier/box alignment sound (CUTLASS multicast pipeline pattern; SWIZZLE_128B limits inner box to 64 bf16, so 1-2 boxes per rank).
+
+### Confounders on the current kernel
+- swap-AB Triton at m<=32 (bf16-m32-swapab-wgmma-triton / bf16-restack-m16-swapab-router-swapab-m32): the inc comparator, not a confounder; if the shelved tile repack (CLAIMS.md:64) lands the bar moves.
+- bulk12 m=1 landing (5325ea40, CLAIMS.md:56, :59): diag re-encodes pooler R=32 and qkv R=16, which master already holds; reuse state's codes when R matches (saves prepare time and ~80 MB).
+- kernel_fn and routing byte-identical: board rows are the noise control.
+
+### Interference and A/B needs
+No companion run. All comparisons are interleaved in one process under the same read flush. Fix in the build: (1) co-residency: size a pooler instance per NT for 2 CTAs/SM (S=5-6 at NT=8, <= ~113 KB dynamic smem), MaxActiveClusters(4) ~62 >= 32; keep S=8 MINB=1 only if its query reports >= 32; print every instance's MaxActiveClusters in VERDICT. (2) Decision: REFUTE only if min(mc,uc)/inc >= 1.0 (or > 0.95); base LEAD/SHELF on best-arm/inc (b8, b16) and name the winning arm; keep mc/uc as attribution worded 'multicast (fewer L2 reads and 4x fewer TMA issues per CTA) vs per-CTA boxes'. (3) Optional: bridge arm with a7da6fa9's rotated b12x (cp.async x) at pooler m=8 to tie to 2980f57a.
+
+### Open questions
+- Judge MaxActiveClusters for 4-CTA at 1 CTA/SM with ~140-170 KB smem is likely <= 31 < 32; choose the 2/SM pooler instance.
+- LEAD on the better of mc and uc; uc <= 0.85 means the lever is tensor-map delivery, not multicast.
+- Add a pooler m=32 case (NT=32, S<=6) or drop pooler d32 / unpooler d32 from a LEAD's mint.
+- VERDICT line must carry both rounds of mc/inc, uc/inc, mc/uc, net us and IQR per arm, MaxActiveClusters per instance, pooler m=1 reference (16 KB tail).
+- Correct the Risk note (b12r 0.938 was write-flush); qkv m=8 threshold ~0.86-0.88.
+
