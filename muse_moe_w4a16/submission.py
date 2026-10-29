@@ -109,54 +109,42 @@ from sglang.srt.layers.quantization.marlin_utils_fp4 import prepare_moe_nvfp4_la
 
 
 class Weights(TypedDict):
-    w13: torch.Tensor          # uint8 [256, 2I, H/2], gate rows [0, I) then up rows [I, 2I), packed E2M1
-    w13_sf: torch.Tensor       # float8_e4m3fn [256, 2I, H/16]
-    w13_gs: torch.Tensor       # float32 [256]
-    w2: torch.Tensor           # uint8 [256, H, I/2]
-    w2_sf: torch.Tensor        # float8_e4m3fn [256, H, I/16]
-    w2_gs: torch.Tensor        # float32 [256]
-    post_norm_w: torch.Tensor  # bfloat16 [H], the post-expert RMSNorm's weight (applied as 1 + w)
+    w13: torch.Tensor
+    w13_sf: torch.Tensor
+    w13_gs: torch.Tensor
+    w2: torch.Tensor
+    w2_sf: torch.Tensor
+    w2_gs: torch.Tensor
+    post_norm_w: torch.Tensor
 
 
 class Config(TypedDict):
-    bs: int           # tokens, M
-    d_hidden: int     # H = 4096, the width the MoE block runs its experts at
-    d_expert: int     # I = 4096
-    n_experts: int    # 256 experts in the model
-    local_start: int  # this GPU computes experts [local_start, local_start + local_count)
-    local_count: int  # 32: one GPU under 8-way expert parallelism
-    top_k: int        # 8
-    sharding: str     # "ep8"
+    bs: int
+    d_hidden: int
+    d_expert: int
+    n_experts: int
+    local_start: int
+    local_count: int
+    top_k: int
+    sharding: str
 
 
 class Inputs(TypedDict):
-    hidden_states: torch.Tensor  # bfloat16 [M, H]
-    topk_ids: torch.Tensor       # int32 [M, 8], global expert ids (0-255)
-    topk_weights: torch.Tensor   # float32 [M, 8]
+    hidden_states: torch.Tensor
+    topk_ids: torch.Tensor
+    topk_weights: torch.Tensor
     config: Config
 
 
 N_EXPERTS = 256
 TOP_K = 8
-# MuseSpark1xFp4Experts' candidates, smallest first.
 BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
 POST_NORM_EPS = 1e-8
-# Below this many tokens kernel_fn combines with _post_norm_combine_kernel instead of SGLang's
-# fused_post_expert_norm_weighted_sum (hypothesis post-expert-norm-triton-small-m).
 SMALL_M_POST_NORM = 32
-# Up to this many tokens _align_small_kernel does the expert_map gather and the align in one
-# launch (hypothesis triton-map-align-small-m-port); above it, _align_parallel_kernel does the same
-# in one 33-program launch (hypothesis align-parallel-per-expert-verify).
 ALIGN_FUSED_MAX_TOKENS = 32
-# _align_parallel_kernel: routes per chunk (a [512, 32] one-hot at 8 warps is 64 int32 per thread
-# per temporary), warps, and the block_experts store tile.
 ALIGN_PAR_CHUNK = 512
 ALIGN_PAR_WARPS = 8
 ALIGN_PAR_BLK = 64
-# Hypothesis align-two-phase-port-from17: prefill's two-phase Triton align (a count kernel, then a place
-# kernel) for 17 <= tokens <= 512, per T class, each gated in prepare() on bit-identical outputs against the
-# class incumbent and a >= ALIGN2_MIN_RATIO cold-L2 graph win. state["align2_ok"] is a plain dict of ints
-# {class: chunk or 0}; 0 keeps master's align.
 ALIGN2_TAG = "[align2]"
 ALIGN2_WARPS = 8
 ALIGN2_BLKT = 256
@@ -164,7 +152,6 @@ ALIGN2_SENT = 2048
 ALIGN2_MIN_TOKENS = 17
 ALIGN2_MAX_TOKENS = 512
 ALIGN2_CHUNKS = (64, 128, 256, 512)
-# class: (first T, last T, representative T for the timing gate, equivalence T list)
 ALIGN2_CLASSES = {
     "d32": (17, 32, 32, (17, 24, 32)),
     "v128": (33, 191, 128, (33, 57, 120, 128, 191)),
@@ -173,33 +160,23 @@ ALIGN2_CLASSES = {
 ALIGN2_STARTS = (0, 32, 224)
 ALIGN2_MIN_RATIO = 1.05
 ALIGN2_REPLAYS = 41
-# Hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2: four prepare-gated sources, each its own bound
-# constant (LESSONS 141), each run after master's prepare with its own start deadline (s from prepare()'s start).
 COMBO_TAG = "[combo]"
-COMBO_MAX_RATIO = 0.98            # ON only at new / master <= this on the worse of judge-like and random routing
-COMBO_TIMING_DEADLINE_S = 270.0   # no phase starts a timing past this
+COMBO_MAX_RATIO = 0.98
+COMBO_TIMING_DEADLINE_S = 270.0
 COMBO_DEADLINES_S = {"F1": 120.0, "F2": 150.0, "C1a": 160.0, "C1b": 170.0, "F2-select-diag": 200.0, "copy": 255.0}
-# (F1, source w13-marlin-atomic-add-t1-only f29a0b9e) w13 Marlin use_atomic_add at num_tokens <= this.
 W13_ATOMIC_MAX_TOKENS = 1
 W13_POISON = 3.0e4
-W13_ATOMIC_TOL = 1.25e-2          # rel-L2 vs current master (w2 mode as chosen); source measured 8.4e-3 on ONE routing
-# rel-L2 vs a full fp32 reference (judge bound 1.5e-2): review F1 amendment. Pre-flight audit: 1e-2 was below the
-# expected stack (w13 atomic 8.1e-3 + w2 atomic 4.7e-3 + Marlin base, ~1.0e-2 in quadrature), so F1 would gate OFF.
+W13_ATOMIC_TOL = 1.25e-2
 W13_FP32_TOL = 1.25e-2
-# (F2, source master's own align2) state["wg_align2"][bucket]: 0 = master's SGLang front end, WG_ALIGN_PAR =
-# _align_parallel at WG_BSM, else an align2 chunk (all chunks are >= 64).
 WG_ALIGN_PAR = 1
 WG_ALIGN2_EQ_TOKENS = (128, 191, 192, 256, 257, 384, 512)
-# (C1a, source align-parallel-from-17-tokens c9c2db89) _align_parallel for these T when state["d32_align"] == 1.
 D32_ALIGN_MIN_TOKENS = 17
 D32_ALIGN_MAX_TOKENS = 32
 D32_ALIGN_EQ_TOKENS = (17, 24, 28, 29, 32)
-# (C1b, source post-norm-triton-hoisted-decode32 4aab0187) hoisted Triton post-norm at exactly this T when
-# state["d32_post_norm"] == 1.
 HOISTED_POST_NORM_TOKENS = 32
 POST_NORM_ERR_FACTOR = 1.5
 POST_NORM_ERR_FLOOR = 1e-5
-COMBO_COPY_TOL = 3e-2             # graph replay on a state copy vs eager kernel_fn (atomic paths are not bitwise)
+COMBO_COPY_TOL = 3e-2
 
 
 @triton.jit
@@ -281,23 +258,20 @@ def _align_small_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_exper
     tl.store(local_ids_ptr + offs, local, mask=mask)
 
     experts = tl.arange(0, NUM_E)
-    onehot = (local[:, None] == experts[None, :]).to(tl.int32)        # [BLOCK_N, NUM_E]
-    counts = tl.sum(onehot, axis=0)                                    # [NUM_E]
+    onehot = (local[:, None] == experts[None, :]).to(tl.int32)
+    counts = tl.sum(onehot, axis=0)
     padded = (counts + BSM - 1) // BSM * BSM
     seg_end = tl.cumsum(padded, axis=0)
     seg_start = seg_end - padded
     total = tl.sum(padded, axis=0)
 
-    # Real routes: segment start plus rank among the earlier routes of the same expert.
     rank = tl.sum(onehot * (tl.cumsum(onehot, axis=0) - 1), axis=1)
     pos = tl.sum(onehot * seg_start[None, :], axis=1) + rank
     tl.store(sorted_ids_ptr + pos, offs, mask=mask & (local >= 0))
-    # Each expert's padding slots.
     j = tl.arange(0, BSM)
     pad_ptrs = sorted_ids_ptr + (seg_start + counts)[:, None] + j[None, :]
     sentinel = tl.zeros([NUM_E, BSM], dtype=tl.int32) + n
     tl.store(pad_ptrs, sentinel, mask=j[None, :] < (padded - counts)[:, None])
-    # Every slot past the used length.
     slots = tl.arange(0, CAP_BLOCK)
     tl.store(sorted_ids_ptr + slots, tl.zeros([CAP_BLOCK], dtype=tl.int32) + n,
              mask=(slots >= total) & (slots < cap))
@@ -347,7 +321,6 @@ def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_ex
         my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
         my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
         my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
-        # This expert's routes, ascending route index.
         base = my_start
         for c in range(0, n, CHUNK):
             offs = c + offs0
@@ -358,12 +331,9 @@ def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_ex
             rank = tl.cumsum(match, axis=0) - 1
             tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
             base += tl.sum(match, axis=0)
-        # Its padding slots: fewer than BSM, over a power-of-2 tile (BSM 48 is not one).
         j = tl.arange(0, PAD_BLOCK)
         tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
                  mask=j < my_padded - my_count)
-        # Its m-blocks [my_start / BSM, (my_start + my_padded) / BSM); a runtime loop, since one
-        # expert can own up to cdiv(M, BSM) blocks.
         b0 = my_start // BSM
         nb = my_padded // BSM
         kb0 = tl.arange(0, BLK)
@@ -378,7 +348,6 @@ def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_ex
             local = ids - local_start
             local = tl.where((local >= 0) & (local < local_count), local, -1)
             tl.store(local_ids_ptr + offs, local, mask=mask)
-        # Every slot past the used length.
         for s in range(0, cap, CHUNK):
             slots = s + offs0
             tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
@@ -439,19 +408,15 @@ def _align2_place_kernel(topk_ids_ptr, cnt_ptr, local_ids_ptr, sorted_ids_ptr, b
         pos = tl.sum(onehot * (seg_start[None, :] + pre[None, :] + rank), axis=1)
         tl.store(sorted_ids_ptr + pos, offs, mask=valid)
     else:
-        # Each expert's padding slots [seg_start + count, seg_start + padded): fewer than BSM.
         j = tl.arange(0, PAD_BLOCK)
         pslots = (seg_start + counts)[:, None] + j[None, :]
         tl.store(sorted_ids_ptr + pslots, tl.zeros([NUM_E, PAD_BLOCK], dtype=tl.int32) + n,
                  mask=j[None, :] < (padded - counts)[:, None])
-        # The sentinel in every slot past the used length.
         s0 = tl.arange(0, SENT)
         for s in range(0, cap, SENT):
             slots = s + s0
             tl.store(sorted_ids_ptr + slots, tl.zeros([SENT], dtype=tl.int32) + n,
                      mask=(slots >= total) & (slots < cap))
-        # Block b belongs to the expert whose segment holds slot b * BSM: the number of experts whose
-        # segment ends at or before it; -1 past the used blocks.
         seg_end = seg_start + padded
         b0 = tl.arange(0, BLKT)
         for b in range(0, n_blocks, BLKT):
@@ -649,7 +614,7 @@ def _align2_gate_time(fns, device):
     graphs = {name: _align2_graph(fn, device) for name, fn in fns.items()}
     tiny = torch.zeros(16, dtype=torch.float32, device=device)
     graphs["empty"] = _align2_graph(lambda: tiny.zero_(), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the L2
+    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
     ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
 
     def once(graph):
@@ -768,7 +733,6 @@ def _align_self_check(device, count):
         bsm0 = _block_size_m(tokens, count)
         shapes.append((tokens, bsm0))
         if tokens >= 128:
-            # kernel_fn's marlin-block-m-two-smaller-on-postnorm pick.
             bsm1 = BLOCK_SIZE_M_CANDIDATES[max(BLOCK_SIZE_M_CANDIDATES.index(bsm0) - 2, 0)]
             if bsm1 != bsm0:
                 shapes.append((tokens, bsm1))
@@ -844,7 +808,6 @@ def _align_self_check(device, count):
         print(f"{tag0}   {message}")
     for line in pads:
         print(f"{tag0}   pad {line}")
-    # The _align_parallel cases (tokens > 32), apart, so a real mismatch there is not hidden above.
     tag1 = "[align-parallel-per-expert-verify]"
     big_cases = sum(1 for tokens, _ in shapes if tokens > ALIGN_FUSED_MAX_TOKENS) * 3 * 5
     big = [m for m in hard if int(m.split()[0][2:]) > ALIGN_FUSED_MAX_TOKENS]
@@ -855,60 +818,25 @@ def _align_self_check(device, count):
         print(f"{tag1}   {message}")
 
 
-# ---- begin include rewrite/lib/wg_core.py ----
-# moe's wgmma verify path, shared since campaign 2026-10-26-expert-bandwidth (X2): muse_moe_w4a16 runs it whole
-# (_moe_wgmma, its setup and self-checks stay in the moe source); muse_decode_layer runs it as the hot half of its
-# T = 128 / 256 hybrid (hotcold_decode.py). Needs time and torch only. Moved verbatim from the moe source.
-# ---------------------------------------------------------------------------------------------
-# CUDA wgmma verify path (hypothesis cuda-nvfp4-wgmma-rega-grouped-verify, rewrite stage 1).
-#
-# For 128 <= num_tokens <= WG_MAX_TOKENS, when the prepare-time build and self-check pass, the two
-# moe_wna16_marlin_gemm calls and silu_and_mul are replaced by one small gather kernel and two
-# launches of one hand-written Hopper kernel wg_kernel<GATED> (load_inline): swap-AB wgmma
-# m64nNk16 with the dequantized NVFP4 weight as the REGISTER A operand (weight rows on M) and the
-# gathered BF16 token slab as the shared-memory B operand (tokens on N, SWIZZLE_128B, loaded by
-# TMA). CTA = 3 warpgroups, persistent (grid = SM count): WG0 is the producer (one thread issues a
-# 1-D cp.async.bulk of the stage's contiguous weight record and two 2-D TMA boxes of the slab, all
-# completing on the stage's full mbarrier); WG1/WG2 are consumers, 64 weight rows each, which
-# dequantize into registers exactly (the swap-AB sibling's bit trick), issue 8 wgmmas per stage,
-# keep one wgmma group in flight and release the previous stage. Align stays master's
-# moe_align_block_size at block 16; every CTA forms CHUNKS on device (maximal runs of 16-row blocks
-# of one expert, cut every 8 blocks) and walks items (chunk, 128-row tile) ordered (expert, tile,
-# chunk) with a static stride. A chunk's token count picks the wgmma N (16/32/64/128) at run time.
-# w13's epilogue applies the global scale, rounds gate and up to bf16, applies silu(gate) * up and
-# stages the bf16 tile through shared memory (stmatrix .trans) into h_sorted at the sorted slot;
-# w2's epilogue stages the same way and scatters coalesced rows to cache3[route]. Master's
-# post-expert norm then runs unchanged.
-#
-# Weight bank (prepare, lossless retiling of the same NVFP4 bytes): per expert, per 128-row tile
-# j, per 64-k block kc, one 4608-byte record = 4096 B codes + 512 B E4M3 scales, so a stage (BK =
-# 128, two records) is one contiguous 9216-byte range. Codes: per warp W (16 rows), per lane, 16
-# bytes = 4 words, word s = the lane's 8 E2M1 codes of k16 step s (register pair i = rh + 2 kh at
-# nibbles 3 - i and 7 - i, the sibling's order). Scales: per warp W, per lane group g, 8 bytes:
-# byte 2 s + rh = row g + 8 rh at k16 step s. w13 rows of warp W in tile j: gate column 64 j + 8 W
-# + g (fragment rows 0-7) and the same up column (rows 8-15); w2 rows: 128 j + 16 W + 8 rh + g.
-# ---------------------------------------------------------------------------------------------
 
 WG_TAG = "[cuda-wgmma-verify]"
 WG_MIN_TOKENS = 128
 WG_MAX_TOKENS = 512
-WG_B256_MIN_TOKENS = 256            # bucket B128 = [128, 255] (flag wg_on_128), B256 = [256, 512] (wg_on_256)
+WG_B256_MIN_TOKENS = 256
 WG_BSM = 16
 WG_THREADS = 384
 WG_STAGES = 4
 WG_BK = 128
-WG_REC = 4608                       # one (expert, tile, 64-k block) record: codes + scales
+WG_REC = 4608
 WG_STAGE_BYTES = 2 * WG_REC + 2 * 128 * 128
 WG_EPI_BYTES = {True: 128 * (64 * 2 + 16), False: 128 * (128 * 2 + 16)}
 WG_SMEM = {g: 1024 + WG_STAGES * WG_STAGE_BYTES + WG_EPI_BYTES[g] for g in (True, False)}
-WG_STATIC_SMEM_BOUND = 8192         # chunk tables + barriers, checked again after the build
+WG_STATIC_SMEM_BOUND = 8192
 WG_SMEM_LIMIT = 227 * 1024
-WG_MAX_BLOCKS = 384                 # chunk-table capacity (one 16-row block per thread)
-WG_CAP_ROWS = 8192                  # xs / h_sorted scratch rows (>= any sorted_ids at M <= 512)
+WG_MAX_BLOCKS = 384
+WG_CAP_ROWS = 8192
 WG_BUCKETS = (16, 32, 64, 128)
-# _wg_setup's own time budget inside prepare()'s 300 s (build + retile + canary + self-check):
-# past it the path stays off (the build alone is unmeasured on the judge).
-WG_SETUP_BUDGET_S = 200.0  # measured from prepare()'s start; the self-check (~20-60 s) runs after it
+WG_SETUP_BUDGET_S = 200.0
 WG_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)"}
 
 _WG_CPP = r"""
@@ -1583,11 +1511,6 @@ def _wg_src(pdl=True):
 WG_EXT_NAME = "muse_moe_w4a16_wgmma_rega_v6_pdl"
 
 
-# Build fallback (pre-flight audit): if the PDL module fails to build, prepare() builds MASTER's exact wgmma
-# module instead (same source text, same name) and runs with wg_pdl False. Master's text is derived from the
-# PDL text by reverting these (pdl text, master text) hunks; each must occur exactly once. The kernel hunks
-# are only the griddepcontrol helpers and their three call sites; the host hunks are the pdl argument and
-# the launch macro.
 WG_EXT_NAME_MASTER = "muse_moe_w4a16_wgmma_rega_v5"
 _WG_MASTER_REVERT = {
     "cpp": [
@@ -1719,7 +1642,7 @@ WG_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
 WG_CUDA_CFLAGS = ["-O3", "-lineinfo", WG_GENCODE]
 
 
-WG_BUILD_INFO = {}  # filled by _wg_build, read by the summary block
+WG_BUILD_INFO = {}
 
 
 def _wg_ptxas_warnings(text):
@@ -1755,7 +1678,6 @@ def _wg_build(probe=False, pdl=True):
     t0 = time.perf_counter()
     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
     flags = list(WG_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else [])
-    # pdl=False: MASTER's module (same source text and name as master), the fallback when the PDL build fails.
     name = (WG_EXT_NAME if pdl else WG_EXT_NAME_MASTER) + ("_probe" if probe else "")
     ext, err_text = None, ""
     try:
@@ -1766,7 +1688,7 @@ def _wg_build(probe=False, pdl=True):
         os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
         try:
             arch_flags = cpp_extension._get_cuda_arch_flags()
-        except Exception as e:  # this torch does not know the 'a' suffix: default list + guards
+        except Exception as e:
             print(f"{WG_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); building with the default list "
                   f"(the compute_90 pass is guarded; error word 2 decides)", flush=True)
             if prev is None:
@@ -1788,7 +1710,7 @@ def _wg_build(probe=False, pdl=True):
             extra_cuda_cflags=flags,
             verbose=False,
         )
-    except Exception as e:  # keep the master path if the build fails
+    except Exception as e:
         err_text = str(e)
         ext = None
         print(f"{WG_TAG} load_inline {name} failed after {time.perf_counter() - t0:.1f}s: "
@@ -1821,9 +1743,8 @@ def _wg_code_dims(rows, k, gated):
     s kl kh rh, then kh and rh are reversed, so the nibble in the lane's word s is 4 kl + 2 (1 -
     kh) + (1 - rh): register pair i = rh + 2 kh at nibbles 3 - i (kl = 0) and 7 - i (kl = 1)."""
     kc = k // 64
-    if gated:  # row = rh * I + 64 j + 8 w + g
+    if gated:
         return (2, rows // 128, 8, 8, kc, 4, 2, 4, 2), (1, 4, 2, 3, 7, 5, 8, 6, 0)
-    # row = 128 j + 16 w + 8 rh + g
     return (rows // 128, 8, 2, 8, kc, 4, 2, 4, 2), (0, 4, 1, 3, 7, 5, 8, 6, 2)
 
 
@@ -1936,18 +1857,16 @@ def _wg_gemm(state, which, wq, wgs, sorted_ids, block_experts, n_padded, routes,
     B-source scratch (its tensor maps are encoded in C++ from THIS tensor on every call, into a
     stack-local grid constant), the weights, the per-state error word. No module-level device pointer,
     tensor map or tensor is involved."""
-    # PDL only on the w13 -> w2 boundary (which == 1); state['wg_pdl'] is set once in prepare, read-only here.
     pdl = 1 if (which == 1 and state.get("wg_pdl", False)) else 0
     args = (which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids, block_experts, n_padded,
             routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
-    # wg_ext_pdl (prepare-time bool): the PDL module takes the pdl argument; master's fallback module does not.
     if state.get("wg_ext_pdl", False):
         state["wg_ext"].wg_gemm(*args, pdl)
     else:
         state["wg_ext"].wg_gemm(*args)
 
 
-WG_MAGIC = 0x57474d4d  # block 0 of wg_kernel writes it into wg_err[1] (the launch marker)
+WG_MAGIC = 0x57474d4d
 
 
 def _wg_attach_scratch(state, ext, device, hidden, inter):
@@ -1958,7 +1877,6 @@ def _wg_attach_scratch(state, ext, device, hidden, inter):
     state["wg_err"] = torch.zeros((2,), dtype=torch.int32, device=device)
     state["wg_ext"] = ext
     state["wg_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
-# ---- end include rewrite/lib/wg_core.py ----
 
 
 def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
@@ -1972,8 +1890,6 @@ def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
     if trace is not None:
         trace("before expert_map gather + moe_align_block_size")
     topk_weights = topk_weights.to(torch.float32).contiguous()
-    # Combo F2: the bucket's prepare-gated front end (plain int; shape-only bucket pick). 0 = master's
-    # expert_map gather + SGLang moe_align_block_size; WG_ALIGN_PAR = _align_parallel; else an align2 chunk.
     fe = state.get("wg_align2", {}).get(128 if num_tokens < WG_B256_MIN_TOKENS else 256, 0)
     if fe == WG_ALIGN_PAR:
         local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(topk_ids, start, count, WG_BSM)
@@ -2008,10 +1924,10 @@ def _moe_wgmma(x, topk_ids, topk_weights, bank, state, trace=None):
     return out, local_ids, sorted_ids, block_experts, n_padded, y
 
 
-WG_SENTINEL = -12288.0  # bf16-exact (-3 * 2^12): "row never written" must differ from "computed non-finite"
-WG_TOL = 1e-2           # per-kernel rel-L2 against Marlin (pass/fail is this, never finiteness)
-WG_REPLAY_DEADLINE_S = 235.0   # the replay-safety check (~10-20 s) must start before this many seconds into prepare()
-WG_TIMING_DEADLINE_S = 255.0  # skip the per-kernel timing past this many seconds into prepare()
+WG_SENTINEL = -12288.0
+WG_TOL = 1e-2
+WG_REPLAY_DEADLINE_S = 235.0
+WG_TIMING_DEADLINE_S = 255.0
 
 
 def _wg_rel(a, b):
@@ -2048,7 +1964,7 @@ def _wg_cmp(new, ref, loc, bn, bucket_of):
     good = ~bad
     d2 = (af.double() - b).pow(2)
     d2 = torch.where(fin, d2, torch.full_like(d2, float("inf")))
-    res["max_abs"] = float(d2.sqrt().max())  # inf when any element is non-finite
+    res["max_abs"] = float(d2.sqrt().max())
     b2 = b.pow(2)
     rn, rd = d2.sum(-1), b2.sum(-1)
     res.update(unw=int(unw.sum()), part=int(part.sum()), nonf=int(nonf.sum()), nonf_elems=int((~fin).sum()),
@@ -2192,7 +2108,6 @@ def _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, tag, verbose):
     step("wg_kernel<w2> on its own h", lambda: _wg_gemm(state, 1, wb["q2"], wb["gs2"], sorted_ids, block_experts, n_padded,
                                                             routes, hidden // 128, inter, cache3a))
     ev["y_own"] = _wg_cmp(cache3a, r_y, loc, 128, bucket_of)
-    # w2 judged alone: its h input is Marlin's cache2 at the sorted slots (pad slots of local blocks: 0).
     hs_buf.fill_(sent)
     hs_buf[:used][real] = r_c2[sid[real]]
     hs_buf[:used][pad_rows] = 0
@@ -2200,7 +2115,6 @@ def _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, tag, verbose):
     step("wg_kernel<w2> fed Marlin cache2", lambda: _wg_gemm(state, 1, wb["q2"], wb["gs2"], sorted_ids, block_experts,
                                                                 n_padded, routes, hidden // 128, inter, cache3b))
     ev["y2"] = _wg_cmp(cache3b, r_y, loc, 128, bucket_of)
-    # Does the fused norm skip remote slots? NaN them and compare with the sentinel-filled run.
     if verbose:
         print(f"{WG_TAG}     [{tag}] launching fused post-expert norm x2 (sentinel / NaN remote rows)", flush=True)
     out_b = fused_post_expert_norm_weighted_sum(
@@ -2215,7 +2129,6 @@ def _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, tag, verbose):
     ev["skips_remote"] = bool(torch.isfinite(out_nan).all()) and bool(torch.equal(out_nan, out_b))
     ev["out_y2"] = _wg_rel(out_b, r_out)
     del c_nan, out_nan, out_b, cache3b
-    # The production path end to end (what kernel_fn runs), against Marlin's out.
     n_out = _moe_wgmma(x, topk_ids, tw, bank, state, trace=_wg_tracer(f"{tag} production") if verbose else None)[0]
     torch.cuda.synchronize()
     ev["out_finite"] = bool(torch.isfinite(n_out).all())
@@ -2288,7 +2201,7 @@ def _wg_diag(weights, bank, state, device):
         print(f"{WG_TAG} diagnostic case '{name}' (first launches of this routing)", flush=True)
         try:
             ev = _wg_eval_case(weights, bank, state, device, x, topk_ids, tw, name, True)
-        except Exception as e:  # a Python error in one case must not lose the others or the summary
+        except Exception as e:
             print(f"{WG_TAG}   [{name}] diagnostic case raised: {e!r}", flush=True)
             lines.append(f"  {name}: case raised {e!r}"[:300])
             h_ok = w2_ok = False
@@ -2302,7 +2215,6 @@ def _wg_diag(weights, bank, state, device):
                      f"w2(Marlin cache2) unw {y2['unw']} part {y2['part']} nonfin {y2['nonf']} rel {y2['rel_all']:.2e} | "
                      f"w2(own h) rel {yo['rel_all']:.2e} | out rel {ev['out_rel']:.2e} | gather bad {g[0]}/{g[1]} pad!=0 "
                      f"{g[2]}/{g[3]} | ids {ev['same_ids']} cov {ev['covered']} | err word {ev['err_word']}")
-        # Localisation kept in the summary (the verbose per-launch lines may fall out of the log tail).
         for kn, r in (("h", h), ("y2", y2)):
             if not _wg_pass(r):
                 lines.append(f"    {kn} buckets {_wg_buckets_text(r)}; first bad (route,tok,col,tile,kind,bkt) "
@@ -2317,7 +2229,7 @@ def _wg_diag(weights, bank, state, device):
     return h_ok, w2_ok, skips, lines, cover
 
 
-WG_CANARY_COUNTS = (16, 32, 64, 128)  # routes on ONE local expert: chunk of 1/2/4/8 blocks -> bucket 0..3
+WG_CANARY_COUNTS = (16, 32, 64, 128)
 WG_BUCKET_NAME = ("N16", "N32", "N64", "N128")
 
 
@@ -2456,10 +2368,8 @@ def _wg_self_check(weights, bank, state, device):
     for tokens in (128, 192, 256, 257):
         cases = {
             "random": [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)],
-            # 4 hot local experts take every token, the other 4 routes anywhere.
             "skewed": [local_set[:4] + [others[i] for i in torch.randperm(len(others), generator=gen)[:4].tolist()]
                        for _ in range(tokens)],
-            # M routes on one expert: many 8-block chunks of one expert.
             "all-one-expert": [[local_set[3]] + remote_set[7 * t % 200: 7 * t % 200 + 7] for t in range(tokens)],
             "all-remote": [[remote_set[i] for i in torch.randperm(len(remote_set), generator=gen)[:TOP_K].tolist()]
                            for _ in range(tokens)],
@@ -2500,11 +2410,10 @@ def _wg_self_check(weights, bank, state, device):
                       f"{ev['out_rel']:.2e} | graph {g_err:.1e} | "
                       + ("ok" if case_ok else f"FAIL (ids {ev['same_ids']} cov {ev['covered']} out finite "
                                               f"{ev['out_finite']})"), flush=True)
-                if not case_ok:  # one line per case (log tail budget): the FAIL detail is folded in above
+                if not case_ok:
                     ok = False
                     n_fail += 1
                 if name == "all-one-expert" and tokens in (128, 257):
-                    # One expert against a local fp32 dequant (catches an error Marlin would share).
                     e = local_set[3]
                     rts = (ev["local_ids"].reshape(-1) == 3).nonzero().flatten()
                     w13f = _wg_decode_nvfp4(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e])
@@ -2520,7 +2429,7 @@ def _wg_self_check(weights, bank, state, device):
                     if not max(f_errs) <= WG_TOL:
                         ok = False
                 del ev
-            except Exception as ex:  # one case raising must not lose the rest or the summary
+            except Exception as ex:
                 ok = False
                 n_fail += 1
                 print(f"{WG_TAG}   M={tokens} {name}: case raised {ex!r}"[:300], flush=True)
@@ -2529,7 +2438,7 @@ def _wg_self_check(weights, bank, state, device):
     return ok, worst
 
 
-WG_TIME_TARGET_US = {128: 245.0, 256: 370.0}  # 0.8x the judged Marlin pair (306 / 483 us): prepare undercounts 20-25%
+WG_TIME_TARGET_US = {128: 245.0, 256: 370.0}
 WG_TIME_ALPHAS = (0.3, 0.6, 0.9, 1.2, 1.5)
 
 
@@ -2586,16 +2495,12 @@ def _wg_time_fns(weights, bank, state, device, x, topk_ids, tw):
     return fns, int((local_ids >= 0).sum()), bsm
 
 
-WG_SEL_REPS = 41           # interleaved A/B graph replays per routing
-WG_SEL_MARGIN = 1.02       # wgmma's median must beat Marlin's by this factor on the judge-like routing
-# Audit fix: the uniform random routing is printed but does NOT gate. At a given T it has about half the
-# local routes of the judge-like one (T=256: ~256 vs ~464); wgmma's time is nearly flat in routes
-# (s5-forced prepare: 456 us @241, 466 us @464) while Marlin's scales, so a random-routing gate would
-# disable B256 even though the judge measured wgmma faster there (s5-forced: 402 vs 457 us).
-WG_SEL_FLUSH_BYTES = 256 * 1024 * 1024   # >= 256 MB written before every replay (cold L2)
+WG_SEL_REPS = 41
+WG_SEL_MARGIN = 1.02
+WG_SEL_FLUSH_BYTES = 256 * 1024 * 1024
 WG_SEL_BUCKETS = ((128, "B128", "128 <= T <= 255"), (256, "B256", "256 <= T <= 512"))
-WG_SEL_E2E_TOL = 2e-2      # wgmma vs Marlin end-to-end rel-L2 on the selector's own graphs
-WG_JUDGED_MARLIN_US = {128: 306.2, 256: 483.2}  # s4 judge profile (job 4e7f8be895a145ba), Marlin pair
+WG_SEL_E2E_TOL = 2e-2
+WG_JUDGED_MARLIN_US = {128: 306.2, 256: 483.2}
 
 
 def _wg_calibrate(weights, bank, state, device, x, tw, gen, flush):
@@ -2637,7 +2542,7 @@ def _wg_ab_graphs(flush, graphs, reps):
     >= 256 MB flush written before EVERY replay, events around each replay. Returns {name: median us}."""
     names = list(graphs)
     ts = {n: [] for n in names}
-    for rep in range(3):  # untimed warm-up replays
+    for rep in range(3):
         for n in names:
             graphs[n].replay()
     torch.cuda.synchronize()
@@ -2708,7 +2613,6 @@ def _wg_select(weights, bank, state, device):
             print(f"{WG_TAG} select{line}", flush=True)
             lines.append(line)
         enabled = bool(healthy and ratios[0] >= WG_SEL_MARGIN)
-        # the enabled side must be the faster printed one on the gating (judge-like) routing
         assert (not enabled) or meds[0][1] < meds[0][0], "enabled bucket is not the faster side"
         decisions[tokens] = enabled
         line = (f"  {name} ({rng_text}): wgmma {'ENABLED' if enabled else 'DISABLED (Marlin)'}: ratios "
@@ -2729,14 +2633,14 @@ def _wg_routing(kind, tokens, gen, local_set, remote_set):
     """topk_ids rows (python lists) of one named routing."""
     if kind == "random":
         return [torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist() for _ in range(tokens)]
-    if kind == "skewed-4hot":  # 4 hot local experts take every token, the other 4 routes anywhere else
+    if kind == "skewed-4hot":
         others = [e for e in range(N_EXPERTS) if e not in local_set[:4]]
         return [local_set[:4] + [others[i] for i in torch.randperm(len(others), generator=gen)[:4].tolist()]
                 for _ in range(tokens)]
-    if kind == "all-one-expert":  # every token on one local expert: many 8-block chunks of one expert
+    if kind == "all-one-expert":
         off = int(torch.randint(0, 100, (1,), generator=gen))
         return [[local_set[3]] + remote_set[(7 * t + off) % 200:(7 * t + off) % 200 + 7] for t in range(tokens)]
-    counts = [5, 20, 40, 70, tokens, 9, 33, tokens // 2]  # mixed local + remote, every N bucket
+    counts = [5, 20, 40, 70, tokens, 9, 33, tokens // 2]
     return _wg_mixed_ids(tokens, counts, local_set, remote_set, gen)
 
 
@@ -2752,8 +2656,8 @@ def _wg_fill(bufs, kind, tokens, gen, hidden, local_set, remote_set):
 
 WG_COPY_MS = (128, 256, 257)
 WG_COPY_KINDS = ("random", "skewed-4hot", "all-one-expert", "mixed-local-remote")
-WG_COPY_FACTOR = 1.5   # wgmma error vs the fp32-dequant reference must be <= this x Marlin's own error
-WG_COPY_FLOOR = 1e-5   # absolute floor on that bound (a Marlin error of exactly 0 must not fail everything)
+WG_COPY_FACTOR = 1.5
+WG_COPY_FLOOR = 1e-5
 
 
 def _wg_copy_tree(obj):
@@ -2845,7 +2749,6 @@ def _wg_copy_check(weights, bank, state, device, pdl=False):
     if "C" not in states:
         fails.append("state C (the judge model) could not be built")
     for st in states.values():
-        # kernel_fn's gate reads the two bucket flags; the copy check exercises wgmma in both buckets
         st["wgmma_ok"] = st["wg_on_128"] = st["wg_on_256"] = True
         st["wg_pdl"] = bool(pdl)
     wref = _wg_ref_weights(weights, bank)
@@ -2917,10 +2820,10 @@ def _wg_copy_check(weights, bank, state, device, pdl=False):
             f"bound {WG_COPY_FACTOR}x Marlin" + (f"; {'; '.join(lines)}" if lines else ""))
     return ok, launched_all, fails, line
 
-WG_PDL_TOKENS = (128, 256)    # T buckets the PDL A/B covers (B256 is the shape it targets)
-WG_PDL_DEADLINE_S = 225.0     # the PDL stage (~30-50 s with its copy check) must start before this many s into prepare()
-WG_PDL_REPS = 41              # interleaved A/B graph replays per timing
-WG_PDL_SLACK = 1.003          # PDL stays on only if its T=256 full-path median is <= this x the non-PDL median
+WG_PDL_TOKENS = (128, 256)
+WG_PDL_DEADLINE_S = 225.0
+WG_PDL_REPS = 41
+WG_PDL_SLACK = 1.003
 
 
 def _wg_pdl_stage(weights, bank, state, device, t_setup):
@@ -2996,7 +2899,6 @@ def _wg_pdl_stage(weights, bank, state, device, t_setup):
                 f"graph replays, cold L2, median of {WG_PDL_REPS}, empty-graph {med['base']:.1f} us subtracted): "
                 f"PDL off {off_us:.1f} us, PDL on {on_us:.1f} us, delta {on_us - off_us:+.1f} us "
                 f"({100.0 * (on_us - off_us) / max(off_us, 1e-3):+.2f}%)")
-            # per-kernel and chain timings on a judge-like skewed routing
             topk = _wg_zipf_ids(tokens, 0.9, gen, local_set).to(device)
             fns, n_local, _ = _wg_time_fns(weights, bank, state, device, bufs[0], topk, bufs[2])
 
@@ -3057,7 +2959,7 @@ def _wg_audit_cpp(src):
     scope variables, static locals, and device-side globals (__device__ / __constant__ / __managed__
     variables). Returns a list of findings (empty = none). __shared__ is per launch and not state."""
     findings = []
-    txt = re.sub(r"(?m)^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", "", src)  # preprocessor lines and their continuations
+    txt = re.sub(r"(?m)^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", "", src)
     txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)
     txt = re.sub(r"//[^\n]*", "", txt)
     txt = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', txt)
@@ -3069,7 +2971,7 @@ def _wg_audit_cpp(src):
     stack, cur = [], ""
     for ch in txt:
         if ch == "{":
-            if re.search(r"=\s*$", cur):  # brace initializer: part of the statement
+            if re.search(r"=\s*$", cur):
                 stack.append("init")
                 cur += ch
             else:
@@ -3119,14 +3021,14 @@ def _wg_setup(weights, banks, state, device, t_start=None):
     state["wgmma_ok"] = False
     state["wg_on_128"] = False
     state["wg_on_256"] = False
-    state["wg_pdl"] = False   # set once here (prepare); kernel_fn only reads it
-    state["wg_ext_pdl"] = False  # True only when the PDL module (not master's fallback module) was built
+    state["wg_pdl"] = False
+    state["wg_ext_pdl"] = False
     sel = {}
     sel_s = 0.0
     copy_s = 0.0
     ok = False
     canary_ok, canary_fails = False, []
-    off = []  # reasons the path is off (printed as ONE `OFF:` line)
+    off = []
     audit_findings = ["audit not run"]
     t_setup = time.perf_counter() if t_start is None else t_start
     t_begin = time.perf_counter()
@@ -3144,24 +3046,16 @@ def _wg_setup(weights, banks, state, device, t_start=None):
         hidden, inter = weights["w2"].shape[1], bank["size_n"]
         if hidden % 128 or inter % 128 or hidden % WG_BK or inter % WG_BK:
             raise RuntimeError(f"unsupported sizes H={hidden} I={inter}")
-        # Shared-memory budget before compiling: one ring geometry serves every N bucket, since
-        # the buckets mix inside one launch (4 stages x (9 KB weight + 2 x 16 KB slab boxes)).
         for gated in (True, False):
             need = WG_SMEM[gated] + WG_STATIC_SMEM_BOUND
             assert need <= WG_SMEM_LIMIT, f"smem {need} B > {WG_SMEM_LIMIT} B"
             print(f"{WG_TAG} smem {'w13' if gated else 'w2'}: dynamic {WG_SMEM[gated]} B (+ <= "
                   f"{WG_STATIC_SMEM_BOUND} B static) <= {WG_SMEM_LIMIT} B")
-        # Build. Probe first with ptxas warnings as errors: a build that passes has no ptxas
-        # warning; a failing one carries ptxas's stderr in the exception text (the only way to see
-        # it in-process), which is searched for the wgmma 'serialized' warning, then the real
-        # build runs without -Werror.
         t_b = time.perf_counter()
 
         def build_flow(pdl):
             ext_, btext = _wg_build(probe=True, pdl=pdl)
             warns_ = _wg_ptxas_warnings(btext)
-            # A passing -Werror probe rules out a ptxas WARNING only: if this ptxas reports wgmma
-            # serialization at info level (C75xx), load_inline discards it, so the answer is unknown.
             ser_ = ("yes" if any("serialized" in w for w in warns_)
                     else ("no warning (info-level note not visible)" if ext_ is not None else "unknown"))
             if ext_ is None:
@@ -3169,8 +3063,6 @@ def _wg_setup(weights, banks, state, device, t_start=None):
                       f"'serialized' warning: {ser_}", flush=True)
                 for w in warns_:
                     print(f"{WG_TAG}   ptxas: {w}", flush=True)
-                # PDL module: a failed probe with no ptxas line is a compile error the plain build would only
-                # repeat, so go straight to master's module. Master's module keeps master's exact sequence.
                 if (not pdl or warns_) and time.perf_counter() - t_setup < WG_SETUP_BUDGET_S - 60.0:
                     ext_, _ = _wg_build(probe=False, pdl=pdl)
             else:
@@ -3207,13 +3099,10 @@ def _wg_setup(weights, banks, state, device, t_start=None):
                   f"ptxVersion {ptx_v} (90 for sm_90 and sm_90a alike: error word 2 decides)", flush=True)
             summ.append(f"kernel {'w13+silu' if gated else 'w2'}: regs {regs}, local (spill) {local_bytes} B, smem "
                         f"{static_smem}+{dyn_smem} B, CTAs/SM {occ}")
-            # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40x128 + 232x256
             attrs_ok = (attrs_ok and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= WG_SMEM_LIMIT
                         and regs * WG_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
         if not attrs_ok:
             raise RuntimeError("cudaFuncSetAttribute / cudaFuncGetAttributes / occupancy check failed")
-        # s5: scratch and error word are PER STATE; the tensor maps are encoded per call in C++ from the
-        # tensors passed in that call; the audit proves no module / static state holds a device pointer.
         audit_findings = _wg_audit_globals()
         if audit_findings:
             raise RuntimeError(f"module/static state found: {audit_findings}")
@@ -3231,7 +3120,6 @@ def _wg_setup(weights, banks, state, device, t_start=None):
         print(f"{WG_TAG} retiled {count} experts losslessly (round trips exact) in {time.perf_counter() - t0:.1f}s")
         print(f"{WG_TAG} grid {state['wg_grid']} persistent CTAs x {WG_THREADS} threads, BK {WG_BK}, "
               f"{WG_STAGES} stages, N buckets {WG_BUCKETS}, split-K none", flush=True)
-        # Per-bucket canary first: variant A (wgmma_wait<0>) only, one launch per N bucket.
         try:
             canary_ok, clines, canary_fails = _wg_bucket_canary(weights, bank, state, device)
         except Exception as e:
@@ -3245,10 +3133,9 @@ def _wg_setup(weights, banks, state, device, t_start=None):
             off.append("bucket canary failed")
         if time.perf_counter() - t_setup > WG_SETUP_BUDGET_S:
             raise RuntimeError(f"setup budget {WG_SETUP_BUDGET_S:.0f}s spent before the diagnostic")
-        # Diagnostic canary: judges w13+silu and w2 separately, never stops at the first bad value.
         try:
             h_ok, w2_ok, skips, dlines, cover = _wg_diag(weights, bank, state, device)
-        except Exception as e:  # keep going: the self-check and timing still carry evidence
+        except Exception as e:
             print(f"{WG_TAG} diagnostic raised: {e!r}", flush=True)
             h_ok, w2_ok, skips, dlines, cover = False, False, "unknown", [f"  diagnostic raised {e!r}"[:300]], "?"
         verdict["h"], verdict["w2"] = ("PASS" if h_ok else "FAIL"), ("PASS" if w2_ok else "FAIL")
@@ -3270,7 +3157,6 @@ def _wg_setup(weights, banks, state, device, t_start=None):
                 sc_ok, verdict["self"] = False, f"raised {e!r}"[:200]
         if not sc_ok:
             off.append("self-check " + verdict["self"])
-        # s5 MANDATORY copy check: graphs through kernel_fn on A, deepcopy B and the judge-model clone C.
         replay_ok = False
         launched = False
         replay_line = "not run"
@@ -3314,15 +3200,12 @@ def _wg_setup(weights, banks, state, device, t_start=None):
         if not (h_ok and w2_ok):
             off.append("w13+silu or w2 failed rel-L2 vs Marlin")
         ok = bool(canary_ok and h_ok and w2_ok and sc_ok and replay_ok and launched and err_word == 0)
-        # PDL on the w13 -> w2 boundary: decided before the selector so the selector times the shipped launches.
         if ok and state.get("wg_ext_pdl", False):
             pdl_on, pdl_lines = _wg_pdl_stage(weights, bank, state, device, t_setup)
             state["wg_pdl"] = bool(pdl_on)
             summ.extend(pdl_lines)
         else:
             summ.append("PDL OFF: " + ("the wgmma path is off" if not ok else "master's module was built (PDL build failed)"))
-        # s5 bucket gate: the path is a candidate only when correctness and the launch marker pass; each T
-        # bucket then ships only if the graph-timed A/B selector says wgmma wins it on the judge-like routing.
         if ok and time.perf_counter() - t_setup < WG_TIMING_DEADLINE_S:
             t_sel = time.perf_counter()
             try:
@@ -3337,7 +3220,6 @@ def _wg_setup(weights, banks, state, device, t_start=None):
             sel_s = time.perf_counter() - t_sel
         else:
             summ.append("bucket selector skipped (path off, or budget): both buckets stay Marlin")
-        # Leave the persistent scratches as stage 1b had them (zeros), not as the sentinel.
         state["wg_xs"].zero_()
         state["wg_hs"].zero_()
         state["wg_err"].zero_()
@@ -3351,9 +3233,7 @@ def _wg_setup(weights, banks, state, device, t_start=None):
     state["wg_on_128"] = bool(ok and sel.get(128, False))
     state["wg_on_256"] = bool(ok and sel.get(256, False))
     if not (state["wg_on_128"] or state["wg_on_256"]):
-        state["wg_pdl"] = False  # no bucket runs wgmma: PDL is moot, keep master's launches
-    # Release every prepare-time graph, buffer and copied state before returning (they are locals of the
-    # checks above; a traceback from a failed check may still pin them).
+        state["wg_pdl"] = False
     gc.collect()
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
@@ -3394,7 +3274,6 @@ def _marlin_layer(weights, start, count):
         w2_weight=weights["w2"][sl].contiguous(),
         w13_weight_scale=weights["w13_sf"][sl].contiguous(),
         w2_weight_scale=weights["w2_sf"][sl].contiguous(),
-        # One global scale per expert for gate and up, as in SGLang's Marlin path.
         w13_weight_scale_2=weights["w13_gs"][sl].contiguous(),
         w2_weight_scale_2=weights["w2_gs"][sl].contiguous(),
     )
@@ -3405,7 +3284,7 @@ def _marlin_layer(weights, start, count):
 def prepare(weights: Weights) -> dict:
     """Called once, untimed. Repack this GPU's experts into Marlin's layout as SGLang does at load."""
     t_prepare = time.perf_counter()
-    whj = _wh_start(t_prepare)  # hothalf-wh-a5b-port: the wh module builds in a non-daemon thread, joined before return
+    whj = _wh_start(t_prepare)
     try:
         return _prepare_main(weights, t_prepare, whj)
     finally:
@@ -3414,15 +3293,15 @@ def prepare(weights: Weights) -> dict:
 
 def _prepare_main(weights, t_prepare, whj):
     device = weights["w13"].device
-    if CAMPAIGN_ES1A:  # X5 S1a: the Engine S module builds in a thread while the setups below run (joined in _hm_setup)
+    eaej = _eae_start(t_prepare) if CAMPAIGN_EAE else None
+    if CAMPAIGN_ES1A:
         _es1_build_start(t_prepare)
-    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA6:  # S3: the Engine A v6 module builds in a thread (joined in _ea6_stage)
+    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA6:
         _ea6_build_start(t_prepare)
-    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X:  # v4x: the twin module builds in a thread (joined in _ea4x_stage)
+    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X:
         _ea4x_build_start(t_prepare)
-    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X and CAMPAIGN_STACK:  # stack: the EPLF module builds in a thread (_stk_stage)
+    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X and CAMPAIGN_STACK:
         _stk_build_start(t_prepare)
-    # One repacked bank: this GPU's 32 experts under EP8.
     banks = {}
     for start, count in ((0, 32),):
         layer = _marlin_layer(weights, start, count)
@@ -3437,14 +3316,9 @@ def _prepare_main(weights, t_prepare, whj):
             "size_n": layer.intermediate_size_per_partition,
         }
         if expert_map is not None:
-            # Compile _align_small_kernel for every M it serves (each BLOCK_N / CAP_BLOCK / MB_BLOCK /
-            # block_size_m variant) with this bank's start/count, untimed, on dummy ids; then check
-            # it against SGLang's op on synthetic routings. Nothing here sees any input.
             for tokens in range(1, ALIGN_FUSED_MAX_TOKENS + 1):
                 _align_small(torch.full((tokens, TOP_K), start, dtype=torch.int32, device=device),
                              start, count, _block_size_m(tokens, count))
-            # _align_parallel_kernel: one variant per block_size_m it can see above 32 tokens
-            # (n is runtime), on dummy ids.
             for bsm in (16, 32, 48, 64):
                 _align_parallel(torch.full((ALIGN_FUSED_MAX_TOKENS + 1, TOP_K), start, dtype=torch.int32,
                                            device=device), start, count, bsm)
@@ -3454,13 +3328,10 @@ def _prepare_main(weights, t_prepare, whj):
     state = {
         "banks": banks,
         "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
-        # MuseSpark1xFp4Experts binds the effective (1 + w) weight of the post-expert norm.
         "norm_w": (weights["post_norm_w"].float() + 1.0).to(torch.bfloat16),
-        # The original BF16 weight for _post_norm_combine_kernel, which adds the 1 in fp32.
         "post_norm_w": weights["post_norm_w"].contiguous(),
         "w2_mode": "master",
         "align2_ok": {cls: 0 for cls in ALIGN2_CLASSES},
-        # Combo flags (plain values; master until the combo phases after master's prepare gate them on).
         "w13_mode": "master",
         "wg_align2": {128: 0, 256: 0},
         "d32_align": 0,
@@ -3468,61 +3339,50 @@ def _prepare_main(weights, t_prepare, whj):
     }
     align2_lines = []
     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
-        # Before the w2 self-check, so its T <= 32 _forward runs the align that will be timed.
         align2_lines = _align2_setup(state, device, 0, 32)
         state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
-    # The wgmma verify path: built, retiled and self-checked here; state["wgmma_ok"] gates it.
     _wg_setup(weights, banks, state, device, t_prepare)
     torch.cuda.synchronize()
     t_master = time.perf_counter() - t_prepare
-    # Combo phases: after master's prepare, unchanged; each with its own start deadline.
     combo_lines = []
     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
         combo_lines = _combo_setup(weights, state, device, t_prepare)
     combo_lines.append(f"{COMBO_TAG} prepare seconds: master {t_master:.1f}, total {time.perf_counter() - t_prepare:.1f}")
-    # The [align2] lines, then the combo PATH CHOSEN / phase lines last, so the archived log tail keeps them.
     for line in align2_lines:
         print(line, flush=True)
     for line in combo_lines:
         print(line, flush=True)
-    # The Engine A microbenchmark ladder (lib/ea_ladder.py, CAMPAIGN_LADDER) was off and is left out of this build
-    # (eb-trim 2026-10-28); to bring it back, restore its include and this line from ea54b0ee.
     ladder_lines = []
-    # Campaign W2 step 2: Engine A at 1 <= T <= 8 (built, canaried, gated and copy-checked here; master otherwise).
     ea_attr_lines = []
     if CAMPAIGN_ENGINE_A:
         for line in _ea_setup(weights, state, device, t_prepare):
             print(line, flush=True)
-            if " kernel v4 " in line:  # expert-bandwidth v4c audit: v4's regs / spill / occupancy, again at the end
+            if " kernel v4 " in line:
                 ea_attr_lines.append(line)
-    # Campaign moe hybrid at T = 256 (needs Engine A v3 from _ea_setup; canaried, gated and copy-checked; master else).
     if CAMPAIGN_HYBRID:
         for line in _hm_setup(weights, state, device, t_prepare):
             print(line, flush=True)
-    # Campaign W3: Engine B at 128 <= T <= 512 (built, canaried, gated per bucket and copy-checked here, deadline-gated;
-    # it streams Engine A's repacked weights when Engine A made them; master otherwise).
     if CAMPAIGN_ENGINE_B:
         for line in _eb_setup(weights, state, device, t_prepare):
             print(line, flush=True)
     whl = _wh_phase(state, weights, device, t_prepare, whj) if CAMPAIGN_HYBRID else []
     for line in ladder_lines + ea_attr_lines:
         print(line[:400], flush=True)
-    # W6-M: the hot/cold fork's decision lines (each < 200 chars), last, so the judge's log tail keeps them.
     if CAMPAIGN_HYBRID and CAMPAIGN_HMF:
         for line in HMF_LINES:
             print(line, flush=True)
-    # X5 S1a: the [es1a] block (<= 8 lines: build, first launch, canary, S vs wg hot half per judge draw, routing), last.
     if CAMPAIGN_ES1A and CAMPAIGN_HYBRID:
         _es1_final(state, weights, banks[(0, 32)], device, t_prepare)
         for line in ES1A_LINES:
             print(line, flush=True)
-    # S3: the [ea6] block, then Engine A's PATH CHOSEN lines and its copy check line, as prepare()'s very last prints
-    # (the board's 16 KB log tail kept no [engineA] line).
     if CAMPAIGN_ENGINE_A and CAMPAIGN_EA6:
         for line in _ea6_final_lines(state):
             print(line, flush=True)
-    for line in whl:  # hothalf-wh-a5b-port: the [hh-wh] block, prepare()'s last prints
+    for line in whl:
         print(line[:480], flush=True)
+    if eaej is not None:
+        for line in _eae_phase(state, weights, device, t_prepare, eaej):
+            print(line[:400], flush=True)
     return state
 
 
@@ -3540,21 +3400,14 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
     expert_map = bank["expert_map"]
 
     topk_weights = topk_weights.to(torch.float32).contiguous()
-    # SGLang's pick, and at >= 128 tokens the two-smaller pick (hypothesis
-    # marlin-block-m-two-smaller-on-postnorm: bs=128: 48 -> 16, bs=256/257: 64 -> 32); shape only.
     block_size_m = _fwd_block_size_m(num_tokens, bank["count"])
     if expert_map is not None:
-        # One launch does the expert_map gather and the align, with the bank's prepare-time
-        # start/count: up to 32 tokens _align_small (hypothesis triton-map-align-small-m-port), above
-        # it _align_parallel (hypothesis align-parallel-per-expert-verify). Branch on shape only.
         cls = _align2_class(num_tokens)
         chunk = state["align2_ok"][cls] if cls is not None else 0
         if d32_align and D32_ALIGN_MIN_TOKENS <= num_tokens <= D32_ALIGN_MAX_TOKENS:
-            # Combo C1a (hypothesis align-parallel-from-17-tokens): prepare() gated it against master's d32 pick.
             local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(
                 topk_ids, bank["start"], bank["count"], block_size_m)
         elif chunk:
-            # Hypothesis align-two-phase-port-from17: prepare() gated this class (every T warmed).
             local_ids, (sorted_ids, block_experts, n_padded) = _align_two_phase(
                 topk_ids, bank["start"], bank["count"], block_size_m, chunk)
         else:
@@ -3571,9 +3424,6 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
 
             sorted_ids, block_experts, n_padded = moe_align_single_token(local_ids, block_size_m)
         else:
-            # The one change from baseline.py: the ids are already local ([-1] U [0, count)), so
-            # align over the bank's count (32) rather than N_EXPERTS (256). SGLang's wrapper sizes
-            # sorted_ids and block_experts from this count.
             sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, bank["count"])
 
     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
@@ -3586,10 +3436,8 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
     ws = state["workspace"]
     w13_common = common
     if poison:
-        # Self-check only: junk in the w13 output buffer so a missing zero-fill is caught.
         cache13.fill_(W13_POISON)
     if w13_mode != "master" and num_tokens <= W13_ATOMIC_MAX_TOKENS:
-        # Combo F1 (hypothesis w13-marlin-atomic-add-t1-only); use_fp32_reduce stays True.
         w13_common = dict(common, use_atomic_add=True)
         if w13_mode == "atomic_zero":
             cache1.zero_()
@@ -3615,7 +3463,6 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
             TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
         return out, local_ids, cache2, y
     if d32_post_norm and num_tokens == HOISTED_POST_NORM_TOKENS:
-        # Combo C1b (hypothesis post-norm-triton-hoisted-decode32).
         y = y.contiguous()
         return _post_norm_hoisted(y, local_ids, topk_weights, state["post_norm_w"]), local_ids, cache2, y
     out = fused_post_expert_norm_weighted_sum(
@@ -3624,8 +3471,6 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
     return out, local_ids, cache2, y
 
 
-# Hypothesis w2-marlin-atomic-add-small-m: up to this many tokens the w2 Marlin call may use
-# use_atomic_add=True (use_fp32_reduce stays True); prepare()'s self-check picks the mode.
 W2_ATOMIC_MAX_TOKENS = 32
 
 
@@ -3667,7 +3512,7 @@ def _w2_atomic_self_check(weights, state, device):
                         ok[cand] = False
                         err[cand] = "T=%d rel-L2 %.3g" % (tokens, rel)
                     worst[cand] = max(worst[cand], rel)
-                except Exception as e:  # binding rejected the combination
+                except Exception as e:
                     ok[cand] = False
                     err[cand] = "T=%d %s: %s" % (tokens, type(e).__name__, str(e)[:200])
         for cand in ("atomic", "atomic_zero"):
@@ -3692,12 +3537,6 @@ def _forward(data: Inputs, state: dict, w2_mode: str) -> torch.Tensor:
     return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, w2_mode)[0]
 
 
-# ---------------------------------------------------------------------------------------------
-# Combo (hypothesis combo-toprow-w13t1-d32-alignpar-postnorm-wg-align2): prepare-time gates, run after
-# master's prepare. Each phase: correctness first, then cold-L2 CUDA-graph A/B (_align2_gate_time: 41
-# interleaved replays, 256 MB flush before each, empty-graph baseline subtracted, medians) on a judge-like
-# Zipf routing and a random one; ON only at new / master <= COMBO_MAX_RATIO on the worse of the two.
-# ---------------------------------------------------------------------------------------------
 
 
 class _ComboSkip(Exception):
@@ -3826,7 +3665,7 @@ def _combo_f1(weights, state, device, t_prepare):
                 if not (rm <= W13_ATOMIC_TOL and r32 <= W13_FP32_TOL):
                     ok[cand] = False
                     why[cand] = f"{label} vs master {rm:.3g}, vs fp32 {r32:.3g}"
-            except Exception as e:  # prepare only: the binding rejected the combination
+            except Exception as e:
                 ok[cand] = False
                 why[cand] = f"{label} {type(e).__name__}: {str(e)[:160]}"
     mode = next((c for c in ("atomic", "atomic_zero") if ok[c]), None)
@@ -3954,12 +3793,11 @@ def _combo_f2(weights, state, device, t_prepare):
                     if why:
                         bad[chunk] = f"{tag}: vs _align_parallel: {why}"
     torch.cuda.synchronize()
-    if WG_ALIGN_PAR in bad:  # the align2 chunks were only proven equal to _align_parallel
+    if WG_ALIGN_PAR in bad:
         for chunk in ALIGN2_CHUNKS:
             bad.setdefault(chunk, "its reference _align_parallel failed the per-expert check")
     print(f"{COMBO_TAG} F2 table check: {n_cases} cases; failing candidates "
           f"{ {label_of(c): w for c, w in bad.items()} or 'none'}"[:600], flush=True)
-    # Bitwise _moe_wgmma output: candidate front end vs master's, two routings per T.
     for tokens in WG_ALIGN2_EQ_TOKENS:
         rts = _align2_routings(tokens, start, count, gen, device)
         for name in ("skewed", "random"):
@@ -4086,7 +3924,7 @@ def _combo_c1b(weights, state, device, t_prepare):
     def make(ids):
         local = bank["expert_map"][ids.to(torch.int32)].contiguous()
         y = torch.randn((tokens, TOP_K, hidden), generator=gen).to(torch.bfloat16).to(device)
-        y = torch.where((local >= 0).unsqueeze(-1), y, torch.full_like(y, 3.0e4))  # junk in remote rows
+        y = torch.where((local >= 0).unsqueeze(-1), y, torch.full_like(y, 3.0e4))
         tw = torch.rand((tokens, TOP_K), generator=gen).to(device)
         return y, local, tw
 
@@ -4208,7 +4046,7 @@ def _combo_setup(weights, state, device, t_prepare):
     the copy check, each only if it can start before its own deadline (COMBO_DEADLINES_S, seconds from
     prepare()'s start); a skipped, failed or raising phase leaves its flags at master. Returns the lines prepare()
     prints last: per-phase seconds / skipped, wg_on_128 / wg_on_256, one PATH CHOSEN per source per class."""
-    phases = []    # (name, seconds, status)
+    phases = []
     chosen = []
 
     def run(name, fn, default_lines, reset=None):
@@ -4230,7 +4068,7 @@ def _combo_setup(weights, state, device, t_prepare):
             chosen.extend(f"{ln} ({e})" for ln in default_lines)
             if reset is not None:
                 reset()
-        except Exception as e:  # prepare only: never raises, the flags go back to master
+        except Exception as e:
             status = f"raised {type(e).__name__}: {str(e)[:200]}"
             chosen.extend(f"{ln} (phase raised)" for ln in default_lines)
             if reset is not None:
@@ -4270,7 +4108,6 @@ def _combo_setup(weights, state, device, t_prepare):
         return line
 
     def copy_skipped():
-        # A skipped copy check would leave unchecked flags live: turn every combo flag back to master.
         state["w13_mode"], state["d32_align"], state["d32_post_norm"] = "master", 0, 0
         state["wg_align2"] = {128: 0, 256: 0}
 
@@ -4297,18 +4134,12 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     bank = state["banks"][key]
     x = data["hidden_states"].contiguous()
     num_tokens = x.shape[0]
-    # Campaign Engine B (128 <= T <= 512): the shape and this state's prepare-set per-bucket cell only (0 = master).
     eb = state.get("eb")
     if (eb is not None and EB_MIN_T <= num_tokens <= EB_MAX_T and bank["expert_map"] is not None
             and x.dtype == torch.bfloat16 and data["topk_ids"].dtype == torch.int32 and data["topk_ids"].is_contiguous()):
         eb_cell = eb["cell"].get(EB_B256_MIN_T if num_tokens >= EB_B256_MIN_T else EB_MIN_T, 0)
         if eb_cell:
             return _eb_forward(x, data["topk_ids"], data["topk_weights"], bank, state, eb_cell)
-    # Campaign Engine A (1 <= T <= 32 by class, v1 / v2 / v3; T = 128 / 256 exactly, v3), ahead of master's wg path:
-    # the shape and this state's prepare-set per-T choice only.
-    # Campaign moe hybrid (T = 128 / 256): hot experts on the wgmma path or Marlin at |H|, cold on Engine A; the shape
-    # and this state's prepare-set per-T flag only (0 = the paths below). Ahead of Engine A: its gate (run after
-    # Engine A's) times H against Engine A's choice.
     hm = state.get("hm")
     if (hm is not None and hm["on"].get(num_tokens, 0)
             and bank["expert_map"] is not None and x.dtype == torch.bfloat16
@@ -4319,53 +4150,31 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
             and bank["expert_map"] is not None and x.dtype == torch.bfloat16
             and data["topk_ids"].dtype == torch.int32 and data["topk_ids"].is_contiguous()):
         return _ea_forward(x, data["topk_ids"], data["topk_weights"], bank, state)
-    # Branch on the shape and the prepare-time flag only (s5: no pointer gate). Every launch encodes its
-    # tensor maps from this state's own scratch tensors, so any copy of the state works.
     if bank["expert_map"] is not None and WG_MIN_TOKENS <= num_tokens <= WG_MAX_TOKENS:
         if state.get("wg_on_128", False) if num_tokens < WG_B256_MIN_TOKENS else state.get("wg_on_256", False):
             return _moe_wgmma(x, data["topk_ids"], data["topk_weights"], bank, state)[0]
-    # Combo flags are prepare-set plain values; _moe_marlin branches on them and the shape only.
     return _moe_marlin(x, data["topk_ids"], data["topk_weights"], bank, state, state.get("w2_mode", "master"),
                        state.get("w13_mode", "master"), state.get("d32_align", 0), state.get("d32_post_norm", 0))[0]
 
 
-# ---- campaign 2026-10-26-decode-first-rewrite: shared runtime, Engine A ----
-# expert-bandwidth X5 S1a (SINGLE-PASS.md §5; rewrite/lib/es_core.py): the Engine S hot half, raced in the moe hybrid as
-# H-116 / H-116f (hotcold_moe.py HM_ES_HOT); its build starts in a thread at prepare() entry. The Gate-0 carrier
-# (rewrite/lib/es_probe.py, CAMPAIGN_ES_G0) and the ladder (rewrite/lib/ea_ladder.py, CAMPAIGN_LADDER), both diagnostic
-# only and off, are left out of this build (eb-trim 2026-10-28; restore from ea54b0ee). CAMPAIGN_LEAN_DIAG keeps the prepare-time pure
-# diagnostics that Gate 0 had turned off (Engine A's kernel-only rates, the combo F2-select diagnostic) off; without these
-# prepare reaches ~250 s and misses HM_START_DEADLINE_S. Routing and the timed path of every other T are unchanged.
 CAMPAIGN_ES1A = True
 CAMPAIGN_LEAN_DIAG = True
-CAMPAIGN_ENGINE_A = True    # W2 step 2: Engine A at 1 <= T <= 32 (v1 / v2 / v3 per selector class)
-CAMPAIGN_EA6 = True         # expert-bandwidth S3: Engine A v6 / v6s raced at T = 1 and T = 8 (ea6_core.py; moe only)
-CAMPAIGN_EA6F = True        # fc: FAST v6 arms raced vs v6 at T = 1; False = the board's v6 module
-CAMPAIGN_EA4X = True        # phase A 2026-10-29: Engine A v4x twins of v4 / v4c raced per class (ea4x_core.py)
-CAMPAIGN_STACK = True       # stack lane 2026-10-29: EPLF arms (v4xe / v4cxe) + v6pe2 raced per class (stack_core.py)
-# ---- begin include rewrite/lib/rt.py ----
-# Shared prepare-time runtime for campaign 2026-10-26-decode-first-rewrite (workstream W0).
-# Everything here runs inside prepare() only (never inside kernel_fn), so host syncs are fine; the one exception is
-# _rt_fork_pick (host only, no sync), which kernel_fn calls to pick a fork stream.
-#   - read flush: the judge READS a buffer larger than L2 before each timed replay; zero_() writes and leaves
-#     ~50 MB of dirty lines that the measured kernel then writes back (FINDINGS 3.2). _rt_read_flush reads.
-#   - graph timing: interleaved, order-rotated replays, each preceded by a read flush, minus an empty-graph
-#     baseline measured in the same interleave (the judge subtracts its fixed graph cost too).
-#   - selection: a candidate replaces the incumbent only if every round on every routing clears the margin.
-#   - checks: the judge's rel-L2 and per-row forms, against a reference the caller computes with the
-#     candidate's OWN routing (never against master's output).
-# Names are prefixed _rt_ / RT_ because this file is pasted into several single-file submissions.
+CAMPAIGN_ENGINE_A = True
+CAMPAIGN_EA6 = True
+CAMPAIGN_EA6F = True
+CAMPAIGN_EA4X = True
+CAMPAIGN_STACK = True
 
 RT_FLUSH_BYTES = 256 * 1024 * 1024
 RT_REPS = 41
 RT_ROUNDS = 2
-RT_MARGIN = 1.03             # every round, every routing: incumbent / candidate >= this ...
-RT_MARGIN_TIGHT_IQR = 1.02   # ... or >= this when the candidate IQR <= RT_IQR_FACTOR x the incumbent's
+RT_MARGIN = 1.03
+RT_MARGIN_TIGHT_IQR = 1.02
 RT_IQR_FACTOR = 1.5
 RT_IQR_FLOOR_US = 0.5
-RT_JUDGE_REL = 1.5e-2        # TASK.md: output rel-L2 vs the fp32 reference
-RT_ROW_FACTOR = 5.0          # TASK.md: any single row at most 5 x the bound (tenth-of-mean-row floor)
-RT_CHECK_FRACTION = 0.5      # our gates use half the judge's bound
+RT_JUDGE_REL = 1.5e-2
+RT_ROW_FACTOR = 5.0
+RT_CHECK_FRACTION = 0.5
 
 _RT_FLUSH = {}
 
@@ -4403,23 +4212,9 @@ def _rt_graph(fn, warm=2):
     return g, out
 
 
-# ---- fork streams (v4x256b, 2026-10-28): a side stream that can never be the stream it forks from ------------------------
-# torch.cuda.Stream() hands out pool streams round-robin (32 per priority per device), and torch.cuda.graph's default
-# capture stream (and _rt_graph's warm-up stream above) come from the same priority-0 pool. A fork stream drawn there IS
-# the capture stream whenever a multiple of 32 draws separates the two, and the fork then collapses to serial (gpunode06,
-# 2026-10-28: master's W6-M fork at graph depth 7 / width 1 in most node processes, fork/serial x0.99-1.00, verify_32
-# 382.7 vs 335.5 us). _rt_fork_stream (prepare() only) draws a primary and an alternate from the priority RT_FORK_PRIO
-# pool, distinct from each other and from the current and default capture streams (redrawn otherwise). _rt_fork_pick is
-# the one helper in this file that kernel_fn calls: host only (two handle compares, a capture query and two int bumps;
-# no sync, no allocation, nothing derived from data), it returns the primary unless that is the current (capture)
-# stream, then the alternate, so a captured fork always has width 2. Streams carry no data; a captured graph keeps only
-# the fork / join edges, so the judge's state copies may share them. _rt_fork_line reports (prepare() only).
-# Priority 0 (v4x256c): graph replay honours kernel-node priority. At -1 the grid-filling wg hot w2 jumped ahead of the
-# long cold w2 (+20 us; judge ba509845 fork x0.997-1.004 -> serial), at 0 the cold w2 runs first (gpunode06 eb-forkprio
-# 20261028-160539/-160542: prio 0 337-338 us, prio -1 356-358, serial / collided 363-365).
 RT_FORK_PRIO = 0
 RT_FORK_DRAWS = 8
-_RT_FORK = {}  # primary stream handle -> {"alt": alternate Stream, "n": picks, "cap": picks under capture, "alt_n": ...}
+_RT_FORK = {}
 
 
 def _rt_fork_stream(device, prio=RT_FORK_PRIO):
@@ -4556,7 +4351,7 @@ def _rt_select(rounds_by_routing, incumbent, candidates, margin=RT_MARGIN, tight
             lines.append(f"{rlabel} round {ri + 1} (graph baseline {base:.2f} us subtracted): " + " | ".join(parts))
     good = [c for c in candidates if ok[c]]
     win = max(good, key=lambda c: worst[c]) if good else None
-    if win is not None and prefer_within > 0:  # the earliest qualifying candidate within prefer_within of the best
+    if win is not None and prefer_within > 0:
         win = next(c for c in candidates if c in good and worst[c] >= worst[win] * (1.0 - prefer_within))
     return win, worst, lines
 
@@ -4616,7 +4411,6 @@ def _rt_build(tag, name, cpp, cuda, functions, arch="9.0a", extra=()):
                           extra_cuda_cflags=flags, verbose=False)
     except Exception as e:
         err = str(e)
-        # The exception carries the whole build log; keep the compiler's error lines (the useful part).
         errs = [ln.strip()[:240] for ln in err.splitlines() if "error" in ln.lower() and "Error building" not in ln]
         err = " || ".join(errs[:8]) if errs else err[-600:]
         print(f"{tag} load_inline {name} failed after {time.perf_counter() - t0:.1f}s: {err!r}", flush=True)
@@ -4629,15 +4423,6 @@ def _rt_build(tag, name, cpp, cuda, functions, arch="9.0a", extra=()):
     if ext is not None:
         print(f"{tag} load_inline {name} compiled in {dt:.1f}s (TORCH_CUDA_ARCH_LIST={arch}, {flags})", flush=True)
     return ext, err, dt
-# ---- end include rewrite/lib/rt.py ----
-# ---- begin include rewrite/lib/ea_core.py ----
-# Engine A core (campaign 2026-10-26-decode-first-rewrite, workstream W2): problem-agnostic pieces shared by the
-# moe and decode submissions. Engine A runs this GPU's NVFP4 expert block for 1 <= T <= 8 tokens as two hand-written
-# launches (ea_w13: w13 + silu; ea_w2: w2, PDL on ea_w13) plus the problem's Triton post-norm combine. A CTA-shared
-# ring of 18 KB 1-D bulk stages feeds mma.sync swap-AB consumers that dequantize the NVFP4 codes exactly in registers
-# (the integer scale path when every scale byte is a positive normal E4M3 value, else master's cvt path); stream-K
-# balance with a last-arriver ticket, no spins. Weights are a lossless permutation of the same codes and scale bytes,
-# repacked in prepare. Adapters (ea_moe.py, ea_decode.py) own the canary, the selector and the state copy check.
 EA_MAX_T = 8
 
 EA_CTAS_PER_SM = 2
@@ -4667,15 +4452,15 @@ def _ea_pack(tile_nib, tile_sf, lut):
     (pair 2 bsel) and 2c + 8 + {0,1} (pair 2 bsel + 1)) then 512 B of scales [row][32 blocks]. Lossless."""
     ng, k = tile_nib.shape[0], tile_nib.shape[-1]
     nk = k // 512
-    t = tile_nib.reshape(ng, 4, 2, 8, nk, 4, 4, 2, 2, 4, 2).long()  # gi w rh g kc kq wd bsel hi c el
-    words = torch.zeros((ng, 4, 2, 8, nk, 4, 4, 4), dtype=torch.int64, device=tile_nib.device)  # gi w rh g kc kq wd c
+    t = tile_nib.reshape(ng, 4, 2, 8, nk, 4, 4, 2, 2, 4, 2).long()
+    words = torch.zeros((ng, 4, 2, 8, nk, 4, 4, 4), dtype=torch.int64, device=tile_nib.device)
     for bsel in range(2):
         for hi in range(2):
             p = 2 * bsel + hi
             for el in range(2):
                 words |= lut[p, el][t[:, :, :, :, :, :, :, bsel, hi, :, el]]
     del t
-    w = words.permute(0, 4, 1, 2, 5, 3, 7, 6).contiguous()  # gi kc w rh kq g c wd
+    w = words.permute(0, 4, 1, 2, 5, 3, 7, 6).contiguous()
     del words
     codes = torch.stack([(w >> (8 * i)) & 0xFF for i in range(4)], dim=-1).to(torch.uint8).reshape(ng, nk, 4, 4096)
     sc = tile_sf.reshape(ng, 4, 2, 8, nk, 32).permute(0, 4, 1, 2, 3, 5).reshape(ng, nk, 4, 512)
@@ -4701,15 +4486,15 @@ def _ea_repack(weights, start, count, dq):
     w2r = torch.empty((count, hidden // 64, inter // 512, 4, 4608), dtype=torch.uint8, device=dev)
     for i in range(count):
         e = start + i
-        nib = _ea_nibbles(weights["w13"][e].contiguous())          # [2I, H]
-        sf = weights["w13_sf"][e].contiguous().view(torch.uint8)   # [2I, H / 16]
+        nib = _ea_nibbles(weights["w13"][e].contiguous())
+        sf = weights["w13_sf"][e].contiguous().view(torch.uint8)
         tile = torch.stack((nib[:inter].reshape(inter // 32, 4, 8, hidden),
                             nib[inter:].reshape(inter // 32, 4, 8, hidden)), dim=2)
         stile = torch.stack((sf[:inter].reshape(inter // 32, 4, 8, -1), sf[inter:].reshape(inter // 32, 4, 8, -1)), dim=2)
         w13r[i] = _ea_pack(tile, stile, lut)
         del nib, sf, tile, stile
-        nib = _ea_nibbles(weights["w2"][e].contiguous())           # [H, I]
-        sf = weights["w2_sf"][e].contiguous().view(torch.uint8)    # [H, I / 16]
+        nib = _ea_nibbles(weights["w2"][e].contiguous())
+        sf = weights["w2_sf"][e].contiguous().view(torch.uint8)
         w2r[i] = _ea_pack(nib.reshape(hidden // 64, 4, 2, 8, inter), sf.reshape(hidden // 64, 4, 2, 8, -1), lut)
         del nib, sf
     sl = slice(start, start + count)
@@ -4731,7 +4516,7 @@ def _ea_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=
     if trace is not None:
         trace("before ea_w13")
     pf = ea.get("pf_t", {}).get(tokens, 0)
-    if pf:  # K1 also pulls the active experts' w2 records into L2 for K2 (few active experts)
+    if pf:
         ext.ea_w13_pf(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["ws13"], ea["tk13"], ea["err"], tokens,
                       start, count, ea["grid"], ea["dq"], pdl13, ea["w2r"], pf)
     else:
@@ -4745,7 +4530,7 @@ def _ea_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=
         trace("after ea_w2 / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
     tw32 = topk_weights.to(torch.float32).contiguous()
-    if ea.get("cmb_t", {}).get(tokens, 0):  # CUDA twin of the Triton combine, PDL-linked to K2
+    if ea.get("cmb_t", {}).get(tokens, 0):
         ext.ea_combine(y, local_ids, tw32, norm_w, out, POST_NORM_EPS, 1)
     else:
         _post_norm_combine_kernel[(tokens,)](
@@ -4794,23 +4579,14 @@ def _ea_cmb_check(ext, w, device):
         ext.ea_combine(y, ids, tw, w, got, POST_NORM_EPS, 1)
         torch.cuda.synchronize()
         rel = _rt_rel(got.float(), ref.float())
-        worst = rel if rel != rel else max(worst, rel)  # a NaN must show
+        worst = rel if rel != rel else max(worst, rel)
         ok = ok and rel <= 1e-3 and (tokens == 1 or bool((got[-1].float() == 0).all()))
     return ok, f"combine check (CUDA vs Triton, T 1/8/16/32): worst rel-L2 {worst:.3g} -> {'ok' if ok else 'FAIL'}"
-# ---- end include rewrite/lib/ea_core.py ----
-# ---- begin include rewrite/lib/ea2_core.py ----
-# Engine A v2 core (campaign 2026-10-26-decode-first-rewrite, W2): T <= 32 with gathered B rows and passes of <= 8
-# routes per expert (ea2_kernels.cuh). Shares the repack, buffers' shape, dequant and fp32 reference with v1
-# (ea_core.py); only the kernels, the ticket arrays (64 passes) and h's layout (one row per sorted local route) differ.
-# The module also exports v1's functions (its source includes ea_kernels.cuh) and v3's (ea3_kernels.cuh: passes of up to
-# 16 routes; its Python core is ea3_core.py, included after this file), and v2's buffers are a superset of v1's and
-# v3's (ws13 / ws2 at grid * 2048 floats, v3's two-tile partial slots; v1 and v2 use the first half), so one build and
-# one state dict serve all three: _ea_forward_core, _ea2_forward_core and _ea3_forward_core take the same `ea`.
 EA2_MAX_T = 32
-EA_TK_MAXV = 160   # ticket rows (passes) per kernel in _ea2_buffers: v3 at T <= 256 (EA3_MAXV); v1 / v2 use 64
+EA_TK_MAXV = 160
 
-EA_CLASSES = (1, 8, 16, 32)   # selector classes: T = 1 alone; 2..8 follow 8; 9..16 follow 16; 17..32 follow 32
-EA_ENGINES = {"v1": EA_MAX_T, "v2": EA2_MAX_T}   # the largest T each engine takes (ea3_core.py adds "v3")
+EA_CLASSES = (1, 8, 16, 32)
+EA_ENGINES = {"v1": EA_MAX_T, "v2": EA2_MAX_T}
 
 
 def _ea_class(tokens):
@@ -4866,7 +4642,6 @@ void ea3_w2(torch::Tensor h, torch::Tensor topk_ids, torch::Tensor wr, torch::Te
             torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T, int64_t start, int64_t count,
             int64_t grid, int64_t dq, int64_t pdl);
 """
-# Campaign expert-bandwidth X2: v5's declarations (v4's below), appended to _EA2_CPP while they build (_ea2_build_ext).
 _EA5_CPP = r"""
 std::vector<int64_t> ea5_info();
 void ea5_w13(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor h,
@@ -4876,7 +4651,6 @@ void ea5_w2(torch::Tensor h, torch::Tensor topk_ids, torch::Tensor wr, torch::Te
             torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T, int64_t start, int64_t count,
             int64_t grid, int64_t dq, int64_t pdl);
 """
-# Campaign expert-bandwidth S1: v4's declarations, appended to _EA2_CPP while v4 builds (_ea2_build_ext).
 _EA4_CPP = r"""
 std::vector<int64_t> ea4_info();
 void ea4_w13(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor h,
@@ -7593,10 +7367,8 @@ void ea_combine(torch::Tensor y, torch::Tensor ids, torch::Tensor tw, torch::Ten
 }
 // ---- end include rewrite/lib/cuda/ea_combine.cuh ----
 """
-EA_BUILD_V5 = False       # Engine A v5 (32-route passes on 256-k records): off since it lost every gate (10-26)
-EA_PREFER_WITHIN = 0.0    # engine gates: 0 = the best worst ratio wins. 0.01 (the earliest engine within 1%) cost d16 4-6% in
-                          # a1bc1756 (T=9..16 went v3 where v4 leads by 3-5% in every run); kept for reference. Was: (near
-                          # ties flipped between runs, e.g. v2 / v3 at T <= 8 where their passes are the same work)
+EA_BUILD_V5 = False
+EA_PREFER_WITHIN = 0.0
 
 
 def _ea2_src_without(names):
@@ -7622,7 +7394,7 @@ def _ea2_build_ext(tag, name, t_prepare0=None, start_deadline_s=None):
     tries = ((("v4", "v5"), _EA2_CPP + _EA4_CPP + _EA5_CPP, _EA2_SRC, base + f4 + f5, name),
              (("v4",), _EA2_CPP + _EA4_CPP, _ea2_src_without(("ea5",)), base + f4, name + "_nov5"),
              ((), _EA2_CPP, _ea2_src_without(("ea5", "ea4")), base, name + "_nov4"))
-    if not EA_BUILD_V5:  # v5 lost every gate on 10-26 (e403a42a, 5573e054): not built, not a candidate
+    if not EA_BUILD_V5:
         tries = tries[1:]
     ext, err_text, dt, have = None, "", 0.0, ()
     for i, (engines, cpp, src, fns, nm) in enumerate(tries):
@@ -7640,13 +7412,13 @@ def _ea2_build_ext(tag, name, t_prepare0=None, start_deadline_s=None):
     infos = [("v1", list(ext.ea_info())), ("v2", list(ext.ea2_info())), ("v3", list(ext.ea3_info()))]
     if "v4" in have:
         infos.append(("v4", list(ext.ea4_info())))
-        infos.append(("v4c", infos[-1][1]))  # v4c runs v4's kernels (cost-weighted split by argument)
+        infos.append(("v4c", infos[-1][1]))
     if "v5" in have:
         infos.append(("v5", list(ext.ea5_info())))
     for eng, info in infos:
         for i, nm in enumerate(("w13/dq1", "w13/dq2", "w2/dq1", "w2/dq2")):
             ok_, regs, spill, smem, occ = info[5 * i:5 * i + 5]
-            occs[f"{eng} {nm}"] = int(occ) if ok_ else 0  # a failed attribute call counts as no occupancy
+            occs[f"{eng} {nm}"] = int(occ) if ok_ else 0
             lines.append(f"{tag} kernel {eng} {nm}: attrs ok {bool(ok_)}, {regs} regs, {spill} B spill, "
                          f"{smem // 1024} KB smem, {occ} CTAs/SM")
     ok_, regs, spill = list(ext.ea_combine_info())
@@ -7688,7 +7460,7 @@ def _ea2_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
         trace("after ea2_w2 / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
     tw32 = topk_weights.to(torch.float32).contiguous()
-    if ea.get("cmb_t", {}).get(tokens, 0):  # CUDA twin of the Triton combine, PDL-linked to K2
+    if ea.get("cmb_t", {}).get(tokens, 0):
         ext.ea_combine(y, local_ids, tw32, norm_w, out, POST_NORM_EPS, 1)
     else:
         _post_norm_combine_kernel[(tokens,)](
@@ -7697,18 +7469,8 @@ def _ea2_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     if trace is not None:
         trace("after post-expert norm")
     return out
-# ---- end include rewrite/lib/ea2_core.py ----
-# ---- begin include rewrite/lib/ea3_core.py ----
-# Engine A v3 core (campaign 2026-10-26-decode-first-rewrite, W2): v2 (ea2_core.py) with passes of up to 16 routes per
-# expert (ea3_kernels.cuh): a pass with 9..16 routes runs two n8 MMA tiles on each dequantized weight fragment, so a hot
-# expert's weights stream once per 16 of its routes instead of once per 8. Same module (_ea2_build_ext), repack, state
-# dict and buffers as v1 / v2 (_ea2_buffers sizes ws13 / ws2 for v3's two-tile partial slots), same h layout (one row
-# per sorted local route) and combine as v2. Include after ea2_core.py: this file adds "v3" to its EA_ENGINES.
-# T <= 256 (ea-v3big): the kernels, the host checks and the CUDA combine take 1 <= T <= EA3_MAX_T (2048 routes, at
-# most EA3_MAXV passes, tickets from _ea2_buffers); EA_ENGINES["v3"] stays 32, the bound of the T <= 32 selector classes
-# (EA_CLASSES, canaries and gates loop over T 1..EA2_MAX_T). The adapters gate T 33..256 on EA3_MAX_T themselves.
 EA3_MAX_T = 256
-EA3_MAXV = 160   # (8 * 256 + 15 * 32) // 16 = 158 passes at most; eak3::Map::MAXV
+EA3_MAXV = 160
 assert EA3_MAXV <= EA_TK_MAXV
 
 EA_ENGINES["v3"] = min(EA3_MAX_T, EA2_MAX_T)
@@ -7725,12 +7487,12 @@ def _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     (v4: ea4_core.py, v5: ea5_core.py); pdl_or: bits OR'd into both kernels' pdl argument (v4c's cost, bits 4..7).
     v4x (ea4x_core.py): ext_key names the module the two kernels come from (the combine always comes from ea["ext"]);
     bufs "x" selects the twins' own ws / tickets / err; poison NaN-fills h and y (prepare only)."""
-    ext = ea["ext"]  # the combine's module, always
+    ext = ea["ext"]
     kx = ea[ext_key]
     k13, k2 = getattr(kx, kern[0]), getattr(kx, kern[1])
     if bufs is None:
         ws13, tk13, ws2, tk2, errw = ea["ws13"], ea["tk13"], ea["ws2"], ea["tk2"], ea["err"]
-    elif bufs == "e":  # stack (stack_core.py): EPLF's own ws / tickets + flags / err
+    elif bufs == "e":
         ws13, tk13, ws2, tk2, errw = ea["ws13e"], ea["tk13e"], ea["ws2e"], ea["tk2e"], ea["erre"]
     else:
         ws13, tk13, ws2, tk2, errw = ea["ws13x"], ea["tk13x"], ea["ws2x"], ea["tk2x"], ea["errx"]
@@ -7754,7 +7516,7 @@ def _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
         trace(f"after {kern[1]} / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
     tw32 = topk_weights.to(torch.float32).contiguous()
-    if ea.get("cmb_t", {}).get(tokens, 0):  # CUDA twin of the Triton combine, PDL-linked to K2
+    if ea.get("cmb_t", {}).get(tokens, 0):
         ext.ea_combine(y, local_ids, tw32, norm_w, out, POST_NORM_EPS, 1)
     else:
         _post_norm_combine_kernel[(tokens,)](
@@ -7763,22 +7525,11 @@ def _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     if trace is not None:
         trace("after post-expert norm")
     return out
-# ---- end include rewrite/lib/ea3_core.py ----
-# ---- begin include rewrite/lib/ea4_core.py ----
-# Engine A v4 core (campaign 2026-10-26-expert-bandwidth, S1): v3 (ea3_core.py) on a CTA of 8 consumer warps and one
-# producer warp (ea4_kernels.cuh), 16 consumer warps per SM against v3's 8. Same module (_ea2_build_ext, which rebuilds
-# without v4 when v4 fails to compile, so a v4 error never costs v1..v3), repack, state dict, h layout, tickets and
-# combine as v3; the stream-K partial slots are twice v3's (_ea2_buffers sizes ws13 / ws2 for v4). Include after
-# ea3_core.py: this file adds "v4" to EA_ENGINES (the T <= 32 selector classes); the adapters gate T = 128 / 256
-# themselves (EAD_BIG_ENGINES / EA_BIG_ENGINES).
 EA4_MAX_T = 256
 
 EA_ENGINES["v4"] = min(EA4_MAX_T, EA2_MAX_T)
-# expert-bandwidth v4c: v4's kernels with the stream-K ranges weighted by pass cost (a two-tile pass's unit costs
-# EA4C_CW / 6 of a one-tile one's; ladder-2's C-R4 3.45 vs 2.94 TB/s gives about 7), passed in the kernels' pdl bits
-# 4..7. The engine gates race it against v4.
 EA4C_CW = 7
-EA_PDL_BITS = {"v4c": EA4C_CW << 4}   # bits OR'd into an engine's kernels' pdl argument
+EA_PDL_BITS = {"v4c": EA4C_CW << 4}
 EA_ENGINES["v4c"] = EA_ENGINES["v4"]
 
 
@@ -7791,14 +7542,6 @@ def _ea4c_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trac
     """v4's kernels with the cost-weighted stream-K split (EA4C_CW)."""
     return _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13, ("ea4_w13", "ea4_w2"),
                              pdl_or=EA_PDL_BITS["v4c"])
-# ---- end include rewrite/lib/ea4_core.py ----
-# ---- begin include rewrite/lib/ea5_core.py ----
-# Engine A v5 core (campaign 2026-10-26-expert-bandwidth, X2 / D1): v4 (ea4_core.py) with passes of up to 32 routes
-# on 256-k chunk records (ea5_kernels.cuh). Same module (_ea2_build_ext: v5 is the first engine dropped when the full
-# build fails), state dict, h layout, tickets and combine as v3 / v4; its own records ("w13r5" / "w2r5", built on the
-# device from v3's by _ea5_repack: a permutation of the same bytes) and four-tile partial slots (_ea2_buffers sizes
-# ws13 / ws2 for v5). Include after ea4_core.py: this file adds "v5" to EA_ENGINES (the T <= 32 selector classes); the
-# adapters gate T = 128 / 256 themselves (EAD_BIG_ENGINES / EA_BIG_ENGINES).
 EA5_MAX_T = 256
 
 if EA_BUILD_V5:
@@ -7812,12 +7555,12 @@ def _ea5_split(rec, count, ng):
     kq < 4; the 256-k half h keeps kq = 2 h + kq' as ((rh * 2 + kq') * 32 + lane), and its scales are blocks
     16 h .. 16 h + 15 of each of the 16 rows. Only bytes move."""
     r = rec.view(count, ng, 8, 4, 4608)
-    codes = r[..., :4096].reshape(count, ng, 8, 4, 2, 2, 2, 512)          # e g kc w rh h kq' bytes
-    codes = codes.permute(0, 1, 2, 5, 3, 4, 6, 7).reshape(count, ng, 8, 2, 4, 2048)   # e g kc h w (rh kq' bytes)
-    scales = r[..., 4096:].reshape(count, ng, 8, 4, 16, 2, 16)              # e g kc w row h blk
-    scales = scales.permute(0, 1, 2, 5, 3, 4, 6).reshape(count, ng, 8, 2, 4, 256)    # e g kc h w (row blk)
-    v5 = torch.cat((codes, scales), dim=-1).reshape(count, ng // 2, 2, 16, 4, 2304)  # e sg pair (kc h) w rec
-    return v5.permute(0, 1, 3, 2, 4, 5).contiguous().reshape(-1)                      # e sg kc5 pair w rec
+    codes = r[..., :4096].reshape(count, ng, 8, 4, 2, 2, 2, 512)
+    codes = codes.permute(0, 1, 2, 5, 3, 4, 6, 7).reshape(count, ng, 8, 2, 4, 2048)
+    scales = r[..., 4096:].reshape(count, ng, 8, 4, 16, 2, 16)
+    scales = scales.permute(0, 1, 2, 5, 3, 4, 6).reshape(count, ng, 8, 2, 4, 256)
+    v5 = torch.cat((codes, scales), dim=-1).reshape(count, ng // 2, 2, 16, 4, 2304)
+    return v5.permute(0, 1, 3, 2, 4, 5).contiguous().reshape(-1)
 
 
 def _ea5_repack(ea, count):
@@ -7845,34 +7588,25 @@ def _ea5_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     """_ea3_forward_core's contract on v5's kernels (ea5_w13 / ea5_w2) and records (w13r5 / w2r5)."""
     return _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13,
                              ("ea5_w13", "ea5_w2"), ("w13r5", "w2r5"))
-# ---- end include rewrite/lib/ea5_core.py ----
-# ---- begin include rewrite/lib/ea_moe.py ----
-# Engine A moe adapter (campaign 2026-10-26-decode-first-rewrite, W2): canary, selector and state copy check for
-# muse_moe_w4a16's kernel_fn (global expert ids, the bank's local range). One module (ea2_core.py) holds v1 (T <= 8,
-# B = all T token rows), v2 (T <= 32, gathered B, passes of <= 8 routes per expert) and v3 (passes of <= 16 routes,
-# two n8 tiles); each selector class picks master, v1, v2 or v3. Needs ea_core.py, ea2_core.py and ea3_core.py.
 
 EA_TAG = "[engineA]"
 
 EA_EXT_NAME = "okc_campaign_engine_a_v2"
 
-EA_START_DEADLINE_S = 175.0   # build + repack + canary start only before this many s into prepare()
+EA_START_DEADLINE_S = 175.0
 
-EA_GATE_DEADLINE_S = 240.0    # the selector starts only before this
+EA_GATE_DEADLINE_S = 240.0
 
-EA_COPY_DEADLINE_S = 262.0    # the two-state copy check starts only before this
+EA_COPY_DEADLINE_S = 262.0
 
-EA_BIG = (128, 256)           # exact-T classes for Engine A alone (verify 16 / 32); every other T > 32 stays on master
+EA_BIG = (128, 256)
 
-EA_COPY_TOL = 1e-4            # graph replay on a state copy vs eager kernel_fn (Engine A sums in a fixed order)
+EA_COPY_TOL = 1e-4
 
-EA_JUDGE_DRAWS = 15           # reference-style draws per big-T selector; timed at their p10 / p50 / p90 of v3 passes
-EA_BIG_ENGINES = ("v3", "v4", "v4c", "v5")   # big-T candidates (expert-bandwidth: v4 = v3 on 8 consumer warps, v5 = v4
-                                      # with 32-route passes on 256-k records)
-EA_PIN = {8: "v4", 16: "v4"}  # carrier (H100 M456, ties -> R10): class 8 (T=2..8) and class 16 (T=9..16) route this
-                              # engine whenever it is canary-clean (per-T canary and copy check still guard it); {} = race
-EA_CMB_PIN = {128: "v4c"}     # carrier (M456 c128v4ccuda x1.0112 / x1.0096): the CUDA combine at T=128 when the big gate
-                              # routes this engine and the combine check passed (verify and copy check still guard it)
+EA_JUDGE_DRAWS = 15
+EA_BIG_ENGINES = ("v3", "v4", "v4c", "v5")
+EA_PIN = {8: "v4", 16: "v4"}
+EA_CMB_PIN = {128: "v4c"}
 
 def _ea_forward(x, topk_ids, topk_weights, bank, state, trace=None, engine=None):
     """moe adapter: this GPU's expert block through Engine A (ids are global, the bank's range is local); engine 'v1'
@@ -7880,7 +7614,7 @@ def _ea_forward(x, topk_ids, topk_weights, bank, state, trace=None, engine=None)
     ea = state["ea"]
     core = {"v1": _ea_forward_core, "v2": _ea2_forward_core, "v3": _ea3_forward_core,
             "v4": _ea4_forward_core, "v4c": _ea4c_forward_core, "v5": _ea5_forward_core,
-            **_EA6_CORES, **_EA4X_CORES}[engine or ea["on"][x.shape[0]]]
+            **_EA6_CORES, **_EA4X_CORES, **_EAE_CORES}[engine or ea["on"][x.shape[0]]]
     return core(ea, x, topk_ids, topk_weights, bank["start"], bank["count"], state["post_norm_w"], trace)
 
 def _ea_cfg(bank, tokens, hidden):
@@ -8070,7 +7804,7 @@ def _ea_cmb_gate(weights, bank, state, device):
                 ea["cmb_t"][t] = 1 if keep else 0
         lines.append(f"{EA_TAG} combine gate T={cls}: Triton/CUDA worst ratio {worst['cuda']:.3f} -> "
                      f"{'CUDA' if keep else 'Triton'}")
-    for t, eng in EA_CMB_PIN.items():  # carrier: a prepare-time constant; _ea_cmb_verify and the copy check guard it
+    for t, eng in EA_CMB_PIN.items():
         if ea["on"].get(t) == eng:
             ea["cmb_t"][t] = 1
             lines.append(f"{EA_TAG} combine gate T={t}: CUDA PINNED ({eng})")
@@ -8222,7 +7956,7 @@ def _ea_cmb_verify(weights, bank, state, device):
             for t in range(1, EA2_MAX_T + 1):
                 if _ea_class(t) == cls:
                     ea["cmb_t"][t] = 0
-            ea["cmb_t"][cls] = 0  # a pinned big T (EA_CMB_PIN)
+            ea["cmb_t"][cls] = 0
         lines.append(f"{EA_TAG} combine verify T={cls} ({ea['on'][cls]} + CUDA combine): {text} -> "
                      f"{'ok' if good else 'FAIL -> Triton combine'}")
     return lines
@@ -8311,9 +8045,7 @@ def _ea_setup(weights, state, device, t_prepare):
         for ln in ilines:
             say(ln)
         dq = 2 if _ea_scales_ok(weights, bank["start"], count) else 1
-        # CTAs/SM from v1 / v2; v3 (D = 3, 16 x rows) runs only if it reaches the same occupancy
         cps = max(1, min([EA_CTAS_PER_SM] + [v for k, v in occs.items() if k.endswith(f"dq{dq}") and k[:2] in ("v1", "v2")]))
-        # an engine without occupancy entries (v4 when only the fallback module built) is skipped too
         state["ea"]["skip"] = {e for e in EA_ENGINES if e not in ("v1", "v2")
                                and min((v for k, v in occs.items() if k.startswith(e + " ") and k.endswith(f"dq{dq}")),
                                        default=0) < cps}
@@ -8324,7 +8056,7 @@ def _ea_setup(weights, state, device, t_prepare):
         grid = cps * sms
         state["ea"].update({"ext": ext, "dq": dq, "grid": grid, "pdl": 1, **_ea2_buffers(device, grid, inter)})
         if "v5" in EA_ENGINES and "v5" not in state["ea"]["skip"]:
-            try:  # v5's 256-k records (a permutation of v3's); a miss skips v5
+            try:
                 state["ea"].update(_ea5_repack(state["ea"], count))
             except Exception as e:
                 state["ea"]["skip"].add("v5")
@@ -8332,7 +8064,7 @@ def _ea_setup(weights, state, device, t_prepare):
         say(f"{EA_TAG} {EA_LAYOUT_NAME[dq]}; repack {time.perf_counter() - t1:.1f} s; grid {grid} "
             f"({cps} CTAs/SM; v1..v3 160 threads, v4 / v5 288); build {dt:.1f} s")
         ok, flines, slines = _ea_canary(weights, bank, state, device, t_prepare)
-        lines.extend(flines)  # printed by the canary as they happened
+        lines.extend(flines)
         for ln in slines:
             say(ln)
         if not any(v for d in ok.values() for v in d.values()):
@@ -8347,22 +8079,22 @@ def _ea_setup(weights, state, device, t_prepare):
             w = won.get(_ea_class(t))
             state["ea"]["on"][t] = w if (w is not None and ok[t].get(w, False)) else False
         if time.perf_counter() - t_prepare < EA_GATE_DEADLINE_S:
-            try:  # a miss leaves T = 128 / 256 on master
+            try:
                 lines.extend(_ea_big(weights, bank, state, device, t_prepare))
             except Exception as e:
                 for t in EA_BIG:
                     state["ea"]["on"][t] = False
                 lines.append(f"{EA_TAG} big classes raised {type(e).__name__}: {str(e)[:200]}")
         if any(state["ea"]["on"].values()) and time.perf_counter() - t_prepare < EA_GATE_DEADLINE_S:
-            try:  # a miss leaves K2 on the full grid
+            try:
                 lines.extend(_ea_g2_gate(weights, bank, state, device))
             except Exception as e:
                 state["ea"]["g2_t"] = {}
                 lines.append(f"{EA_TAG} k2 grid gate raised {type(e).__name__}: {str(e)[:200]}")
         if any(state["ea"]["on"].values()) and time.perf_counter() - t_prepare < EA_GATE_DEADLINE_S:
-            try:  # a miss leaves the Triton combine everywhere
+            try:
                 cok, cline = _ea_cmb_check(ext, state["post_norm_w"], device)
-                state["ea"]["cmb_ok"] = bool(cok)  # S3: Engine A v6 uses the CUDA combine whenever it checked out
+                state["ea"]["cmb_ok"] = bool(cok)
                 lines.append(f"{EA_TAG} {cline}")
                 if cok:
                     lines.extend(_ea_cmb_gate(weights, bank, state, device))
@@ -8370,11 +8102,11 @@ def _ea_setup(weights, state, device, t_prepare):
             except Exception as e:
                 state["ea"]["cmb_t"] = {}
                 lines.append(f"{EA_TAG} combine check raised {type(e).__name__}: {str(e)[:200]}")
-        if CAMPAIGN_EA6:  # S3: Engine A v6 (ea6_core.py) raced against T = 1 / T = 8's incumbents; never raises
+        if CAMPAIGN_EA6:
             lines.extend(_ea6_stage(weights, bank, state, device, t_prepare))
-        if CAMPAIGN_EA4X:  # phase A v4x: bitwise v4 / v4c twins raced per class (ea4x_core.py); never raises
+        if CAMPAIGN_EA4X:
             lines.extend(_ea4x_stage(weights, bank, state, device, t_prepare))
-            if globals().get("CAMPAIGN_STACK"):  # stack: EPLF raced vs the routed arms (stack_core.py); never raises
+            if globals().get("CAMPAIGN_STACK"):
                 lines.extend(_stk_stage(weights, bank, state, device, t_prepare))
         _ea5_drop_unused(state["ea"])
         if any(state["ea"]["on"].values()):
@@ -8384,8 +8116,8 @@ def _ea_setup(weights, state, device, t_prepare):
                 lines.append(f"{EA_TAG} copy check: skipped: deadline -> master for every T")
             else:
                 lines.append(_ea_copy_check(weights, bank, state, device))
-            state["ea"]["copy_line"] = lines[-1]  # S3: printed again among prepare()'s last lines
-    except Exception as e:  # prepare only: never raises, every T stays on master
+            state["ea"]["copy_line"] = lines[-1]
+    except Exception as e:
         for t in state["ea"]["on"]:
             state["ea"]["on"][t] = False
         lines.append(f"{EA_TAG} {type(e).__name__}: {str(e)[:400]}")
@@ -8423,31 +8155,23 @@ def _ea_moe_path_lines(ea):
         out.append(f"{EA_TAG} PATH CHOSEN T={t} = {'ENGINE A ' + nm(on[t]) if on.get(t) else 'MASTER'}" +
                    (" + CUDA combine PINNED" if pin else ""))
     return out
-# ---- end include rewrite/lib/ea_moe.py ----
-# ---- begin include rewrite/lib/ea6_core.py ----
-# Engine A v6 (expert-bandwidth S3; research/s3-panel-2026-10-28.md section 6), moe only: whole 16-row records per
-# CTA, one 320-thread CTA per SM (ea6_kernels.cuh); "v6s" = K2 launched without PDL. Not in EA_ENGINES: _ea6_stage (from
-# _ea_setup) has its own canary, race, anatomy and copy check. v1's repack and state dict. Include after ea_moe.py.
 EA6_TAG = "[ea6]"
-EA6_JOIN_S = 170.0                 # the build thread is joined by this many s into prepare()
-EA6_START_S = 170.0                # the stage starts only before this
-EA6_GATE_S = 200.0                 # canary, kernel-only, races and anatomy start only before this
-EA6_COPY_S = 215.0                 # v6's own copy check starts only before this: the stage leaves >= ~45 s for the
-                                   # shared copy check (EA_COPY_DEADLINE_S 262) and the hybrid (HM_START 250)
-EA6_CLASSES = (1, 8)               # T = 1 alone; T = 2..8 follow T = 8
-EA6_W1 = {2: 0.475, 3: 0.43, 4: 0.085, 5: 0.01}   # the judge's T = 1 mix by distinct local experts (8f33e5ee)
-EA6_FLOOR = {1: 0.95, 2: 0.97, 3: 0.97, 4: 0.97, 5: 0.95}   # per-n floor on incumbent / arm, every round
-EA6_FLOOR8 = 0.97                  # per-draw floor at T = 8
-EA6_ANATOMY = False                # per-CTA phases from the debug buffer (diagnostic only, never routes); off
-                                   # for v4x (phase A 2026-10-29): ~1.2 KB of the 16,000-B log tail
+EA6_JOIN_S = 170.0
+EA6_START_S = 170.0
+EA6_GATE_S = 200.0
+EA6_COPY_S = 215.0
+EA6_CLASSES = (1, 8)
+EA6_W1 = {2: 0.475, 3: 0.43, 4: 0.085, 5: 0.01}
+EA6_FLOOR = {1: 0.95, 2: 0.97, 3: 0.97, 4: 0.97, 5: 0.95}
+EA6_FLOOR8 = 0.97
+EA6_ANATOMY = False
 EA6_SEED = 20261060
-EA6_DBG = 8                        # eak6::DBG int64 per CTA
-EA6F_ARMS = {"v6pe": 7, "v6pe2": 23, "v6p": 3, "v6e": 4}  # bits: 1 K1 FAST, 2 K2 FAST, 4 early combine, 16 K2 on
-                                   # 2 x SMs (stack lane v6pe2: a second K2 wave fills each SM as its K1 CTA exits)
+EA6_DBG = 8
+EA6F_ARMS = {"v6pe": 7, "v6pe2": 23, "v6p": 3, "v6e": 4}
 EA6F_MARGIN = 1.01
 EA6F_FLOOR = 0.99
 _EA6_FNS = ("ea6_info", "ea6_w13", "ea6_w2")
-EA6_LINES = []                     # prepare()-only, printed last (each <= 199 chars)
+EA6_LINES = []
 _EA6_BUILD = {}
 
 _EA6_CPP = r"""
@@ -9107,7 +8831,7 @@ def _ea6_build_start(t_prepare):
                     break
                 if i + 1 < len(plan):
                     _EA6_BUILD["fast_err"] = str(r[1])[:150]
-        except BaseException as e:  # prepare only
+        except BaseException as e:
             _EA6_BUILD["result"] = (None, f"build thread raised {type(e).__name__}: {str(e)[:150]}", 0.0)
 
     th = threading.Thread(target=run, name="ea6-build", daemon=True)
@@ -9128,11 +8852,14 @@ def _ea6_build_join(t_prepare):
 
 
 def _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, k2_pdl=1, dbg=None,
-                      scratch=None, fast=0):
+                      scratch=None, fast=0, enc=(0, 0)):
     """v1's contract: ea6_w13 (h [32, T, I], local_ids), ea6_w2 (y; PDL when k2_pdl), then the CUDA combine if it
     checked out, else the Triton one. dbg / scratch (NaN h, y): prepare only.
-    fast (prepare-admitted FAST arms, T = 1): 1 K1 FAST, 2 K2 FAST, 4 the early combine."""
+    fast (prepare-admitted FAST arms, T = 1): 1 K1 FAST, 2 K2 FAST, 4 the early combine.
+    enc (ea-enc, FAST K1 / K2 only): 3 / 4 runs that kernel from ea['ext6e'] on its A4b / A4b + A5b copy, 0 master's."""
     ext = ea["ext6"]
+    k1 = (ea["ext6e"], ea[f"w13e{enc[0]}"]) if enc[0] else (ext, ea["w13r"])
+    k2 = (ea["ext6e"], ea[f"w2e{enc[1]}"]) if enc[1] else (ext, ea["w2r"])
     tokens, hidden = x.shape
     inter = ea["inter"]
     if scratch is None:
@@ -9143,19 +8870,20 @@ def _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     local_ids = torch.empty((tokens, TOP_K), device=x.device, dtype=torch.int32)
     d = ea["ea6_nodbg"] if dbg is None else dbg
     grid, minb = ea["ea6_grid"], ea["ea6_minb"]
-    g2 = grid * 2 if fast & 16 else grid  # v6pe2: K2's split is generic in its grid (whole records): y bitwise
-    if fast & 16 and dbg is not None:  # K2's dbg rows would land at (G2 + c) * DBG; the anatomy buffer is 2 x G rows
+    g2 = grid * 2 if fast & 16 else grid
+    if fast & 16 and dbg is not None:
         raise ValueError("ea6: v6pe2 (fast & 16) has no dbg layout")
-    if fast & 4:  # ea6_cmb reads tw before its PDL wait
+    if fast & 4:
         tw32 = topk_weights.to(torch.float32).contiguous()
     if trace is not None:
         trace("before ea6_w13")
-    ext.ea6_w13(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["err"], d, tokens, start, count, grid, minb,
-                (4 if pdl13 else 0) | (8 if fast & 1 else 0))
+    k1[0].ea6_w13(x, topk_ids, k1[1], ea["gs13"], h, local_ids, ea["err"], d, tokens, start, count, grid, minb,
+                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if enc[0] == 4 else 0))
     if trace is not None:
         trace("after ea6_w13 / before ea6_w2")
-    ext.ea6_w2(h, topk_ids, ea["w2r"], ea["gs2"], y, ea["err"], d, tokens, start, count, g2, minb,
-               ((1 | (2 if ea.get("ea6_cores") else 0)) if k2_pdl else 0) | (8 if fast & 2 else 0))  # 2: K2 beside K1
+    k2[0].ea6_w2(h, topk_ids, k2[1], ea["gs2"], y, ea["err"], d, tokens, start, count, g2, minb,
+                 ((1 | (2 if ea.get("ea6_cores") else 0)) if k2_pdl else 0) | (8 if fast & 2 else 0)
+                 | (4096 if enc[1] == 4 else 0))
     if trace is not None:
         trace("after ea6_w2 / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
@@ -9165,7 +8893,7 @@ def _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
             trace("after post-expert norm")
         return out
     tw32 = topk_weights.to(torch.float32).contiguous()
-    if ea.get("cmb_ok"):  # CUDA twin of the Triton combine (main module), PDL-linked to K2
+    if ea.get("cmb_ok"):
         ea["ext"].ea_combine(y, local_ids, tw32, norm_w, out, POST_NORM_EPS, 1)
     else:
         _post_norm_combine_kernel[(tokens,)](
@@ -9223,10 +8951,10 @@ def _ea6_canary(weights, bank, state, device, t_prepare, farms=()):
     hidden, inter = weights["w2"].shape[1], ea["inter"]
     local_set = list(range(start, start + count))
     gen = torch.Generator().manual_seed(EA6_SEED + 1)
-    bad = {"v6": [], "v6s": [], "hang": [], **{a: [] for a in farms}}   # hang: (arm, T), error word or raise
+    bad = {"v6": [], "v6s": [], "hang": [], **{a: [] for a in farms}}
     worst = {a: 0.0 for a in ("v6", "v6s") + tuple(farms)}
     first = {a: True for a in worst}
-    eq = {a: [0, 0] for a in farms}  # bitwise equal to v6 / compared
+    eq = {a: [0, 0] for a in farms}
     fail_line = {}
     m_worst, n_in, n_rep = 0.0, 0, 0
     for tokens in range(1, EA_MAX_T + 1):
@@ -9247,7 +8975,7 @@ def _ea6_canary(weights, bank, state, device, t_prepare, farms=()):
             tw = (tw / tw.sum(-1, keepdim=True)).to(device)
             data = {"hidden_states": x, "topk_ids": ids, "topk_weights": tw, "config": _ea_cfg(bank, tokens, hidden)}
             saved = ea["on"][tokens]
-            ea["on"][tokens] = False  # master's own error, as the shared canary measures it
+            ea["on"][tokens] = False
             try:
                 master = kernel_fn(data, state).float()
             finally:
@@ -9296,7 +9024,7 @@ def _ea6_canary(weights, bank, state, device, t_prepare, farms=()):
                         bit = v6o is not None and bool(torch.equal(outs[0], v6o))
                         if arm == "v6pe":
                             peo = outs[0]
-                        elif arm == "v6pe2":  # stack: canaried bitwise against v6pe too (it must run first)
+                        elif arm == "v6pe2":
                             bit = bit and peo is not None and bool(torch.equal(outs[0], peo))
                         eq[arm][0] += int(bit)
                         eq[arm][1] += 1
@@ -9316,7 +9044,7 @@ def _ea6_canary(weights, bank, state, device, t_prepare, farms=()):
                     fail_line.setdefault(arm, ln)
     for ln in fail_line.values():
         _ea6_say(ln)
-    ea["ea6_feq"] = {a: list(v) for a, v in eq.items()}  # stack: the T1 line's canary tally
+    ea["ea6_feq"] = {a: list(v) for a, v in eq.items()}
     parts = []
     for arm, hi in (("v6", EA_MAX_T), ("v6s", 1)):
         parts.append(f"{arm} T1..{hi} " + (f"FAIL at T {bad[arm]}" if bad[arm] else "clean") +
@@ -9346,7 +9074,7 @@ def _ea6_kernel_only(weights, bank, state, device):
         lid = torch.empty((1, TOP_K), dtype=torch.int32, device=device)
         y = torch.empty((TOP_K, hidden), dtype=torch.bfloat16, device=device)
         graphs = {}
-        if ea["on"].get(1) == "v1":  # as _ea_forward_core runs it at T = 1: w2 L2 prefetch if pf_t, K2 on g2_t
+        if ea["on"].get(1) == "v1":
             pf = ea.get("pf_t", {}).get(1, 0)
             if pf:
                 graphs["v1K1"], _ = _rt_graph(lambda: ext.ea_w13_pf(x, ids, ea["w13r"], ea["gs13"], h, lid, ea["ws13"],
@@ -9476,7 +9204,7 @@ def _ea6_class1f(bank, state, device, arms, hidden, inc):
             f"{inc if nm == 'inc' else nm} " +
             "/".join(f"{_rt_stats(per[f'n{n}'][ri][nm])[0]:.2f}" for n in range(1, 6)) for nm in ("inc",) + tuple(arms)))
     good = sorted((a for a in arms if res[a]["ok"]), key=lambda a: -res[a]["worst"])
-    ea["ea6_fres"] = {a: (res[a]["ok"], [r["wr"] for r in res[a]["rounds"]]) for a in arms}  # stack: the T1 line
+    ea["ea6_fres"] = {a: (res[a]["ok"], [r["wr"] for r in res[a]["rounds"]]) for a in arms}
     _ea6_say(f"{EA6_TAG} T=1 fast vs {inc}: " + " | ".join(
         f"{a} wr " + "/".join(f"{r['wr']:.3f}" for r in res[a]["rounds"]) +
         f" floor {min(r['fmin'] for r in res[a]['rounds']):+.3f}" + (" Q" if res[a]["ok"] else " -") for a in arms) +
@@ -9515,7 +9243,7 @@ def _ea6_anat_one(d, G):
     w1, w2 = k1[:, 4] > 0, k2[:, 4] > 0
     if not bool(w1.any()) or not bool(w2.any()):
         return None
-    med = lambda v: float(v.median())  # noqa: E731
+    med = lambda v: float(v.median())
     k1end = float(k1[w1, 3].max())
     return {"ramp": med(k1[w1, 1] - k1[w1, 0]) / 1e3,
             "rec1": med((k1[w1, 2] - k1[w1, 1]) / (k1[w1, 4] - 1).clamp_min(1)) / 1e3,
@@ -9588,8 +9316,8 @@ def _ea6_copy_check(weights, bank, state, device, tokens, arm):
             graph, out = _rt_graph(lambda data=data, st=st: kernel_fn(data, st))
             per.append((data, graph, out))
         rd = dict(_ea_routings(tokens, gen, local_set, device))
-        routs = [rd["zipf"], rd["skewed-4hot"]] * 2  # the shared check's refills ...
-        if tokens == 1:  # ... and at T = 1 also the judge's commonest n = 2 / 3
+        routs = [rd["zipf"], rd["skewed-4hot"]] * 2
+        if tokens == 1:
             routs[2:] = [_ea6_forced_ids(k, gen, start, count).to(device) for k in (2, 3)]
         for k in range(4):
             ids = routs[k]
@@ -9687,7 +9415,7 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
         else:
             _ea6_say(f"{EA6_TAG} build {dt:.1f} s: no usable instance (attrs/occupancy {rows})")
             return [EA6_LINES[-1]]
-        alloc = lambda r: -(-32 * r // 256) * 256  # noqa: E731  (registers per warp, 256-register granules)
+        alloc = lambda r: -(-32 * r // 256) * 256
         r13, r2 = rows[0 if minb == 2 else 1], rows[2 if minb == 2 else 3]
         cores = minb == 2 and 10 * alloc(r13[1]) + 10 * alloc(r2[1]) <= 65536
         sms = int(torch.cuda.get_device_properties(device).multi_processor_count)
@@ -9698,7 +9426,6 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
             f"{nm}m{mb} {r[1]}/{r[2]}/{r[5]}" for nm, mb, r in
             (("K1", 2, rows[0]), ("K1", 1, rows[1]), ("K2", 2, rows[2]), ("K2", 1, rows[3]))) +
             f"; MINB {minb}{spill}; grid {sms}; K2 co-resident at T=1: {'yes' if cores else 'no'}")
-        # FAST: MINB 2, rows ok / 0 B lmem, K1f + K2f co-resident; early also cmb_ok
         fr = rows[4:7] if _EA6_BUILD.get("fast") else []
         fast = (len(fr) == 3 and minb == 2 and cores and all(r[0] and r[2] == 0 and r[5] >= 1 for r in fr[:2])
                 and 10 * alloc(fr[0][1]) + 10 * alloc(fr[1][1]) <= 65536)
@@ -9721,7 +9448,7 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
         if hang1:
             _ea6_say(f"{EA6_TAG} kernel-only skipped: T=1 canary saw an error word or a raise")
         elif not late(EA6_GATE_S):
-            try:  # diagnostic only (also when the canary failed on numbers alone)
+            try:
                 _ea6_kernel_only(weights, bank, state, device)
             except Exception as e:
                 _ea6_say(f"{EA6_TAG} kernel-only raised {type(e).__name__}: {str(e)[:150]}")
@@ -9731,7 +9458,7 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
         elif late(EA6_GATE_S):
             _ea6_say(f"{EA6_TAG} T=1 race skipped: deadline -> incumbent")
         else:
-            try:  # a raise loses this class only
+            try:
                 win[1] = _ea6_class1(bank, state, device, arms1, hidden)
             except Exception as e:
                 ea["on"][1] = prev[1]
@@ -9741,29 +9468,28 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
             if late(EA6_GATE_S):
                 _ea6_say(f"{EA6_TAG} T=1 fast race skipped: deadline -> {win[1]}")
             else:
-                try:  # a raise loses the FAST arms only
+                try:
                     chain1 = _ea6_class1f(bank, state, device, farms_ok, hidden, win[1])
                     chain1 = _ea6_stack_order(ea, chain1, bad, farms)
                 except Exception as e:
                     _ea6_say(f"{EA6_TAG} T=1 fast race raised {type(e).__name__}: {str(e)[:140]} -> {win[1]}")
-        if EA_PIN.get(8) and ea["on"].get(8) == EA_PIN[8]:  # only when the pin took (v4 canary-clean)
+        if EA_PIN.get(8) and ea["on"].get(8) == EA_PIN[8]:
             _ea6_say(f"{EA6_TAG} T=8 race skipped: class 8 PINNED to {EA_PIN[8]} (EA_PIN) -> incumbent")
         elif not ok8:
             _ea6_say(f"{EA6_TAG} T=8 race skipped: canary FAIL at T 2..8 -> incumbent")
         elif late(EA6_GATE_S):
             _ea6_say(f"{EA6_TAG} T=8 race skipped: deadline -> incumbent")
         else:
-            try:  # a raise loses this class only
+            try:
                 win[8] = _ea6_class8(bank, state, device, hidden)
             except Exception as e:
                 ea["on"][8] = prev[8]
                 _ea6_say(f"{EA6_TAG} T=8 race raised {type(e).__name__}: {str(e)[:150]} -> incumbent")
         if EA6_ANATOMY and arms1 and not late(EA6_GATE_S):
-            try:  # diagnostic only
+            try:
                 _ea6_anatomy(weights, bank, state, device, arms1 + (("v6p",) if "v6p" in farms_ok else ()))
             except Exception as e:
                 _ea6_say(f"{EA6_TAG} anatomy raised {type(e).__name__}: {str(e)[:150]}")
-        # class 1: the first passing of [FAST arms..., winner] routes; class 8: its largest and smallest T
         cands = {1: (chain1 + [win[1]]) if win[1] else [], 8: [win[8]] if win[8] else []}
         for cls in EA6_CLASSES:
             win[cls] = None
@@ -9796,7 +9522,7 @@ def _ea6_stage(weights, bank, state, device, t_prepare):
         _ea6_say(f"{EA6_TAG} route: T=1 {ea['on'][1] or 'master'}" + (" (v6 family)" if win[1] else " (incumbent)") +
                  f"; T=2..8 {ea['on'][8] or 'master'}" + (" (v6)" if win[8] else " (incumbent)") +
                  f"; stage {time.perf_counter() - t0:.1f} s, prepare at {time.perf_counter() - t_prepare:.1f} s")
-    except Exception as e:  # prepare only: the incumbents stay
+    except Exception as e:
         ea["on"].clear()
         ea["on"].update(prev)
         _ea6_say(f"{EA6_TAG} stage raised {type(e).__name__}: {str(e)[:150]} -> incumbents kept")
@@ -9813,7 +9539,7 @@ def _ea6_final_lines(state):
     chars."""
     out = list(EA6_LINES) if EA6_LINES else [f"{EA6_TAG} stage did not run (Engine A setup ended before it)"]
     out.extend(globals().get("EA4X_LINES", ()))
-    if globals().get("CAMPAIGN_STACK"):  # stack lane: the [stack] block (stack_core.py)
+    if globals().get("CAMPAIGN_STACK"):
         try:
             out.extend(_stk_final_lines(state))
         except Exception as e:
@@ -9825,46 +9551,26 @@ def _ea6_final_lines(state):
     if ea.get("copy_line"):
         out.append(ea["copy_line"])
     return [ln[:199] for ln in out]
-# ---- end include rewrite/lib/ea6_core.py ----
-# ---- begin include rewrite/lib/ea4x_core.py ----
-# Engine A v4x (phase A 2026-10-29, research/phaseA-2026-10-29/engineA.json, S1): bitwise twins of v4 / v4c in their
-# own module (ea4x_kernels.cuh, namespace eak4x): arm s (v4xs / v4cxs, the control: one-thread fence around the
-# ticket) and arm d (v4xd / v4cxd: each CTA's partial super-groups take one ticket round at its end). Not in
-# EA_ENGINES: _ea4x_stage (moe) admits, canaries (bitwise vs the incumbent, NaN h / y), races per class, copy-checks
-# per class at its largest T and routes the class only when all four pass. The twins own their ws / tickets / err
-# (the "x" buffers); the combine always runs on the board's module (ea['ext'], _ea3_forward_core). Include after
-# ea6_core.py.
 EA4X_TAG = "[ea4x]"
-EA4X_START_S = 190.0               # join limit and admission start only before this many s into prepare()
-EA4X_GATE_S = 200.0                # the canary and the races start only before this
-EA4X_COPY_S = 205.0                # the per-class copy checks start only before this
-EA4X_PROBE_S = 210.0               # the isolation probe (print-only) is skipped past this
+EA4X_START_S = 190.0
+EA4X_GATE_S = 200.0
+EA4X_COPY_S = 205.0
+EA4X_PROBE_S = 210.0
 EA4X_MARGIN = 1.01
 EA4X_TIGHT = 1.005
-EA4X_FLOOR = 0.99                  # per-draw floor on incumbent / arm, every round
+EA4X_FLOOR = 0.99
 EA4X_SEED = 20261029
 EA4X_CLASSES = {8: tuple(range(2, 9)), 16: tuple(range(9, 17)), 32: tuple(range(17, 33)), 128: (128,)}
 EA4X_CANARY_T = (2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 128)
-EA4X_ARMS = {"v4xs": 0, "v4xd": 256, "v4cxs": EA4C_CW << 4, "v4cxd": (EA4C_CW << 4) | 256}  # pdl bits; 256 = DEFER
+EA4X_ARMS = {"v4xs": 0, "v4xd": 256, "v4cxs": EA4C_CW << 4, "v4cxd": (EA4C_CW << 4) | 256}
 EA4X_BASE = {"v4xs": "v4", "v4xd": "v4", "v4cxs": "v4c", "v4cxd": "v4c"}
-EA_PDL_BITS.update(EA4X_ARMS)      # never in EA_ENGINES
-EA4X_LINES = []                    # prepare()-only, printed last (<= 10 lines, each <= 199 chars)
-# v4x-routes (2026-10-29, campaign expert-bandwidth): the per-class route is robust where its race is marginal. Routing
-# and race logic only; the kernels, canary, copy checks and fallbacks are unchanged.
-# (1) Each clean twin qualifies on its own (v4x256b's change A, here in every class): S1's "d first, s only as an
-#     upgrade of a routed d" rule kept the incumbent whenever d missed its bar, and the judge's class 128 d twin reads
-#     1.011-1.013 against 1.01 (03d2c99e / dceed39d) while s reads 1.023-1.025; the board's twin (s) now leads.
-# (2) Hysteresis around the board's routes (EA4X_BOARD, the judge's picks in af154932 / 03d2c99e / dceed39d): the
-#     board's twin stays routed while inc / it >= EA4X_KEEP on every round and draw floor, the other twin qualifies at
-#     EA4X_MARGIN and displaces it only by > EA4X_SWITCH. (3) A pick that moving any arm's ratio by EA4X_NEAR would change,
-#     or whose single-round picks flip (the node's class 8 flipped 3/17, research/h100-cs-1028 / LOG 0306Z), is
-#     decided on pooled rounds: EA4X_MORE more _ea6_race calls, every round's samples pooled per draw (median).
-# One "[routes]" line per class: the routed arm, its ratio, rounds, flips (rounds whose own pick differs).
-EA4X_KEEP = 1.0                    # the board's twin stays while inc / twin >= this (and every draw >= EA4X_FLOOR)
-EA4X_SWITCH = 0.01                 # the other twin displaces the board's only when its ratio beats it by more
-EA4X_NEAR = 0.005                  # marginal: a +-this move of any arm's ratio changes the pick
-EA4X_MORE = 2                      # marginal: this many more _ea6_race calls (RT_ROUNDS rounds each), pooled
-EA4X_BOARD = {8: "s", 16: "s", 32: "s", 128: "s"}  # the judge's routes: v4xs at 8 / 16, v4cxs at 32 / 128
+EA_PDL_BITS.update(EA4X_ARMS)
+EA4X_LINES = []
+EA4X_KEEP = 1.0
+EA4X_SWITCH = 0.01
+EA4X_NEAR = 0.005
+EA4X_MORE = 2
+EA4X_BOARD = {8: "s", 16: "s", 32: "s", 128: "s"}
 _EA4X_FNS = ("ea4x_info", "ea4x_w13", "ea4x_w2")
 _EA4X_BUILD = {}
 
@@ -10488,7 +10194,7 @@ def _ea4x_build_start(t_prepare):
     def run():
         try:
             _EA4X_BUILD["result"] = _rt_build(EA4X_TAG, name, _EA4X_CPP, src, _EA4X_FNS)
-        except BaseException as e:  # prepare only
+        except BaseException as e:
             _EA4X_BUILD["result"] = (None, f"build thread raised {type(e).__name__}: {str(e)[:150]}", 0.0)
 
     th = threading.Thread(target=run, name="ea4x-build", daemon=True)
@@ -10596,7 +10302,7 @@ def _ea4x_fixup_probe(bank, state, device, s_ok=True, d_ok=True):
     remote = [e for e in range(N_EXPERTS) if not start <= e < start + count]
     remote = [remote[i] for i in torch.randperm(len(remote), generator=gen).tolist()]
 
-    def routing(k):  # expert j takes tokens (2j) % T and (2j + 1) % T; every other slot a distinct remote id
+    def routing(k):
         rows = [[] for _ in range(T)]
         for j in range(k):
             for r in range(2):
@@ -10867,25 +10573,22 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
             _ea4x_say(f"{EA4X_TAG} canary skipped: deadline -> incumbents kept")
             return [_ea4x_ret(t0)]
         clean, fails, runs = _ea4x_canary(weights, bank, state, device, t_prepare)
-        ea["x_clean"] = dict(clean)  # v4x-t256 (hotcold_moe.py _hmx_cold): only canary-clean twins race the cold half
+        ea["x_clean"] = dict(clean)
         _ea4x_say(f"{EA4X_TAG} canary {len(EA4X_CANARY_T)} T x routings x {{v4,v4c}} x {{s,d}} x 2 runs (NaN h/y): "
                   f"{runs} runs, clean " + " ".join(f"{a} {'ok' if c else 'FAIL'}" for a, c in clean.items()) +
                   ("; =inc bitwise, err 0, tickets 0" if not fails else f"; {len(fails)} fails, first {fails[0]}"))
-        # races per class (the incumbent and its clean twins on judge-style draws). v4x-routes: every clean twin races
-        # (an s twin no longer needs a clean d), and a marginal pick (_ea4x_marginal) takes EA4X_MORE more race calls
-        # whose rounds are pooled (_ea4x_rstats); a raise or deadline there keeps the rounds already timed.
         rinfo, race_txt = {}, {}
         for cls in EA4X_CLASSES:
             inc = ea["on"].get(cls)
             twins = tuple(a for a in EA4X_ARMS if EA4X_BASE[a] == inc)
-            arms = tuple(a for a in twins if clean[a])  # v4x-routes: each clean twin on its own
+            arms = tuple(a for a in twins if clean[a])
             if not arms:
                 race_txt[cls] = f"T{cls} -" if inc in ("v4", "v4c") else f"T{cls} inc {inc or 'master'}"
                 continue
             if late(EA4X_GATE_S):
                 race_txt[cls] = f"T{cls} deadline"
                 continue
-            try:  # a raise loses this class only
+            try:
                 gen = torch.Generator().manual_seed(EA4X_SEED + cls)
                 inputs = _ea4x_draws(cls, gen, start, count, device)
                 per = _ea6_race(bank, state, device, cls, inputs, arms, hidden, EA4X_SEED + 100 + cls)
@@ -10898,7 +10601,7 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
                 q0 = _ea4x_order({k: (min(r[0] for r in v), min(r[1] for r in v)) for k, v in rr0.items()}, board)
                 why, more = _ea4x_marginal(rr0, board), 0
                 if why:
-                    try:  # pooled rounds; a raise keeps the rounds already timed
+                    try:
                         for j in range(EA4X_MORE):
                             if late(EA4X_GATE_S):
                                 break
@@ -10917,7 +10620,7 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
                 rinfo[cls] = {"ak": ak, "rr": rr, "view": view, "board": board, "n": min(len(v) for v in rr.values()),
                               "mode": (f"pooled {why}" if more else (f"{why} unpooled" if why else "2r"))}
 
-                def meds(a):  # mean over rounds of the per-draw medians (inc = index 0)
+                def meds(a):
                     rr_ = res[arms[0]]["rounds"]
                     if a == "inc":
                         return "/".join(f"{sum(r['med'][lab][0] for r in rr_) / len(rr_):.1f}" for lab, _ in inputs)
@@ -10932,10 +10635,7 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
                 race_txt[cls] = f"T{cls} raised {type(e).__name__}"
         _ea4x_say(f"{EA4X_TAG} race p10/p50/p90 us: {race_txt.get(8, 'T8 -')} | {race_txt.get(16, 'T16 -')}")
         _ea4x_say(f"{EA4X_TAG} race p10/p50/p90 us: {race_txt.get(32, 'T32 -')} | {race_txt.get(128, 'T128 -')}")
-        # routing (v4x-routes): per class the qualified twins in _ea4x_order (the board's twin first unless the other
-        # beats it by > EA4X_SWITCH), each after its own copy check; the first that passes routes, a miss falls to the
-        # next, none keeps the incumbent. Upper case = routed.
-        def put(cls, arm):  # copy check at the class's largest T; on PASS route every t of the class still on frm
+        def put(cls, arm):
             frm = ea["on"][cls]
             if late(EA4X_COPY_S):
                 return False, "dl"
@@ -10976,7 +10676,7 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
                           f" | {'>'.join(order) or 'none'} {' '.join(tried)}".rstrip())
         fix = ""
         if (clean["v4xs"] or clean["v4xd"]) and not late(EA4X_PROBE_S):
-            try:  # print-only; only canary-clean twins are launched
+            try:
                 fix = _ea4x_fixup_probe(bank, state, device, s_ok=clean["v4xs"], d_ok=clean["v4xd"])
             except Exception as e:
                 fix = f"{EA4X_TAG} fixup probe raised {type(e).__name__}: {str(e)[:120]}"
@@ -10986,7 +10686,7 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
                       f"; stage {time.perf_counter() - t0:.1f} s, at {time.perf_counter() - t_prepare:.1f} s")
         for ln in rlines:
             _ea4x_say(ln)
-    except Exception as e:  # prepare only: the incumbents stay
+    except Exception as e:
         ea["on"].clear()
         ea["on"].update(prev)
         ea["x_picks"] = []
@@ -10998,35 +10698,21 @@ def _ea4x_stage(weights, bank, state, device, t_prepare):
     except Exception as e:
         _ea4x_say(f"{EA4X_TAG} final sync raised {type(e).__name__}: {str(e)[:150]}")
     return [_ea4x_ret(t0)]
-# ---- end include rewrite/lib/ea4x_core.py ----
-# ---- begin include rewrite/lib/stack_core.py ----
-# stack lane (2026-10-29, campaign expert-bandwidth; CLAIMS [shelf] EPLF + [shelf] EPF's v6pe2 rider): two shelf
-# gains as raced, bitwise-canaried arms on the board's routes; each qualifies per class or the board's arm stays.
-# (1) EPLF (t32 judge build_brief section 7): v4xe / v4cxe, arm s of the v4x twins with fixed stream-K fix-up roles
-#     (ea4xe_kernels.cuh, its own module; the routed v4x module is untouched). Raced only at the moe classes 8 / 16 /
-#     32 / 128, whose expert block runs serially on one stream (2 x SMs grid; progress rests on the monotone c -> c + 1
-#     wait plus publish-before-wait, not on co-residency, which the admission keeps as a perf guard); never on the
-#     forked T = 256 cold half (that one races HMX_RACE's twins only). Canary: bitwise vs _ea_forward(engine=base),
-#     NaN-poisoned h / y and partials, EPLF's tickets / flags / err 0. Race vs the class's routed arm (_ea6_race);
-#     copy check at the class's largest T; then the class routes v4xe / v4cxe, else the board's arm stays.
-# (2) v6pe2 (t1rate designer 0 section 4): v6pe with ea6 K2 on 2 x SMs at the unpadded co-resident request, host
-#     only (EA6F_ARMS / _ea6_forward_core in ea6_core.py), canaried bitwise vs v6pe and raced in _ea6_class1f.
-# [stack] lines (<= 6, each <= 199 chars) print with the final block (_ea6_final_lines). Include after ea4x_core.py.
 STK_TAG = "[stack]"
-STK_START_S = 200.0                # the EPLF stage starts (join limit) only before this many s into prepare()
-STK_GATE_S = 208.0                 # the canary and the races start only before this
-STK_COPY_S = 214.0                 # the per-class copy checks start only before this
+STK_START_S = 200.0
+STK_GATE_S = 208.0
+STK_COPY_S = 214.0
 STK_SEED = 20261031
-STK_CLASSES = (8, 16, 32, 128)     # serial expert blocks only (one 2 x SMs wave); never 256
-STK_EARMS = {"v4xe": 0, "v4cxe": EA4C_CW << 4}  # the base's cost bits only: hotcold's cold_bits read EA_PDL_BITS
+STK_CLASSES = (8, 16, 32, 128)
+STK_EARMS = {"v4xe": 0, "v4cxe": EA4C_CW << 4}
 STK_EBASE = {"v4xe": "v4", "v4cxe": "v4c"}
-STK_PF_SHIFT = (10, 12)            # pdl bits 10..11 / 12..13: K1 / K2's PF instance (0, 1 or 2; ea4xe_kernels.cuh)
-STK_PF_ORDER = (2, 1, 0)           # admission's preference: smem prefetch, smem with the folded poll, late load
-STK_REG_CAP = 96                   # __launch_bounds__(288, 2): 5 warps on a 16384-register SM sub-partition
-STK_V6_SWITCH = 0.005              # v6pe2 leads v6pe only when its worst-round wr beats v6pe's by more than this
+STK_PF_SHIFT = (10, 12)
+STK_PF_ORDER = (2, 1, 0)
+STK_REG_CAP = 96
+STK_V6_SWITCH = 0.005
 EA_PDL_BITS.update(STK_EARMS)
-EA4X_BASE.update(STK_EBASE)        # PATH CHOSEN naming only: _ea4x_stage iterates EA4X_ARMS, _hmx_cold HMX_RACE
-STK_INFO = {}                      # prepare()-only: per-class results for the [stack] lines (t1: from _ea6_stage)
+EA4X_BASE.update(STK_EBASE)
+STK_INFO = {}
 _STK_FNS = ("ea4xe_info", "ea4xe_w13", "ea4xe_w2")
 _STK_BUILD = {}
 
@@ -11614,13 +11300,13 @@ def _stk_build_start(t_prepare):
         def run():
             try:
                 _STK_BUILD["result"] = _rt_build(STK_TAG, name, _STK_CPP, src, _STK_FNS)
-            except BaseException as e:  # prepare only
+            except BaseException as e:
                 _STK_BUILD["result"] = (None, f"build thread raised {type(e).__name__}: {str(e)[:150]}", 0.0)
 
         th = threading.Thread(target=run, name="stk-build", daemon=True)
         _STK_BUILD["thread"] = th
         th.start()
-    except BaseException as e:  # prepare only
+    except BaseException as e:
         _STK_BUILD["result"] = (None, f"build start raised {type(e).__name__}: {str(e)[:150]}", 0.0)
 
 
@@ -11660,7 +11346,7 @@ def _stk_core(name):
 
 
 _STK_CORES = {name: _stk_core(name) for name in STK_EARMS}
-_EA4X_CORES.update(_STK_CORES)     # _ea_forward's engine table (ea_moe.py) reads _EA4X_CORES at call time
+_EA4X_CORES.update(_STK_CORES)
 
 
 def _stk_sums(ea):
@@ -11707,7 +11393,7 @@ def _stk_admit(ea, ext, device):
         else:
             picks.append(f"{nm} p{pick}")
             pf |= pick << STK_PF_SHIFT[k]
-    co = ea["grid"] <= 2 * sms  # perf guard (one wave); see the docstring for the correctness invariant
+    co = ea["grid"] <= 2 * sms
     text = (f"cap {STK_REG_CAP} " + " ".join(parts) + "; pf " + " ".join(picks) +
             f"; grid {ea['grid']}{'<=' if co else '>'}2x{sms}")
     return ok and co, pf, text
@@ -11875,7 +11561,6 @@ def _stk_stage(weights, bank, state, device, t_prepare):
         ea["ext4xe"] = ext
         ea["e_pf"] = pf
         ea.update(_stk_buffers(device, ea["grid"]))
-        # per class: the routed arm's base picks the EPLF twin (v4 family -> v4xe, v4c family -> v4cxe)
         fam = {}
         for cls in STK_CLASSES:
             inc = ea["on"].get(cls)
@@ -11905,7 +11590,7 @@ def _stk_stage(weights, bank, state, device, t_prepare):
             if late(STK_GATE_S):
                 ent["why"] = "race deadline"
                 continue
-            try:  # a raise loses this class only
+            try:
                 gen = torch.Generator().manual_seed(STK_SEED + cls)
                 inputs = _ea4x_draws(cls, gen, start, count, device)
                 labels = [lab for lab, _ in inputs]
@@ -11958,7 +11643,7 @@ def _stk_stage(weights, bank, state, device, t_prepare):
                     ea["x_picks"].append(cls)
             else:
                 ent["why"] = "copy FAIL"
-    except Exception as e:  # prepare only: the routed arms stay
+    except Exception as e:
         ea["on"].clear()
         ea["on"].update(prev)
         info["raised"] = f"stage raised {type(e).__name__}: {str(e)[:120]}"
@@ -12008,28 +11693,14 @@ def _stk_final_lines(state):
                    f"{ent.get('mode', '-')}{mtxt} | {'ROUTED' if ent.get('routed') else ent.get('why', '-')}"
                    + (f" copy {ent['copy']}" if "copy" in ent else ""))
     return [ln[:199] for ln in out]
-# ---- end include rewrite/lib/stack_core.py ----
-# ---- campaign W3: Engine B (128 <= T <= 512); inert until turned on ----
-CAMPAIGN_ENGINE_B = False   # W3: Engine B at 128 <= T <= 512 (cells c2 / c1, per-bucket selector, copy check)
-# ---- begin include rewrite/lib/eb_core.py ----
-# Engine B core (campaign 2026-10-26-decode-first-rewrite, workstream W3): problem-agnostic pieces shared by the moe
-# and (later) decode submissions. Engine B runs this GPU's NVFP4 expert block for 128 <= T <= 512 tokens as three
-# hand-written launches, PDL-chained (eb_prep: one CTA per token, routes -> dense slots by local expert + gathered x
-# rows; eb_gemm w13 + silu; eb_gemm w2), then the problem's Triton post-norm combine. v2 (after judge job
-# 3f402ec33b094c2e: v1's wgmma consumer ran 1.5-1.95 TB/s): GEMM cell 2 = mma.sync m16n8k16 swap-AB per warp with N 8/16/32
-# tokens per run (Engine A's consumer generalized to 1-4 n-tiles, B by ldmatrix from TMA-swizzled token boxes); cell 1 =
-# wgmma m64nNk16 RS with double-buffered register A, wait_group 1 and independent accumulator chains, on the same rings.
-# Both: runs of <= 32 routes, unified 128-k stages (128 rows x 128 k of weights + two 64-k token boxes on one mbarrier)
-# from Engine B's own lossless 128-k repack (a byte permutation of Engine A's records), cost-weighted stream-K with the
-# last-arriver fix-up, no spins. Prepare-time diagnostics time no-MMA / no-dequant / ring-only variants of w13.
-# Adapters (eb_moe.py) own the canary, the selector and the copy check.
+CAMPAIGN_ENGINE_B = False
 EB_MIN_T = 128
 EB_MAX_T = 512
-EB_B256_MIN_T = 256          # bucket B128 = [128, 255], B256 = [256, 512]
+EB_B256_MIN_T = 256
 
-EB_BUILD_C1 = True           # False: compile without the wgmma cell 1 (-DEB_WITH_C1=0)
+EB_BUILD_C1 = True
 
-EB_CELLS = (2, 1) if EB_BUILD_C1 else (2,)   # GEMM cells (eb_kernels.cuh Cell<2> mma.sync, Cell<1> wgmma)
+EB_CELLS = (2, 1) if EB_BUILD_C1 else (2,)
 
 EB_CELL_TEXT = {2: "m (mma.sync m16n8k16, N 8/16/32, runs <= 32, 2 CTAs/SM)",
                 1: "w (wgmma m64nNk16 RS + chains, N 16/32, runs <= 32, 2 CTAs/SM)"}
@@ -12038,17 +11709,16 @@ EB_CELL_KEY = {2: "m", 1: "w"}
 
 EB_CTAS_PER_SM = 2
 
-EB_COSTS = {2: (4, 4, 5), 1: (4, 4)}         # stream-K cost of one 128-k unit per N bucket (NB0 << b), quarter units
+EB_COSTS = {2: (4, 4, 5), 1: (4, 4)}
 
-EB_WSF = 2 * 256 * 16                        # fp32 partials per CTA: 2 slots x 256 consumer threads x NMAX / 2
+EB_WSF = 2 * 256 * 16
 
-EB_MAXRUN = 160                              # runs: <= 32 experts + 4096 routes / 32
+EB_MAXRUN = 160
 
-EB_MAGIC = 0x45424232                        # GEMM launch marker in err[1]
+EB_MAGIC = 0x45424232
 
 EB_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma / TMA compiled out)"}
 
-# eb_info order: production m w13, m w2, w w13, w w2; diagnostics on w13: m no-MMA, m no-dequant, w no-dequant, ring.
 EB_INFO_NAMES = (("m", "w13"), ("m", "w2"), ("w", "w13"), ("w", "w2"), ("m", "w13 no-MMA"), ("m", "w13 no-dequant"),
                  ("w", "w13 no-dequant"), ("ring", "w13 ring only"), ("prep", ""))
 
@@ -13228,7 +12898,7 @@ def _eb_repack128(src):
         a = src[key].view(-1, ng, 8, 4, 4608)
         count, nt = a.shape[0], ng // 2
         dst = torch.empty((count, nt, 8, 4, 2, 4, 1152), dtype=torch.uint8, device=a.device)
-        for e in range(count):  # per expert: temporaries stay ~30 MB
+        for e in range(count):
             codes = a[e, :, :, :, :4096].reshape(nt, 2, 8, 4, 2, 4, 512).permute(0, 2, 5, 1, 3, 4, 6)
             scales = a[e, :, :, :, 4096:].reshape(nt, 2, 8, 4, 16, 4, 8).permute(0, 2, 5, 1, 3, 4, 6)
             dst[e, :, :, :, :, :, :1024] = codes.reshape(nt, 8, 4, 2, 4, 1024)
@@ -13324,34 +12994,29 @@ def _eb_active_bytes(ids, start, count, inter, hidden):
     b13 = touched * 2 * inter * (hidden // 2 + hidden // 16)
     b2 = touched * hidden * (inter // 2 + inter // 16)
     return touched, int(cnt.max()) if loc.numel() else 0, int(loc.numel()), b13, b2
-# ---- end include rewrite/lib/eb_core.py ----
-# ---- begin include rewrite/lib/eb_moe.py ----
-# Engine B moe adapter (campaign 2026-10-26-decode-first-rewrite, W3): canary, per-bucket selector, state copy check and
-# summary for muse_moe_w4a16's kernel_fn (global expert ids, the bank's local range). Needs eb_core.py and ea_core.py.
 
 EB_TAG = "[engineB]"
 
 EB_EXT_NAME = "okc_campaign_engine_b_v2"
 
-EB_START_DEADLINE_S = 180.0   # the build (~40-60 s, cannot be interrupted) starts only before this many s into prepare()
+EB_START_DEADLINE_S = 180.0
 
-EB_CANARY_DEADLINE_S = 245.0  # the canary starts only before this
+EB_CANARY_DEADLINE_S = 245.0
 
-EB_GATE_DEADLINE_S = 256.0    # the selector starts only before this
+EB_GATE_DEADLINE_S = 256.0
 
-EB_COPY_DEADLINE_S = 266.0    # the two-state copy check starts only before this
+EB_COPY_DEADLINE_S = 266.0
 
-EB_BUDGET_S = {"canary": 70.0, "gate": 78.0, "copy": 84.0}   # also: no phase past this many s after Engine B's start
+EB_BUDGET_S = {"canary": 70.0, "gate": 78.0, "copy": 84.0}
 
-EB_COPY_TOL = 1e-4            # graph replay on a state copy vs eager kernel_fn (Engine B sums in a fixed order)
+EB_COPY_TOL = 1e-4
 
 EB_BUCKETS = ((128, "B128", "128 <= T <= 255"), (256, "B256", "256 <= T <= 512"))
 
-EB_JUDGE_TOUCHED = {128: 23, 256: 25}   # mean touched local experts per call at verify_16 / verify_32 (forensics 1)
+EB_JUDGE_TOUCHED = {128: 23, 256: 25}
 
 EB_GATE_KINDS = ("judge", "zipf", "random")
 
-# (T, routing): the scored shapes, both bucket edges, the judge's test shapes (257, 128 skewed) and forced extremes.
 EB_CANARY_CASES = ((128, "judge"), (128, "zipf"), (128, "random"), (128, "skewed"), (128, "one-hot"),
                    (128, "all-local"), (128, "zero-local"), (129, "skewed-4hot"), (255, "judge"), (256, "judge"),
                    (256, "one-hot"), (256, "zipf"), (257, "random"), (257, "one-hot"), (384, "skewed"),
@@ -13399,10 +13064,10 @@ def _eb_routing(kind, tokens, gen, local_set, device):
         ids = _wg_zipf_ids(tokens, 0.9, gen, local_set)
     elif kind in ("random", "skewed-4hot"):
         ids = torch.tensor(_wg_routing(kind, tokens, gen, local_set, remote), dtype=torch.int32)
-    elif kind == "one-hot":  # every token on one local expert: runs of NMAX of a single expert
+    elif kind == "one-hot":
         hot = local_set[3 % count]
         ids = torch.tensor([[hot] + pick_remote(TOP_K - 1) for _ in range(tokens)], dtype=torch.int32)
-    elif kind == "all-local":  # every route local, every local expert touched, uniform
+    elif kind == "all-local":
         ids = torch.tensor([[local_set[(TOP_K * t + j) % count] for j in range(TOP_K)] for t in range(tokens)],
                            dtype=torch.int32)
     elif kind == "zero-local":
@@ -13437,7 +13102,7 @@ def _eb_canary(weights, bank, state, device, t_prepare, t0, cells):
     lines, first = [], True
     gen = torch.Generator().manual_seed(20261030)
     for tokens, kind in EB_CANARY_CASES:
-        late = _eb_late("gate", EB_GATE_DEADLINE_S, t_prepare, t0)  # never run the canary into the gate's limits
+        late = _eb_late("gate", EB_GATE_DEADLINE_S, t_prepare, t0)
         if late:
             for c in cells:
                 ok[c] = False
@@ -13459,7 +13124,7 @@ def _eb_canary(weights, bank, state, device, t_prepare, t0, cells):
             if not ok[c]:
                 continue
             eb["err"].zero_()
-            eb["tk13"].zero_()  # the cells share the tickets: a failed cell must not poison the next one's fix-ups
+            eb["tk13"].zero_()
             eb["tk2"].zero_()
             try:
                 if first:
@@ -13715,14 +13380,14 @@ def _eb_setup(weights, state, device, t_prepare):
             + "; " + "; ".join(f"{EB_CELL_TEXT[c]} grid {state['eb']['grid'][c]}" for c in built)
             + f"; build {dt:.1f} s")
         ok, clines = _eb_canary(weights, bank, state, device, t_prepare, t0, built)
-        lines.extend(clines[:-1])  # the FAIL lines were printed as they happened
+        lines.extend(clines[:-1])
         say(clines[-1])
-        for key in ("tk13", "tk2", "err"):  # a failed cell may have left a ticket or the error word set
+        for key in ("tk13", "tk2", "err"):
             state["eb"][key].zero_()
         clean = [c for c in built if ok.get(c, False)]
         if not clean:
             raise RuntimeError("canary failed for every cell")
-        try:  # diagnostic only: a miss here must not turn Engine B off
+        try:
             for ln in _eb_kernel_rates(weights, bank, state, device, clean, cells.get("diag_ok", {})):
                 say(ln)
         except Exception as e:
@@ -13743,7 +13408,7 @@ def _eb_setup(weights, state, device, t_prepare):
                 lines.append(f"{EB_TAG} copy check: {late} -> master for every bucket")
             else:
                 lines.append(_eb_copy_check(weights, bank, state, device))
-    except Exception as e:  # prepare only: never raises, every bucket stays on master
+    except Exception as e:
         for t, _, _ in EB_BUCKETS:
             state["eb"]["cell"][t] = 0
         lines.append(f"{EB_TAG} {type(e).__name__}: {str(e)[:400]}")
@@ -13762,47 +13427,24 @@ def _eb_setup(weights, state, device, t_prepare):
         tail.append(f"{EB_TAG} PATH CHOSEN {name} ({rng_text}) = "
                     + (f"ENGINE B {EB_CELL_TEXT[cell[t]]}" if cell[t] else "MASTER"))
     return tail
-# ---- end include rewrite/lib/eb_moe.py ----
-# ---- campaign moe hybrid (T = 256): decode's hot/cold hybrid on moe's bank (needs Engine A v3) ----
-CAMPAIGN_HYBRID = True      # hot experts on Marlin at |H|, cold experts on Engine A v3 (per-T flag from prepare)
-# ---- begin include rewrite/lib/hotcold_moe.py ----
-# Campaign moe hybrid (branch campaign/moe-hybrid): rewrite/lib/hotcold_decode.py's judge-proven hybrid expert block,
-# ported to muse_moe_w4a16 at T = 256 exactly (verify_32). One Triton launch (_hm_align_kernel, decode's
-# _hc_align_kernel renamed) shifts the GLOBAL routing ids by the bank's start (a [1] int32 device scalar,
-# state['hm']['ls']), counts the routes per local expert on the device and writes the full local ids, both classes'
-# (sorted_ids, block_experts, n_padded) and the cold-only local ids; every size comes from the shape. A HOT expert
-# (more than HM_HOT_ROWS local routes) runs moe_wna16_marlin_gemm at block |H| (w13, silu_and_mul over every row, w2
-# into cache3); then the COLD experts run Engine A v3 (state['ea'], built by _ea_setup) on the cold ids into cache3's
-# cold rows (after the hot w2: cache3 aliases cache1); then master's post-norm at T >= 32
-# (fused_post_expert_norm_weighted_sum, state['norm_w']) once over every local row. A positive H is decode's plain
-# hot/cold (both classes on Marlin, the cold one at block 16). Graph-capturable; kernel_fn branches on the shape and
-# state['hm']['on'][T] only. prepare(): align build, canary (fp32 reference, half the judge's bounds, poisoned caches),
-# kernel_fn graph gate against whatever kernel_fn runs today at T (the wgmma path), a hooked-layer check and the
-# two-state copy check. Never raises from prepare: every miss keeps master.
-# W6-M (campaign expert-bandwidth, wave 6): a wgmma-hot hybrid H can also run FORKED (raced as "H<h>f"): the hot half
-# (wg gather + w13 + w2) on a side stream after event e0, the cold half (Engine A) on the caller's stream, and a join on
-# e1 before the post-norm (decode's W6-E, hotcold_decode.py _hcf_*). See the W6-M block below.
+CAMPAIGN_HYBRID = True
 
 HM_TAG = "[hybrid-moe]"
-HM_TOKENS = (128, 256)           # exact T the flag covers (verify_16 / verify_32); every other T keeps its path
-HM_HOT_ROWS = 16                 # an expert with more local routes than this is HOT
-HM_COLD_BSM = 16                 # the cold class's Marlin block (plain hot/cold only)
+HM_TOKENS = (128, 256)
+HM_HOT_ROWS = 16
+HM_COLD_BSM = 16
 HM_BSMS = (-16, -8, -32, -48, 32, 48) + ((-116,) if CAMPAIGN_ES1A else ())
-                                        # H < 0: hybrid (hot on Marlin at |H|, on the wgmma path for the HM_WG_HOT codes,
-                                        # on Engine S for HM_ES_HOT's -116; cold on Engine A); H > 0: plain hot/cold
-HM_WG_H = -16                    # expert-bandwidth: the hybrid with hot experts on the wgmma path (aligned at its block
-                                 # 16; it reads a hot expert's weights once per chunk of <= 128 routes), cold on Engine A
-HM_COLD_SLOTS = (HM_HOT_ROWS + HM_COLD_BSM - 1) // HM_COLD_BSM * HM_COLD_BSM  # a cold expert pads to at most this
-HM_JUNK = 100.0                  # prepare()-only poison in cache13 / cache3 before the GEMMs
-HM_COPY_TOL = 1e-3               # graph replay on a state copy vs eager kernel_fn (rel L2)
-HM_START_DEADLINE_S = 250.0      # nothing starts after this many s into prepare()
-HM_GATE_DEADLINE_S = 255.0       # no canary routing / gate starts after this
-HM_COPY_DEADLINE_S = 262.0       # no layer check / copy check starts after this (then master)
+HM_WG_H = -16
+HM_COLD_SLOTS = (HM_HOT_ROWS + HM_COLD_BSM - 1) // HM_COLD_BSM * HM_COLD_BSM
+HM_JUNK = 100.0
+HM_COPY_TOL = 1e-3
+HM_START_DEADLINE_S = 250.0
+HM_GATE_DEADLINE_S = 255.0
+HM_COPY_DEADLINE_S = 262.0
 
 
-HM_ES_HOT = {-116: 16}        # X5 S1a: Engine S hot half (es_core.py; eb_prep -> es1_w13 -> es1_w2) -> hot threshold
-HM_WG_HOT = {-16: 16, -8: 8}  # expert-bandwidth: wgmma-hot codes -> the hot threshold (routes); -8 also takes the
-                              # 9..16-route experts Engine A runs as two-tile passes (its slowest case, ladder-2)
+HM_ES_HOT = {-116: 16}
+HM_WG_HOT = {-16: 16, -8: 8}
 
 
 def _hm_hot_rows(bsm_hot):
@@ -13903,7 +13545,7 @@ def _hm_align_kernel(ids_ptr, ls_ptr, local_ids_ptr, sc_ptr, bc_ptr, nc_ptr, sh_
             local = ((ids - ls) % N_GLOBAL + N_GLOBAL) % N_GLOBAL
             local = tl.where(local < NUM_E, local, -1)
             tl.store(local_ids_ptr + offs, local, mask=mask)
-            if COLD_IDS:  # hybrid: the local ids with the hot experts' routes made remote, for Engine A v3
+            if COLD_IDS:
                 is_hot = tl.sum(((local[:, None] == experts[None, :]) & hot[None, :]).to(tl.int32), axis=1) > 0
                 tl.store(cold_ids_ptr + offs, tl.where(is_hot, -1, local), mask=mask)
         for s in range(0, cap_c, CHUNK):
@@ -13971,10 +13613,6 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
         sc, bc, nc, sh, bh, nh = align
         classes = ((sc, bc, nc, HM_COLD_BSM), (sh, bh, nh, bsm_hot))
     if bsm_hot in HM_ES_HOT:
-        # X5 S1a: hot experts (> 16 routes) on Engine S (es_core.py _es1_hot: eb_prep -> es1_w13 -> es1_w2 into cache3's
-        # hot route rows); the cold experts follow on Engine A below. Forked (H-116f) as W6-M's wg fork: e0 after
-        # everything the hot half reads is ready, the hot half on the fork stream, e1 after es1_w2. Disjoint scratch
-        # (es1 xs / hs / ws / tickets / err vs Engine A's) and disjoint cache3 rows (hot routes vs cold routes).
         routes = num_tokens * TOP_K
         cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
         if fill is not None:
@@ -13982,7 +13620,7 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
         if fk is None:
             _es1_hot(state, x, local_ids, cache3)
         else:
-            fs = _rt_fork_pick(fk["s"])  # v4x256b: never the current (capture) stream, so the fork keeps width 2
+            fs = _rt_fork_pick(fk["s"])
             fk["e0"].record()
             fs.wait_event(fk["e0"])
             with torch.cuda.stream(fs):
@@ -13990,8 +13628,6 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
                 fk["e1"].record()
         classes = ()
     elif bsm_hot in HM_WG_HOT:
-        # Hot experts on the wgmma path (its gather, w13 + silu into h_sorted, w2 into cache3 at the route index) with
-        # the hot class aligned at its block 16; the cold experts follow on Engine A below, into their own rows.
         routes = num_tokens * TOP_K
         wb = state["wg_banks"][(bank["start"], count)]
         cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
@@ -14001,10 +13637,6 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
             state["wg_ext"].wg_gather(x, sh, bh, nh, routes, count, state["wg_xs"])
             _wh_pair(state, wb, (state.get("whk") or {}).get(num_tokens), sh, bh, nh, routes, size_n, size_k, cache3)
         else:
-            # W6-M fork: e0 on the caller's stream once everything the hot half reads is ready (x, the align, cache3's
-            # poison); the hot half on the fork stream; e1 after the hot w2. The halves share no scratch (wg_xs / wg_hs /
-            # wg_err vs h3 / lid3 / ws / tk / err) and write disjoint cache3 rows (hot routes vs cold routes). v4x256b: the
-            # fork stream is _rt_fork_pick's (a dedicated priority -1 stream, never the current / capture stream).
             fs = _rt_fork_pick(fk["s"])
             fk["e0"].record()
             fs.wait_event(fk["e0"])
@@ -14038,29 +13670,22 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
             sorted_ids, block_experts, n_padded, tw, moe_block_size=bsm, top_k=1,
             size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common)
     if hybrid:
-        # Cold experts (<= HM_HOT_ROWS routes) through Engine A v3 into cache3's cold rows: after the hot w2 because
-        # cache3 aliases cache1; the hot rows are final and v3 writes only its own routes. The cold ids are local
-        # (0..count-1, -1 remote or hot), so v3 runs with start 0.
         ea = state["ea"]
         ext = ea["ext"]
         h3 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=torch.bfloat16)
         lid3 = torch.empty((num_tokens, TOP_K), device=x.device, dtype=torch.int32)
         xarm = (state["hm"].get("cold_x") or {}).get(num_tokens)
-        if xarm:  # v4x-t256 (_hmx_cold): the cold base's v4x twin, its own module and ws / tickets / err
-            kx = ea["ext4x"]
-            xb = EA4X_ARMS[xarm]  # the base's cost bits | DEFER (K1 without the PDL bit, as the incumbent's)
-            kx.ea4x_w13(x, cold_ids, ea["w13r"], ea["gs13"], h3, lid3, ea["ws13x"], ea["tk13x"], ea["errx"], num_tokens,
-                        0, count, ea["grid"], ea["dq"], xb)
-            kx.ea4x_w2(h3, cold_ids, ea["w2r"], ea["gs2"], cache3, ea["ws2x"], ea["tk2x"], ea["errx"], num_tokens, 0,
-                       count, ea["grid"], ea["dq"], ea["pdl"] | xb)
+        if xarm:
+            _eae_pair(ea, x, cold_ids, h3, lid3, cache3, num_tokens, 0, count, EA4X_ARMS[xarm],
+                      (state["hm"].get("cold_e") or {}).get(num_tokens, 0))
         else:
             k13, k2 = (ext.ea4_w13, ext.ea4_w2) if state["hm"].get("cold") == "v4" else (ext.ea3_w13, ext.ea3_w2)
-            cb = state["hm"].get("cold_bits", {}).get(num_tokens, 0)  # v4c's cost bits (0: count split)
+            cb = state["hm"].get("cold_bits", {}).get(num_tokens, 0)
             k13(x, cold_ids, ea["w13r"], ea["gs13"], h3, lid3, ea["ws13"], ea["tk13"], ea["err"], num_tokens, 0,
                 count, ea["grid"], ea["dq"], cb)
             k2(h3, cold_ids, ea["w2r"], ea["gs2"], cache3, ea["ws2"], ea["tk2"], ea["err"], num_tokens, 0,
                count, ea["grid"], ea["dq"], ea["pdl"] | cb)
-    if fk is not None:  # W6-M join: the caller's stream waits for the hot half before anything reads cache3
+    if fk is not None:
         torch.cuda.current_stream().wait_event(fk["e1"])
     y = cache3.view(num_tokens, TOP_K, size_k)
     out = fused_post_expert_norm_weighted_sum(
@@ -14075,7 +13700,6 @@ def _hm_forward(x, topk_ids, topk_weights, bank, state, bsm_hot, fill=None):
     return _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill)
 
 
-# ---- prepare()-only: checks, gate, summary -----------------------------------------------------------------------------
 def _hm_align_ref(ids_cpu, ls, bsm_hot, count):
     """_hm_align's exact outputs on the host: (local ids [T, 8], cold (sorted, blocks, n_padded), hot (...))."""
     flat = [int(v) for v in ids_cpu.reshape(-1).tolist()]
@@ -14113,7 +13737,7 @@ def _hm_align_cmp(ids_cpu, ls, bsm_hot, count, local_ids, align):
     ref_l, ref_c, ref_h = _hm_align_ref(ids_cpu, ls, bsm_hot, count)
     if not torch.equal(local_ids.cpu(), ref_l):
         return "local ids differ"
-    if len(align) == 7:  # hybrid: the cold ids are the local ids with every hot expert's routes made remote
+    if len(align) == 7:
         flat = ref_l.reshape(-1).tolist()
         hot = {e for e in set(flat) if e >= 0 and flat.count(e) > _hm_hot_rows(bsm_hot)}
         want = torch.tensor([-1 if e in hot else e for e in flat], dtype=torch.int32).view(ref_l.shape)
@@ -14159,7 +13783,7 @@ def _hm_warm(device, state, count):
             torch.cuda.synchronize()
             bad[h] = None
             lines.append(f"{HM_TAG} align kernel H={h}: compiled + ran in {time.perf_counter() - t0:.2f} s")
-        except Exception as e:  # prepare only: a Triton build error; this H stays off
+        except Exception as e:
             bad[h] = f"align build {type(e).__name__}"
             lines.append(f"{HM_TAG} align kernel H={h} raised {type(e).__name__} after {time.perf_counter() - t0:.2f} s: "
                          f"{str(e)[:300]}")
@@ -14236,7 +13860,7 @@ def _hm_canary(weights, bank, state, device, t_prepare, built):
                             problem = f"{text}, master {m_rel:.3g} (<= 2x)"
                         elif m_zero and float(out[no_local].abs().max()) != 0.0:
                             problem = "a token without a local route is not exactly zero (master's is)"
-                except Exception as e:  # prepare only
+                except Exception as e:
                     problem = f"raised {type(e).__name__}: {str(e)[:200]}"
                 if problem is not None:
                     ok[(tokens, h)], why[(tokens, h)] = False, f"canary {label}: {problem}"
@@ -14395,7 +14019,7 @@ def _hm_es_h2h(per, names, serial, win, swin, worst, tokens):
     (RT_MARGIN_TIGHT_IQR with a tight IQR). Otherwise the incumbent routes: the race re-decided without Engine S codes
     (the W6-M fork rule included). swin is the caller's serial pick (already through _hm_es_swin when win is forked;
     win itself otherwise) and is returned as is on a PASS. Returns (win, serial pick)."""
-    is_s = lambda n: _hmf_parse(n)[0] in HM_ES_HOT  # noqa: E731
+    is_s = lambda n: _hmf_parse(n)[0] in HM_ES_HOT
     wgn = [n for n in names if _hmf_parse(n)[0] in HM_WG_HOT]
     ref = max(wgn, key=lambda n: worst[n]) if wgn else "master"
     hwin, hworst, hlines = _rt_select(per, ref, [win])
@@ -14443,7 +14067,7 @@ def _hm_setup(weights, state, device, t_prepare):
     last, with the PATH CHOSEN lines at the end."""
     t0 = time.perf_counter()
     state["hm"] = {"on": {t: 0 for t in HM_TOKENS}, "fon": {t: False for t in HM_TOKENS},
-                   "cold_x": {t: None for t in HM_TOKENS}}  # v4x-t256: the cold half's v4x twin (_hmx_cold)
+                   "cold_x": {t: None for t in HM_TOKENS}}
     on, fon = state["hm"]["on"], state["hm"]["fon"]
     why, times, notes, races = {}, {}, [], {}
     del HMF_LINES[:]
@@ -14465,11 +14089,8 @@ def _hm_setup(weights, state, device, t_prepare):
         if (bank["expert_map"] is None or bank["count"] != 32 or bank["size_n"] != 4096
                 or weights["w2"].shape[1] != 4096):
             raise RuntimeError(f"unsupported bank: count {bank['count']}, size_n {bank['size_n']}")
-        # expert-bandwidth: kernel_fn takes this hook before Engine A, so the gate below times H against Engine A's
-        # (or the wg / Marlin path's) choice for T; the cold half runs on v4 when it is built.
         state["hm"]["cold"] = "v4" if ("v4" in EA_ENGINES and "v4" not in ea.get("skip", ())
                                        and hasattr(ea["ext"], "ea4_w13")) else "v3"
-        # v4c: the cold half takes Engine A's split for the T (cost-weighted when its gate chose v4c)
         state["hm"]["cold_bits"] = {t: (EA_PDL_BITS.get(ea.get("on", {}).get(t), 0) if state["hm"]["cold"] == "v4"
                                         else 0) for t in HM_TOKENS}
         state["hm"]["ls"] = torch.tensor([bank["start"]], dtype=torch.int32, device=device)
@@ -14477,7 +14098,7 @@ def _hm_setup(weights, state, device, t_prepare):
         if state.get("wg_ext") is None or (bank["start"], bank["count"]) not in state.get("wg_banks", {}):
             for hw in HM_WG_HOT:
                 built[hw] = "the wgmma path is not built in this prepare"
-        for hs_ in HM_ES_HOT:  # X5 S1a: join the S build (fail closed), bank, scratch, the named first launch + canary
+        for hs_ in HM_ES_HOT:
             if hs_ in HM_BSMS and built.get(hs_) is None:
                 why_s = _es1_setup(weights, bank, state, device, t_prepare)
                 if why_s is not None:
@@ -14486,7 +14107,7 @@ def _hm_setup(weights, state, device, t_prepare):
             say(ln)
         ok, kwhy, klines = _hm_canary(weights, bank, state, device, t_prepare, built)
         for ln in klines:
-            if "FAIL H=" not in ln:  # the FAIL lines printed as they happened
+            if "FAIL H=" not in ln:
                 print(ln, flush=True)
             notes.append(ln)
         fcodes = {}
@@ -14514,13 +14135,9 @@ def _hm_setup(weights, state, device, t_prepare):
                 times[tokens] = {lab.split()[-1]: {name: sum(_rt_stats(r[name])[0] for r in rounds) / len(rounds)
                                                    for name in ["master"] + names}
                                  for lab, rounds in per.items()}
-                # X5 S1a audit: an Engine S serial pick passes the head-to-head before it can be the fork reference or
-                # the stored fallback (races[T][2]); a non-forked S winner takes _hm_es_h2h below.
                 swin = (_hm_es_swin(per, serial, _rt_select(per, "master", serial)[0], worst, tokens)
                         if (win and win.endswith("f")) else win)
                 if win and win.endswith("f"):
-                    # W6-M audit: a forked winner must also beat the serial race's pick (master when none) in EVERY
-                    # round by HMF_MARGIN (W6-E's decode rule), else the serial pick routes: no fork on noise.
                     ref = swin or "master"
                     fwin, fworst, flines = _rt_select(per, ref, [win], margin=HMF_MARGIN, tight=HMF_MARGIN)
                     for ln in flines:
@@ -14546,7 +14163,6 @@ def _hm_setup(weights, state, device, t_prepare):
                 problem, line = _hm_layer_check(weights, bank, state, device, tokens, h, f)
                 say(line)
                 if problem is not None and f:
-                    # W6-M: any miss -> re-decide without forked candidates (the serial race's pick)
                     _hmf_say(f"{HMF_TAG} T={tokens} {win} layer check FAIL -> serial pick {swin or 'master'}")
                     if swin is None:
                         why[tokens] = "forked layer check FAIL; no serial H wins every round"
@@ -14563,7 +14179,7 @@ def _hm_setup(weights, state, device, t_prepare):
                 why[tokens] = f"gate {type(e).__name__}"
                 say(f"{HM_TAG} T={tokens} raised {type(e).__name__}: {str(e)[:300]}")
         if CAMPAIGN_HMX and any(on.get(t, 0) for t in HMX_TOKENS):
-            try:  # v4x-t256: the routed hybrid's cold half raced on its v4x twins; any miss keeps the incumbent
+            try:
                 _hmx_cold(weights, bank, state, device, t_prepare)
             except Exception as e:
                 state["hm"]["cold_x"] = {t: None for t in HM_TOKENS}
@@ -14578,15 +14194,12 @@ def _hm_setup(weights, state, device, t_prepare):
                 cok, line = _hm_copy_check(weights, bank, state, device)
                 say(line)
                 if not cok and any(state["hm"]["cold_x"].values()):
-                    # v4x-t256: a miss with a cold twin routed -> the incumbent cold half, then the copy check again
                     state["hm"]["cold_x"] = {t: None for t in HM_TOKENS}
                     _hmf_say(f"{HMX_TAG} shared copy check FAIL with the cold twin -> incumbent cold half")
                     cok, line = (False, f"{HM_TAG} copy check: skipped: deadline") if late(HM_COPY_DEADLINE_S) \
                         else _hm_copy_check(weights, bank, state, device)
                     say(line)
                 if not cok and any(fon.values()):
-                    # W6-M: a forked T missed the copy check -> re-decide every forked T without forked candidates
-                    # (the serial race's pick, its layer check), then the copy check again.
                     for t in HM_TOKENS:
                         if not fon[t]:
                             continue
@@ -14613,7 +14226,7 @@ def _hm_setup(weights, state, device, t_prepare):
                     for t in HM_TOKENS:
                         if on[t]:
                             on[t], fon[t], why[t] = 0, False, "copy check FAIL"
-    except Exception as e:  # prepare only: never raises, every T keeps master
+    except Exception as e:
         for t in HM_TOKENS:
             on[t], fon[t] = 0, False
             why.setdefault(t, type(e).__name__)
@@ -14628,44 +14241,24 @@ def _hm_setup(weights, state, device, t_prepare):
     tail.extend(notes)
     try:
         tail.extend(_hm_path_lines(state, why, times))
-    except Exception as e:  # never raise from prepare: master everywhere
+    except Exception as e:
         for t in HM_TOKENS:
             on[t], fon[t] = 0, False
         tail.append(f"{HM_TAG} PATH CHOSEN T={HM_TOKENS} = MASTER (summary raised {type(e).__name__}: {str(e)[:200]})")
     try:
         _hmf_final(state, races, time.perf_counter() - t_prepare)
-    except Exception as e:  # never raise from prepare (the flags above stand)
+    except Exception as e:
         _hmf_say(f"{HMF_TAG} final lines raised {type(e).__name__}: {str(e)[:120]}")
     return tail
 
 
-# ---- W6-M: the hot/cold fork in moe's hybrid race (research/wave6-panel2-2026-10-27.md; decode probe 1fc3b489) -----
-# Decode's W6-D measured the H-16 hybrid expert block with the hot (wgmma) and cold (Engine A) halves on two streams and
-# an event join at x0.930 of serial at T=128 and x0.975 at T=256, cache3 bitwise equal; W6-E (hotcold_decode.py _hcf_*)
-# is the decode cell. Here every wgmma-hot H whose serial twin passed the hybrid canary also races FORKED ("H<h>f") in
-# the same race (kernel_fn graphs, read flush, the same draws, rounds, worst-draw rule and margin). Only a wgmma-hot H
-# forks: a Marlin-hot H's cache3 aliases cache1, so its halves are not disjoint. The fork stream and its two events are
-# made here in prepare(), once per device, and held at module level (not in the state: the judge's state copy would
-# otherwise have to copy a Stream); they carry no data, and a captured graph turns them into fork / join edges, so the
-# judge's state copies share them safely. moe_fork_canary (synced, named) runs per T and per code BEFORE any forked
-# timing: a code that fails it does not race. A forked race winner must also beat the serial race's pick (master when no
-# serial H qualifies) in every round by HMF_MARGIN, as W6-E's decode cell does, else the serial pick routes. Any later
-# miss (layer check, copy check) re-decides without forked candidates (the serial race's pick). The decision lines go
-# to HMF_LINES; prepare() prints them last (each < 200 chars).
-# v4x256b (2026-10-28): the fork stream was torch.cuda.Stream(device), a priority-0 pool stream that is the capture
-# stream whenever 32k pool draws separate them (gpunode06: master's fork collapsed to width 1 in most node processes). It
-# is now rt.py's _rt_fork_stream (priority -1, distinct from the current and default capture streams, with an
-# alternate), and _hm_experts forks onto _rt_fork_pick's stream (the alternate when the primary is the current stream).
-# A "[w6m-fork] prepare fork s ..." line after the stream is made and an "end fork s ..." line in the decision lines
-# print both handles, the capture stream's, distinct / CLASH and the pick counters (picks, under capture, alternate).
 CAMPAIGN_HMF = True
 HMF_TAG = "[w6m-fork]"
-HMF_CODES = tuple(HM_WG_HOT) + tuple(c for c in HM_ES_HOT if c in HM_BSMS)  # (-16, -8[, -116]): raced forked as H-16f
-                                 # / H-8f / H-116f (H-16f is also the T=256 winner's twin)
+HMF_CODES = tuple(HM_WG_HOT) + tuple(c for c in HM_ES_HOT if c in HM_BSMS)
 HMF_REPLAYS = 4
-HMF_MARGIN = 1.01               # a forked winner vs the serial pick (master when none), every round
-HMF_LINES = []                   # prepare()-only decision lines, re-printed at the end of prepare()
-_HMF_FK = {}                     # device index -> {"s": fork stream, "e0": fork event, "e1": join event}
+HMF_MARGIN = 1.01
+HMF_LINES = []
+_HMF_FK = {}
 
 
 class _HmfMiss(Exception):
@@ -14701,7 +14294,7 @@ def _hmf_canary(weights, bank, state, device, tokens, h, seed):
     jr = list(_ea_judge_routings(tokens, gen, start, count, device).values())
     rr = dict(_ea_routings(tokens, gen, list(range(start, start + count)), device))
     es1 = state.get("es1") if h in HM_ES_HOT else None
-    errs = lambda: (int(ea["err"][0]), int(state["wg_err"][0]), int(es1["err"][0]) if es1 else 0)  # noqa: E731
+    errs = lambda: (int(ea["err"][0]), int(state["wg_err"][0]), int(es1["err"][0]) if es1 else 0)
     e0 = errs()
     res, keep = [], []
     for label, ids in (("judge-p90", jr[-1]), ("skewed-4hot", rr["skewed-4hot"])):
@@ -14737,7 +14330,7 @@ def _hmf_canary(weights, bank, state, device, tokens, h, seed):
     del keep
     torch.cuda.synchronize()
     good = all(a and b for a, b in res) and e1 == e0
-    yn = lambda k: "/".join("YN"[not v[k]] for v in res)  # noqa: E731
+    yn = lambda k: "/".join("YN"[not v[k]] for v in res)
     return good, (f"{HMF_TAG} moe_fork_canary T={tokens} H{h}f vs H{h}: out+cache3 bitwise eager {yn(0)}, "
                   f"{HMF_REPLAYS} poisoned replays {yn(1)}; err {e0}->{e1}{'' if good else ': FAIL'}")
 
@@ -14750,10 +14343,8 @@ def _hmf_prepare(weights, bank, state, device, t_prepare, ok):
         if not HMF_CODES or state.get("wg_ext") is None:
             raise _HmfMiss("no wgmma path")
         key = device.index if device.index is not None else torch.cuda.current_device()
-        # v4x256b: a dedicated priority -1 stream with a registered alternate (rt.py _rt_fork_stream), not a priority-0
-        # pool stream that can be the capture stream (gpunode06: the pooled fork collapsed to width 1)
         _HMF_FK[key] = {"s": _rt_fork_stream(device), "e0": torch.cuda.Event(), "e1": torch.cuda.Event()}
-        try:  # report only: a print miss never costs the fork
+        try:
             _hmf_say(f"{HMF_TAG} prepare {_rt_fork_line(_HMF_FK[key]['s'])}")
         except Exception as e:
             _hmf_say(f"{HMF_TAG} prepare fork line raised {type(e).__name__}")
@@ -14769,7 +14360,7 @@ def _hmf_prepare(weights, bank, state, device, t_prepare, ok):
                 print(f"{HMF_TAG} LAUNCH moe_fork_canary T={tokens} H{h}f", flush=True)
                 try:
                     good, line = _hmf_canary(weights, bank, state, device, tokens, h, 20261151 + tokens - h)
-                except Exception as e:  # prepare only: this code does not race forked
+                except Exception as e:
                     good, line = False, (f"{HMF_TAG} moe_fork_canary T={tokens} H{h}f raised {type(e).__name__}: "
                                          f"{str(e)[:80]}")
                 print(f"{HMF_TAG} DONE   moe_fork_canary T={tokens} H{h}f (synced)", flush=True)
@@ -14777,7 +14368,7 @@ def _hmf_prepare(weights, bank, state, device, t_prepare, ok):
                 if good:
                     codes.append(h)
             out[tokens] = tuple(codes)
-    except Exception as e:  # prepare only: no forked candidates anywhere
+    except Exception as e:
         why = str(e)[:80] if isinstance(e, _HmfMiss) else f"raised {type(e).__name__}: {str(e)[:80]}"
         _hmf_say(f"{HMF_TAG} no forked candidates ({why})")
         out = {}
@@ -14796,7 +14387,7 @@ def _hmf_report(tokens, per, names, worst, win, swin):
         _hmf_say(f"{HMF_TAG} Q1 T={tokens} worst-round vs master: " + " ".join(f"{n} x{worst[n]:.3f}" for n in names)
                  + f" -> {win or 'master'}")
         rounds = [r for v in per.values() for r in v]
-        med = lambda r, n: _rt_stats(r[n])[0]  # noqa: E731
+        med = lambda r, n: _rt_stats(r[n])[0]
         parts = []
         for n in names:
             if not n.endswith("f"):
@@ -14804,12 +14395,12 @@ def _hmf_report(tokens, per, names, worst, win, swin):
             tw = [med(r, n[:-1]) / max(med(r, n), 1e-3) for r in rounds]
             parts.append(f"{n}/{n[:-1]} x{min(tw):.3f}..x{max(tw):.3f}")
         ref = swin or "master"
-        if win and win.endswith("f") and ref != win[:-1]:  # vs the serial pick when it is not the twin
+        if win and win.endswith("f") and ref != win[:-1]:
             vs = [med(r, ref) / max(med(r, win), 1e-3) for r in rounds]
             parts.append(f"{win}/{ref} x{min(vs):.3f}..x{max(vs):.3f}")
         _hmf_say(f"{HMF_TAG} Q1 T={tokens} fork vs serial twin (worst..best round): "
                  + (", ".join(parts) if parts else "no forked candidate raced") + f"; serial pick {ref}")
-    except Exception as e:  # report only
+    except Exception as e:
         _hmf_say(f"{HMF_TAG} Q1 T={tokens} report raised {type(e).__name__}: {str(e)[:80]}")
 
 
@@ -14823,50 +14414,29 @@ def _hmf_final(state, races, t_now):
         sp = sp or "master"
         rounds = [r for v in (per or {}).values() for r in v]
 
-        def mean(n):  # every draw and round of the race (times[t] keeps one draw per label suffix)
+        def mean(n):
             v = [_rt_stats(r[n])[0] for r in rounds if n in r]
             return sum(v) / len(v) if v else float("nan")
         c, s_ = mean(chosen), mean(sp)
         _hmf_say(f"{HMF_TAG} PATH T={t} = {chosen}{' (FORK)' if fon.get(t) else ''} | serial pick {sp} | Q2 expect "
                  f"judged M={t} row {c - s_:+.1f} us vs eacf0722 (race mean {s_:.1f}->{c:.1f})")
-    for fk in _HMF_FK.values():  # v4x256b: the fork stream vs the capture stream, and how often the alternate was taken
+    for fk in _HMF_FK.values():
         try:
             _hmf_say(f"{HMF_TAG} end {_rt_fork_line(fk['s'])}")
-        except Exception as e:  # report only
+        except Exception as e:
             _hmf_say(f"{HMF_TAG} end fork line raised {type(e).__name__}")
     _hmf_say(f"{HMF_TAG} decision lines end (prepare at {t_now:.1f} s)")
 
 
-# ---- v4x-t256 (2026-10-28, campaign expert-bandwidth): the T=256 hybrid's cold half on a v4x twin -----------------------
-# The routed H-16f fork's cold half (Engine A v4 / v4c on the caller's stream, ~255 us) sets verify_32's makespan. S1
-# (af154932) routed the v4x twins (ea4x_core.py) at T=2..32 and T=128; decode's S2 port (hotcold_decode.py _hcx_cold)
-# routes its T=128 / 256 cold half the same way. Here, after _hm_setup's per-T decision and before the shared copy check
-# (which then replays the final routing): per T in HMX_TOKENS with a wgmma-hot H routed and the cold half on v4, the cold
-# base's canary-clean twins (ea['x_clean'] from _ea4x_stage) (1) canary: the expert block (serial, and forked when the
-# fork is routed) with cache3 poisoned and the twin partials NaN, out and cache3's local rows bitwise = the incumbent's
-# on 3 inputs x 2 runs, twin tickets / err 0 (a miss drops that arm only); (2) one race of kernel_fn graphs (the routed
-# H and fork fixed) inc vs the twins on the 3 judge-style draws, 2 read-flushed rounds, _rt_select per arm at decode's
-# whole-layer rule (HMX_MARGIN / HMX_TIGHT, every round on every draw); (3) v4x256b's route: the qualified arms, s first
-# unless d beats s by > HMX_TIE, each after its own copy check (_hm_copy_check, twin tickets / err 0 after it); the first
-# pass routes. Any miss, raise or deadline keeps the incumbent cold half (cold_x None).
 CAMPAIGN_HMX = True
 HMX_TAG = "[v4x-t256]"
 HMX_TOKENS = (256,)
-HMX_S = 245.0                     # each step (canary, race, copy check) starts only before this many s into prepare()
+HMX_S = 245.0
 HMX_SEED = 20261156
-HMX_MARGIN = 1.005                # decode's whole-layer rule (EAD4X_MARGIN / EAD4X_TIGHT)
+HMX_MARGIN = 1.005
 HMX_TIGHT = 1.003
-HMX_RACE = ("v4xs", "v4cxs", "v4xd", "v4cxd")  # v4x256b: each arm qualifies on its own; s leads (see below)
-HMX_TIE = 0.002                   # v4x256b: d leads only when its worst-round ratio beats s's by more than this
-# v4x256b (2026-10-28): gpunode06 forced the judge route (H-16f, cold v4c cw7), each arm vs inc, 2 replicates: v4cxs
-# x1.016 / x1.019 (about -5 us on the cold half), v4cxd x1.004 / x1.007 (straddling HMX_MARGIN), and the node's ea4x
-# race rejects d in every class while s routes alone; c04363bb's judge race had d 1.018Q / s 1.019Q and routed v4cxd.
-# S1's "d must qualify first" rule therefore keeps the incumbent whenever d misses, and s never routes on its own. Now
-# every clean twin of the cold base takes its own canary (an s miss no longer depends on d, a d miss no longer loses the
-# T) and is qualified on its own against inc (_rt_select, the same HMX_MARGIN / HMX_TIGHT rule every round on every
-# draw). The route tries the qualified arms in order, s first unless d's worst-round ratio beats s's by > HMX_TIE, each
-# after its own _hm_copy_check (twin tickets / err 0 after it); the first that passes routes, a miss falls to the next,
-# and with none the T keeps the incumbent cold half. The shared copy check's fallback (_hm_setup) is unchanged.
+HMX_RACE = ("v4xs", "v4cxs", "v4xd", "v4cxd")
+HMX_TIE = 0.002
 
 
 class _HmxMiss(Exception):
@@ -14922,7 +14492,7 @@ def _hmx_canary(weights, bank, state, device, tokens, h, f, arms, seed):
         ref = _hm_experts(x, lids, tw, align, bank, state, h, fill=HM_JUNK, fork=False, keep=True)
         torch.cuda.synchronize()
         for arm in arms:
-            for run, fk in enumerate((False, f)):  # run 1 serial, run 2 as routed (forked when the fork is on)
+            for run, fk in enumerate((False, f)):
                 if arm in bad:
                     break
                 _ea4x_zero(ea)
@@ -14969,7 +14539,7 @@ def _hmx_cold(weights, bank, state, device, t_prepare):
     def late():
         return time.perf_counter() - t_prepare > HMX_S
 
-    def copy(t, arm):  # cold_x[t] = arm on PASS, None on a miss (raises _HmxMiss)
+    def copy(t, arm):
         if late():
             raise _HmxMiss("copy dl")
         _ea4x_zero(ea)
@@ -15018,17 +14588,17 @@ def _hmx_cold(weights, bank, state, device, t_prepare):
             _, worst, glines = _rt_select(per, "inc", arms, margin=HMX_MARGIN, tight=HMX_TIGHT)
             for ln in glines:
                 print(f"{HMX_TAG} gate {ln}"[:400], flush=True)
-            for a in arms:  # per arm: qualified against inc on its own (every round on every draw)
+            for a in arms:
                 if _rt_select(per, "inc", [a], margin=HMX_MARGIN, tight=HMX_TIGHT)[0]:
                     cand[a[-1]] = (a, worst[a])
 
-            def meds(nm):  # per draw: the mean over rounds of the median (us)
+            def meds(nm):
                 return "/".join(f"{sum(_rt_stats(r[nm])[0] for r in rr) / len(rr):.1f}" for rr in per.values())
             _hmf_say(f"{HMX_TAG} race {'/'.join(per)} us: {txt} | wr "
                      + " ".join(f"{a[-1]} {worst[a]:.3f}{'Q' if a[-1] in cand else ''}" for a in arms)
                      + f" | i {meds('inc')} " + " ".join(f"{a[-1]} {meds(a)}" for a in arms))
             raced = True
-        except Exception as e:  # prepare only: this T keeps the incumbent cold half
+        except Exception as e:
             cx[t], cand = None, {}
             route.append(str(e)[:80] if isinstance(e, _HmxMiss) else f"raised {type(e).__name__}: {str(e)[:60]} -> inc")
             if not raced:
@@ -15037,30 +14607,18 @@ def _hmx_cold(weights, bank, state, device, t_prepare):
         order = _hmx_order(cand)
         if raced and not order:
             route.append("none qualified")
-        for k in order:  # the first qualified arm whose own copy check passes routes; a miss falls to the next
+        for k in order:
             arm, wr = cand[k]
             try:
                 copy(t, arm)
                 route.append(f"{k.upper()}{wr:.3f} ok")
                 break
-            except Exception as e:  # prepare only: this arm does not route
+            except Exception as e:
                 cx[t] = None
                 route.append(f"{k}{wr:.3f} " + (str(e)[:60] if isinstance(e, _HmxMiss) else f"raised {type(e).__name__}"))
                 tidy()
         _hmf_say(f"{HMX_TAG} route {'>'.join(order) or '-'} T{t}: {' '.join(route)} -> cold {cx[t] or 'inc ' + base}; "
                  f"{time.perf_counter() - t0:.1f} s, at {time.perf_counter() - t_prepare:.1f} s")
-# ---- end include rewrite/lib/hotcold_moe.py ----
-# ---- expert-bandwidth X5 S1a: Engine S hot half (moe only; decode never includes it) ----
-# ---- hothalf-wh-a5b-port: decode's routed wh hot half (hothalf-a3-exactn-ring-wh, 44f30364; takemyjob hopper/hh2-1029)
-# plus hh3's wh5ds (takemyjob hopper/hh3-1029 6a33dbf; prefill's landed A5b+D+SC, 9f934846). One module from master's wg
-# text by asserted edits (each target exactly once): wg_kernel<G, V>, V bits 1 = A3 (Engine A dq2 on a word-permuted
-# copy of the wg bank), 2 = exact-N tiles, 4 = R4 register-A ring wait<2> for N >= 48, 8 = A5b (ENC4 codes + packed
-# 7-bit b-8 scales, a second bank copy) + D (per-stage descriptor low word) + SC (split commit below N 48).
-# Arms: D0 = 0 (master's text in this TU, the control), a3 = 1, wh = 7, wh5ds = 14. Built in a non-daemon thread from
-# prepare()'s top; raced after _hm_setup (W6-M race, fork gate, copy check), T=256 only, dispatched only at the hybrid's
-# wg hot half (_hm_experts), never in _moe_wgmma. Route: best isolated pair among arms exact and <= WH_ROUTE vs master
-# and D0 every round (wh5ds also <= WH_5VSWH vs wh), replay 16/16, then the routed kernel_fn T=256 (fork as routed)
-# <= WH_FORK vs master every round and the copy check; any miss, raise or deadline -> master.
 WH_TAG = "[hh-wh]"
 WH_ARMS = (("D0", 0), ("a3", 1), ("wh", 7), ("wh5ds", 14))
 WH_T = 256
@@ -15074,7 +14632,7 @@ WH_REFILLS = 8
 WH_SEED = 20261190
 WH_COUNTS = (129, 113, 97, 81, 65, 49, 33, 17, 140, 100, 70, 40, 24, 56, 88, 120)
 WH_ENC4 = (8, 9, 10, 1, 2, 7, 12, 13, 14, 11, 0, 3, 20, 21, 22, 15, 24, 25, 26, 17, 18, 23, 28, 29, 30, 27, 16, 19, 4, 5,
-           6, 31)  # A4b: bit j of the stored word = bit WH_ENC4[j] of master's word (rgx2.cu ENC4)
+           6, 31)
 
 _WH_CPP = r"""
 #include <torch/extension.h>
@@ -15166,8 +14724,6 @@ __device__ __forceinline__ void dq_stage_a3(const uint8_t* st, int cw, int lane,
 
 """
 
-# Ring hazard (decode's): step j writes slot j % 4 after step j - 1's wait<2> retired every group <= j - 3; the previous
-# stage is released after this stage's 2nd wait<2>; the item ends on wait<0>. V & 8: descriptors as low words (D).
 _WH_RING = r"""  if constexpr ((V & 4) != 0 && NB >= 48) {
   const uint32_t hh_m16 = (V & 8) != 0 ? hh_rt78(KS) : hh_rt16(KS);
   const int hh_g = lane >> 2;
@@ -15306,8 +14862,6 @@ def _wh_src():
 
 
 def _wh_build_bg(name, cpp, src, res):
-    # Background thread: no print, no CUDA call; nice +10 (per thread on Linux, inherited by ninja / nvcc). ptxas -Werror
-    # first (a C75xx serialization warning fails it and is grepped); without C75xx a plain build follows if time allows.
     import re
     t0 = time.perf_counter()
     try:
@@ -15336,7 +14890,6 @@ def _wh_build_bg(name, cpp, src, res):
 
 
 def _wh_start(t0):
-    # prepare()'s first step. TORCH_CUDA_ARCH_LIST = 9.0a for all of prepare(), as es1a / ea6 already set it.
     job = {"res": {}, "th": None, "off": None, "wait": 0.0}
     try:
         import hashlib
@@ -15366,8 +14919,6 @@ def _wh_join(job):
 
 
 def _wh_pair(state, wb, v, sh, bh, nh, routes, size_n, size_k, out, sc=None):
-    # v None: master's dispatched launches (master's module and bank, this state's scratch). Else the wh module's
-    # wg_kernel<G, v> on the A5b bank (v & 8), the A3 permuted bank (v & 1) or master's; sc = the scratch set.
     if v is None:
         _wg_gemm(state, 0, wb["q13"], wb["gs13"], sh, bh, nh, routes, size_n // 64, size_k, state["wg_hs"])
         _wg_gemm(state, 1, wb["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, out)
@@ -15398,7 +14949,7 @@ def _wh_bitperm(w, d):
     return p
 
 
-def _wh_pack(w):  # A5b scale word: fields f = b - 8, f0 bits 4-10, f1 20-26, f2 28-31 + 0-2, f3 12-18
+def _wh_pack(w):
     f0, f1, f2, f3 = (((w >> (8 * i)) & 0xFF) - 8 for i in range(4))
     return (f0 << 4) | (f1 << 20) | (f3 << 12) | ((f2 & 0xF) << 28) | (f2 >> 4)
 
@@ -15409,7 +14960,6 @@ def _wh_unpack(p):
 
 
 def _wh_maps():
-    # (A3's word permutation, A4b's ENC4) as d[s] = destination bit of master bit s; each checked a bijection
     a3 = [0] * 32
     for p in range(4):
         dst = [6 - 3 * p, 7 - 3 * p, 8 - 3 * p, 15 - 3 * p] if p < 3 else [13, 10, 11, 14]
@@ -15429,8 +14979,6 @@ def _wh_i32(w):
 
 
 def _wh_recode(wb, d, pack):
-    # A COPY of the whole wg bank from the weights' bank only: every code word bit-mapped by d; scale words packed (A5b)
-    # or untouched (A3); each chunk checked lossless by the inverse.
     inv = [0] * 32
     for s in range(32):
         inv[d[s]] = s
@@ -15459,8 +15007,6 @@ def _wh_recode(wb, d, pack):
 
 
 def _wh_selftest(device):
-    # Host model of the two dequant front ends on 2^16 random words + every scale pair: A5b's views of ENC4(q) equal
-    # A3's ext_prop of perm(q), and A5b's LOP3 scale on the packed word equals A3's prmt * 16 + 0x77807780.
     a3, e4 = _wh_maps()
     g = torch.Generator(device=device).manual_seed(WH_SEED + 7)
     q = torch.randint(0, 1 << 32, (1 << 16,), generator=g, device=device, dtype=torch.int64)
@@ -15484,8 +15030,6 @@ def _wh_selftest(device):
 
 
 def _wh_inputs(state, device, gen, gcpu, h, ids=None, synth=None):
-    # ids: a router draw; synth r: every expert of residue r mod 4 hot with a WH_COUNTS route count (N 16..128), the
-    # other slots remote. Returns (x, hot align, host route counts).
     if synth is not None:
         ids = torch.arange(32, 32 + TOP_K).repeat(WH_T, 1)
         for j, e in enumerate(range(synth, 32, 4)):
@@ -15529,8 +15073,6 @@ def _wh_time(state, wb, device, x, al, arms):
 
 
 def _wh_replay(state, wb, device, gen, gcpu, h, v, draws):
-    # Graphs (gather + w13 + w2) of arm v on two scratch sets, refilled WH_REFILLS times (judge draws and all-N synthetic
-    # routings alternate), replayed in alternating order: each output bitwise vs master's eager pair; err word clean.
     x0, al0, _ = _wh_inputs(state, device, gen, gcpu, h, ids=draws[0])
     x, al = x0.clone(), [t.clone() for t in al0]
     sb = {"wg_xs": torch.zeros_like(state["wg_xs"]), "wg_hs": torch.zeros_like(state["wg_hs"]),
@@ -15556,8 +15098,6 @@ def _wh_replay(state, wb, device, gen, gcpu, h, v, draws):
 
 
 def _wh_fork(state, bank, device, arms, modes):
-    # kernel_fn graphs at T=256 under the routed H, per hot arm and fork mode ('f' forked, 's' serial), on the ROUTE
-    # draws (same seed), 2 read-flushed rounds each: [{name: median us} per round].
     hm, whk = state["hm"], state["whk"]
     keep = hm["fon"][WH_T]
     gen = torch.Generator().manual_seed(WH_SEED)
@@ -15586,7 +15126,6 @@ def _wh_fmt(vals):
 
 
 def _wh_phase(state, weights, device, t0, job):
-    # After _hm_setup (prepare() only; never raises): any miss leaves state['whk'][256] None (master's hot half).
     whk = state["whk"] = {WH_T: None}
     out, t1, pick, why, cpy = [], time.perf_counter(), None, "", ""
     arms = WH_ARMS
@@ -15747,41 +15286,19 @@ def _wh_phase(state, weights, device, t0, job):
     return out
 
 
-# ---- begin include rewrite/lib/es_core.py ----
-# Engine S, S1a (campaign 2026-10-26-expert-bandwidth, X5; SINGLE-PASS.md section 5 "S1a: hot list only" and section 6;
-# the S1a build spec): the hot half of moe's T = 128 / 256 hybrid on ONE persistent kernel per GEMM, es1_w13 / es1_w2
-# (rewrite/lib/cuda/es_hot.cuh), after Engine B's eb_prep gather. MOE ONLY (decode never includes this file).
-#   chain:  _hm_align (Triton) -> eb_prep (unchanged; _hm_align's local ids, start 0) -> es1_w13 (PDL) -> es1_w2 (PDL)
-#           -> Engine A v4c on the cold ids -> post-norm (hotcold_moe.py _hm_experts, code -116 raced as H-116 / H-116f).
-# What lives here:
-#   - the threaded build (started at prepare() entry, joined by ES1A_JOIN_S) under one fd-1 capture, so ptxas -v and the
-#     C75xx wgmma-serialization notes are read in-process (W3-B's idiom); lines other threads printed meanwhile are
-#     re-printed after the capture ends. The cubin reader (.text sha256 + HGMMA / DEPBAR digest) moved here from
-#     es_probe.py, which now aliases these functions.
-#   - the fail-closed build verdict: any C75xx note, local memory > 0, an HGMMA directly followed by DEPBAR 0x0 (a
-#     serialized wgmma), or maxR > 232 (from the node build whose .text sha256 matches: the cu130 bridge) -> -116 off.
-#   - the launcher glue (tensor maps encoded per call over THIS call's B source), per-state scratch, the weight bank
-#     (Engine B's _eb_repack128 permutation of Engine A's exact-dequant repack: +906 MB, lossless), _es1_check (the named,
-#     synced first launch of S alone and the fp32 canary), _es1_time (S vs wg hot half per judge draw: the kill metric),
-#     and ES1A_LINES (<= 8 lines, printed last in prepare()).
-# Node evidence (takemyjob hopper-probe probes/es1a, gpunode06, 2026-10-27 ~21:00Z, both toolchains): 29 routings exact
-# (rel-L2 <= 1.2e-4 vs fp64, every element within 2 bf16 ulp off rounding ties), eager == graph bitwise, memcheck /
-# synccheck 0 errors at grid 8 and 132; S / wg hot half 0.89 / 0.92 / 0.95 at T = 256 p10 / p50 / p90 (the go / no-go
-# table's "< 1.10: stop and report" row).
 ES1A_TAG = "[es1a]"
-ES1A_CODE = -116                   # hotcold_moe.py HM_ES_HOT: the hybrid with hot experts (> 16 routes) on Engine S
+ES1A_CODE = -116
 ES1A_HOT_ROWS = 16
-ES1A_COSTS = (128, 142, 172, 155)  # stream-K unit cost per bucket N32 t2 / N64 t2 / N128 t2 / N256 t1 (16-clock units;
-                                   # calibrated on gpunode06 from steady-state K-loop clocks per unit)
-ES1A_CAP_T = 256                   # scratch rows for T <= 256 (HM_TOKENS)
-ES1A_JOIN_S = 200.0                # the build thread not joined by then: -116 counts as unbuilt
-ES1A_TIME_DEADLINE_S = 270.0       # no hot-half kill-metric timing starts after this (prepare's limit is 300 s)
-ES1A_MAGIC = 0x45533141            # es1::MAGIC ("ES1A") in err[1]
-ES1A_MAXR = 232                    # the consumer setmaxnreg
-ES1A_WSLOT = 256 * 128             # es1::WSLOT
-ES1A_NODE = {"es1_w13": ("b318211c", 230), "es1_w2": ("02ee0324", 230)}  # node cu130 .text sha256[:8], maxR (es1_sass)
+ES1A_COSTS = (128, 142, 172, 155)
+ES1A_CAP_T = 256
+ES1A_JOIN_S = 200.0
+ES1A_TIME_DEADLINE_S = 270.0
+ES1A_MAGIC = 0x45533141
+ES1A_MAXR = 232
+ES1A_WSLOT = 256 * 128
+ES1A_NODE = {"es1_w13": ("b318211c", 230), "es1_w2": ("02ee0324", 230)}
 ES1A_FUNCS = ("es1_info", "es1_prep", "es1_gemm")
-ES1A_LINES = []                    # prepare()-only, printed last
+ES1A_LINES = []
 ES_OPC = {0x005: "CS2R", 0x007: "SEL", 0x00C: "ISETP", 0x010: "IADD3", 0x011: "LEA", 0x012: "LOP3", 0x016: "PRMT",
           0x019: "SHF", 0x01C: "PLOP3", 0x021: "FADD", 0x024: "IMAD", 0x025: "IMAD", 0x027: "IMAD", 0x02F: "ELECT",
           0x032: "HMUL2", 0x036: "VIADD", 0x03B: "LDSM", 0x03C: "HMMA", 0x048: "VIMNMX", 0x082: "UMOV",
@@ -15791,7 +15308,7 @@ ES_OPC = {0x005: "CS2R", 0x007: "SEL", 0x00C: "ISETP", 0x010: "IADD3", 0x011: "L
           0x188: "STS", 0x192: "MEMBAR", 0x1A7: "SYNCS", 0x1A8: "ATOMG", 0x1B2: "SYNCS", 0x1BA: "UBLKCP",
           0x1C3: "S2UR", 0x1C5: "WARPGROUP", 0x1C6: "FENCE", 0x1C8: "USETMAXREG", 0x1F0: "HGMMA"}
 ES_TOP_OPS = 7
-_ES1_BUILD = {}                    # prepare()-only build handle (thread, result); holds no tensor
+_ES1_BUILD = {}
 
 _ES1_CPP = r"""
 #include <torch/extension.h>
@@ -18026,7 +17543,6 @@ def _es_say(line):
     return line
 
 
-# ---- the build: threaded load_inline under one fd-1 capture (moved from es_probe.py, generalised) --------------------
 def _es_build_all(names, srcs, cpp, functions, flags, deadline_s, t_prepare):
     """Threaded load_inline builds of every (name, src) under one fd-1 capture (W3-B's _wg_diag_build idiom: verbose=True
     lets ninja write the compiler output, ptxas -v included, to fd 1, which points at an anonymous temp file).
@@ -18076,7 +17592,7 @@ def _es_build_all(names, srcs, cpp, functions, flags, deadline_s, t_prepare):
                 results[k] = (None, f"BUILD-TIMEOUT at {deadline_s:.0f} s into prepare", left)
     finally:
         if ex is not None:
-            ex.shutdown(wait=False, cancel_futures=True)  # a straggler keeps compiling; nothing waits for it
+            ex.shutdown(wait=False, cancel_futures=True)
         if saved is not None:
             try:
                 sys.stdout.flush()
@@ -18123,7 +17639,7 @@ def _es_ptxas(text):
             code = c.group(1) if c else "C75??"
             why = re.search(r"serialized\s+(due to .*?)(?:\s+in the function|'|$)", ln)
             text_note = code + " " + (why.group(1)[:70] if why else ln.strip()[:80])
-            owner = fn.group(1) if fn else cur  # a note without a name belongs to the block's kernel
+            owner = fn.group(1) if fn else cur
             if owner:
                 d = info.setdefault(owner, {"regs": -1, "stack": -1, "spill": -1, "c75": [], "notes": []})
                 if code not in d["c75"]:
@@ -18134,7 +17650,6 @@ def _es_ptxas(text):
     return info, notes, seen
 
 
-# ---- the in-prepare cubin reader: W3-C's (worked on the judge in e775df93; es_probe.py's since Gate 0) -------------------
 def _es_elf_sections(b):
     import struct
     if b[:4] != b"\x7fELF" or b[4] != 2 or b[5] != 1:
@@ -18145,7 +17660,7 @@ def _es_elf_sections(b):
     stro = hdrs[shstrndx][4]
     out = {}
     for name, typ, _fl, _ad, off, size in hdrs:
-        if typ == 8:  # SHT_NOBITS: no file bytes
+        if typ == 8:
             continue
         e = b.index(b"\0", stro + name)
         out[b[stro + name:e].decode("latin-1")] = (off, size)
@@ -18186,7 +17701,7 @@ def _es_lz4(src, n_out):
         st = len(out) - off
         if ml <= off:
             out += out[st:st + ml]
-        else:  # overlapping match: the last `off` bytes repeat
+        else:
             pat = bytes(out[st:])
             out += (pat * (ml // off + 1))[:ml]
     return bytes(out[:n_out])
@@ -18236,7 +17751,7 @@ def _es_texts(path, names):
     with open(path, "rb") as f:
         so = f.read()
     if so[:4] == b"\x7fELF" and ".nv_fatbin" not in _es_elf_sections(so):
-        cubins, notes = [so], []  # a bare cubin
+        cubins, notes = [so], []
     else:
         cubins, notes = _es_cubins(so)
     out = {}
@@ -18289,7 +17804,6 @@ def _es_digest(text):
     return hashlib.sha256(text).hexdigest()[:8], d, names
 
 
-# ---- S1a: build, verdict, state ----------------------------------------------------------------------------------------
 def _es1_build_start(t_prepare):
     """prepare() entry: start the S module's build in a thread (it runs while master's / Engine A's setups build their own
     modules). TORCH_CUDA_ARCH_LIST is set to 9.0a here for the rest of prepare() (every module this submission builds is
@@ -18308,7 +17822,7 @@ def _es1_build_start(t_prepare):
         try:
             _ES1_BUILD["result"] = _es_build_all([name], [_ES1_SRC], _ES1_CPP, ES1A_FUNCS, flags,
                                                  ES1A_JOIN_S, t_prepare)
-        except Exception as e:  # prepare only
+        except Exception as e:
             _ES1_BUILD["result"] = ([(None, f"build thread raised {type(e).__name__}: {str(e)[:120]}", 0.0)], "",
                                     "", 0.0)
 
@@ -18328,7 +17842,7 @@ def _es1_build_join(t_prepare):
         return None, f"build not joined by {ES1A_JOIN_S:.0f} s", []
     results, text, note, wall = _ES1_BUILD["result"]
     ext, err, sec = results[0]
-    for ln in text.splitlines():  # the main thread's own lines, captured while the build ran
+    for ln in text.splitlines():
         if ln.startswith("[") and len(ln) > 1 and ln[1].isalpha() and "ptxas" not in ln:
             print(ln, flush=True)
     if ext is None:
@@ -18585,7 +18099,7 @@ def _es1_setup(weights, bank, state, device, t_prepare):
             state.pop("es1", None)
             return f"es1 check: {why}"[:200]
         return None
-    except Exception as e:  # prepare only
+    except Exception as e:
         state.pop("es1", None)
         ES1A_LINES.append(_es_say(f"{ES1A_TAG} setup raised {type(e).__name__}: {str(e)[:150]} -> OFF"))
         return f"es1 setup {type(e).__name__}"
@@ -18613,4 +18127,485 @@ def _es1_final(state, weights, bank, device, t_prepare):
         route = f"{ES1A_TAG} route lines raised {type(e).__name__}"
     keep = ES1A_LINES[:8 - len(tl) - 1] + tl + [route]
     ES1A_LINES[:] = [ln[:199] for ln in keep[:8]]
-# ---- end include rewrite/lib/es_core.py ----
+CAMPAIGN_EAE = True
+EAE_TAG = "[ea-enc]"
+EAE_JOIN_S = 220.0
+EAE_END_S = 255.0
+EAE_RACE_S = 20.0
+EAE_BAR = 0.98
+EAE_ROUNDS = 5
+EAE_REPS = 15
+EAE_SEED = 20261099
+EAE_T = (1, 8, 16, 32, 128, 256)
+EAE_PERM = (3, 4, 5, 10, 11, 9, 6, 7, 8, 12, 13, 14, 16, 17, 18, 15, 19, 20, 21, 26, 27, 25, 22, 23, 24, 28, 29, 30, 0,
+            1, 2, 31)
+
+_EAE_COMMON = r"""
+// ea-enc: A4b views of the recoded word (pair I's e2m1 bits on {6,7,8,15,22,23,24,31}); rtv(n, v) = v, opaque to ptxas
+template <int I>
+__device__ __forceinline__ uint32_t ext_a4b(uint32_t q) {
+  if constexpr (I == 0) return q & 0x81C081C0u;
+  else if constexpr (I == 1) return (q << 6) & 0x81C081C0u;
+  else if constexpr (I == 2) return __funnelshift_l(q, q, 10) & 0x81C081C0u;
+  else return ((q << 4) & 0x81808180u) | ((q >> 4) & 0x00400040u);
+}
+__device__ __forceinline__ uint32_t rtv(int n, uint32_t v) {
+  uint32_t z;
+  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
+  return v << z;
+}
+"""
+_EAE_CONSUME = r"""
+// ea-enc consume: A4b codes; DQ 3 dq2's paired scale decode, DQ 4 A5b words (rec + 4096 + (g * 4 + kq) * 16; odd steps
+// on rotl 8). NT 1: consume's B (XB 0 ldmatrix.x2 per step, XB 1 the X1 preload), NT 2: consume2's two n8 tiles.
+template <int DQ, int XB, int NT>
+__device__ __forceinline__ void consume_e(const uint8_t* rec, uint32_t xb, int lane, int n, float (&acc)[NT][2][4]) {
+  const int g = lane >> 2;
+  const uint32_t m16 = rt16(n);
+  const uint32_t m78 = rtv(n, 0x78007800u);
+#pragma unroll
+  for (int kq = 0; kq < 4; ++kq) {
+    const uint4 c0 = *reinterpret_cast<const uint4*>(rec + (kq * 32 + lane) * 16);
+    const uint4 c1 = *reinterpret_cast<const uint4*>(rec + ((4 + kq) * 32 + lane) * 16);
+    uint32_t sw[4];
+    if constexpr (DQ == 4) {
+      const uint4 p = *reinterpret_cast<const uint4*>(rec + 4096 + (g * 4 + kq) * 16);
+      sw[0] = p.x; sw[1] = p.y; sw[2] = p.z; sw[3] = p.w;
+    } else {
+      const uint2 s0 = *reinterpret_cast<const uint2*>(rec + 4096 + g * 32 + kq * 8);
+      const uint2 s1 = *reinterpret_cast<const uint2*>(rec + 4096 + (g + 8) * 32 + kq * 8);
+      sw[0] = s0.x; sw[1] = s0.y; sw[2] = s1.x; sw[3] = s1.y;
+    }
+    uint32_t bk[8][2];
+    if constexpr (XB == 1 && NT == 1) {
+#pragma unroll
+      for (int p = 0; p < 4; ++p)
+        ldsm_x4(xb + static_cast<uint32_t>((kq * 8 + 2 * p) * 32), bk[2 * p][0], bk[2 * p][1], bk[2 * p + 1][0],
+                bk[2 * p + 1][1]);
+    }
+    const uint32_t qg[4] = {c0.x, c0.y, c0.z, c0.w};
+    const uint32_t qu[4] = {c1.x, c1.y, c1.z, c1.w};
+#pragma unroll
+    for (int wd = 0; wd < 4; ++wd) {
+#pragma unroll
+      for (int bsel = 0; bsel < 2; ++bsel) {
+        const int j = wd * 2 + bsel;
+        uint32_t sg;
+        if constexpr (DQ == 4) {
+          const uint32_t w = (j & 1) ? __byte_perm(sw[j >> 1], sw[j >> 1], 0x2103u) : sw[j >> 1];
+          asm("lop3.b32 %0, %1, %2, %3, 0xEA;\n" : "=r"(sg) : "r"(w), "n"(0x07F007F0), "r"(m78));
+        } else {
+          sg = scale_pair_imad_rt(j < 4 ? sw[0] : sw[1], j < 4 ? sw[2] : sw[3], j & 3, m16);
+        }
+        uint32_t a[4];
+        if (bsel == 0) {
+          a[0] = mul_bf16x2_h<0>(ext_a4b<0>(qg[wd]), sg);
+          a[2] = mul_bf16x2_h<0>(ext_a4b<1>(qg[wd]), sg);
+          a[1] = mul_bf16x2_h<1>(ext_a4b<0>(qu[wd]), sg);
+          a[3] = mul_bf16x2_h<1>(ext_a4b<1>(qu[wd]), sg);
+        } else {
+          a[0] = mul_bf16x2_h<0>(ext_a4b<2>(qg[wd]), sg);
+          a[2] = mul_bf16x2_h<0>(ext_a4b<3>(qg[wd]), sg);
+          a[1] = mul_bf16x2_h<1>(ext_a4b<2>(qu[wd]), sg);
+          a[3] = mul_bf16x2_h<1>(ext_a4b<3>(qu[wd]), sg);
+        }
+        if constexpr (NT == 2) {
+          uint32_t b0, b1, b2, b3;
+          ldsm_x4(xb + static_cast<uint32_t>((kq * 8 + j) * 32), b0, b1, b2, b3);
+          mma16816(acc[0][bsel], a, b0, b1);
+          mma16816(acc[1][bsel], a, b2, b3);
+        } else if constexpr (XB == 1) {
+          mma16816(acc[0][bsel], a, bk[j][0], bk[j][1]);
+        } else {
+          uint32_t b0, b1;
+          ldsm_x2(xb + static_cast<uint32_t>((kq * 8 + j) * 32), b0, b1);
+          mma16816(acc[0][bsel], a, b0, b1);
+        }
+      }
+    }
+  }
+}
+
+"""
+_EAE_M16 = "  const uint32_t m16 = rt16(T);  // L4: run-time 16 (dq2 only; dead for DQ 1)\n"
+
+
+def _eae_rep(s, a, b, n=1):
+    if s.count(a) != n:
+        raise RuntimeError(f"ea-enc anchor x{s.count(a)}: {a[:60]!r}")
+    return s.replace(a, b)
+
+
+def _eae_dev(src):
+    """master's Engine A text + _EAE_COMMON (ea_common), consume_e before eak::consume, and the DQ >= 3 branches of
+    consume and (when present) eak3::consume2; every other kernel line unchanged."""
+    src = _eae_rep(src, "}  // namespace ea\n", _EAE_COMMON + "}  // namespace ea\n")
+    a = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
+    src = _eae_rep(src, a, _EAE_CONSUME + a)
+    src = _eae_rep(src, _EAE_M16, _EAE_M16 + "  if constexpr (DQ >= 3) {\n    consume_e<DQ, XB, 1>(rec, xb, lane, T, "
+                   "reinterpret_cast<float (&)[1][2][4]>(acc));\n    return;\n  }\n")
+    a = _EAE_M16.replace("(T)", "(n)")
+    if a in src:
+        src = _eae_rep(src, a, a + "  if constexpr (DQ >= 3) {\n    eak::consume_e<DQ, 0, 2>(rec, xb, lane, n, acc);\n"
+                       "    return;\n  }\n")
+    return src
+
+
+def _eae_src4x():
+    """the v4x twin module with only E instances: <3, false> (E4) and <4, false> (E5, pdl bit 4096) in place of
+    master's <2, false> / <2, true>."""
+    src = _eae_dev(_ea4x_source())
+    for kn in ("w13", "w2"):
+        k = f"eak4x::ea4x_{kn}_kernel<"
+        for a, b in (("(r, {}2, false>)", "(r, {}3, false>)"), ("(r, {}2, true>)", "(r, {}4, false>)"),
+                     ("(&cfg, {}2, false>", "(&cfg, {}3, false>"), ("(&cfg, {}2, true>", "(&cfg, {}4, false>")):
+            src = _eae_rep(src, a.format(k), b.format(k))
+    return _eae_rep(src, "(pdl & 256) != 0\n      ?", "(pdl & 4096) != 0\n      ?", 2)
+
+
+def _eae_src6():
+    """the FAST v6 module with only E instances: ea6_kernel<., ., 2, true, 3> (E4) / <., ., 2, true, 4> (E5, flags bit
+    4096) in place of master's MINB 2 / 1 and FAST ones."""
+    src = _eae_dev("#define EA6_FAST 1\n" + _ea6_source())
+    src = _eae_rep(src, "template <bool W13, int D, int MINB, bool FAST = false>\n",
+                   "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2>\n")
+    src = _eae_rep(src, "eak::consume<2, 1>(ring", "eak::consume<EQ, 1>(ring")
+    for w, d in (("true", "D13"), ("false", "D2")):
+        k = f"eak6::ea6_kernel<{w}, eak6::{d}, "
+        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>")
+        src = _eae_rep(src, f"    fn = &{k}2, true>;\n", "")
+        src = _eae_rep(src, f"(r, {k}2>, {w})", f"(r, {k}2, true, 3>, {w})")
+        src = _eae_rep(src, f"(r, {k}1>, {w})", f"(r, {k}2, true, 4>, {w})")
+        src = _eae_rep(src, f"  ea6_one_info(r, {k}2, true>, {w});\n", "")
+    return src
+
+
+def _eae_start(t0):
+    """prepare()'s first step: each module in its own non-daemon thread (TORCH_CUDA_ARCH_LIST 9.0a, as the others)."""
+    import hashlib
+    import threading
+    job = {"th": [], "res": {}, "err": []}
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+    for key, cpp, mk, fns in (("4x", _EA4X_CPP, _eae_src4x, _EA4X_FNS), ("6", _EA6_CPP, _eae_src6, _EA6_FNS)):
+        try:
+            src = mk()
+            name = f"okc_eaenc_{key}_" + hashlib.sha256((cpp + src).encode()).hexdigest()[:10]
+
+            def run(key=key, name=name, cpp=cpp, src=src, fns=fns):
+                try:
+                    job["res"][key] = _rt_build(EAE_TAG, name, cpp, src, fns)
+                except BaseException as e:
+                    job["res"][key] = (None, f"thread {type(e).__name__}: {str(e)[:100]}", 0.0)
+
+            th = threading.Thread(target=run, name=f"eaenc-{key}", daemon=False)
+            th.start()
+            job["th"].append(th)
+        except Exception as e:
+            job["err"].append(f"{key} source {type(e).__name__}: {str(e)[:100]}")
+    return job
+
+
+def _eae_recode(wr, a5b):
+    """(A4b copy, A4b + A5b copy or None) of a bank (records of 4608 B: 4096 code bytes, 16 rows x 32 scale bytes):
+    every code word under EAE_PERM; A5b per (g, kq) four words at 4096 + (g * 4 + kq) * 16 + 4 m of fields b - 8:
+    (g, 2m) @ 4-10, (g+8, 2m) @ 20-26, (g, 2m+1) @ 28-31,0-2, (g+8, 2m+1) @ 12-18 (encb.py's _encb_recode)."""
+    wr = wr.view(-1)
+    nrec = wr.numel() // 4608
+    o3 = torch.empty_like(wr)
+    o4 = torch.empty_like(wr) if a5b else None
+    for r0 in range(0, nrec, 8192):
+        n = min(nrec, r0 + 8192) - r0
+        raw = wr[r0 * 4608:(r0 + n) * 4608]
+        src = raw.view(torch.int32).view(n, 1152).to(torch.int64) & 0xFFFFFFFF
+        codes = src[:, :1024]
+        o = torch.zeros_like(codes)
+        for j, p in enumerate(EAE_PERM):
+            o |= ((codes >> p) & 1) << j
+        sws = [(o3, src[:, 1024:])]
+        if a5b:
+            b = raw.view(n, 4608)[:, 4096:].to(torch.int64) - 8
+            b = b.view(n, 2, 8, 4, 4, 2)
+            f0, f1, f2, f3 = b[:, 0, ..., 0], b[:, 1, ..., 0], b[:, 0, ..., 1], b[:, 1, ..., 1]
+            sws.append((o4, ((f0 << 4) | (f1 << 20) | (f3 << 12) | (((f2 << 28) | (f2 >> 4)) & 0xFFFFFFFF)).reshape(n, 128)))
+        for dst, sw in sws:
+            full = torch.cat([o, sw], 1)
+            full = torch.where(full >= 2 ** 31, full - 2 ** 32, full).to(torch.int32)
+            dst[r0 * 4608:(r0 + n) * 4608].view(torch.int32).copy_(full.reshape(-1))
+        del src, codes, o, sws, full
+    return o3, o4
+
+
+def _eae_pair(ea, x, ids, h, lid, y, T, start, count, bits, dq=0, g2=None):
+    """The v4x twins' K1 + K2 on their ws / tickets / err: dq 0 master's module and bank (ea['ext4x'], 'w13r' / 'w2r'),
+    3 / 4 the ea-enc module on its A4b / A4b + A5b copy (pdl bit 4096 = E5). K1 gets bits, K2 ea['pdl'] | bits."""
+    kx, w13, w2 = (ea["exte"], ea[f"w13e{dq}"], ea[f"w2e{dq}"]) if dq else (ea["ext4x"], ea["w13r"], ea["w2r"])
+    b = bits | (4096 if dq == 4 else 0)
+    kx.ea4x_w13(x, ids, w13, ea["gs13"], h, lid, ea["ws13x"], ea["tk13x"], ea["errx"], T, start, count, ea["grid"],
+                ea["dq"], b)
+    kx.ea4x_w2(h, ids, w2, ea["gs2"], y, ea["ws2x"], ea["tk2x"], ea["errx"], T, start, count,
+               ea["grid"] if g2 is None else g2, ea["dq"], ea["pdl"] | b)
+
+
+def _eae_xcore(base, dq):
+    bits = EA4X_ARMS[base] | (4096 if dq == 4 else 0)
+
+    def core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, poison=False):
+        return _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13,
+                                 ("ea4x_w13", "ea4x_w2"), (f"w13e{dq}", f"w2e{dq}"), bits, "exte", "x", poison)
+    return core
+
+
+def _eae_t1core(base, e1, e2):
+    def core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, dbg=None, scratch=None):
+        return _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13, 1, dbg, scratch,
+                                 EA6F_ARMS[base], (e1, e2))
+    return core
+
+
+_EAE_CORES = {**{f"{b}:e{d}": _eae_xcore(b, d) for b, v in EA4X_ARMS.items() if not v & 256 for d in (3, 4)},
+              **{f"{b}:e{p}{q}": _eae_t1core(b, p, q) for b in EA6F_ARMS for p in (0, 3, 4) for q in (0, 3, 4) if p or q}}
+
+
+def _eae_base(state, T):
+    """(kind, base) of T's master route when E can mirror it ('t1' FAST v6 K1 + K2, 'x' a v4x s twin, 'cold' the
+    T = 256 hybrid's v4x s cold half), else (None, why); kernel_fn's branch order."""
+    ea, hm, eb = state.get("ea") or {}, state.get("hm") or {}, state.get("eb")
+    if eb is not None and EB_MIN_T <= T <= EB_MAX_T and eb["cell"].get(EB_B256_MIN_T if T >= EB_B256_MIN_T else EB_MIN_T, 0):
+        return None, "Engine B route"
+    hon = (hm.get("on") or {}).get(T, 0)
+    if T == 256:
+        xa = (hm.get("cold_x") or {}).get(T)
+        ok = hon < 0 and xa in EA4X_ARMS and not EA4X_ARMS[xa] & 256
+        return ("cold", xa) if ok else (None, f"cold half {hon}/{xa}")
+    if hon:
+        return None, "hybrid route"
+    b = (ea.get("on") or {}).get(T)
+    if T == 1:
+        return ("t1", b) if EA6F_ARMS.get(b, 0) & 3 == 3 else (None, f"route {b} not FAST K1+K2")
+    return ("x", b) if b in EA4X_ARMS and not EA4X_ARMS[b] & 256 else (None, f"route {b} not a v4x s twin")
+
+
+def _eae_set(state, kind, T, base, arm):
+    if kind == "cold":
+        state["hm"].setdefault("cold_e", {})[T] = int(arm or 0)
+    else:
+        state["ea"]["on"][T] = f"{base}:e{arm}" if arm else base
+
+
+def _eae_eq(a, b):
+    """torch.equal with NaN positions required equal (poisoned rows nothing writes stay NaN in both)."""
+    if a.shape != b.shape:
+        return False
+    m = torch.isnan(a)
+    return bool(torch.equal(m, torch.isnan(b))) and bool(torch.equal(a[~m], b[~m]))
+
+
+def _eae_hy(state, kind, T, base, data, arm, cold):
+    """(h, y) of the arm's Engine A kernels on NaN-poisoned buffers (T = 1: the whole v6 path, which also gives out)."""
+    ea = state["ea"]
+    bank = state["banks"][(0, 32)]
+    x, ids = data["hidden_states"], data["topk_ids"]
+    nan = float("nan")
+    if kind == "t1":
+        e = (int(arm[0]), int(arm[1])) if arm else (0, 0)
+        h = torch.full((32, 1, ea["inter"]), nan, dtype=torch.bfloat16, device=x.device)
+        y = torch.full((TOP_K, x.shape[1]), nan, dtype=torch.bfloat16, device=x.device)
+        _ea6_forward_core(ea, x, ids, data["topk_weights"], bank["start"], bank["count"], state["post_norm_w"], None,
+                          0, 1, None, (h, y), EA6F_ARMS[base], e)
+        return h, y
+    h = torch.full((T * TOP_K, ea["inter"]), nan, dtype=torch.bfloat16, device=x.device)
+    y = torch.full((T * TOP_K, x.shape[1]), nan, dtype=torch.bfloat16, device=x.device)
+    lid = torch.empty((T, TOP_K), dtype=torch.int32, device=x.device)
+    if kind == "cold":
+        _eae_pair(ea, x, cold, h, lid, y, T, 0, bank["count"], EA4X_ARMS[base], int(arm or 0))
+    else:
+        _eae_pair(ea, x, ids, h, lid, y, T, bank["start"], bank["count"], EA4X_ARMS[base], int(arm or 0),
+                  ea.get("g2_t", {}).get(T, ea["grid"]))
+    return h, y
+
+
+def _eae_class(state, device, T, kind, base, arms, gen, hidden):
+    """One judged T: per draw (p10 / p50 / p90; judge routings at 128 / 256) exact h / y (poisoned) and kernel_fn out
+    (eager and after the timed replays) vs master, then EAE_ROUNDS interleaved read-flushed rounds of kernel_fn graphs
+    (+ at 256 the isolated cold half), err / tickets after timing. Returns ({arm: exact}, {arm: [E/m per round]},
+    {arm: [cold E/m]}). Routes restored to master."""
+    ea = state["ea"]
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    exact = {a: True for a in arms}
+    rat = {a: [] for a in arms}
+    crat = {a: [] for a in arms}
+    for lab, ids in _ea4x_draws(T, gen, start, count, device):
+        data = _ea6_data(bank, ids, gen, device, hidden)
+        cold = None
+        if kind == "cold":
+            hm = state["hm"]
+            cold = _hm_align(data["topk_ids"], hm["ls"], hm["on"][T], count)[1][6]
+        ks = [k for k in ("tk13x", "tk2x", "errx", "err") if k in ea]
+        for k in ks:
+            ea[k].zero_()
+        _eae_set(state, kind, T, base, None)
+        ref = kernel_fn(data, state).clone()
+        hy0 = _eae_hy(state, kind, T, base, data, None, cold)
+        graphs, outs, iso = {}, {}, {}
+        for a in (None,) + tuple(arms):
+            _eae_set(state, kind, T, base, a)
+            try:
+                if a is not None:
+                    o = kernel_fn(data, state)
+                    hy = _eae_hy(state, kind, T, base, data, a, cold)
+                    exact[a] = exact[a] and _eae_eq(o, ref) and all(_eae_eq(p, q) for p, q in zip(hy, hy0))
+                graphs[a], outs[a] = _rt_graph(lambda: kernel_fn(data, state))
+            finally:
+                _eae_set(state, kind, T, base, None)
+            if cold is not None:
+                h3 = torch.empty((T * TOP_K, ea["inter"]), dtype=torch.bfloat16, device=device)
+                y3 = torch.empty((T * TOP_K, hidden), dtype=torch.bfloat16, device=device)
+                l3 = torch.empty((T, TOP_K), dtype=torch.int32, device=device)
+                iso[("c", a)] = _rt_graph(lambda a=a, h3=h3, y3=y3, l3=l3: _eae_pair(
+                    ea, data["hidden_states"], cold, h3, l3, y3, T, 0, count, EA4X_ARMS[base], int(a or 0)))[0]
+        res = _rt_time({**graphs, **iso}, device, reps=EAE_REPS, rounds=EAE_ROUNDS)
+        torch.cuda.synchronize()
+        sums = [int(ea[k].sum()) for k in ks]
+        for a in arms:
+            exact[a] = exact[a] and _eae_eq(outs[a], ref) and not any(sums)
+            for r in res:
+                rat[a].append(_rt_stats(r[a])[0] / max(_rt_stats(r[None])[0], 1e-3))
+                if cold is not None:
+                    crat[a].append(_rt_stats(r[("c", a)])[0] / max(_rt_stats(r[("c", None)])[0], 1e-3))
+        del graphs, outs, iso, res
+    return exact, rat, crat
+
+
+def _eae_lab(a):
+    """arm label: '3' E4, '4' E5; T = 1 'pq' K1 / K2 (m = master's kernel)."""
+    n = {"0": "m", "3": "E4", "4": "E5"}
+    return n[a] if len(a) == 1 else f"{n[a[0]]}/{n[a[1]]}"
+
+
+def _eae_rs(v):
+    return f"{sorted(v)[len(v) // 2]:.3f}[{min(v):.3f},{max(v):.3f}]" if v else "-"
+
+
+def _eae_info(ext, w):
+    """[(ok, regs, lmem, occ)] per instance (K1 E4, K1 E5, K2 E4, K2 E5) from ea4x_info (w 5) / ea6_info (w 6)."""
+    v = [int(t) for t in (ext.ea4x_info() if w == 5 else ext.ea6_info())]
+    return [(v[w * i], v[w * i + 1], v[w * i + 2], v[w * i + w - 1]) for i in range(4)]
+
+
+def _eae_off(state):
+    ea, hm = state.get("ea") or {}, state.get("hm") or {}
+    for t, v in list((ea.get("on") or {}).items()):
+        if isinstance(v, str) and ":e" in v:
+            ea["on"][t] = v.split(":e")[0]
+    hm.pop("cold_e", None)
+    for k in ("exte", "ext6e", "w13e3", "w2e3", "w13e4", "w2e4"):
+        ea.pop(k, None)
+
+
+def _eae_phase(state, weights, device, t0, job):
+    """The [ea-enc] block (<= ~1.5 KB). Never raises; any failure leaves every route on master."""
+    L = []
+    try:
+        _eae_run(state, weights, device, t0, job, L)
+    except Exception as e:
+        _eae_off(state)
+        L.append(f"{EAE_TAG} raised {type(e).__name__}: {str(e)[:150]} -> master everywhere")
+    return L
+
+
+def _eae_run(state, weights, device, t0, job, L):
+    tw = time.perf_counter()
+    for th in job["th"]:
+        th.join(max(0.0, EAE_JOIN_S - (time.perf_counter() - t0)))
+    wait = time.perf_counter() - tw
+    res = {k: v for k, v in job["res"].items() if not any(t.name == f"eaenc-{k}" and t.is_alive() for t in job["th"])}
+    ext4, ext6 = (res.get("4x") or (None,))[0], (res.get("6") or (None,))[0]
+    bl = ", ".join(f"{k} " + (f"{res[k][2]:.0f}s" + ("" if res[k][0] is not None else f" FAIL {str(res[k][1])[:60]}")
+                              if k in res else f"not joined by {EAE_JOIN_S:.0f}s") for k in ("4x", "6"))
+    L.append(f"{EAE_TAG} build {bl}{'; ' + '; '.join(job['err']) if job['err'] else ''} (bg from 0s), join wait "
+             f"{wait:.1f}s, phase at {time.perf_counter() - t0:.0f}s")
+    ea = state.get("ea")
+    if ea is None or ea.get("dq") != 2 or (ext4 is None and ext6 is None):
+        L.append(f"{EAE_TAG} PATH CHOSEN all T = master (no E module / Engine A dq {None if ea is None else ea.get('dq')})")
+        return
+    at, ok = [], {}
+    for key, ext, w, need in (("4x", ext4, 5, "ext4x"), ("6", ext6, 6, "ext6")):
+        if ext is None or ea.get(need) is None:
+            continue
+        rows = _eae_info(ext, w)
+        at.append(f"{key} " + " ".join(f"{n}{r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4 ", "K1e5 ", "K2e4 ", "K2e5 "), rows)))
+        for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
+            ok[(key, kk, dq)] = bool(rows[i][0]) and rows[i][3] >= 1
+    t = time.perf_counter()
+    lo, hi, bad = 255, 0, 0
+    for k in ("w13r", "w2r"):
+        s = ea[k].view(-1, 4608)[:, 4096:]
+        lo, hi = min(lo, int(s.min())), max(hi, int(s.max()))
+        bad += int(((s < 0x08) | (s > 0x7E)).sum())
+    e5 = bad == 0
+    for k in ("w13", "w2"):
+        ea[f"{k}e3"], o4 = _eae_recode(ea[f"{k}r"], e5)
+        if e5:
+            ea[f"{k}e4"] = o4
+    torch.cuda.synchronize()
+    mb = sum(ea[k].numel() for k in ("w13e3", "w2e3", "w13e4", "w2e4") if k in ea) / 1e6
+    ea["exte"], ea["ext6e"] = ext4, ext6
+    L.append(f"{EAE_TAG} regs/lmem/occ {'; '.join(at)}; recode {time.perf_counter() - t:.1f}s {mb:.0f}MB; scales "
+             f"0x{lo:02X}..0x{hi:02X}, {bad} outside 0x08..0x7E -> E5 {'on' if e5 else 'OFF'}")
+    gen = torch.Generator().manual_seed(EAE_SEED)
+    hidden = weights["w2"].shape[1]
+    tr, picks, why, txt = time.perf_counter(), {}, {}, []
+    for T in EAE_T:
+        kind, base = _eae_base(state, T)
+        if kind is None:
+            why[T] = base
+            continue
+        if time.perf_counter() - tr > EAE_RACE_S or time.perf_counter() - t0 > EAE_END_S:
+            why[T] = "race cap / deadline"
+            continue
+        dqs = (3, 4) if e5 else (3,)
+        if kind == "t1":
+            arms = [f"{p}{q}" for p in (0,) + dqs for q in (0,) + dqs if (p or q) and (not p or ok.get(("6", "K1", p)))
+                    and (not q or ok.get(("6", "K2", q)))]
+        else:
+            arms = [str(d) for d in dqs if ok.get(("4x", "K1", d)) and ok.get(("4x", "K2", d))]
+        if not arms:
+            why[T] = "no admitted E instance"
+            continue
+        ex, rat, crat = _eae_class(state, device, T, kind, base, arms, gen, hidden)
+        good = {a: max(rat[a]) for a in arms if ex[a] and rat[a] and max(rat[a]) <= EAE_BAR}
+        txt.append(f"T={T} {base}: " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
+                   + (" | cold iso " + " ".join(f"{_eae_lab(a)} {_eae_rs(crat[a])}" for a in arms) if crat[arms[0]] else ""))
+        if good:
+            a = min(good, key=lambda k: sorted(rat[k])[len(rat[k]) // 2])
+            picks[T] = (kind, base, a)
+        else:
+            nb = [a for a in arms if not ex[a]]
+            why[T] = (f"not exact {','.join(map(_eae_lab, nb))}" if len(nb) == len(arms) else
+                      f"E/m>{EAE_BAR} in a round, best worst {min(max(rat[a]) for a in arms if rat[a]):.3f}")
+    for T, (kind, base, a) in picks.items():
+        _eae_set(state, kind, T, base, a)
+    used = {int(c) for _, _, a in picks.values() for c in a if c != "0"}
+    for d in (3, 4):
+        if d not in used:
+            ea.pop(f"w13e{d}", None)
+            ea.pop(f"w2e{d}", None)
+    if picks:
+        gen2 = torch.Generator().manual_seed(EAE_SEED + 1)
+        bank = state["banks"][(0, 32)]
+        cp = _wg_copy_tree(state)
+        good = True
+        for T in picks:
+            d = _ea6_data(bank, _ea4x_draws(T, gen2, bank["start"], bank["count"], device)[1][1], gen2, device, hidden)
+            good = good and _eae_eq(kernel_fn(d, cp), kernel_fn(d, state))
+        del cp
+        if not good:
+            _eae_off(state)
+            why.update({T: "state-copy check FAILED" for T in picks})
+            picks = {}
+    for ln in txt:
+        L.append(f"{EAE_TAG} {ln}")
+    L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
+        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
+        + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
