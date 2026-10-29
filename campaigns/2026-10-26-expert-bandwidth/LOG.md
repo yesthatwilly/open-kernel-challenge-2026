@@ -2645,3 +2645,10 @@ with the operator's go-ahead.
 
 ## 2026-10-29 2256Z — owner: subagents may run gpunode06 directly (allow rules added); keep GPUs 1/3/4/5/6 busy on expert-block work ~14 h
 - Relayed from the owner's openclaw session (owner-approved 22:55Z): three allow rules in .claude/settings.local.json (hopper-probe run gpunode06 *). GPUs 1/3/4/5/6 only (never 0/2/7). Refusals still happening get the exact command + refusal logged here. openclaw checks gpunode06 every 30 min.
+
+## 2026-10-29 2257Z — five expert-block lanes on GPUs 1/3/4/5/6
+- GPU 1: decode stack build (Engine A encodings + wh5ds + T=16 pin) may validate on the node when built.
+- GPU 3: ea-enc2 (next Engine A consume-loop cut beyond E4/E5; agent now runs its own bundle).
+- GPU 4: glue (router/align/gather/combine/PDL gaps per T class; >= 5%-of-expert-block cut).
+- GPU 5: rega3 (next >= 5% pair cut on prefill's A5b+D+SC tile).
+- GPU 6: t1b (T=1 expert block with E4: new bounds; EPF re-measured).
