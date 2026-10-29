@@ -2421,3 +2421,20 @@ with the operator's go-ahead.
   - The rebalancing ceiling is 3.07%, but static, dynamic and slot designs capture only 0.08 / 0.08 / 0.79%. 1 CTA/SM is slower.
   - No build. The t32i claim is closed as [shelf].
   - Quota: moe 12 checks / 7 runs, decode 18 / 9.
+- 2026-10-29T1510Z **State and the 10-30 phase-A plan (draft).**
+  - Today: moe 1.950 -> **1.952** (stack2: v6pe2 + EPLF T16 + robust routes); decode 1.661 -> **1.690** (v4xd-stack).
+  - Closed today, with measured ceilings:
+    - T=1: ring depth, w2 prefetch, consume rate (EPF shelf +1.6%).
+    - T=16/32: the fix-up oracle reads MID (EPLF captures ~nothing beyond T16); the tail is slot age priority (rebalancing 0.08%).
+    - T=256: the design panel read 0%.
+  - Open expert-block leads, all below the bar alone:
+    - EPF fused T=1 (+1.6%, p 0.45);
+    - slot-weighted split (0.79% ceiling);
+    - EPLF at other classes (level).
+  - Candidate 10-30 phase A:
+    - (1) a stack panel: EPF + slot rider + combine fusion (~3 us at T16/32) as one moe build aiming at >= 2.5%;
+    - (2) decode-only expert levers: the T=128/256 cold halves where decode differs from moe (router fork, hot/cold split), plus an anatomy check;
+    - (3) if the user lifts the expert-block focus, the other problems' queued leads.
+  - **Pending the user:**
+    - whether bf16/attention/prefill get phase-C checks (focus since 10-28 22:05Z says no);
+    - the gpunode06 close-out (runner 11735, prev.py, nodejudge env).
