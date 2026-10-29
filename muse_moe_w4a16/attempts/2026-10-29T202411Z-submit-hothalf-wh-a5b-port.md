@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/gain/2026-10-29T195507Z-hothalf-wh-a5b-port.md` (branch `hyp/muse_moe_w4a16/hothalf-wh-a5b-port`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `a5318a1f98984a5f` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `ddc98f98`
 
 ## Goal
