@@ -139,7 +139,7 @@ base_sha: cab523d330d2015479dc4d0f602a30a1722974e0
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
 branch: hyp/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue
 worktree: .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T163540Z
@@ -148,6 +148,8 @@ submission_sha256: fd0dcfebdb4606b606d2640881872b6499797b9a61d254799d999c27e6adb
 norm_sha256: d1912cafe9b38a601c2eece81510e8d32eb121c0450817575fcc5d729c6ade15
 submission_blob: d781fbcf52a3b1f0f9b0a13e268add1be0e308c2
 lint_warnings: 123
+attempt_file: 2026-10-29T163541Z-check-experts-rega-stage-antiphase-ordered-issue.md
+prepared_at: 2026-10-29T163541Z
 ---
 
 # experts-rega-stage-antiphase-ordered-issue
