@@ -2496,3 +2496,7 @@ with the operator's go-ahead.
 - A3 routed in all three classes (gate <= 0.97 vs master AND DQ0 every round, replay pass, bit-exact). Judge pair (warm pop, vs DQ0 / vs master): **low x0.860/0.854 (LEAD, MODE 5 cut 25.8%)**, **high x0.915/0.909 (LEAD)**, **ft x0.923/0.922 (SHELF by the rule, routed)**. Node predicted low 0.84-0.89, high 0.91-0.92: the H100 transfer held.
 - churn landed it on master (30ee3a39); scored run **27f0b9af** of the same bytes (sha 56570c00) dispatched. On a beat: register-landing / BEST.json via churn's promote path.
 - The verdict also says "wg port YES": A3 to the moe/decode hot half (H100 lane: pair x0.89-0.92) heads the 10-30 plan; the stack lane (hh2) is sizing it with the w2 tail and N-tile fixes.
+
+## 2026-10-29 1842Z — **prefill 1.536 LANDED** (scored 27f0b9af, [1.513, 1.559]; board was 1.5008, +2.36%)
+- dq2 A3 in the rega tile's dq_stage, routed per class (check 835e1a44 1.5556). Master 1b14174f; BEST.json -> 27f0b9af; [landed] claim. Rank 246 (252.18 ms); #1 2.033x.
+- First H100-derived landing of the window: node A3 ratios predicted the judge's to within ~0.01-0.02.
