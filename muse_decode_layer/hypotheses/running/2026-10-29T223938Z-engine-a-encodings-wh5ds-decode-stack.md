@@ -62,7 +62,7 @@ base_sha: 7c345f539f26d261c6ced014d2cf6d7f85a06d22
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
 branch: hyp/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack
 worktree: .worktrees/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T230113Z
@@ -71,6 +71,8 @@ submission_sha256: e1a44258c39b1be6a46f6f0f81223fec4b42d2979908b038cbb493ea5f19f
 norm_sha256: 7666f3a0d03d0c8bebbf269066a834fcb3ad24b2f7bbf08c8375e4e5a8206e13
 submission_blob: 4f529d7b0f87fd4e4daa18fb355df14d73096e58
 lint_warnings: 205
+attempt_file: 2026-10-29T230114Z-check-engine-a-encodings-wh5ds-decode-stack.md
+prepared_at: 2026-10-29T230114Z
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
