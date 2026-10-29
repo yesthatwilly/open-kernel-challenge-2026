@@ -82,6 +82,7 @@ best_at_harvest: 1.952050927455536
 promotion: merged
 mechanism: null
 promotion_commit: 7da461db12b3c802a605fcdcaf2208314fe6dc60
+promotion_attempt: 2026-10-29T202411Z-submit-hothalf-wh-a5b-port.md
 ---
 
 # hothalf-wh-a5b-port
