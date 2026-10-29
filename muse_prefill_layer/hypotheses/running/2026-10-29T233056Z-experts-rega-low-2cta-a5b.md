@@ -45,11 +45,20 @@ evidence: >
   SM cycles -13%; prefill board 1.5721 (9f934846)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T233429Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
+stage: claimed
+claimed_at: 2026-10-29T233706Z
+base_sha: 6364d94aa7863fd527376ac09288d0238158f8d7
+base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
+branch: hyp/muse_prefill_layer/experts-rega-low-2cta-a5b
+worktree: .worktrees/muse_prefill_layer/experts-rega-low-2cta-a5b
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-low-2cta-a5b
