@@ -149,7 +149,7 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-29T1555Z (date -u); phase B (C from 18:00Z); /loop /3to1 running
+- updated: 2026-10-29T1743Z (date -u); phase B -> C at 18:00Z; /loop /3to1 running
 - **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`):
   phase A 00:00Z (decode/moe ultracode rewrites) -> phase B (other problems' minor gains) -> phase C 18-24Z (spend
   every check; tomorrow's phase-A plan by ~23:00Z); scored submit whenever a check beats a board; never re-roll bytes.
@@ -158,15 +158,15 @@ append-only, newest last.
     three checks"), then **10-29 ~15:04Z "run all you want that youre able to"**: below-bar diagnostics and leads
     run as user-requested hypotheses today, agent cap 3.
   - H100: window CLOSED 10-29 14:54Z (gpunode06 cleaned, runner stopped); new GPU work needs the user's go.
-- **Boards 10-29:** moe 1.952 (rank 332), decode 1.690 (371), bf16 1.279, attention 1.634, prefill 1.501.
-- **Today's reads:** /hypothesize all minted 0 (all leads below bar). bf16 b12mc REFUTE (TMA build stalled; weak).
-  prefill rega anatomy SERIAL, g 0.18-0.34 -> [lead], ceilings ~5.2% low / ~3% high.
-- **In flight:** moe cmbf combine-fusion diag (build); prefill K-pair four-consumer check (build, stagger arm);
-  attn FA3 metadata fold check (build). Each: commit-impl -> prepare-run -> okc check -> harvest.
-- **Next:** dispatch the three as they build; phase C at 18:00Z spends what remains (cheap diagnostics only);
-  10-30 phase-A plan by ~23:00Z: the moe/decode draft (1510Z entry) plus a prefill consumer-overlap panel
-  (anti-phase consumer WGs, deferred wgmma_wait with SASS check, K-pair result).
-- **Quota 15:49Z:** moe 12 checks / 7 scored; decode 18 / 9; bf16 19 / 10; attention 20 / 10; prefill 19 / 10.
+- **Boards 10-29 (unchanged):** moe 1.952, decode 1.690, bf16 1.279, attention 1.634 (lucky draw; code level ~1.62),
+  prefill 1.501.
+- **Today's reads:** prefill anatomy [lead] then K-pair, anti-phase refuted (overlap closed on the rega tile);
+  attn FA3 metadata fold [shelf] stacker; moe combine fusion refuted (stack3 closed); bf16 b12mc refuted (weak).
+- **In flight:** mint of the prefill rega dequant-cost diag (cheaper dq_stage arms, bit-exact, gated route),
+  user-requested; then review -> build -> check.
+- **Next:** phase C spends checks only on questions that move the 10-30 plan (no board-beating candidate exists
+  today: attention's fold + onepass lands ~1.63 < 1.654 needed); 10-30 phase-A plan by ~23:00Z.
+- **Quota 1742Z:** bf16 19 checks / 10 scored; attention 19 / 10; moe 11 / 7; decode 18 / 9; prefill 17 / 10.
 
 ## 2026-10-26T15:35Z: campaign opened
 
