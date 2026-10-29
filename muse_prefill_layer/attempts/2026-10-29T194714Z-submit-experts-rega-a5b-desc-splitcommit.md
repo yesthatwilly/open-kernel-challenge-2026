@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/gain/2026-10-29T191222Z-experts-rega-a5b-desc-splitcommit.md` (branch `hyp/muse_prefill_layer/experts-rega-a5b-desc-splitcommit`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `9f93484606cd4f9e` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `d95bbcb3`
 
 ## Goal
