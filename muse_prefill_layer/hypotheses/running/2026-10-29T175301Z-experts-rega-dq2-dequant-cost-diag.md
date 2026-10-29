@@ -138,7 +138,7 @@ base_sha: 2f7dcbf03b7345f8e21d32c433510942d4a23926
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
 branch: hyp/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag
 worktree: .worktrees/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T182804Z
@@ -147,6 +147,8 @@ submission_sha256: 56570c0030c551c01cef091abdab18e4d17b06699ef19ca8f2c9825368856
 norm_sha256: 368cef334baba077650e0fcd582c4bc5f4cce300e1ceec415c25389e2ab0d562
 submission_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
 lint_warnings: 121
+attempt_file: 2026-10-29T182805Z-check-experts-rega-dq2-dequant-cost-diag.md
+prepared_at: 2026-10-29T182805Z
 ---
 
 # experts-rega-dq2-dequant-cost-diag
