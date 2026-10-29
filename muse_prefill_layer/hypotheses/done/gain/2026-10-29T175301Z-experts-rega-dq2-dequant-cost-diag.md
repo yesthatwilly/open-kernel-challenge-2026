@@ -157,8 +157,9 @@ speedup: 1.5555848458088881
 speedup_ci: [1.5322510731217547, 1.5789186184960213]
 harvested_at: 2026-10-29T183514Z
 best_at_harvest: 1.5007957663757285
-promotion: pending
+promotion: merged
 mechanism: flat
+promotion_commit: 1b14174f106138de92022ca58ff1e6e374acd4a5
 ---
 
 # experts-rega-dq2-dequant-cost-diag

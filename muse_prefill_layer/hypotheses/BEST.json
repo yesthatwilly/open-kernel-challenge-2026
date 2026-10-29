@@ -1,20 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "b2941ea23dc743a3",
- "check_job": "21911eb694ce467c",
- "mode": "submit",
- "speedup": 1.5007957663757285,
+ "job": "835e1a443a604eb2",
+ "check_job": "835e1a443a604eb2",
+ "mode": "check",
+ "speedup": 1.5555848458088881,
  "ci": [
-  1.4782838298800927,
-  1.5233077028713644
+  1.5322510731217547,
+  1.5789186184960213
  ],
- "score_us": 258132.32465036976,
- "commit": "350343bcf26d26e11eddf1c1b2e72cd4d7dc8c18",
- "submission_blob": "c63801e7a1dcfdb7cbdd0d38bc9b295407be7489",
- "slug": "phasec-final-near-ties-nolo",
- "result": "muse_prefill_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T171015Z",
- "note": "registered by hand 2026-10-28: phase-C variant final-near-ties-nolo (campaign expert-bandwidth, branch phasec/prefill-1028 994a3e95) = the 1.4897 board with the near-tie arms pinned (fa3c contig-varlen at turn_4 / turn_1, w2st arm a at high / ft) and the never-routed LO phase skipped (~40 s shorter prepare); check 7db6fa1a 1.5055; scored 1.5008 vs 1.4897; landed on master.",
- "master_slug": "phasec-final-near-ties-nolo",
- "master_job": "b2941ea23dc743a3"
+ "score_us": 249040.67498713257,
+ "commit": "1b14174f106138de92022ca58ff1e6e374acd4a5",
+ "submission_blob": "d8ce4cbf6e2e54cb8294363e025022d9284a0762",
+ "slug": "experts-rega-dq2-dequant-cost-diag",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.result.json",
+ "updated_at": "2026-10-29T183515Z"
 }
