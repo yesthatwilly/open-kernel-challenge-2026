@@ -56,7 +56,7 @@ review_at: 2026-10-29T224707Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T224707Z
 base_sha: 7c345f539f26d261c6ced014d2cf6d7f85a06d22
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -73,6 +73,8 @@ submission_blob: 4f529d7b0f87fd4e4daa18fb355df14d73096e58
 lint_warnings: 205
 attempt_file: 2026-10-29T230114Z-check-engine-a-encodings-wh5ds-decode-stack.md
 prepared_at: 2026-10-29T230114Z
+job: 824b60fac87c4ff4
+dispatched_at: 2026-10-29T230127Z
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
