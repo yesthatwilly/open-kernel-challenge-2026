@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "a5318a1f98984a5f",
- "check_job": "54b70249868f468b",
- "mode": "submit",
- "speedup": 1.974770471501011,
+ "job": "702f1004b45f4bfa",
+ "check_job": "702f1004b45f4bfa",
+ "mode": "check",
+ "speedup": 2.0645771117791423,
  "ci": [
-  1.945148914428496,
-  2.004392028573526
+  2.033608455102455,
+  2.095545768455829
  ],
- "score_us": 6810.158544541066,
- "commit": "7da461db12b3c802a605fcdcaf2208314fe6dc60",
- "submission_blob": "37ea90fc306c0ed8fb3d49094bf5f4acf6202307",
- "slug": "hothalf-wh-a5b-port",
- "result": "muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.result.json",
- "updated_at": "2026-10-29T202807Z"
+ "score_us": 6513.924775815615,
+ "commit": "bbd1661f3d77230ea0673d67b390da4277ee5ea8",
+ "submission_blob": "c6e41c9acc6169ac8a532684437955b1d560835b",
+ "slug": "engine-a-a4b-a5b-encodings-race",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.result.json",
+ "updated_at": "2026-10-29T222813Z"
 }

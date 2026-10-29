@@ -83,8 +83,9 @@ speedup: 2.0645771117791423
 speedup_ci: [2.033608455102455, 2.095545768455829]
 harvested_at: 2026-10-29T222812Z
 best_at_harvest: 1.974770471501011
-promotion: pending
+promotion: merged
 mechanism: null
+promotion_commit: bbd1661f3d77230ea0673d67b390da4277ee5ea8
 ---
 
 # engine-a-a4b-a5b-encodings-race
