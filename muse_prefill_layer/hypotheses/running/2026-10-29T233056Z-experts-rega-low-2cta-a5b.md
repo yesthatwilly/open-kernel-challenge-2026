@@ -50,7 +50,7 @@ review_at: 2026-10-29T233429Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T233706Z
 base_sha: 6364d94aa7863fd527376ac09288d0238158f8d7
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
@@ -67,6 +67,8 @@ submission_blob: 0112a434215de60e5629552bc7b8ccaff363f437
 lint_warnings: 125
 attempt_file: 2026-10-29T235116Z-check-experts-rega-low-2cta-a5b.md
 prepared_at: 2026-10-29T235116Z
+job: 074a0e02f4e94efd
+dispatched_at: 2026-10-29T235128Z
 ---
 
 # experts-rega-low-2cta-a5b
