@@ -2610,6 +2610,6 @@ with the operator's go-ahead.
 - Run from the main session under the user's direct approval (the subagent's policy check still refused it): ee-val PASS (exact every draw, check_implementation pass, prepare 42.8 s, 1830 MHz no throttle); ee-r1/r2/ncu/ncub done (runs/20261029-144741-gpunode06 in takemyjob .worktrees ea-enc).
 - Consume-only B/E4 (A4b codes): T8 1.05-1.08, **T16 w13 1.067-1.090, T32 w13 1.079-1.086**, T128/256 cold 1.04-1.05, **ea6 K1 1.076-1.097**; B/E5 (A4b+A5b): T8-32 1.03-1.07, cold half **1.05-1.07** (E5 wins there). Normal mode ~1.00 (H100 HBM wall). Rule: >= 8% only on T16/T32 w13 and ea6 K1; the rest 4-7%. [lead]: the judge decides via an in-prepare exact race per class (E4 at T<=32, E5 at the cold half). **10-30 phase A item 1 stands** (expected ~+1-2% moe if the H200 is consumer-bound, as estimated).
 
-## 2026-10-29 2156Z — pfexp read (shelf); moe Engine A encodings check minted
+## 2026-10-29 2155Z — pfexp read (shelf); moe Engine A encodings check minted
 - pfexp (research/h100-pfexp-1029.md; GPU 5; venv removed): exp-split pays 1.07-1.10x within a rebuilt FA3 at f 0.1-0.2, but that rebuild is 1.31-1.34x slower than sgl_kernel's shipped binary, so every arm loses vs master (0.67-0.85x); ceiling ~1-1.5% headline. [shelf].
 - Minted muse_moe_w4a16 engine-a-a4b-a5b-encodings-race (E4/E5 per-class exact race; user-requested, EV 0.6); review next. Phase A item 1 started early.
