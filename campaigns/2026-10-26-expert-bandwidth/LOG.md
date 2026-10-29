@@ -2613,3 +2613,7 @@ with the operator's go-ahead.
 ## 2026-10-29 2155Z — pfexp read (shelf); moe Engine A encodings check minted
 - pfexp (research/h100-pfexp-1029.md; GPU 5; venv removed): exp-split pays 1.07-1.10x within a rebuilt FA3 at f 0.1-0.2, but that rebuild is 1.31-1.34x slower than sgl_kernel's shipped binary, so every arm loses vs master (0.67-0.85x); ceiling ~1-1.5% headline. [shelf].
 - Minted muse_moe_w4a16 engine-a-a4b-a5b-encodings-race (E4/E5 per-class exact race; user-requested, EV 0.6); review next. Phase A item 1 started early.
+
+## 2026-10-29 2159Z — fa3math read: WS attention closed; the gate kernel itself becomes the attention lead
+- research/h100-fa3math-1029.md (takemyjob hopper/fa3math-1029 399b9bd; GPU 4; venv removed). The WS serialization was C7514 (unequal pending wgmma groups across `if (have_p) wait<1> else wait<0>`), fixed by an empty commit_group + uniform wait<1> (0 C75xx); still slower: WS math 287-304 (v32) / 153-160 (v16) us vs the gate's 237 / 125, e2e 1.02-1.07x master. Two-chain non-WS not built (~170 regs -> 1 CTA/SM, same shape as the loser).
+- **Plan change (10-30 item 3):** judge check of the fa3gate kernel as is (node e2e 0.82-0.84, error inside tolerance), routed at v16/v32 full only, + the FA3 metadata fold for verify_1. [lead] claim on attention.
