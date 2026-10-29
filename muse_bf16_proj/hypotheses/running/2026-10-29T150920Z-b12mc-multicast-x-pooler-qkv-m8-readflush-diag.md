@@ -132,7 +132,7 @@ review_at: 2026-10-29T151743Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T151743Z
 base_sha: c54503e25e6fe0056cea3feba5d4e4982d602c7d
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -149,6 +149,8 @@ submission_blob: cb2f95c8a3228c5078eb8314b805bb900ed0a0dd
 lint_warnings: 61
 attempt_file: 2026-10-29T153340Z-check-b12mc-multicast-x-pooler-qkv-m8-readflush-diag.md
 prepared_at: 2026-10-29T153340Z
+job: 5f35efd59d054392
+dispatched_at: 2026-10-29T153359Z
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
