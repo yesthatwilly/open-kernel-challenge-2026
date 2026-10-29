@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T222816Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -120,6 +120,9 @@ Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5721): histori
 
 ### attention boundary + FFN boundary (FusedPostNormResidualPreNorm x2, persistent multi-row variant)
 - **norm-boundaries-persistent-multirow** → neutral (within-ci), 1.0716x, mechanism flat 0/8 — no shape moved outside noise. Built on master (635cfee). The multi-row/persistent re-mint the review of the held norm-residual-boundaries-triton-row-kernel invited ('same one-row-per-program
+
+### experts rega tile at the LOW class (turn_1): occupancy / tile shape
+- **experts-rega-low-2cta-a5b** → neutral (within-ci), 1.5678x — lost on full first_turn. Add a low-class-only arm to master's rega dq module: the H100-validated SC-2CTA tile from takemyjob hopper/rgx4 290f097 (research/h100-rega4-1029.md): master's 
 
 ### experts rega tile dq_stage / consumer stage loop (w13, w2)
 - **experts-rega-a5b-desc-splitcommit** → gain (gain), 1.5792x — gained on full first_turn. Stack the H100-validated A5b+D+SC form on master's landed A3 rega dequant (muse_prefill_layer/submission.py master 1b14174f, the rega dq module from experts-reg
@@ -328,6 +331,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **experts-rega-stage-anatomy-diag-r2** [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] neutral, within-ci: A prepare-only diagnostic: kernel_fn, _experts, _experts_rega and every function the timed
 - **experts-rega-low-kpair-four-consumer-wgs** [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab] neutral, within-ci: GOAL: the ~10% TLP effect that two CTAs/SM showed at the low class (V64 occ2 0.887x vs its
 - **experts-rega-stage-antiphase-ordered-issue** [w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes] neutral, within-ci: Consumer schedule only: FA3-style ordered anti-phase of master's TWO existing consumer war
+- **experts-rega-low-2cta-a5b** [experts rega tile at the LOW class (turn_1): occupancy / tile shape] neutral, within-ci: Add a low-class-only arm to master's rega dq module: the H100-validated SC-2CTA tile from 
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 

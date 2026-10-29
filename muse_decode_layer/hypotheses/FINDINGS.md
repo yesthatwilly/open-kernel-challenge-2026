@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T231956Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -49,6 +49,7 @@ Regenerated 2026-10-29T231956Z by `churn.py index`. Read this before writing a h
 - [landed] Engine A v4c pinned at T=9..16 (the race flipped v4 / v4c 6:4; the layer prefers v4c though v4's block is 1.8-2.5% faster in isolation) | rows: load=decode_16 | evidence: check 86edd970 1.6599 ((16,1) rows 162.8 / 250.0 vs 165.1 / 261.8 us with v4 pinned; dec-pin-all 1.6470, dec-pin16-v4 1.6509), scored 83f0c00eb3644e1c 1.6551 (LOG:2088-2090, 2104-2105); land ec3c4dcb | board: 1.6551 | blob: b04cdf5c | reopen: - | 2026-10-28 campaign
 - [landed] Engine A v4x decode port: warp-scan pass list, gs in smem, 32-bit split, arm d/s ticket rounds; routed 8 v4xs, 16 v4xd, 32 v4cxs, T=128 cold half v4cxs | rows: load=decode_16, load=decode_32, load=verify_1, load=verify_16, load=verify_32 | evidence: job 31e9a69aac344675 (okc status 31e9a69aac344675), check 1fd2c931cf874a07, master d1fb10ab8a | board: 1.6606 | blob: 124f158f | reopen: - | 2026-10-28 campaign
 - [landed] v4xd-stack: v6pe2 two-wave ea6 K2 at T=1 + v4x-routes (each twin qualifies alone, pooled hysteresis; T=128 cold half alone) + priority-0 side-stream fork guard | rows: load=decode_* load=verify_* | evidence: job 7cc034f917274439 (okc status 7cc034f917274439), check 264355099fc74226, master d28b23d729 | board: 1.6904 | blob: 315119e2 | reopen: - | 2026-10-29 campaign
+- [landed] decode expert-block stack: Engine A E4 encodings at T=8/16/32/128-cold + wh5ds hot half at T=128/256 + T=16 pinned to v4cxs (engine-a-encodings-wh5ds-decode-stack) | rows: load=verify_1, load=decode_16, load=decode_32, load=verify_16, load=verify_32 | evidence: check 824b60fac87c4ff4 1.7197 (E4 iso .952-.969, layer .979-.992; wh5ds layer .930-.955; T=1 vetoed 1.007, T=256 cold iso .979 > .98); scored e42339989d554019 1.7051 [1.680, 1.731]; NOTE the shared [ea-enc] T=1 prepare-crash hazard under triage (LOG 2316Z) | board: 1.7051 | blob: 4f529d7b | reopen: - | 2026-10-29 churn
 
 ### refuted
 

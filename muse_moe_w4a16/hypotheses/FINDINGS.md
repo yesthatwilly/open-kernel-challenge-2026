@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T231040Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -37,6 +37,7 @@ Regenerated 2026-10-29T231040Z by `churn.py index`. Read this before writing a h
 - [node-only] T<=8 cost per local expert (M08t1, M08t8, M09): T=1 is fixed-cost work (v6 a 12.5 us + ~10.2 us/expert; v1 13.8, v4 21.3; ~5.5 us of fill / K1->K2 hand-off; combine on the critical path 2.5-3.8 us); no streaming engine at T=1 or T=8 (w13 : w2 split ~2:1); transfer: held (fc's T=1 cut read decode 1 x1.084 on the judge) | rows: load=decode_1, load=verify_1 | evidence: H100:699-717, 780-793, 810-817; LOG:1680-1688, 1868 | board: 1.7345 | blob: - | reopen: - | 2026-10-28 h100
 - [node-only] Engine A consume body (P3b / P3c ncu): 21.6-21.75 instr per 256-weight step, ~17 of them per-weight dequant (ext_prop 11, scale decode 4, HMUL2 4); no pipe above 80% of SM-active; ldmatrix wavefronts 1.000x ideal (H4 closed); T=1 fixed cost per kernel ~2 us launch + 1.6-1.8 prologue + 1.2 x staging + 1.4 first fill; transfer: held (the ALU-only cuts L3 / L4 it pointed to transferred) | rows: load=decode_1, load=decode_16, load=decode_32, load=verify_1 | evidence: H100:741-760, 867-885 (P3b VOID by its pairing rule, P3c VALID); research/p3b-p3c-2026-10-28.md | board: 1.7345 | blob: - | reopen: - | 2026-10-28 h100
 - [node-only] eac consumer arms that did not port: fragment-order scale repack F (closed, 1.000), m-tile reuse r=2/4 (x1.05-1.06 at T=8 but over v4's 96-register cap, SPILL at T=16), X2+L3 x in registers (x1.064 over L3 at T=1 but forfeits K2 co-residency); transfer: untested | rows: load=decode_1, load=verify_1, load=decode_16 | evidence: H100:948-957; LOG:1755, 1814-1815 | board: 1.8249 | blob: - | reopen: X2: a form that keeps K2 co-resident; reuse: a register budget <= 96 at (288,2) | 2026-10-28 h100
+- [node-only] moe T=128 forked hot/cold hybrid (H-16, wh5ds hot + E5 cold) vs plain Engine A E5: wins on average, loses on draws with one hot expert | rows: load=verify_16 | evidence: H100 t128h (takemyjob hopper/t128h-1029 20499cf; research/h100-t128h-1029.md, GPU 3), 3 replicates x 3 judge-like draws x 8 rounds, all exact: H-16 fork mean 0.934 (0.853-1.039), 56/72 rounds <= 0.97; H-8 fork 0.935; H-24 0.960; serial 0.98-1.06; losing draws: p10 with max 28 routes / one hot expert x1.04, p50 max 46 x0.99-1.00; A/A null 0.989-1.024 | board: 2.0201 | blob: c6e41c9a | reopen: a device-side gate that runs the hybrid only when the hot set has >= 2 experts (no host branching), then a judge check (the T=128 hybrid flipped sign node vs judge before, CLAIMS:63) | 2026-10-29 h100
 
 ### landed
 
@@ -263,4 +264,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 hold
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 hold
 - queue: cmbf-combine-fused-w2-epilogue-t8-32-cf [post-expert norm+combine] p1 queued
+- running: eae-cold-iso-keepalive-fix [prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs] p1 running
 - 21 stale holds expired to `done/expired/` (not run)
