@@ -2491,3 +2491,8 @@ with the operator's go-ahead.
 - Other gaps: tail/waves 22-27% of the T=256 pair (mostly w2, 1.45 waves, 29-36% idle; upper bound since the cold half fills some); per-stage cost vs tensor floor N128 x1.36, N64 x2.1, N32 x4; 576 token columns for 386 routes; fixed costs ~13%, K-loops 85-88%.
 - [lead] claims on moe and decode (A3 alone ~0.7-0.8% < bar; reopen = stack with w2 wave/tail + per-expert N-tile padding fixes to >= 2.5%). **10-30 phase-A headline: the hot-half stack** (A3 + w2 waves + N-tile padding).
 - Node: an old orphan `decs` fuzz under compute-sanitizer runs on GPU 4 (pids 2789298/2789304, ~19 h old); left alone for the user.
+
+## 2026-10-29 1835Z — prefill dq2 check 835e1a44: 1.5556 (board 1.5008, +3.65%); scored run dispatched
+- A3 routed in all three classes (gate <= 0.97 vs master AND DQ0 every round, replay pass, bit-exact). Judge pair (warm pop, vs DQ0 / vs master): **low x0.860/0.854 (LEAD, MODE 5 cut 25.8%)**, **high x0.915/0.909 (LEAD)**, **ft x0.923/0.922 (SHELF by the rule, routed)**. Node predicted low 0.84-0.89, high 0.91-0.92: the H100 transfer held.
+- churn landed it on master (30ee3a39); scored run **27f0b9af** of the same bytes (sha 56570c00) dispatched. On a beat: register-landing / BEST.json via churn's promote path.
+- The verdict also says "wg port YES": A3 to the moe/decode hot half (H100 lane: pair x0.89-0.92) heads the 10-30 plan; the stack lane (hh2) is sizing it with the w2 tail and N-tile fixes.
