@@ -57,4 +57,4 @@ okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_decode_
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.7051x [1.6795,1.7307], board: {"rank": 406, "team": "yesthatwilly", "speedup": 1.7051, "first": false, "ahead": 405, "to_first": 1.418}
