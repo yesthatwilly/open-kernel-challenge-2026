@@ -2597,3 +2597,8 @@ with the operator's go-ahead.
 - **bced57b4 1.2871 [1.268, 1.306]** vs 1.2794: both cells ROUTED on the judge, better than projected at pooler: **pooler m8 uc1 pooled 0.837** (proj 0.939), **qkv m8 0.928** (proj 0.906); pooler m16 diag 0.936 (would pass 0.95). Judge gather cost GA0-GA1: pooler m8 3.84 us, qkv m8 2.43 us. Real escapes: pooler 4628 (max 51/CTA), qkv 2691 (max 32/CTA). churn: neutral / unproven-vs-best -> queued confirm -cf, dispatched **c0f8969e**.
 - Next bf16 step if the pool holds short of the margin: make pooler m16 routable (0.936) and port to decode's dense pooler/qkv m8 rows (CLAIMS:97).
 - **decode wh5ds 35cc220c** dispatched (988,094 B; arms D0/a3/wh/wh5ds, per-T isolated-pair pick + layer veto; untested on a GPU: its route/gate Python first runs on the judge).
+
+## 2026-10-29 2142Z — **bf16 1.284 LANDED** (scored 14ea7be4; check 1.2871 + confirm 1.3076 pooled 1.2974); decode wh5ds [shelf]
+- bf16 b12 uc1_g1 at pooler m8 (0.827-0.837) and qkv m8 (0.928): churn pooled the two checks (gain-pooled), landed, scored 1.2839 [1.265, 1.303]. Rank 525. Next: pooler m16 routable (judge diag 0.923-0.936) and the decode dense-GEMM port (CLAIMS:97).
+- decode wh5ds 35cc220c 1.6968 (+0.38%, below CONFIRM_MIN): routed both classes, layer gate .933-.952; T=16 ea4x drew d again. [shelf] rider for the 10-30 decode stack.
+- **Tonight's H100-derived landings: prefill 1.501 -> 1.572, moe 1.952 -> 1.975, bf16 1.279 -> 1.284.**
