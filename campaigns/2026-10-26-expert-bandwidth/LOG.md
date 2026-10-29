@@ -2456,7 +2456,7 @@ with the operator's go-ahead.
 - **prefill rega stage anatomy (cb22e610):** valid (mode0 0.98-1.00, no spill, bit-exact), VERDICT SERIAL in every class; low w13 t0 293.6 vs MMA-only 194.4 / dequant-only 191.1 / producer 145.1 us, g 0.34 (low), 0.21 (high), 0.18-0.21 (ft). [lead]; ceilings re-scaled to ~5.2% (low) / ~3% (high). **Prefill phase-A candidate for 10-30:** consumer overlap (anti-phase of the two consumer WGs, deferred wgmma_wait with SASS check, K-pair result).
 - In flight: moe cmbf build; prefill K-pair build (proceed, stagger arm + ptxas capture in-run); attn FA3 metadata fold (review).
 
-## 2026-10-29 1630Z — run-all wave 2 read
+## 2026-10-29 1621Z — run-all wave 2 read
 - **moe cmbf (a5aee751):** combine fused into the v4x w2 epilogue is slower everywhere (p50 d T8 -4.7, T16 -14.1, T32 -15.5, T128 -57 us; codegen tax only 0.3-1.1 us; canary bitwise). [refuted]; stack3 closed (EPF + slot rider ~1.2%).
 - **prefill K-pair (bbca0105):** valid (-Werror clean, r96 l0), x1.09-1.14 slower at low and high, stagger irrelevant. [refuted].
 - **attn FA3 metadata fold (6d1082a6):** works: all 3 full verify rows routed, metadata bitwise, step -2.4/-2.3/-2.7 us; verify_1 full 27.8 vs board 30.1 us; headline 1.6336 (flat vs the lucky 1.634 board). [shelf] stacker (branch hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify).
