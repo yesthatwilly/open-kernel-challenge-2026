@@ -127,12 +127,12 @@ instrument: >
   '[rega-dq] VERDICT <cls>' line per class, all within the last 16 KB of the log
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T175903Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T175904Z
 base_sha: 2f7dcbf03b7345f8e21d32c433510942d4a23926
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -151,6 +151,14 @@ attempt_file: 2026-10-29T182805Z-check-experts-rega-dq2-dequant-cost-diag.md
 prepared_at: 2026-10-29T182805Z
 job: 835e1a443a604eb2
 dispatched_at: 2026-10-29T182813Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.5555848458088881
+speedup_ci: [1.5322510731217547, 1.5789186184960213]
+harvested_at: 2026-10-29T183514Z
+best_at_harvest: 1.5007957663757285
+promotion: pending
+mechanism: flat
 ---
 
 # experts-rega-dq2-dequant-cost-diag
@@ -269,3 +277,31 @@ Checked against `git -C .worktrees/muse_prefill_layer/experts-rega-dq2-dequant-c
 - [x] No triton.autotune, no recompiling per call (one build in prepare).
 
 okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`). Exit 0, `OK with warnings`: 121 warnings (master: 112). 116 are `host-sync ... (outside kernel_fn's call graph; fine in prepare())`; the 9 new ones are the dq phase's prepare-time synchronizes. The 5 `dtype` warnings are all master's lines (L3490, L3491, L3796, L4346, L8077: uint8 byte buffers). Full output: scratch `lint.out`. `python3 -I -m py_compile` passes, and `__pycache__` was removed from the worktree.
+
+## Result
+
+- job `835e1a443a604eb2` (check), status done, passed True, tests 5/5
+- speedup 1.5556x, 95% CI [1.5323, 1.5789], score 249040.67498713257 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5007957663757285, "ci": [1.4782838298800927, 1.5233077028713644], "job": "b2941ea23dc743a3"}; base result: muse_prefill_layer/hypotheses/BEST.result.json
+- **outcome: gain** (gain); mechanism: flat (7/8 predicted rows past ±2%)
+- files: `muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.result.json`, `muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.patch`; branch `hyp/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 700.96 | 709.56 | 1.0471 | gained |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1083.73 | 1067.11 | 1.0327 | gained |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2088.45 | 2077.81 | 1.0327 | gained |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3614.44 | 3533.58 | 1.0201 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11011.98 | 11052.78 | 1.0425 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10865.92 | 10545.85 | 1.041 | gained |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14763.78 | 14570.54 | 1.0343 | gained |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18546.94 | 18087.08 | 1.0138 | flat |
+
+gained on sliding first_turn, turn_1, turn_4; full first_turn, turn_1. Expected hit: 3/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands. Gain not attributable to the mechanism (race/draw?): its predicted rows were flat.
+
