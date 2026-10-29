@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T214210Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T222816Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -35,6 +35,7 @@ Regenerated 2026-10-29T214210Z by `churn.py index`. Read this before writing a h
 - [landed] read-flush gates for every bulk12 cell + pooler m=128 K-halves with fp32 partials (khalf b2: pooler m=128 22.05 -> 21.12 us) | rows: layer=pooler load=verify_16 | evidence: check 670ad7c6b0da41ec 1.2726, scored bc147c5b87bc465d 1.2735 (LOG:939-942); land 8f233e88; pooler-k-halves-fp32-partials-restack de95f81782374124 (FINDINGS:216) is this line | board: 1.2735 | blob: d51c745a | reopen: - | 2026-10-27 campaign
 - [landed] router zero-fill PDL overlap at m=9..256 (all four classes) + the pooled khalf gate rule (3 rounds, 2.0x pooled IQR) | rows: layer=router load=decode_16, layer=router load=decode_32, layer=router load=verify_16, layer=router load=verify_32, layer=pooler load=verify_16 | evidence: a20f80486c5b4bc1 (router PDL x1.031-1.101 routed, FINDINGS:218), check 023f4260e86e423e 1.2723, scored 254c83ae55834807 1.2740 (LOG:1283-1302; FINDINGS:219 is this line); land f10f2752 | board: 1.2740 | blob: ada0503d | reopen: - | 2026-10-27 campaign
 - [landed] qkv_gate m=128 cuBLASLt plan ranked and gated under the judge's read flush | rows: layer=qkv_gate load=verify_16 | evidence: check 0c9095e2 1.2844, scored 3e3ffc5afc57433b 1.2794 (LOG:2011-2012, 2034); land 62da2d9e | board: 1.2794 | blob: a36f3392 | reopen: - | 2026-10-28 campaign
+- [landed] bulk12 m=8 uc1_g1 (TMA boxes, no cluster, batched escape gather, plain mbarrier arrive) at pooler m8 and qkv_gate m8, raced per cell at <= 0.95 (b12-batched-escape-m8-32-race) | rows: layer=pooler load=verify_1, layer=qkv_gate load=verify_1 | evidence: check bced57b42b87444d 1.2871 + confirm c0f8969e76cf4cb7 1.3076 (pooled 1.2974): pooler m8 0.837 / 0.827, qkv m8 0.928; judge gather cost GA0-GA1 3.84-4.16 us (pooler m8), 2.43 (qkv m8); scored 14ea7be493204308 1.2839 [1.265, 1.303]; pooler m16 diag 0.923-0.936 (routable next) | board: 1.2839 | blob: 5ef62a20 | reopen: - | 2026-10-29 churn
 
 ### refuted
 

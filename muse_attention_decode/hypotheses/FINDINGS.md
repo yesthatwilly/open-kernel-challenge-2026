@@ -1,8 +1,12 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T222816Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
+
+### lead
+
+- [lead] full-verify paged-gather attention gate kernel (non-WS; 64 KB in flight/SM; FP8 QK wgmma + f16 PV; grid-barrier combine) routed at v16/v32 full only; warp specialization closed (C7514 trigger found and fixed, still 0.78-0.83x the gate's math speed) | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: H100 fa3gate (4b2a169) e2e 0.82 (v32) / 0.83-0.84 (v16) of master's FA3 call, judge-metric error 2.5-2.8e-2 vs 0.083/0.085 bounds; fa3ws (16c06a0) and fa3math (399b9bd): WS e2e 1.02-1.16x (C7513/C7514: unequal pending wgmma groups across paths; fixed by an empty commit_group + uniform wait<1>); research/h100-fa3{gate,ws,math}-1029.md | board: 1.634 | blob: 2eb03f76 | reopen: judge check of the gate kernel at v16/v32 full (projected H200 e2e 0.82-0.87, untested), stacked with the FA3 metadata fold (CLAIMS:82) for verify_1 | 2026-10-29 h100
 
 ### shelf
 
@@ -191,6 +195,9 @@ Diagnosis of 2026-10-25T203356Z, written on board 1.5295 (today 1.6340): histori
 ### full-layer attention (whole-path rewrite, warp-specialized one launch)
 - **full-cuda-onelaunch-warpspec-bulk-gather** → regression (regression), 0.8238x, mechanism miss 0/2 — lost on full decode_16, decode_32; sliding verify_1. Stage 1 of a rewrite of the FULL-layer path, built on master (stage 1 of the first CUDA kernel, full-decode-cuda-gather-splitkv, has landed; no depends_on). Why
 
+### full-layer verify attention (FA3 call at verify_16 / verify_32)
+- **full-verify-paged-gather-gate-kernel** → neutral (within-ci), 1.6154x — gained on sliding verify_1; lost on full decode_32; sliding verify_16. Replace master's FA3 call on the full-attention verify rows at B=16 and B=32 (q_len 8, paged FP8 KV, ctx ~80000) with the H100-validated gate kernel from takemy
+
 ### launch overhead
 - **splitkv-pdl-attn-to-combine** → neutral (within-ci), 1.3929x — lost on full decode_32. Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B (splitkv_combine_kernel), full decode 1 < batch <= 64. (1) In splitkv
 
@@ -327,6 +334,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **sk-ticket-merge-onepass** [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] neutral, within-ci: ONE mechanism, the load structure of the in-kernel ticket merge in _SK_CUDA splitkv_attn_s
 - **sk-onepass-verify1-timing-fix** [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] neutral, within-ci: Restack of sk-ticket-merge-onepass (neutral 1.6177 in check ba8c8a61; twins compiled, merg
 - **fa3-metadata-fold-preattn-full-verify** [FA3 call (scheduler metadata folded into pre-attention, full verify)] neutral, within-ci: Fold FA3's varlen scheduler metadata (what flash::prepare_varlen_num_blocks_kernel<NumWarp
+- **full-verify-paged-gather-gate-kernel** [full-layer verify attention (FA3 call at verify_16 / verify_32)] neutral, within-ci: Replace master's FA3 call on the full-attention verify rows at B=16 and B=32 (q_len 8, pag
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
 - **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
