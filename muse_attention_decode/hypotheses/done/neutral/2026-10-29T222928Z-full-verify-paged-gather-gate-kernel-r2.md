@@ -42,12 +42,12 @@ evidence: >
   judge 06c051723643462f fvg build failed on the C++17 flag, master kept
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T223204Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T223204Z
 base_sha: e3a95e5080f0844b6bb601639a5bb3051e58c707
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -66,6 +66,14 @@ attempt_file: 2026-10-29T223301Z-check-full-verify-paged-gather-gate-kernel-r2.m
 prepared_at: 2026-10-29T223301Z
 job: 184991095dff4d50
 dispatched_at: 2026-10-29T223312Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.6421954867431368
+speedup_ci: [1.6175625544419896, 1.6668284190442837]
+harvested_at: 2026-10-29T224331Z
+best_at_harvest: 1.6339575246416982
+promotion: null
+mechanism: null
 ---
 
 # full-verify-paged-gather-gate-kernel-r2
@@ -136,3 +144,35 @@ warn  dtype      L7646: q = torch.full(..., dtype=torch.uint8 ...).view(FP8)   [
 OK with warnings: .../muse_attention_decode/submission.py
 ```
 `python3 -I -m py_compile`: OK (__pycache__ removed).
+
+## Result
+
+- job `184991095dff4d50` (check), status done, passed True, tests 16/16
+- speedup 1.6422x, 95% CI [1.6176, 1.6668], score 2293.454117006171 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.6339575246416982, "ci": [1.6094481617720726, 1.6584668875113235], "job": "4e386647edd845f7"}; base result: muse_attention_decode/hypotheses/BEST.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel-r2.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel-r2.patch`; branch `hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 10.82 | 11.26 | 0.9441 | lost |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 15.62 | 15.74 | 0.9941 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.38 | 15.44 | 1.0075 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 104.77 | 103.45 | 1.0099 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 16.81 | 16.94 | 1.0217 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 177.91 | 189.43 | 0.9352 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.9 | 13.46 | 1.0207 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.09 | 30.35 | 0.9855 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 19.51 | 19.21 | 1.008 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.74 | 151.44 | 1.0767 | gained |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 27.1 | 27.83 | 0.9777 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.09 | 282.33 | 1.0714 | gained |
+
+gained on full verify_16, verify_32; lost on sliding decode_1; full decode_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

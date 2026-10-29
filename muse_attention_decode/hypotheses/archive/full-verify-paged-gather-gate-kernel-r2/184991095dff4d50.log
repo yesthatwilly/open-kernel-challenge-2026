@@ -1,0 +1,139 @@
+.2 s (import clock now 298 s)
+[sw] GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.5/30.2 us: pdl grid 132 1.037x/1.027x; pdl grid 256 1.026x/1.022x; quick: master 30.3 us vs best pdl grid 132 (sm) 29.3 us (merge +3.3 us)): master kept
+[sw] phase two-state replay checks: starting (import clock 298 s, deadline 480 s)
+[sw] replay B=2..16 state A: eager warm-up on a side stream
+[sw] replay B=2..16 state B: eager warm-up on a side stream
+[sw] replay B=2..16: warm-ups returned
+[sw] replay B=2..16 state A: capturing
+[sw] replay B=2..16 state B: capturing
+[sw] replay B=2..16 step 0: launching state A graph
+[sw] replay B=2..16 step 0: state A rel L2 6.48e-03, finite True -> ok
+[sw] replay B=2..16 step 1: launching state B graph
+[sw] replay B=2..16 step 1: state B rel L2 4.65e-03, finite True -> ok
+[sw] replay B=2..16 step 2: launching state A graph (refilled)
+[sw] replay B=2..16 step 2: state A rel L2 4.47e-03, finite True -> ok
+[sw] replay B=2..16 step 3: launching state B graph (refilled)
+[sw] replay B=2..16 step 3: state B rel L2 4.55e-03, finite True -> ok
+[sw] replay B=2..16 step 4: launching state A graph (refilled)
+[sw] replay B=2..16 step 4: state A rel L2 4.58e-03, finite True -> ok
+[sw] replay B=2..16 step 5: launching state B graph (refilled)
+[sw] replay B=2..16 step 5: state B rel L2 4.49e-03, finite True -> ok
+[sw] after the replay checks: error word 0
+[sw] phase two-state replay checks: 0.1 s (import clock now 298 s)
+[sw] total setup 41.4 s (import clock 298 s)
+PATH CHOSEN: sliding verify B=2..16 [sw s2b]: pre-attn + kernel<SPLIT> + PDL sw_combine_kernel grid sm (GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.7/24.9 us: pdl grid 132 1.161x/1.190x; pdl grid 128 1.129x/1.149x; quick: master 24.8 us vs best pdl grid 132 (sm) 21.3 us (merge +3.0 us)))
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=2..16 (master 24.8 us): pdl best grid 132 (sm) 21.3 us = pre-attn + kernel 18.3 + merge +3.0 (kernel alone 14.8, combine alone 7.3); tk best grid 128 (8b) 41.0 us = pre-attn + kernel 19.1 + merge +21.9 (kernel alone 15.7, combine alone 6.6); ticket-only tail at grid 264 +1.9 us (DIAG)
+PATH CHOSEN: sliding verify B=17..32 [sw s2b]: master's routed path (GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.5/30.2 us: pdl grid 132 1.037x/1.027x; pdl grid 256 1.026x/1.022x; quick: master 30.3 us vs best pdl grid 132 (sm) 29.3 us (merge +3.3 us)): master kept)
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=17..32 (master 30.3 us): pdl best grid 132 (sm) 29.3 us = pre-attn + kernel 26.0 + merge +3.3 (kernel alone 22.6, combine alone 6.9); tk best grid 128 (4b) 43.2 us = pre-attn + kernel 27.0 + merge +16.2 (kernel alone 23.6, combine alone 6.6); ticket-only tail at grid 256 +1.2 us (DIAG)
+PATH CHOSEN: sliding verify B=1 [sw s2b]: not gated (PSEUDO / master route above unchanged)
+[fvg] build 38.1 s in the background, joined at import clock 298 s; OK
+[fvg] fvg_kernel<1>: regs 128, local 0 B, smem 89112 dyn + 0 static, 2 CTAs/SM, 132 SMs, G 264, cooperative 1
+[fvg] probe: launching kernel_fn eager (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] probe: eager returned; capturing + replaying it
+[fvg] routed rows: q unpaired e4m3 [B*8,16,64] (_pre_attention_kernel PAIRED=False); out bf16 [B*8,1024] from the gate's combine with the fused RMSNorm x sigmoid(gate) (no norm-gate launch)
+[fvg] v16 agentic-soft: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v16 agentic-soft: returned
+[fvg] v16 agentic-soft: relL2 vs e4m3-q ref 1.81e-03, judge 7.14e-02 vs bound 0.150 (worst row 2.42x bound), finite True; master judge 7.19e-02
+[fvg] v16 agentic-coherent: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v16 agentic-coherent: returned
+[fvg] v16 agentic-coherent: relL2 vs e4m3-q ref 1.66e-03, judge 2.10e-02 vs bound 0.067 (worst row 4.28x bound), finite True; master judge 2.16e-02
+[fvg] v16 short-T<G: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v16 short-T<G: returned
+[fvg] v16 short-T<G: relL2 vs e4m3-q ref 1.71e-03, judge 6.20e-02 vs bound 0.150 (worst row 2.26x bound), finite True; master judge 6.27e-02
+[fvg] v16 replay state A: eager warm-up on a side stream
+[fvg] v16 replay state B: eager warm-up on a side stream
+[fvg] v16 replay: warm-ups returned
+[fvg] v16 replay state A: capturing
+[fvg] v16 replay state B: capturing
+[fvg] v16 replay step 0: launching state A graph
+[fvg] v16 replay step 0: state A rel L2 1.80e-03, finite True -> ok
+[fvg] v16 replay step 1: launching state B graph
+[fvg] v16 replay step 1: state B rel L2 1.78e-03, finite True -> ok
+[fvg] v16 replay step 2: launching state A graph (refilled)
+[fvg] v16 replay step 2: state A rel L2 1.78e-03, finite True -> ok
+[fvg] v16 replay step 3: launching state B graph (refilled)
+[fvg] v16 replay step 3: state B rel L2 1.79e-03, finite True -> ok
+[fvg] v16 replay step 4: launching state A graph (refilled)
+[fvg] v16 replay step 4: state A rel L2 1.79e-03, finite True -> ok
+[fvg] v16 replay step 5: launching state B graph (refilled)
+[fvg] v16 replay step 5: state B rel L2 1.79e-03, finite True -> ok
+[fvg] v16 round 1: master 162.9 us, gate e2e 149.1 us, ratio 0.916
+[fvg] v16 round 2: master 165.9 us, gate e2e 149.8 us, ratio 0.903
+[fvg] v16 round 3: master 162.9 us, gate e2e 148.9 us, ratio 0.914
+[fvg] v16 ROUTE: r1 162.9/149.1 us 0.916; r2 165.9/149.8 us 0.903; r3 162.9/148.9 us 0.914; draws relL2 <= 1.81e-03, judge worst 7.14e-02 vs bound 0.150, row <= 4.28x bound (master judge <= 7.19e-02)
+[fvg] v32 agentic-soft: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v32 agentic-soft: returned
+[fvg] v32 agentic-soft: relL2 vs e4m3-q ref 1.80e-03, judge 7.41e-02 vs bound 0.150 (worst row 1.72x bound), finite True; master judge 7.46e-02
+[fvg] v32 agentic-coherent: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v32 agentic-coherent: returned
+[fvg] v32 agentic-coherent: relL2 vs e4m3-q ref 1.67e-03, judge 2.06e-02 vs bound 0.066 (worst row 3.94x bound), finite True; master judge 2.17e-02
+[fvg] v32 short-T<G: launching kernel_fn (pre-attn + fvg_kernel<1>, grid 264, coop 1)
+[fvg] v32 short-T<G: returned
+[fvg] v32 short-T<G: relL2 vs e4m3-q ref 1.72e-03, judge 5.80e-02 vs bound 0.150 (worst row 2.32x bound), finite True; master judge 5.89e-02
+[fvg] v32 replay state A: eager warm-up on a side stream
+[fvg] v32 replay state B: eager warm-up on a side stream
+[fvg] v32 replay: warm-ups returned
+[fvg] v32 replay state A: capturing
+[fvg] v32 replay state B: capturing
+[fvg] v32 replay step 0: launching state A graph
+[fvg] v32 replay step 0: state A rel L2 1.80e-03, finite True -> ok
+[fvg] v32 replay step 1: launching state B graph
+[fvg] v32 replay step 1: state B rel L2 1.82e-03, finite True -> ok
+[fvg] v32 replay step 2: launching state A graph (refilled)
+[fvg] v32 replay step 2: state A rel L2 1.79e-03, finite True -> ok
+[fvg] v32 replay step 3: launching state B graph (refilled)
+[fvg] v32 replay step 3: state B rel L2 1.77e-03, finite True -> ok
+[fvg] v32 replay step 4: launching state A graph (refilled)
+[fvg] v32 replay step 4: state A rel L2 1.80e-03, finite True -> ok
+[fvg] v32 replay step 5: launching state B graph (refilled)
+[fvg] v32 replay step 5: state B rel L2 1.78e-03, finite True -> ok
+[fvg] v32 round 1: master 302.3 us, gate e2e 278.0 us, ratio 0.919
+[fvg] v32 round 2: master 303.4 us, gate e2e 279.0 us, ratio 0.920
+[fvg] v32 round 3: master 303.1 us, gate e2e 278.7 us, ratio 0.920
+[fvg] v32 ROUTE: r1 302.3/278.0 us 0.919; r2 303.4/279.0 us 0.920; r3 303.1/278.7 us 0.920; draws relL2 <= 1.80e-03, judge worst 7.41e-02 vs bound 0.150, row <= 3.94x bound (master judge <= 7.46e-02)
+[gate] empty-graph baseline 2.9 us (subtracted)
+[fvg] diag v16: kernel 147.8 us, mainloop 139.1 (2.43 TB/s), loads-only 85.0 (3.98 TB/s), math-only 119.6 us
+[gate] empty-graph baseline 2.9 us (subtracted)
+[fvg] diag v32: kernel 277.6 us, mainloop 265.2 (2.53 TB/s), loads-only 165.4 (4.06 TB/s), math-only 233.1 us
+PATH CHOSEN: full verify B=16 [fvg gate]: pre-attn (unpaired q) + fvg_kernel<1> grid 264 (coop 1, fused norm-gate)
+PATH CHOSEN: full verify B=32 [fvg gate]: pre-attn (unpaired q) + fvg_kernel<1> grid 264 (coop 1, fused norm-gate)
+[paths] 31 decision lines, re-printed (stream-K K/V gather: full-line (sk-full-line-gather, SK_FULLLINE)):
+PATH CHOSEN: stream-K K/V gather: full-line (sk-full-line-gather; canary + stage-2 self-check passed)
+PATH CHOSEN: full decode streamk+ticket v2
+PATH CHOSEN: sliding verify B=1: stream-K pseudo-decode <4 stages, ticket, PSEUDO> grid p8 (best printed variant >= 1.05x faster than FA3)
+PATH CHOSEN: sliding verify B=2..16: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: sliding verify B=17..32: master FA3 (pseudo-decode not >= 1.05x faster than FA3 in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=2..16: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=17..64: pre-attn + v2 (FUSED_PRE not >= 1.02x in the printed timings, or failed a check)
+PATH CHOSEN: full decode B=1: master two-level ticket + separate pre-attention kernel (FUSED_PRE has no two-level variant)
+PATH CHOSEN: full decode_1 streamk two-level
+PATH CHOSEN: every other shape (sliding decode bands not named above, other verify bands, page 64, dp): master path, unchanged
+[slide] PATH CHOSEN: sliding B=1 PERHEAD ON: 2 clusters x C=16, one kv head each
+[slide] PATH CHOSEN: sliding cluster v2 PERHEAD 2 x C=16 B=1 (fp8qk)
+[slide] PATH CHOSEN: sliding master Triton B=2..16 (C=8 off by gate)
+[slide] PATH CHOSEN: sliding cluster v2 C=4 B=17..32 (fp8qk)
+[slide] PATH CHOSEN: sliding master for B>32 decode, every verify (FA3) and page 64 (by gate)
+PATH CHOSEN: sliding decode B=1: master (cluster C=16), not gated in this restack
+PATH CHOSEN: sliding decode B=2..16: master (Triton), not gated in this restack
+PATH CHOSEN: sliding decode B=17..32: [pre-attn + stream-K sk window] <4 stages, ticket, PSEUDO TOK=1> grid p4; head-to-head (pass 2) pair 18.9 us net vs cluster C=4 21.8 us net vs Triton 26.0 us net (cluster C=4 / pair 1.154x; pass 1 1.175x) (>= 1.03x vs master incumbent)
+PATH CHOSEN: full decode_1 [A chunk320]: route (c320 V1 21.63 us vs two-level 23.97 us, ratio 0.903; the chain line below names the routed variant)
+PATH CHOSEN: full decode_1 [chain]: V4 (A+C+D) (V4 19.71 us vs V0 23.97 us head to head, ratio 0.822 (<= 0.98); pass 1: V0 23.62, V1 21.38, V2 21.18, V3 19.55, V4 19.39 us); import clock 256 s
+PATH CHOSEN: full decode_1 [c320-combine-onepass]: ONEPASS combine on V4 (h2h 19.58 -> 17.38 us, inc/cand 1.127 vs margin 1.01; readout V3 19.23->17.79, V4 19.49->17.06 us (V4 ratio 1.143))
+PATH CHOSEN: full decode_1 [c320-pdl-early-trigger]: incumbent trigger kept (h2h 17.12 -> 16.77 us, inc/cand 1.021 vs margin 1.01; readout V4 inc 16.38, V4 late 16.38, V4 early nw16 16.51, V4 early nw8 18.56 us (ratio 0.992))
+PATH CHOSEN: full decode_1 [chain final]: V4 [c320_attn_kernel<320, true> + c320_combine_kernel<320, 16, true, ONEPASS>]; onepass True, early trigger False; import clock 256 s
+PATH CHOSEN: sliding verify_32 pre-attention SV32 [B tiled]: route (pre 4.4 vs 6.0 us, step 29.7 vs 30.9 us, ratio 0.963)
+PATH CHOSEN: sliding verify B=2..16 [sw s2b]: pre-attn + kernel<SPLIT> + PDL sw_combine_kernel grid sm (GATE B=2..16: ROUTE pdl grid 132 (sm) (rounds master 24.7/24.9 us: pdl grid 132 1.161x/1.190x; pdl grid 128 1.129x/1.149x; quick: master 24.8 us vs best pdl grid 132 (sm) 21.3 us (merge +3.0 us)))
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=2..16 (master 24.8 us): pdl best grid 132 (sm) 21.3 us = pre-attn + kernel 18.3 + merge +3.0 (kernel alone 14.8, combine alone 7.3); tk best grid 128 (8b) 41.0 us = pre-attn + kernel 19.1 + merge +21.9 (kernel alone 15.7, combine alone 6.6); ticket-only tail at grid 264 +1.9 us (DIAG)
+PATH CHOSEN: sliding verify B=17..32 [sw s2b]: master's routed path (GATE B=17..32: no finalist passed both rounds + IQR + agreement (rounds master 30.5/30.2 us: pdl grid 132 1.037x/1.027x; pdl grid 256 1.026x/1.022x; quick: master 30.3 us vs best pdl grid 132 (sm) 29.3 us (merge +3.3 us)): master kept)
+PATH CHOSEN: sliding verify merge cost [sw s2b, printed either way]: B=17..32 (master 30.3 us): pdl best grid 132 (sm) 29.3 us = pre-attn + kernel 26.0 + merge +3.3 (kernel alone 22.6, combine alone 6.9); tk best grid 128 (4b) 43.2 us = pre-attn + kernel 27.0 + merge +16.2 (kernel alone 23.6, combine alone 6.6); ticket-only tail at grid 256 +1.2 us (DIAG)
+PATH CHOSEN: sliding verify B=1 [sw s2b]: not gated (PSEUDO / master route above unchanged)
+PATH CHOSEN: full verify B=16 [fvg gate]: pre-attn (unpaired q) + fvg_kernel<1> grid 264 (coop 1, fused norm-gate)
+PATH CHOSEN: full verify B=32 [fvg gate]: pre-attn (unpaired q) + fvg_kernel<1> grid 264 (coop 1, fused norm-gate)
+[fvg] summary (7 lines):
+[fvg] build 38.1 s in the background, joined at import clock 298 s; OK
+[fvg] fvg_kernel<1>: regs 128, local 0 B, smem 89112 dyn + 0 static, 2 CTAs/SM, 132 SMs, G 264, cooperative 1
+[fvg] routed rows: q unpaired e4m3 [B*8,16,64] (_pre_attention_kernel PAIRED=False); out bf16 [B*8,1024] from the gate's combine with the fused RMSNorm x sigmoid(gate) (no norm-gate launch)
+[fvg] v16 ROUTE: r1 162.9/149.1 us 0.916; r2 165.9/149.8 us 0.903; r3 162.9/148.9 us 0.914; draws relL2 <= 1.81e-03, judge worst 7.14e-02 vs bound 0.150, row <= 4.28x bound (master judge <= 7.19e-02)
+[fvg] v32 ROUTE: r1 302.3/278.0 us 0.919; r2 303.4/279.0 us 0.920; r3 303.1/278.7 us 0.920; draws relL2 <= 1.80e-03, judge worst 7.41e-02 vs bound 0.150, row <= 3.94x bound (master judge <= 7.46e-02)
+[fvg] diag v16: kernel 147.8 us, mainloop 139.1 (2.43 TB/s), loads-only 85.0 (3.98 TB/s), math-only 119.6 us
+[fvg] diag v32: kernel 277.6 us, mainloop 265.2 (2.53 TB/s), loads-only 165.4 (4.06 TB/s), math-only 233.1 us
