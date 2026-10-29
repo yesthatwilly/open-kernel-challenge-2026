@@ -57,11 +57,20 @@ evidence: >
   hot half 134.5 us at T=256 vs ~39 us floor
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T190531Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+stage: claimed
+claimed_at: 2026-10-29T190532Z
+base_sha: 9a165fa3daa30898af37b9dcd47adf0056de57e3
+base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+branch: hyp/muse_decode_layer/hothalf-a3-exactn-ring-wh
+worktree: .worktrees/muse_decode_layer/hothalf-a3-exactn-ring-wh
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # hothalf-a3-exactn-ring-wh
