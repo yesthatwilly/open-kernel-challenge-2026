@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T225411Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T231040Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -19,6 +19,7 @@ Regenerated 2026-10-29T225411Z by `churn.py index`. Read this before writing a h
 - [shelf] stack of onepass merge + PERHEAD push merge + fast-math epilogues (combo-tail-onepass-push-fastepi), est ~0.6% | rows: layer=sliding load=decode_1, layer=sliding load=verify_1, layer=full load=decode_16, layer=full load=decode_32 | evidence: DECISIONS:441; its onepass part is [unresolved] above, not Do-not-try | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] FA3 scheduler metadata folded into the pre-attention kernel (one META program), FA3 prepare node removed on full verify rows (fa3-metadata-fold-preattn-full-verify) | rows: layer=full load=verify_1, layer=full load=verify_16, layer=full load=verify_32 | evidence: check 6d1082a6c0dd4f80: metadata bitwise == library on 156-162 samples/row (caps 57/8/4 binding, stable tie), output/FA3/k_cache/v_cache torch.equal, all 3 rows routed; in-run race step 32.45->30.06 (1.085/1.074x), 160.98->158.66 (1.016/1.013x), 301.30->298.62 us (1.009x); judge rows verify_1 full 27.8 us (board 30.1), verify_16 full 161.4 (162.7), verify_32 full 299.8 (302.1); headline 1.6336 vs board 1.6340 (lucky-draw board; flat within the sliding-gate flips); ~+0.7% expected; branch hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify | board: 1.6340 | blob: 2eb03f76 | reopen: stack with another attention row gain to >= 1.24% over the board (e.g. the [unresolved] onepass verify_1) | 2026-10-29 churn
 - [shelf] dense_q full-verify FA3 call (q reshaped [B,8,H,D], cu_seqlens_q dropped; bitwise-equal output), stacks with the metadata fold | rows: layer=full load=verify_1 | evidence: H100 fa3v probe (takemyjob hopper/fa3v c67d880; research/h100-fa3-1029.md): dense_q 1.03-1.04 at v1, 1.00 v16/v32; with precomputed metadata 1.05-1.06 / 1.006 / 1.007; 7 interleaved rounds, 2 seeds | board: 1.634 | blob: 2eb03f76 | reopen: stack with the fold (CLAIMS:82) and another row gain to >= 1.24% | 2026-10-29 h100
+- [shelf] full-verify paged-gather gate kernel at v16/v32 full (fvg_kernel<1>, cooperative, fused norm-gate), routed per row by the in-prepare race (full-verify-paged-gather-gate-kernel-r2) | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: check 184991095dff4d50 1.6422 + confirm a47caf0724de40ad 1.6464 (pooled 1.6443 vs board 1.6340, +0.63%; the board is a lucky draw, code level ~1.62): routed both runs, v16 0.903-0.916, v32 0.918-0.924, error = master's; H200 diag v32 math-only 233.1 / loads-only 165.4 / mainloop 265.2 us (math-bound) | board: 1.634 | blob: 2eb03f76 | reopen: stack with the FA3 metadata fold at verify_1 (CLAIMS:82) and dense_q (shelf) into one attention candidate; risk high -> confirm-pooled gain or a stack before any scored run | 2026-10-29 churn
 
 ### unresolved
 
