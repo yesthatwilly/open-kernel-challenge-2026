@@ -74,6 +74,7 @@ harvested_at: 2026-10-29T224331Z
 best_at_harvest: 1.6339575246416982
 promotion: null
 mechanism: null
+confirm_queued: full-verify-paged-gather-gate-kernel-r2-cf
 ---
 
 # full-verify-paged-gather-gate-kernel-r2
