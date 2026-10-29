@@ -2398,3 +2398,9 @@ with the operator's go-ahead.
     - L* = 3.08 us per kernel (iso K1 3.66, K2 3.98; prod 3.08), H = 1.39/1.57, E = 2.08/2.54.
     - v4xr is slower (wr 0.98): refuted. EPLF goes to [shelf]; per the MID rule it rides a later moe build as a raced arm.
   - **Next, a stack lane `stack`** (the [shelf] stacking rule): EPLF (decode_16/32, verify_1/16) plus the t1rate v6pe2 two-wave K2 rider (decode_1, host-only, ~+0.9%), as raced arms in one moe build on campaign/eb-v4x-routes (the board plus robust class-128 routing). Expected about +2-3.5% if both capture; briefs in git-scratch-c24a6e/stack-1029-briefs.md.
+- 2026-10-29T0950Z **stack check 65830a65: 1.942** (campaign/eb-stack c67fffd1; review and fix re-run after an API network error).
+  - **v6pe2 ROUTED at T=1:** ratio 1.043, decode_1 27.3 us vs ~29.3 (about +1% headline, hidden by noise on the other rows).
+  - **EPLF NOT ADMITTED:** all four kernels compiled at a 96-register cap with 24-32 B lmem spill, so they were never raced. The lever is still untested.
+  - No scored run.
+  - **stack2 started:** fix EPLF's register cap or spill (reuse .worktrees/eb-stack) and re-check. v6pe2 is kept.
+  - Quota: moe 15 checks / 8 runs.
