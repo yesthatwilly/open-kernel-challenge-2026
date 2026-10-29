@@ -68,4 +68,4 @@ OK with warnings: .worktrees/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race/muse
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 2.0201x [1.9898,2.0504], board: {"rank": 333, "team": "yesthatwilly", "speedup": 2.0201, "first": false, "ahead": 332, "to_first": 1.3324}

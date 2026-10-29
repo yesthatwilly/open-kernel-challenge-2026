@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "702f1004b45f4bfa",
+ "job": "24f183ff300949f2",
  "check_job": "702f1004b45f4bfa",
- "mode": "check",
- "speedup": 2.0645771117791423,
+ "mode": "submit",
+ "speedup": 2.020119462295186,
  "ci": [
-  2.033608455102455,
-  2.095545768455829
+  1.9898176703607582,
+  2.0504212542296134
  ],
- "score_us": 6513.924775815615,
+ "score_us": 6657.279557477411,
  "commit": "bbd1661f3d77230ea0673d67b390da4277ee5ea8",
  "submission_blob": "c6e41c9acc6169ac8a532684437955b1d560835b",
  "slug": "engine-a-a4b-a5b-encodings-race",
  "result": "muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.result.json",
- "updated_at": "2026-10-29T222813Z"
+ "updated_at": "2026-10-29T223315Z"
 }

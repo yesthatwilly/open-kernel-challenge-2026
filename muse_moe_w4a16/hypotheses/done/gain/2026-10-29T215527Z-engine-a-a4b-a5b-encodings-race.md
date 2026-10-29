@@ -83,12 +83,13 @@ speedup: 2.0645771117791423
 speedup_ci: [2.033608455102455, 2.095545768455829]
 harvested_at: 2026-10-29T222812Z
 best_at_harvest: 1.974770471501011
-promotion: submitted
+promotion: done
 mechanism: null
 promotion_commit: bbd1661f3d77230ea0673d67b390da4277ee5ea8
 promotion_attempt: 2026-10-29T222813Z-submit-engine-a-a4b-a5b-encodings-race.md
 promotion_job: 24f183ff300949f2
 promotion_at: 2026-10-29T222827Z
+board: "{\"rank\": 333, \"team\": \"yesthatwilly\", \"speedup\": 2.0201, \"first\": false, \"ahead\": 332, \"to_first\": 1.3324}"
 ---
 
 # engine-a-a4b-a5b-encodings-race

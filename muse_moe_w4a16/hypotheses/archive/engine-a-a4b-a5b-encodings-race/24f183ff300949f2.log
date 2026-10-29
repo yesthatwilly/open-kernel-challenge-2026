@@ -1,0 +1,123 @@
+90 267.84/271.10, x1.018)
+[v4x-t256] gate p50 round 2 (graph baseline 5.38 us subtracted): inc 274.66 us (IQR 1.34) | v4cxs 269.54 us (IQR 1.25, p10/p90 268.38/271.14, x1.019) | v4cxd 269.57 us (IQR 1.22, p10/p90 268.67/270.72, x1.019)
+[v4x-t256] gate p90 round 1 (graph baseline 5.38 us subtracted): inc 279.33 us (IQR 1.50) | v4cxs 272.90 us (IQR 1.44, p10/p90 271.58/273.95, x1.024) | v4cxd 273.50 us (IQR 0.80, p10/p90 272.48/274.50, x1.021)
+[v4x-t256] gate p90 round 2 (graph baseline 5.38 us subtracted): inc 278.82 us (IQR 1.41) | v4cxs 272.70 us (IQR 1.63, p10/p90 271.39/274.30, x1.022) | v4cxd 273.47 us (IQR 1.60, p10/p90 271.87/274.91, x1.020)
+[v4x-t256] race p10/p50/p90 us: T256 H-16f cold v4c canary s ok d ok | wr s 1.019Q d 1.018Q | i 305.8/274.5/279.1 s 297.2/269.1/272.8 d 298.8/269.5/273.5
+[v4x-t256] v4cxs [hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[v4x-t256] route s>d T256: S1.019 ok -> cold v4cxs; 0.8 s, at 148.8 s
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[w6m-fork] PATH T=128 = master | serial pick master | Q2 expect judged M=128 row +0.0 us vs eacf0722 (race mean 223.9->223.9)
+[w6m-fork] PATH T=256 = H-16f (FORK) | serial pick H-16 | Q2 expect judged M=256 row -15.4 us vs eacf0722 (race mean 312.5->297.1)
+[w6m-fork] end fork s 0x2b125ee0 p0 alt 0x2bec8490 | cur 0x0 cap 0x2b550820 -> distinct | picks 157 cap 43 alt 2
+[w6m-fork] decision lines end (prepare at 149.2 s)
+[hybrid-moe] ===== MOE HYBRID (T (128, 256)) SUMMARY (7.4 s; prepare at 149.2 s) =====
+[hybrid-moe] align kernel H=-16: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-8: compiled + ran in 0.39 s
+[hybrid-moe] align kernel H=-32: compiled + ran in 0.37 s
+[hybrid-moe] align kernel H=-48: compiled + ran in 0.38 s
+[hybrid-moe] align kernel H=32: compiled + ran in 0.31 s
+[hybrid-moe] align kernel H=48: compiled + ran in 0.30 s
+[hybrid-moe] align kernel H=-116: compiled + ran in 0.00 s
+[hybrid-moe] canary H=-16: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00431 (master 0.0039)
+[hybrid-moe] canary H=-8: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00431 (master 0.0039)
+[hybrid-moe] canary H=-32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=-48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=32: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=48: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00532 (master 0.0039)
+[hybrid-moe] canary H=-116: T=128 clean, T=256 clean; worst rel-L2 vs fp32 0.00431 (master 0.0039)
+[hybrid-moe] gate input T=128 judge p10 (16 experts, max 122, 201 routes, 23 passes): local routes 201, distinct 16, hot experts 1 (122 rows, max 122), 16-row blocks 23
+[hybrid-moe] gate input T=128 judge p50 (23 experts, max 28, 194 routes, 28 passes): local routes 194, distinct 23, hot experts 5 (100 rows, max 28), 16-row blocks 28
+[hybrid-moe] gate input T=128 judge p90 (27 experts, max 49, 162 routes, 30 passes): local routes 162, distinct 27, hot experts 1 (49 rows, max 49), 16-row blocks 30
+[hybrid-moe] gate T=128 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x0.856, H-8 x0.805, H-32 x0.883, H-48 x0.825, H32 x0.693, H48 x0.673, H-116 x0.839, H-16f x0.923, H-8f x0.866, H-116f x0.840 -> master
+[hybrid-moe] gate input T=256 judge p10 (22 experts, max 155, 333 routes, 34 passes): local routes 333, distinct 22, hot experts 4 (224 rows, max 155), 16-row blocks 34
+[hybrid-moe] gate input T=256 judge p50 (23 experts, max 82, 374 routes, 38 passes): local routes 374, distinct 23, hot experts 7 (274 rows, max 82), 16-row blocks 38
+[hybrid-moe] gate input T=256 judge p90 (25 experts, max 143, 467 routes, 43 passes): local routes 467, distinct 25, hot experts 8 (361 rows, max 143), 16-row blocks 43
+[hybrid-moe] gate T=256 (kernel_fn graphs, zipf + random x 2 rounds): worst ratio H-16 x1.029, H-8 x0.966, H-32 x0.920, H-48 x0.899, H32 x0.829, H48 x0.796, H-116 x0.974, H-16f x1.079, H-8f x1.011, H-116f x0.978 -> H-16f
+[hybrid-moe] layer check T=256 H=-16f (kernel_fn hook, zipf + skewed-4hot vs fp32) ok: worst rel-L2 0.00428 (master 0.00387)
+[hybrid-moe] copy check: 8 replays on two states, T [256]: PASS
+[hybrid-moe] PATH CHOSEN T=128 = MASTER (fallback: no H wins every round (H-16 x0.856, H-8 x0.805, H-32 x0.883, H-48 x0.825, H32 x0.693, H48 x0.673, H-116 x0.839); layer us passes): master 240.2, H-16 270.9, H-8 270.2, H-32 271.9, H-48 281.6, H32 346.7, H48 356.8, H-116 286.0, H-16f 256.0, H-8f 261.2, H-116f 285.9)
+[hybrid-moe] PATH CHOSEN T=256 = HYBRID FORKED (hot wg on the fork stream || cold Engine A, join before the post-norm) cold on v4cxs (v4c twin) H=-16 (hot > 16 rows at block 16); layer us passes): master 377.4, H-16 343.2, H-8 370.6, H-32 397.8, H-48 395.9, H32 432.0, H48 431.3, H-116 351.6, H-16f 320.5, H-8f 346.9, H-116f 350.7
+[hh-wh] > wh_init
+[hh-wh] > exact T=256
+[hh-wh] > time T=256
+[hh-wh] > replay wh5ds
+[hh-wh] > fork T=256
+[hh-wh] > copy check
+[w6m-fork] prepare fork s 0x2b125ee0 p0 alt 0x2bec8490 | cur 0x0 cap 0x2b550820 -> distinct | picks 0 cap 0 alt 0
+[w6m-fork] moe_fork_canary T=128 H-16f vs H-16: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=128 H-8f vs H-8: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=128 H-116f vs H-116: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-16f vs H-16: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-8f vs H-8: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] moe_fork_canary T=256 H-116f vs H-116: out+cache3 bitwise eager Y/Y, 4 poisoned replays Y/Y; err (0, 0, 0)->(0, 0, 0)
+[w6m-fork] Q1 T=128 worst-round vs master: H-16 x0.856 H-8 x0.805 H-32 x0.883 H-48 x0.825 H32 x0.693 H48 x0.673 H-116 x0.839 H-16f x0.923 H-8f x0.866 H-116f x0.840 -> master
+[w6m-fork] Q1 T=128 fork vs serial twin (worst..best round): H-16f/H-16 x1.057..x1.112, H-8f/H-8 x1.024..x1.076, H-116f/H-116 x0.970..x1.001; serial pick master
+[w6m-fork] T=256 fork gate H-16f vs H-16: worst x1.034 (each round >= 1.01) -> PASS H-16f
+[w6m-fork] Q1 T=256 worst-round vs master: H-16 x1.029 H-8 x0.966 H-32 x0.920 H-48 x0.899 H32 x0.829 H48 x0.796 H-116 x0.974 H-16f x1.079 H-8f x1.011 H-116f x0.978 -> H-16f
+[w6m-fork] Q1 T=256 fork vs serial twin (worst..best round): H-16f/H-16 x1.034..x1.071, H-8f/H-8 x1.046..x1.070, H-116f/H-116 x1.001..x1.025; serial pick H-16
+[v4x-t256] race p10/p50/p90 us: T256 H-16f cold v4c canary s ok d ok | wr s 1.019Q d 1.018Q | i 305.8/274.5/279.1 s 297.2/269.1/272.8 d 298.8/269.5/273.5
+[v4x-t256] route s>d T256: S1.019 ok -> cold v4cxs; 0.8 s, at 148.8 s
+[w6m-fork] PATH T=128 = master | serial pick master | Q2 expect judged M=128 row +0.0 us vs eacf0722 (race mean 223.9->223.9)
+[w6m-fork] PATH T=256 = H-16f (FORK) | serial pick H-16 | Q2 expect judged M=256 row -15.4 us vs eacf0722 (race mean 312.5->297.1)
+[w6m-fork] end fork s 0x2b125ee0 p0 alt 0x2bec8490 | cur 0x0 cap 0x2b550820 -> distinct | picks 157 cap 43 alt 2
+[w6m-fork] decision lines end (prepare at 149.2 s)
+[es1a] build 60.8 s: w13 regs 168 maxR 230 lmem 0 C75xx 0 serHGMMA 0 text b318211c=node; w2 regs 168 maxR 230 lmem 0 C75xx 0 serHGMMA 0 text 02ee0324=node
+[es1a] first launch T=128 judge p10: err 0, marker ok
+[es1a] check: 14 routings (judge p10/p50/p90 + extremes, T (128, 256)) vs fp32 exact dequant: worst rel-L2 0.00167 (<= 0.0075), untouched rows ok
+[es1a] hot half T=256 (us, read flush, wg/S worst round): p10 S 123.6 wg 110.7 x0.89, p50 S 157.3 wg 143.2 x0.91, p90 S 178.0 wg 170.4 x0.96; worst x0.89
+[es1a] hot half T=128 (us, read flush, wg/S worst round): p10 S 72.7 wg 60.0 x0.82, p50 S 98.8 wg 102.3 x1.03, p90 S 58.1 wg 47.5 x0.82; worst x0.82
+[es1a] route: T=128 master, T=256 H-16f (H-116 = Engine S hot half); prepare at 151.6 s
+[ea6] build 50.1 s (regs/lmem B/occ): K1m2 72/0/1 K1m1 72/0/1 K2m2 78/0/2 K2m1 82/0/2; MINB 2; grid 132; K2 co-resident at T=1: yes
+[ea6] fast (regs/lmem B/occ): K1f 79/0/1 K2f 79/0/2 cmb 121/0/2; arms v6pe v6pe2 v6p v6e
+[ea6] canary (36 inputs, NaN h/y): v6 T1..8 clean (worst 0.00407); v6s T1..1 clean (worst 0.00407); master worst 0.00814; 58 bitwise repeats
+[ea6] canary fast T=1: v6pe clean (worst 0.00407, =v6 bitwise 10/10); v6pe2 clean (worst 0.00407, =v6 bitwise 10/10); v6p clean (worst 0.00407, =v6 bitwise 10/10); v6e clean (worst 0.00407, =v6 bitwi
+[ea6] kernel-only T=1 us (K2 plain): n2 v1K1 13.54 v1K2 12.64 v6K1 15.46 v6K2 10.08; n3 v1K1 24.13 v1K2 14.18 v6K1 19.71 v6K2 12.26
+[ea6] T=1 us n1..n5 r1: inc(v1) 19.4/26.5/36.7/43.1/55.5 | v6 17.2/25.3/34.8/42.2/49.2 | v6s 21.4/28.6/37.0/44.1/52.3
+[ea6] T=1 us per extra expert r1 (2>3/3>4/4>5/OLS2-5): inc 10.21/6.40/12.45/9.36 | v6 9.57/7.33/7.04/7.91 | v6s 8.38/7.04/8.26/7.81
+[ea6] T=1 us n1..n5 r2: inc(v1) 19.5/26.4/36.8/43.1/55.4 | v6 17.2/25.3/34.8/42.2/49.3 | v6s 21.2/28.5/36.5/44.2/52.0
+[ea6] T=1 us per extra expert r2 (2>3/3>4/4>5/OLS2-5): inc 10.43/6.24/12.32/9.32 | v6 9.47/7.42/7.10/7.94 | v6s 8.06/7.68/7.78/7.82
+[ea6] T=1 vs v1: v6 wr 1.048/1.049 floor margin +0.050@n4 Q | v6s wr 0.959/0.967 floor margin -0.046@n2 - -> v6
+[ea6] T=1 fast us n1..n5 r1: v6 17.79/25.31/34.75/42.56/50.66 | v6pe 14.88/22.43/32.10/40.35/48.51 | v6pe2 14.27/21.60/30.75/38.50/46.50
+[ea6] T=1 fast us n1..n5 r2: v6 17.79/25.18/34.59/42.56/50.69 | v6pe 14.94/22.62/32.10/40.19/48.54 | v6pe2 14.34/21.50/31.04/38.43/46.56
+[ea6] T=1 fast vs v6: v6pe wr 1.102/1.093 floor +0.054 Q | v6pe2 wr 1.147/1.141 floor +0.099 Q -> v6pe2
+[ea6] T=8 race skipped: class 8 PINNED to v4 (EA_PIN) -> incumbent
+[ea6] copy check v6pe2 T=1: 8 replays on two states: PASS
+[ea6] route: T=1 v6pe2 (v6 family); T=2..8 v4 (incumbent); stage 1.5 s, prepare at 137.1 s
+[ea4x] build 54.9 s, join wait 0.0 s (regs/lmem/occ): K1s 93/0/2 K1d 95/0/2 K2s 93/0/2 K2d 95/0/2; smem 113136; okc_campaign_engine_a_v4x_5a6b0753a8
+[ea4x] canary 12 T x routings x {v4,v4c} x {s,d} x 2 runs (NaN h/y): 792 runs, clean v4xs ok v4xd ok v4cxs ok v4cxd ok; =inc bitwise, err 0, tickets 0
+[ea4x] race p10/p50/p90 us: T8 wr s 1.043Q d 1.027Q i 67.5/73.6/92.9 s 64.5/70.5/88.9 d 65.6/72.0/90.0 | T16 wr s 1.028Q d 1.015Q i 77.2/113.7/141.9 s 75.6/110.6/137.0 d 76.4/112.1/139.2
+[ea4x] race p10/p50/p90 us: T32 wr s 1.036Q d 1.020Q i 134.3/154.2/179.4 s 129.0/149.2/173.5 d 130.8/151.7/176.0 | T128 wr s 1.023Q d 1.012Q i 209.1/234.2/254.4 s 203.5/228.4/249.6 d 206.3/231.2/251.
+[ea4x] fixup t256/257/264: K1k8 i 44.0/48.1/49.1 s 42.3/46.0/46.8 d 42.6/46.9/47.3 | K2k16 i 45.0/50.3/50.2 s 43.0/46.8/47.3 d 43.6/47.5/49.1; D i/s/d K1 +4.14/+3.78/+4.26 K2 +5.23/+3.81/+3.95
+[routes] ea4x T8 v4: arm v4xs ratio 1.043 rounds 2 flips 0 | 2r, board s | d 1.027/1.019 s 1.043/1.039 | s>d S ok(27/9/15/11)
+[routes] ea4x T16 v4: arm v4xs ratio 1.028 rounds 2 flips 0 | 2r, board s | d 1.015/1.010 s 1.028/1.021 | s>d S ok(31/13/26/14)
+[routes] ea4x T32 v4c: arm v4cxs ratio 1.036 rounds 2 flips 0 | 2r, board s | d 1.020/1.015 s 1.036/1.032 | s>d S ok(34/16/30/20)
+[routes] ea4x T128 v4c: arm v4cxs ratio 1.023 rounds 2 flips 0 | 2r, board s | d 1.012/1.011 s 1.023/1.018 | s>d S ok(78/26/50/30); stage 2.7 s, at 139.9 s
+[stack] eplf 54.2+0.0s r/l/o cap 96 K1 p2 96/0/2 p1 96/0/2 p0 95/0/2 K2 p2 95/0/2 p1 96/8/2 p0 95/0/2; pf K1 p2 K2 p2; grid 264<=2x132; 521af6a548; stage 1.4 s, at 141.3 s
+[stack] T1 arm v6pe2 ratio 1.042 rounds 2 canary ok =v6pe 10/10 | wr vs inc pe 1.102/1.093 pe2 1.147/1.141
+[stack] T8 arm v4xs ratio 0.996/0.986 rounds 2 canary ok 212 | 2r | i 64.9/70.6/94.0 e 64.8/70.8/94.5 | not qualified
+[stack] T16 arm v4xs ratio 1.009/1.001 rounds 6 canary ok 212 | pooled near | i 93.6/103.6/124.4 e 91.8/102.9/124.2 | not qualified
+[stack] T32 arm v4cxs ratio 1.010/1.000 rounds 6 canary ok 212 | pooled near | i 115.6/150.0/162.8 e 113.6/148.6/162.7 | not qualified
+[stack] T128 arm v4cxs ratio 1.003/1.000 rounds 2 canary ok 212 | 2r | i 197.8/217.3/248.5 e 196.7/217.1/248.3 | not qualified
+[engineA] PATH CHOSEN T=1 = ENGINE A v6pe2
+[engineA] PATH CHOSEN T=2..16 = ENGINE A v4xs (v4 twin) PINNED (class 8/16)
+[engineA] PATH CHOSEN T=17..32 = ENGINE A v4cxs (v4c twin)
+[engineA] PATH CHOSEN T=128 = ENGINE A v4cxs (v4c twin) + CUDA combine PINNED
+[engineA] PATH CHOSEN T=256 = ENGINE A v4c
+[engineA] copy check: 64 replays on two states, T [1, 2, 8, 16, 17, 32, 128, 256]: PASS
+[hh-wh] BUILD 69s bg from 0.0s, join waited 0s at 149s; ptxas -Werror clean, C75xx none
+[hh-wh] ATTRS regs/spill w13 D0 r168/l0 a3 r168/l0 wh r168/l0 wh5ds r168/l0; w2 D0 r168/l0 a3 r168/l0 wh r168/l0 wh5ds r168/l0
+[hh-wh] SCALES 100663296 in 0x08..0x7E; A3 perm + A5b ENC4/pack copies lossless, self-test PASS (0.5s)
+[hh-wh] ROUTE T=256 pick wh5ds: wh/m .858/.860/.836/.840/.882/.883 wh/D0 .859/.859/.836/.840/.881/.880 a3/D0 .863/.864/.879/.880/.883/.880 wh5ds/wh .934/.935/.934/.931/.939/.937 D0/m 0.999..1.004; pair us m 115.7 D0 115.8 a3 101.6 wh 99.5 wh5ds 93.1; hot:N 4:32x2,48x2 7:32x5,80x1,96x1 7:32x5,64x1,128x2; exact 7/7; replay wh5ds 16/16 exact
+[hh-wh] FORK T=256 kfn us f/s m 285.3/290.2 a3 273.6/276.6 wh 267.1/273.9 wh5ds 261.9/267.8; f/m a3 .973/.971/.956/.957/.948/.948 wh .965/.962/.906/.908/.940/.939 wh5ds .954/.952/.888/.888/.915/.913; s/m worst a3 0.972 wh 0.966 wh5ds 0.958; m f/s 0.972..0.992; hot pair m 115.7 vs kfn serial 290.2 (cold+rest 174.5)
+[w6m-fork] PATH T=128 = master | serial pick master | Q2 expect judged M=128 row +0.0 us vs eacf0722 (race mean 223.9->223.9)
+[w6m-fork] PATH T=256 = H-16f (FORK) | serial pick H-16 | Q2 expect judged M=256 row -15.4 us vs eacf0722 (race mean 312.5->297.1)
+[hh-wh] PATH CHOSEN T=256 wh5ds wg_kernel<G,14> (copy PASS), T=128 master (2.1s, prepare at 151.3s)
+[ea-enc] build 4x 50s, 6 56s (bg from 0s), join wait 0.0s, phase at 152s
+[ea-enc] regs/lmem/occ 4x K1e4 82/0/2 K1e5 83/0/2 K2e4 82/0/2 K2e5 83/0/2; 6 K1e4 70/0/1 K1e5 64/0/1 K2e4 70/0/2 K2e5 64/0/2; recode 0.2s 1812MB; scales 0x5E..0x7E, 0 outside 0x08..0x7E -> E5 on
+[ea-enc] T=1 v6pe2: m/E4 y 0.984[0.967,1.004] m/E5 y 0.991[0.964,1.022] E4/m y 0.990[0.971,1.015] E4/E4 y 0.971[0.940,0.982] E4/E5 y 0.976[0.958,1.016] E5/m y 0.988[0.963,1.007] E5/E4 y 0.968[0.946,0.987] E5/E5 y 0.972[0.965,0.981]
+[ea-enc] T=8 v4xs: E4 y 0.968[0.949,0.982] E5 y 0.976[0.956,0.990]
+[ea-enc] T=16 v4xs: E4 y 0.963[0.957,0.978] E5 y 0.978[0.970,0.985]
+[ea-enc] T=32 v4cxs: E4 y 0.960[0.948,0.976] E5 y 0.968[0.955,0.979]
+[ea-enc] T=128 v4cxs: E4 y 0.961[0.956,0.967] E5 y 0.957[0.953,0.961]
+[ea-enc] T=256 v4cxs: E4 y 0.974[0.970,0.983] E5 y 0.979[0.976,0.985] | cold iso E4 0.967[0.958,0.975] E5 0.964[0.959,0.973]
+[ea-enc] PATH CHOSEN T=1 master (E/m>0.98 in a round, best worst 0.981); T=8 master (E/m>0.98 in a round, best worst 0.982); T=16 E4; T=32 E4; T=128 E5; T=256 master (E/m>0.98 in a round, best worst 0.983) (race 1.8s, prepare at 153s)
