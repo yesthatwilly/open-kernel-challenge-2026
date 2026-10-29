@@ -1,0 +1,691 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 2eb03f76..c6dc7efb 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -12,8 +12,10 @@ an in-kernel ticket combine and epilogue, stage 2; see below) replaces FA3 and t
+ stage 1's two kernels kept as its fallback.
+ """
+ 
++import math
+ import os
+ import random
++import struct
+ import time
+ 
+ _IMPORT_T0 = time.perf_counter()  # the import clock: every combination phase checks it
+@@ -76,6 +78,74 @@ def _inv_freq(theta: float, d: int, device) -> torch.Tensor:
+     return cache
+ 
+ 
++@triton.jit
++def _fm_metadata(
++    seqlens_ptr, cuq_ptr, meta_ptr,
++    B: tl.constexpr, P: tl.constexpr, BR: tl.constexpr, BM: tl.constexpr, BN: tl.constexpr, PG: tl.constexpr,
++    QHPK: tl.constexpr, NH: tl.constexpr, CAP: tl.constexpr, NSM: tl.constexpr, L2: tl.constexpr,
++    DIV: tl.constexpr, TIE: tl.constexpr,
++):
++    """FA3's varlen scheduler metadata for one call, as flash::prepare_varlen_num_blocks_kernel<NumWarps, Sort=true>
++    writes it (causal, not local: batch sort and head swizzle on), from THIS call's cache_seqlens / cu_seqlens_q.
++    Layout (BR = round_up(B, 4)): [0, BR) num_splits_dynamic, [BR, 2BR) num_m_blocks, [2BR, 3BR) varlen_batch_idx,
++    [3BR, 4BR) num_nheads_in_l2, [4BR] tile_count_semaphore; every vector at the sorted (virtual) index. Pad slots
++    [B, BR) and the semaphore are written 0 on every call (FA3 skips its prepare kernel, which zeroes the semaphore,
++    when it is handed this buffer). The shape-only constants come from the import gate (_fm_setup) and were matched
++    against the library's get_scheduler_metadata bit for bit before the route exists."""
++    i = tl.arange(0, P)
++    valid = i < B
++    seq = tl.load(seqlens_ptr + i, mask=valid, other=0)
++    lq = tl.load(cuq_ptr + i + 1, mask=valid, other=0) - tl.load(cuq_ptr + i, mask=valid, other=0)
++    if PG:
++        lq = lq * QHPK
++    mb = tl.where(valid, (lq + (BM - 1)) // BM, 0)
++    nb = tl.where(valid, (seq + (BN - 1)) // BN, 0)
++    total = tl.sum(mb * nb, axis=0)
++    # blocks_per_sm = int(ceilf(float(total) * 1.1f * float(num_head) / float(num_sm))), fp32, same operation order;
++    # ceil done in integers (x < 2^24 here, so the truncation and the int -> fp32 round trip are exact).
++    x = total.to(tl.float32) * 1.1
++    x = x * NH
++    x = x / NSM
++    fl = x.to(tl.int32)
++    bps = fl + (fl.to(tl.float32) < x).to(tl.int32)
++    bps = tl.maximum(bps, 1)  # total >= 1 on every call (cache_seqlens >= q_len); upstream has no guard
++    splits = tl.maximum(tl.minimum((nb + bps - 1) // bps, CAP), 1)  # the split cap clamps to [1, CAP]
++    if DIV:
++        nbs = (nb + splits - 1) // splits  # num_n_blocks per split, before the sort key and nheads_in_l2
++    else:
++        nbs = nb
++    key = nbs * BN - mb * BM  # causal sort key; descending
++    nbl = tl.maximum(nbs, 1)
++    nh = tl.where(nbl * 16 <= L2, 16, tl.where(nbl * 8 <= L2, 8, tl.where(nbl * 4 <= L2, 4,
++                                                                             tl.where(nbl * 2 <= L2, 2, 1))))
++    if not PG:
++        nh = nh * QHPK
++    nh = tl.minimum(nh, NH)
++    # Rank of each request in the descending sort: #{j: key_j > key_b} + ties placed by batch index (TIE 0: lower
++    # index first, as a stable merge sort; TIE 1: higher index first). The gate adopted the rule matching the library.
++    kb = key[:, None]
++    kj = key[None, :]
++    ib = i[:, None]
++    ij = i[None, :]
++    if TIE == 0:
++        tie = ij < ib
++    else:
++        tie = ij > ib
++    before = ((kj > kb) | ((kj == kb) & tie)) & valid[None, :]
++    rank = tl.sum(before.to(tl.int32), axis=1)
++    tl.store(meta_ptr + rank, splits, mask=valid)
++    tl.store(meta_ptr + BR + rank, mb, mask=valid)
++    tl.store(meta_ptr + 2 * BR + rank, i, mask=valid)
++    tl.store(meta_ptr + 3 * BR + rank, nh, mask=valid)
++    z = tl.zeros([P], dtype=tl.int32)
++    pad = (i >= B) & (i < BR)
++    tl.store(meta_ptr + i, z, mask=pad)
++    tl.store(meta_ptr + BR + i, z, mask=pad)
++    tl.store(meta_ptr + 2 * BR + i, z, mask=pad)
++    tl.store(meta_ptr + 3 * BR + i, z, mask=pad)
++    tl.store(meta_ptr + 4 * BR + i, z, mask=i == 0)  # tile_count_semaphore = 0, every call (graph replay safe)
++
++
+ @triton.jit
+ def _pre_attention_kernel(
+     qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
+@@ -83,15 +153,45 @@ def _pre_attention_kernel(
+     qkv_stride,
+     HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
+     PAIRED: tl.constexpr, G: tl.constexpr,
++    seqlens_ptr=None, cuq_ptr=None, meta_ptr=None,
++    META: tl.constexpr = False, FM_T: tl.constexpr = 0, FM_B: tl.constexpr = 1, FM_P: tl.constexpr = 16,
++    FM_BR: tl.constexpr = 4, FM_BM: tl.constexpr = 1, FM_BN: tl.constexpr = 1, FM_PG: tl.constexpr = True,
++    FM_QHPK: tl.constexpr = 1, FM_NH: tl.constexpr = 1, FM_CAP: tl.constexpr = 1, FM_NSM: tl.constexpr = 1,
++    FM_L2: tl.constexpr = 1, FM_DIV: tl.constexpr = 1, FM_TIE: tl.constexpr = 0,
++):
++    """One program per (token, head); the body is _pre_attention_body (unchanged). META=False (every call site but
++    the routed full-verify rows) compiles exactly the body. META=True: the grid is (FM_T + 1, HQ + HKV) with FM_T =
++    tokens; the programs t == FM_T never run the body (explicit runtime branch around it, no early return): program
++    (FM_T, 0) writes FA3's scheduler metadata for this call (_fm_metadata), the others in that row do nothing."""
++    t = tl.program_id(0)
++    h = tl.program_id(1)
++    if META:
++        if t == FM_T:
++            if h == 0:
++                _fm_metadata(seqlens_ptr, cuq_ptr, meta_ptr, FM_B, FM_P, FM_BR, FM_BM, FM_BN, FM_PG, FM_QHPK, FM_NH,
++                             FM_CAP, FM_NSM, FM_L2, FM_DIV, FM_TIE)
++        else:
++            _pre_attention_body(qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr, q_out_ptr,
++                                k_cache_ptr, v_cache_ptr, qkv_stride, t, h, HQ, HKV, D, ROPE, EPS, PAIRED, G)
++    else:
++        _pre_attention_body(qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr, q_out_ptr,
++                            k_cache_ptr, v_cache_ptr, qkv_stride, t, h, HQ, HKV, D, ROPE, EPS, PAIRED, G)
++
++
++@triton.jit
++def _pre_attention_body(
++    qkv_ptr, pos_ptr, loc_ptr, inv_freq_ptr, k_scale_ptr, v_scale_ptr,
++    q_out_ptr, k_cache_ptr, v_cache_ptr,
++    qkv_stride, t, h,
++    HQ: tl.constexpr, HKV: tl.constexpr, D: tl.constexpr, ROPE: tl.constexpr, EPS: tl.constexpr,
++    PAIRED: tl.constexpr, G: tl.constexpr,
+ ):
+-    """One program per (token, head). Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
++    """Program (t, h) of _pre_attention_kernel. Heads 0..HQ-1 are queries; HQ..HQ+HKV-1 are the new keys,
+     whose program also stores the matching value head. The q and k heads are contiguous in the
+     fused row, so head h starts at h*D for both. When PAIRED, q_out is the zero-padded
+     [tokens, HQ, 2*D] FA3 query: query h writes its D values into the half (h // G) % 2 (its KV
+     head's half of the paired 128-byte row) and D FP8 zeros into the other half, so the program
+     owns its whole padded row and every byte of it is written on every call."""
+-    t = tl.program_id(0)
+-    h = tl.program_id(1)
+     HALF: tl.constexpr = D // 2
+     i = tl.arange(0, HALF)
+     even = 2 * i
+@@ -1870,6 +1970,7 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+     g = hq // hkv
+     q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=device)
+     inv_freq = _inv_freq(theta, d, device) if theta else data["k_scale"]  # unused when ROPE is off
++    fm = _fm_gate(cfg, data["page_table"].shape[1])  # import-frozen route, config + page-table width only
+     if _TILED_ROUTE and _tiled_class(cfg) in _TILED_ROUTE:  # merge piece B: SV32 only, routed by GATE B (frozen table)
+         _pre_attention_tiled_kernel[(tokens, hkv)](
+             qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+@@ -1878,6 +1979,9 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+             HQ=hq, HKV=hkv, D=d, ROPE=bool(theta), EPS=RMS_EPS, PAIRED=paired, G=g,
+             num_warps=4,
+         )
++    elif fm is not None:  # full verify at a routed (B, page-table width): FA3's scheduler metadata folded in
++        fmeta = torch.empty(fm[0], dtype=torch.int32, device=device)  # per call, fully written by the META program
++        _fm_pre_launch(data, qkv, q, inv_freq, fmeta, fm[1], paired)
+     else:
+         _pre_attention_kernel[(tokens, hq + hkv)](
+             qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
+@@ -1905,6 +2009,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
+         k_attn, v_attn, q_attn = k_cache, v_cache, q
+         attn_heads = hkv
+         metadata = data["scheduler_metadata"]
++    if fm is not None:
++        metadata = fmeta  # FA3 skips its in-call prepare_varlen_num_blocks kernel
+     descale = {}
+     if cfg["kv_scale"] != 1.0:
+         descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, attn_heads),
+@@ -9407,6 +9513,510 @@ def _sw_setup() -> None:
+ 
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# fa3-metadata-fold-preattn-full-verify (log tag [fm]). On the three full-layer verify rows (window 0, q_len 8,
++# page 1, tp8; B = 1 unpaired at page-table width 80008, B = 16 / 32 paired at 86008: the judge's verify shapes at
++# ctx 80000, spread fixed at B = 1 and agentic at 16 / 32), FA3's varlen scheduler metadata (what its in-call
++# prepare_varlen_num_blocks_kernel<NumWarps, Sort=true> writes) is computed by ONE extra program of the existing
++# _pre_attention_kernel launch (META=True, grid (tokens + 1, Hq + Hkv)) from this call's cache_seqlens into a
++# per-call buffer and handed to flash_attn_with_kvcache as scheduler_metadata, so FA3 launches no prepare kernel.
++# Nothing derived from inputs is kept: only shape-only constants (block sizes, PackGQA, the static split cap, SM
++# count, the L2 block budget, the tie rule) are frozen per (B, page-table width). Gates per row: (a) recover those
++# constants by matching a Python port against the library's own get_scheduler_metadata (called as mha_fwd derives
++# it for kernel_fn's FA3 call) on judge draws plus edge sets, every surviving candidate must also match a 64-draw
++# holdout; (b) the Triton META program equals the library on every valid slot and the semaphore for every sample;
++# (c) kernel_fn's output, FA3's output and the whole k/v caches torch.equal to master's on 8 draws at the judge
++# shape, and a captured graph replayed twice and after an in-place refill equals master; (d) an interleaved
++# graph-replay race against master's step. Any miss, deadline or exception leaves that row on master.
++# ---------------------------------------------------------------------------------------------
++
++_FM_ROWS = MappingProxyType({1: 80008, 16: 86008, 32: 86008})  # B -> the judge's page-table width (verify, ctx 80000)
++_FM_ROUTE = MappingProxyType({})  # (B, page-table width) -> (metadata size, constexpr kwargs); frozen at import
++_FM_BAR = MappingProxyType({1: 1.02, 16: 1.00, 32: 1.00})  # master / fold step time needed in BOTH race rounds
++_FM_BY = 480.0  # import-clock start rule (seconds), as the other phases
++_FM_BMS = (64, 128, 192)
++_FM_BNS = (64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 256)
++
++
++def _fm_gate(cfg, max_pages: int):
++    """Config-and-shape-only predicate: full-layer verify (window 0, q_len 8, tp8, d 64, page 1, unit kv scale) at a
++    routed (batch, page-table width). Returns (metadata size, constexpr kwargs) or None."""
++    if (not _FM_ROUTE or cfg["window"] or cfg["q_len"] != 8 or cfg["page_size"] != 1 or cfg["num_q_heads"] != 16
++            or cfg["num_kv_heads"] != 2 or cfg["head_dim"] != 64 or cfg["rope_theta"] or cfg["kv_scale"] != 1.0):
++        return None
++    return _FM_ROUTE.get((cfg["batch"], max_pages))
++
++
++def _fm_pre_launch(data, qkv, q, inv_freq, fmeta, kw, paired: bool) -> None:
++    """kernel_fn's pre-attention launch on a routed full-verify row: master's programs (unchanged body) plus the META
++    program (t == tokens, h == 0) writing FA3's scheduler metadata for this call into fmeta."""
++    cfg = data["config"]
++    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = cfg["batch"] * cfg["q_len"]
++    _pre_attention_kernel[(tokens + 1, hq + hkv)](
++        qkv, data["positions"], data["cache_loc"], inv_freq, data["k_scale"], data["v_scale"],
++        q, data["k_cache"], data["v_cache"],
++        qkv.stride(0),
++        HQ=hq, HKV=hkv, D=d, ROPE=False, EPS=RMS_EPS, PAIRED=paired, G=hq // hkv,
++        seqlens_ptr=data["cache_seqlens"], cuq_ptr=data["cu_seqlens_q"], meta_ptr=fmeta,
++        META=True, FM_T=tokens, **kw,
++        num_warps=1,
++    )
++
++
++def _f32(v: float) -> float:
++    """v rounded to the nearest float32 (IEEE round to nearest even)."""
++    return struct.unpack("f", struct.pack("f", v))[0]
++
++
++def _fm_bps(total: int, nh: int, nsm: int) -> int:
++    """blocks_per_sm = int(ceilf(float(total) * 1.1f * float(num_head) / float(num_sm))) in float32, same order
++    (a float32 product or quotient computed in double and rounded once is the correctly rounded float32 result)."""
++    x = _f32(_f32(_f32(float(total)) * _f32(1.1)) * _f32(float(nh)))
++    x = _f32(x / _f32(float(nsm)))
++    return max(math.ceil(x), 1)
++
++
++def _fm_raw(cs, c):
++    """(num_m_blocks, num_n_blocks, uncapped split count) per request for cache_seqlens cs (q_len 8) under c."""
++    mb = -(-8 * (c["QHPK"] if c["PG"] else 1) // c["BM"])
++    nb = [-(-n // c["BN"]) for n in cs]
++    bps = _fm_bps(mb * sum(nb), c["NH"], c["NSM"])
++    return mb, nb, [-(-n // bps) for n in nb]
++
++
++def _fm_emulate(cs, c):
++    """Python port of prepare_varlen_num_blocks_kernel<NumWarps, Sort=true> (causal, not local) for one call: the
++    4*BR + 1 metadata list, None at the pad slots (never read by FA3)."""
++    B, BR = len(cs), c["BR"]
++    mb, nb, raw = _fm_raw(cs, c)
++    sp = [max(min(r, c["CAP"]), 1) for r in raw]
++    nbs = [-(-n // s) for n, s in zip(nb, sp)] if c["DIV"] else nb
++    key = [n * c["BN"] - mb * c["BM"] for n in nbs]
++    order = sorted(range(B), key=(lambda b: (-key[b], b)) if c["TIE"] == 0 else (lambda b: (-key[b], -b)))
++
++    def nheads(n):
++        n = max(n, 1)
++        k = 16 if n * 16 <= c["L2"] else 8 if n * 8 <= c["L2"] else 4 if n * 4 <= c["L2"] else 2 if n * 2 <= c["L2"] else 1
++        return min(k if c["PG"] else k * c["QHPK"], c["NH"])
++
++    out = [None] * (4 * BR + 1)
++    for r, b in enumerate(order):
++        out[r], out[BR + r], out[2 * BR + r], out[3 * BR + r] = sp[b], mb, b, nheads(nbs[b])
++    out[4 * BR] = 0
++    return out
++
++
++def _fm_same(m, lib, B: int, BR: int) -> bool:
++    """m equals the library's metadata on every slot FA3 reads: [0, B) of each vector and the semaphore."""
++    return (all(m[k * BR + j] == lib[k * BR + j] for k in range(4) for j in range(B)) and m[4 * BR] == lib[4 * BR])
++
++
++def _fm_lib_meta(lib, cs, max_pages: int, paired: bool, dev):
++    """The library's get_scheduler_metadata for cache_seqlens cs, called with what mha_fwd derives for kernel_fn's FA3
++    call on this row: num_heads 16, num_heads_k / headdim of the actual view (paired 1 / 128, else 2 / 64),
++    max_seqlen_q 8 with cu_seqlens_q, max_seqlen_k = page-table width x page size 1, causal, window (-1, -1), e4m3,
++    num_splits 0. Import-time only."""
++    B = len(cs)
++    m = lib(batch_size=B, max_seqlen_q=8, max_seqlen_k=max_pages * 1, num_heads=16,
++            num_heads_k=1 if paired else 2, headdim=128 if paired else 64,
++            cache_seqlens=torch.tensor(cs, dtype=torch.int32, device=dev), qkv_dtype=FP8,
++            cu_seqlens_q=torch.arange(0, 8 * B + 1, 8, dtype=torch.int32, device=dev),
++            page_size=1, causal=True, num_splits=0)
++    return m.cpu().tolist()
++
++
++def _fm_draws(B: int, max_pages: int, rng, n: int):
++    """n cache_seqlens lists (seq_len + 8) from the judge's distribution for this row: B > 1 'agentic' (80000 +/- 7.5%);
++    B = 1 is 'fixed' (80000), so 8 judge draws plus uniform lengths (the B = 1 gate must see other lengths)."""
++    if B == 1:
++        return [[max_pages]] * 8 + [[rng.randint(9, max_pages)] for _ in range(n - 8)]
++    return [[min(max(int(80000 * (1 + 0.075 * (2 * rng.random() - 1))), 1), 86000) + 8 for _ in range(B)]
++            for _ in range(n)]
++
++
++def _fm_edges(B: int, max_pages: int, rng):
++    """Edge sets (cache_seqlens <= page-table width): all-equal lengths (every sort key ties: the tie rule), lengths
++    == q_len, below / at / above one block, ramps, one long + many short (the split cap binds), uniform."""
++    top = max_pages
++    out = [[n] * B for n in (8, 9, 100, 159, 160, 161, 1000, 40000, top - 1, top)]
++    if B == 1:
++        return out + [[rng.randint(8, top)] for _ in range(24)]
++    out.append([9 + 7 * b for b in range(B)])
++    out.append([8 + 64 * b for b in range(B)])
++    out.append([top - 97 * b for b in range(B)])
++    out.append([9 + (top - 9) * b // (B - 1) for b in range(B)])
++    for pos in (0, B // 2, B - 1):
++        short = [9 + 13 * b for b in range(B)]
++        short[pos] = top
++        out.append(short)
++    out.append([top] + [8] * (B - 1))
++    out.append([top] * (B // 2) + [9] * (B - B // 2))
++    out.append([8 + (b % 2) for b in range(B)])
++    out += [[rng.randint(8, top) for _ in range(B)] for _ in range(8)]
++    return out
++
++
++def _fm_cap(c, prepared):
++    """(cap, from_binding) for candidate c, or (None, False) if inconsistent. Binding: a request whose uncapped split
++    count exceeds the library's, which then IS the cap; all binding values must agree. With none binding, the
++    smallest cap consistent with every sample (the largest split seen), never larger."""
++    bind, lo = set(), 1
++    for cs, _, lsp in prepared:
++        _, _, raw = _fm_raw(cs, c)
++        for r, s in zip(raw, lsp):
++            if s < 1 or s > max(r, 1):
++                return None, False
++            if r > s:
++                bind.add(s)
++            lo = max(lo, s)
++    if len(bind) > 1:
++        return None, False
++    if bind:
++        cap = bind.pop()
++        return (cap, True) if cap >= lo else (None, False)
++    return lo, False
++
++
++def _fm_recover(B: int, paired: bool, samples, nsm: int):
++    """Gate (a): every candidate constant set whose port reproduces the library on every sample. Returns
++    (candidates, reason when none)."""
++    BR = (B + 3) // 4 * 4
++    hk, dd = (1, 128) if paired else (2, 64)
++    qhpk = -(-16 // hk)
++    prepared = []
++    for cs, lib in samples:
++        if len(lib) != 4 * BR + 1:
++            return [], f"library metadata has {len(lib)} ints, not 4*{BR}+1 (layout differs)"
++        idx = lib[2 * BR:2 * BR + B]
++        if sorted(idx) != list(range(B)):
++            return [], "library varlen_batch_idx is not a permutation (layout differs)"
++        if lib[4 * BR] != 0:
++            return [], f"library semaphore slot {lib[4 * BR]} != 0 (layout differs)"
++        lsp = [0] * B
++        for r, b in enumerate(idx):
++            lsp[b] = lib[r]
++        prepared.append((cs, lib, lsp))
++    found = []
++    for bm in _FM_BMS:
++        for bn in _FM_BNS:
++            for pg in (True, False):
++                c = dict(B=B, BR=BR, BM=bm, BN=bn, PG=pg, QHPK=qhpk, NH=hk if pg else 16, NSM=nsm,
++                         L2=(8 << 20) // (bn * (dd + dd) * 1), CAP=1, BIND=False, DIV=1, TIE=0)
++                cap, bind = _fm_cap(c, prepared)
++                if cap is None:
++                    continue
++                for div in (1, 0):
++                    for tie in (0, 1):
++                        cc = dict(c, CAP=cap, BIND=bind, DIV=div, TIE=tie)
++                        if all(_fm_same(_fm_emulate(cs, cc), lib, B, BR) for cs, lib, _ in prepared):
++                            found.append(cc)
++    return found, (None if found else f"no candidate constant set reproduces the library on {len(samples)} samples")
++
++
++def _fm_name(c) -> str:
++    return (f"BM {c['BM']} BN {c['BN']} packgqa {int(c['PG'])} nh {c['NH']} cap {c['CAP']}"
++            f"{' (binding)' if c['BIND'] else ' (clamped: none binds)'} L2 {c['L2']} div {c['DIV']} tie {c['TIE']}")
++
++
++def _fm_kwargs(c):
++    """The META constexprs for _pre_attention_kernel (shape-only)."""
++    return MappingProxyType(dict(
++        FM_B=c["B"], FM_P=max(16, triton.next_power_of_2(c["B"])), FM_BR=c["BR"], FM_BM=c["BM"], FM_BN=c["BN"],
++        FM_PG=bool(c["PG"]), FM_QHPK=c["QHPK"], FM_NH=c["NH"], FM_CAP=c["CAP"], FM_NSM=c["NSM"], FM_L2=c["L2"],
++        FM_DIV=c["DIV"], FM_TIE=c["TIE"]))
++
++
++def _fm_dummy(B: int, dev):
++    """Small token-only inputs for the production META launch (the metadata reads only cache_seqlens / cu_seqlens_q;
++    the body programs store into a private [tokens] cache)."""
++    tokens = B * 8
++    return {
++        "qkv": torch.zeros((B, 8, 2304), dtype=torch.bfloat16, device=dev),
++        "positions": torch.arange(tokens, dtype=torch.int64, device=dev),
++        "cache_loc": torch.arange(tokens, dtype=torch.int64, device=dev),
++        "cache_seqlens": torch.zeros(B, dtype=torch.int32, device=dev),
++        "cu_seqlens_q": torch.arange(0, tokens + 1, 8, dtype=torch.int32, device=dev),
++        "k_cache": torch.empty((tokens, 1, 2, 64), dtype=FP8, device=dev),
++        "v_cache": torch.empty((tokens, 1, 2, 64), dtype=FP8, device=dev),
++        "k_scale": torch.tensor(1.0, dtype=torch.float32, device=dev),
++        "v_scale": torch.tensor(1.0, dtype=torch.float32, device=dev),
++        "config": {"batch": B, "q_len": 8, "num_q_heads": 16, "num_kv_heads": 2, "head_dim": 64},
++    }
++
++
++def _fm_triton_meta(dummy, cs, size: int, kw):
++    """Gate (b): the production META launch (kernel_fn's grid and constexprs) for cache_seqlens cs; the buffer is
++    poisoned with -7 first, so an unwritten slot shows."""
++    B = len(cs)
++    dummy["cache_seqlens"].copy_(torch.tensor(cs, dtype=torch.int32))
++    meta = torch.full((size,), -7, dtype=torch.int32, device=dummy["qkv"].device)
++    q = torch.empty((B * 8, 16, 128 if B > 1 else 64), dtype=FP8, device=meta.device)
++    _fm_pre_launch(dummy, dummy["qkv"].reshape(B * 8, -1), q, dummy["k_scale"], meta, kw, B > 1)
++    torch.cuda.synchronize()
++    return meta.cpu().tolist()
++
++
++def _fm_synth(lens, gen, dev, max_pages: int):
++    """Full-layer verify inputs (window 0, no RoPE, q_len 8, page 1, tp8) at seq_lens = lens and the given page-table
++    width, built as reference.generate_input lays them out."""
++    data = _ps_synthetic(lens, 1.0, gen, dev, max_pages=max_pages, L=8)
++    data["config"] = dict(data["config"], window=0, rope_theta=0.0)
++    return data
++
++
++def _fm_clone(data):
++    return {k: (v.clone() if torch.is_tensor(v) else v) for k, v in data.items()}
++
++
++def _fm_run(route, fn):
++    """fn() with _FM_ROUTE temporarily set to route (import-time gates only; kernel_fn reads the module global when
++    it is called or captured)."""
++    global _FM_ROUTE
++    old = _FM_ROUTE
++    _FM_ROUTE = route
++    try:
++        return fn()
++    finally:
++        _FM_ROUTE = old
++
++
++def _fm_pre_only(data, kw, size: int):
++    """kernel_fn's pre-attention launch alone for these rows: master's (kw None) or the META one. Returns (q, meta)."""
++    cfg = data["config"]
++    B, hq, hkv, d = cfg["batch"], cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
++    tokens = B * cfg["q_len"]
++    paired = B > 1  # kernel_fn's predicate on these rows (window 0, Hkv even, not split-KV)
++    qkv = data["qkv"].reshape(tokens, -1)
++    q = torch.empty((tokens, hq, 2 * d if paired else d), dtype=FP8, device=qkv.device)
++    if kw is None:
++        _pre_attention_kernel[(tokens, hq + hkv)](
++            qkv, data["positions"], data["cache_loc"], data["k_scale"], data["k_scale"], data["v_scale"],
++            q, data["k_cache"], data["v_cache"],
++            qkv.stride(0),
++            HQ=hq, HKV=hkv, D=d, ROPE=False, EPS=RMS_EPS, PAIRED=paired, G=hq // hkv,
++            num_warps=1,
++        )
++        return q, None
++    meta = torch.empty(size, dtype=torch.int32, device=qkv.device)
++    _fm_pre_launch(data, qkv, q, data["k_scale"], meta, kw, paired)
++    return q, meta
++
++
++def _fm_fa3(data, q, metadata):
++    """kernel_fn's FA3 call on these rows (paired 128-wide view at B > 1) with the given scheduler_metadata."""
++    cfg = data["config"]
++    hkv, d = cfg["num_kv_heads"], cfg["head_dim"]
++    k_attn, v_attn = data["k_cache"], data["v_cache"]
++    if cfg["batch"] > 1:
++        pages, ps = k_attn.shape[0], k_attn.shape[1]
++        k_attn = k_attn.view(pages, ps, hkv // 2, 2 * d)
++        v_attn = v_attn.view(pages, ps, hkv // 2, 2 * d)
++    out = flash_attn_with_kvcache(
++        q=q, k_cache=k_attn, v_cache=v_attn, page_table=data["page_table"], cache_seqlens=data["cache_seqlens"],
++        cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=cfg["q_len"],
++        softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
++        scheduler_metadata=metadata)
++    return out[0] if isinstance(out, tuple) else out
++
++
++def _fm_equal_check(B: int, mp: int, on, kw, size: int, lib, gen, rng, dev) -> "str | None":
++    """Gate (c): 8 judge-shape draws (B = 1: 4 at 80000, 4 at other lengths): kernel_fn with the fold vs master
++    (route off) on cloned inputs: output, the WHOLE k_cache and v_cache torch.equal; FA3's output with this call's
++    folded metadata vs metadata None torch.equal, and the metadata equal to the library's. Then one captured graph of
++    the fold replayed twice (semaphore re-zeroed by the META program) and again after an in-place refill with other
++    lengths, each torch.equal to master on the same inputs. None on success, else the reason."""
++    off = MappingProxyType({})
++    BR = (B + 3) // 4 * 4
++    for k in range(8):
++        if B == 1:
++            lens = [80000] if k < 4 else [rng.randint(1, mp - 8)]
++        else:
++            lens = [c - 8 for c in _fm_draws(B, mp, rng, 1)[0]]
++        dm = _fm_synth(lens, gen, dev, mp)
++        df = _fm_clone(dm)
++        om = _fm_run(off, lambda: kernel_fn(dm))
++        of = _fm_run(on, lambda: kernel_fn(df))
++        torch.cuda.synchronize()
++        eq = (torch.equal(om, of), torch.equal(dm["k_cache"], df["k_cache"]), torch.equal(dm["v_cache"], df["v_cache"]))
++        if not all(eq):
++            return f"draw {k} (lens {lens[:2]}..): output / k_cache / v_cache equal {eq}"
++        q, meta = _fm_pre_only(df, kw, size)
++        a_meta = _fm_fa3(df, q, meta)
++        a_none = _fm_fa3(df, q, None)
++        torch.cuda.synchronize()
++        if not torch.equal(a_meta, a_none):
++            return f"draw {k}: FA3 output with the folded metadata != metadata None"
++        if not _fm_same(meta.cpu().tolist(), _fm_lib_meta(lib, [n + 8 for n in lens], mp, B > 1, dev), B, BR):
++            return f"draw {k}: folded metadata != library at the judge shape"
++        del dm, df, om, of, q, meta, a_meta, a_none
++    lens = [80000] if B == 1 else [c - 8 for c in _fm_draws(B, mp, rng, 1)[0]]
++    df = _fm_synth(lens, gen, dev, mp)
++    holder = {}
++    side = torch.cuda.Stream()
++    side.wait_stream(torch.cuda.current_stream())
++    with torch.cuda.stream(side):
++        for _ in range(2):
++            _fm_run(on, lambda: kernel_fn(df))
++    torch.cuda.current_stream().wait_stream(side)
++    torch.cuda.synchronize()
++    graph = torch.cuda.CUDAGraph()
++    with torch.cuda.graph(graph):
++        holder["out"] = _fm_run(on, lambda: kernel_fn(df))
++    torch.cuda.synchronize()
++    graph.replay()
++    torch.cuda.synchronize()
++    r1 = holder["out"].clone()
++    graph.replay()
++    torch.cuda.synchronize()
++    r2 = holder["out"].clone()
++    om = _fm_run(off, lambda: kernel_fn(_fm_clone(df)))
++    torch.cuda.synchronize()
++    if not (torch.equal(r1, r2) and torch.equal(r1, om)):
++        return "graph replay: two consecutive replays differ or differ from master (semaphore reset)"
++    lens2 = [54321] if B == 1 else [rng.randint(1, mp - 8) for _ in range(B)]
++    new = _fm_synth(lens2, gen, dev, mp)
++    for key in _ALT_KEYS:
++        df[key].copy_(new[key])
++    del new
++    dm2 = _fm_clone(df)
++    graph.replay()
++    torch.cuda.synchronize()
++    r3 = holder["out"].clone()
++    om2 = _fm_run(off, lambda: kernel_fn(dm2))
++    torch.cuda.synchronize()
++    eq = (torch.equal(r3, om2), torch.equal(df["k_cache"], dm2["k_cache"]), torch.equal(df["v_cache"], dm2["v_cache"]))
++    del graph, holder, df, dm2
++    if not all(eq):
++        return f"graph replay after an in-place refill (lens {lens2[:2]}..): output / k_cache / v_cache equal {eq}"
++    return None
++
++
++def _fm_row(B: int, lib, gen, rng, flush, dev, nsm: int):
++    """Gates (a)-(d) for one row. Returns (route value | None, compact summary for the PATH CHOSEN line); the full
++    detail goes to a [fm] line."""
++    mp = _FM_ROWS[B]
++    paired = B > 1
++    BR = (B + 3) // 4 * 4
++    size = 4 * BR + 1
++    st = {"match": "not run", "kv": "not run", "race": "not run", "pre": "not run", "why": ""}
++    info = []
++    t0 = time.perf_counter()
++
++    def done(val, why):
++        st["why"] = why
++        _say(f"[fm] B={B}: {'; '.join(info + [why])} ({time.perf_counter() - t0:.1f} s)")
++        return val, (f"metadata-match {st['match']}; k/v-cache equal {st['kv']}; race {st['race']}; pre-attn "
++                     f"{st['pre']}; {why}")
++
++    rec = [(cs, _fm_lib_meta(lib, cs, mp, paired, dev)) for cs in _fm_draws(B, mp, rng, 64) + _fm_edges(B, mp, rng)]
++    found, why = _fm_recover(B, paired, rec, nsm)
++    if not found:
++        st["match"] = "NO (gate a)"
++        return done(None, f"gate a: {why}")
++    hold = [(cs, _fm_lib_meta(lib, cs, mp, paired, dev)) for cs in _fm_draws(B, mp, rng, 64)]
++    for c in found:
++        if not all(_fm_same(_fm_emulate(cs, c), lb, B, BR) for cs, lb in hold):
++            st["match"] = "NO (gate a holdout)"
++            return done(None, f"gate a: {len(found)} candidates match {len(rec)} samples but {_fm_name(c)} misses "
++                              f"the holdout")
++    c = found[0]
++    ties = sorted({x["TIE"] for x in found})
++    tie_txt = (f"tie rule {'stable' if ties[0] == 0 else 'reversed'} (the all-equal sets match only it)"
++               if len(ties) == 1 else "tie rule not discriminated (no ties possible)")
++    info.append(f"a: {len(found)} candidate(s) on {len(rec)} samples + {len(hold)} holdout, size {size}, "
++                f"{_fm_name(c)}, {tie_txt}")
++    kw = _fm_kwargs(c)
++    dummy = _fm_dummy(B, dev)
++    for cs, lb in rec + hold:
++        m = _fm_triton_meta(dummy, cs, size, kw)
++        pads = all(m[k * BR + j] == 0 for k in range(4) for j in range(B, BR))
++        if not (_fm_same(m, lb, B, BR) and pads):
++            st["match"] = "NO (gate b)"
++            return done(None, f"gate b: Triton META != library (pads 0: {pads}) at cache_seqlens {cs[:3]}..")
++    del dummy
++    st["match"] = f"yes ({len(rec) + len(hold)} samples, cap {c['CAP']}{' binding' if c['BIND'] else ' clamped'})"
++    info.append(f"b: Triton META == library on all {len(rec) + len(hold)} samples")
++    if _sw_elapsed() > _FM_BY:
++        return done(None, "gate c skipped: deadline")
++    on = MappingProxyType({(B, mp): (size, kw)})
++    why = _fm_equal_check(B, mp, on, kw, size, lib, gen, rng, dev)
++    torch.cuda.empty_cache()
++    if why is not None:
++        st["kv"] = "NO / not equal (gate c)"
++        return done(None, f"gate c: {why}")
++    st["kv"] = "yes (8 draws + replays; output and FA3 equal too)"
++    info.append("c: output / FA3 / k_cache / v_cache torch.equal on 8 draws, graph replays equal")
++    if _sw_elapsed() > _FM_BY:
++        return done(None, "race skipped: deadline")
++    off = MappingProxyType({})
++    lens = [80000] if B == 1 else [x - 8 for x in _fm_draws(B, mp, rng, 1)[0]]
++    dm = _fm_synth(lens, gen, dev, mp)
++    df = _fm_clone(dm)
++    lists, emp = _sw_rounds([lambda: _fm_pre_only(dm, None, size), lambda: _fm_pre_only(df, kw, size)], flush,
++                            warm=3, reps=15)
++    p_off, _ = _sw_stats(lists[0], emp)
++    p_on, _ = _sw_stats(lists[1], emp)
++    st["pre"] = f"META off {p_off:.2f} us / on {p_on:.2f} us ({p_on - p_off:+.2f})"
++    ratios, iqr_ok, steps = [], True, []
++    for rd in (1, 2):
++        lists, emp = _sw_rounds([lambda: _fm_run(off, lambda: kernel_fn(dm)), lambda: _fm_run(on, lambda: kernel_fn(df))],
++                                flush, warm=3, reps=31)
++        mm, mi = _sw_stats(lists[0], emp)
++        fa, fi = _sw_stats(lists[1], emp)
++        ratios.append(mm / max(fa, 1e-3))
++        iqr_ok = iqr_ok and fi <= _SW_IQR * max(mi, 0.05)
++        steps.append((mm, fa))
++        _say(f"[fm] B={B} race round {rd}: master {mm:.2f} us (IQR {mi:.2f}) vs fold {fa:.2f} us (IQR {fi:.2f}) -> "
++             f"{ratios[-1]:.3f}x")
++    del dm, df
++    torch.cuda.empty_cache()
++    bar = _FM_BAR[B]
++    good = min(ratios) >= bar and iqr_ok
++    mm = sum(x[0] for x in steps) / 2
++    fa = sum(x[1] for x in steps) / 2
++    st["race"] = (f"{ratios[0]:.3f}x / {ratios[1]:.3f}x (bar {bar}, IQR {'met' if iqr_ok else 'MISSED'}; step "
++                  f"{mm:.2f} -> {fa:.2f} us; prepare-node delta ~{(mm - fa) + (p_on - p_off):.2f} us)")
++    return done((size, kw) if good else None, "routed" if good else "race below the bar or IQR missed")
++
++
++def _fm_setup() -> None:
++    """Gate the three full-verify rows (B = 1, 16, 32 at the judge's page-table widths) and freeze _FM_ROUTE. One
++    PATH CHOSEN line per row; any failure, deadline or exception leaves that row on master."""
++    global _FM_ROUTE
++    route, lines = {}, {}
++    try:
++        from sgl_kernel.flash_attn import get_scheduler_metadata as lib
++        why_lib = None
++    except Exception as e:
++        lib, why_lib = None, f"get_scheduler_metadata unavailable ({e!r})"
++    dev = torch.device("cuda", torch.cuda.current_device())
++    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
++    gen = torch.Generator(device="cuda").manual_seed(4251)
++    rng = random.Random(4251)
++    nsm = _sm_count(dev)
++    for B in (1, 16, 32):
++        if lib is None:
++            lines[B] = f"master (fallback: {why_lib})"
++            continue
++        if _sw_elapsed() > _FM_BY:
++            lines[B] = f"master (skipped: deadline, import clock {_sw_elapsed():.0f} s > {_FM_BY:.0f} s)"
++            continue
++        t0 = time.perf_counter()
++        try:
++            val, detail = _fm_row(B, lib, gen, rng, flush, dev, nsm)
++        except Exception as e:
++            val, detail = None, f"raised {e!r}"
++        torch.cuda.empty_cache()
++        if val is not None:
++            route[(B, _FM_ROWS[B])] = val
++        lines[B] = f"{'ROUTE folded metadata' if val is not None else 'master'}: {detail} [{time.perf_counter() - t0:.0f} s]"
++    del flush
++    _FM_ROUTE = MappingProxyType(route)
++    for B in (1, 16, 32):
++        _say(f"PATH CHOSEN: full verify B={B} [fm FA3 metadata folded into pre-attention]: {lines[B]}")
++
++
+ if torch.cuda.is_available():
+     _EXT = _build_splitkv()
+     if _EXT is not None and not _splitkv_self_check():
+@@ -9526,6 +10136,13 @@ if torch.cuda.is_available():
+         _SW_ROUTE = MappingProxyType({})
+         _SW_EXT = None
+         _say(f"PATH CHOSEN: sliding verify B=2..32 [sw s2b wgmma + fast merge]: master (fallback: setup raised {_e!r})")
++    # Full verify B = 1 / 16 / 32: FA3's scheduler metadata folded into the pre-attention launch (independent of every
++    # route above: window 0, q_len 8 only; master FA3 call otherwise).
++    try:
++        _fm_setup()
++    except Exception as _e:  # never raise at import: full verify keeps master exactly
++        _FM_ROUTE = MappingProxyType({})
++        _say(f"PATH CHOSEN: full verify B=1/16/32 [fm FA3 metadata folded into pre-attention]: master (fallback: setup raised {_e!r})")
+     # Decision lines re-printed last: the judge keeps a 16 KB log tail, which the gates' timing lines would otherwise fill.
+     print(f"[paths] {len(_PATH_LINES)} decision lines, re-printed (stream-K K/V gather: {_SK_GATHER}):", flush=True)
+     for _ln in _PATH_LINES:
