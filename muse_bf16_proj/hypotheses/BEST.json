@@ -1,17 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "bced57b42b87444d",
+ "job": "14ea7be493204308",
  "check_job": "bced57b42b87444d",
- "mode": "check",
- "speedup": 1.2973637641537636,
+ "mode": "submit",
+ "speedup": 1.2838658375255416,
  "ci": [
-  1.2836027160087515,
-  1.3111248122987758
+  1.2646078499626585,
+  1.3031238250884247
  ],
- "score_us": 3753.1322673646223,
+ "score_us": 3762.698452441605,
  "commit": "51c4c3d8c82de04fae14daffea5796394346b17f",
  "submission_blob": "5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab",
  "slug": "b12-batched-escape-m8-32-race",
  "result": "muse_bf16_proj/hypotheses/done/gain/b12-batched-escape-m8-32-race.result.json",
- "updated_at": "2026-10-29T213649Z"
+ "updated_at": "2026-10-29T214206Z"
 }
