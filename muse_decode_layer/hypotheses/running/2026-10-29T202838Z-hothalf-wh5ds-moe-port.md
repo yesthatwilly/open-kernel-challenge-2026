@@ -52,7 +52,7 @@ review_at: 2026-10-29T203620Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T203620Z
 base_sha: 906305a67ac68840ccfdb0d90d3edf861f6b9536
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -69,6 +69,8 @@ submission_blob: 7bb37a39e11419ee04a23303c491d0feccc95576
 lint_warnings: 209
 attempt_file: 2026-10-29T212727Z-check-hothalf-wh5ds-moe-port.md
 prepared_at: 2026-10-29T212727Z
+job: 35cc220cd79e4668
+dispatched_at: 2026-10-29T212752Z
 ---
 
 # hothalf-wh5ds-moe-port
