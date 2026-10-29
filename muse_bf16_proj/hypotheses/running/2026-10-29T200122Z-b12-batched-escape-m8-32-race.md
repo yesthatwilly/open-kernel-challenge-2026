@@ -55,7 +55,7 @@ review_at: 2026-10-29T200826Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T202329Z
 base_sha: 69eaf6972f9cd230611dddd4bb025a1dbf631d8a
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -64,6 +64,12 @@ worktree: .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T212209Z
+impl_commit: 84995d9e32799d8c940b71c9d279bedaad12e6d1
+submission_sha256: 7837d1e422852f91a995c3bc960614a411f0cb4aabf584aa9c70fe09983ed64b
+norm_sha256: 6a001bc2811e29072474f4cb3f5160bc7340a3492911325721a6db4baeaac7af
+submission_blob: 5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab
+lint_warnings: 58
 ---
 
 # b12-batched-escape-m8-32-race
@@ -133,3 +139,45 @@ No companion run is warranted. Each routed cell's effect reads directly off the 
 - Is the H100 lane still open for a 20-minute pre-check at the judge's real escape density (51/30 per CTA) with a b12r-style resident-x m8 arm? If yes, run it first. A projection of <= 0.95 at pooler m8 is what makes the judge check worth more than a diag.
 - For the decode bulk12 shelf (CLAIMS.md:97 per the LOG): the escape-density correction applies there too. Re-project with the real escapes per CTA before that shelf reopens on this result.
 
+
+## Implementation notes
+
+**Mechanism:** pooler and qkv_gate at exactly m=8 run a new 12-bit row-owner kernel (b12m_tma_kernel, uc1_g1: TMA-box x without a cluster, local mbarrier arrives, batched escape-x gather). It lives in its own extension and routes only behind a read-flush race against master's swap-AB incumbent.
+
+- **Where:** worktree `muse_bf16_proj/submission.py`, new section (12) after section (10) (+1049 lines, nothing removed). New extension `muse_bf16_b12m_m8_tma_v1` (TORCH_CUDA_ARCH_LIST=9.0a, `-O3 -lineinfo -std=c++20`). The m=1 `_B12_CUDA` unit is not touched or recompiled. Device code comes from takemyjob `hopper/b12tma-1029` d95798e / `hopper/b12dens-1029` 6d80717 `b12t_kernel` at CL=1 (cluster, multicast, AR and INS code stripped), and from a7da6fa9 / 2980f57a `b12x_kernel` for the bridge (GA0 is byte-for-byte the judged gather). Both kernels share one epilogue helper.
+- **Arms:**
+  - Routable: pooler m8 `uc1_g1<R32,S6,MINB2,CW8,NT8>`, qkv m8 `uc1_g1<R16,S4,MINB2,CW4,NT8>`.
+  - Non-routable diagnostics: bridge GA0 and GA1 at pooler m8 and qkv m8 (extra `_cell_gate` arms, which print GA0-GA1), and pooler m16 `uc1_s8_g1` as a timed-only cell.
+  - Dropped: m=32 cells and o (review fix).
+- **Routing:** exact shape only (`_b12m_route`). It requires `(layer, cfg m)` in B12M_CELLS, `x.shape[0] == m`, bf16, contiguous, 16 B aligned and a row stride divisible by 16 B. The `uc1` tensor map is encoded inside `b12m_run` from `x.data_ptr()` on every call. The encode is a host-only `cuTensorMapEncodeTiled` resolved through `cudaGetDriverEntryPointByVersion`, it is never cached, and only the driver function pointer is static.
+- **Gate (review fix: 0.95, not 0.97):** each arm runs `_cell_check` (fp64 rel L2, probe row, repeat bit-identity, error word), then `_b12m_rows` (every row's rel L2 <= 1.5e-2). After that come 3 read-flush `_cell_gate` rounds of kernel_fn with the flag on vs off (master's routed path, like for like) and 1 write-flush round as a diagnostic. A cell routes only if the pooled median ratio is <= B12_MAX_RATIO_M8 (0.95), every round is <= 0.97, and the pooled cand IQR is <= 2x max(incumbent IQR, 0.5 us). It must then pass a strict profiler assertion: exactly one `b12m_tma_kernel` (no profile means no route).
+- **Codes (review fix):** a cell reuses the m=1 state's `b12_wc_/esc_/base_` only when that instance has the same R. Otherwise it encodes its own codes through `_b12_encode_checked` (host + device round trip) under `b12m_*` keys. The source, R, base, escapes total / max per CTA and extra MB are printed. Codes are popped when no cell of the layer routes.
+- **Error word:** prepare-only. kernel_fn passes it and never reads it. Bounded mbarrier waits (0.5 s), and every launch is announced and synced in the checks.
+- **A/B and summary:** qkv_gate m=8 was added to AB_CASES. `_ab_component` maps (pooler|qkv_gate, 8) to its own b12m flag, and the second state reloads codes. A <= 2 KB `[b12m]` SUMMARY prints after the DECISIONS block, as the last lines of prepare. It carries build s, prepare s, codes, per-arm regs/spill/smem/occupancy/worst-row, per-round inc/arm/ratio/IQR, write flush, pooled ratio, GA0-GA1, ROUTE/NO-ROUTE + reason, and PATH CHOSEN.
+- **Size:** 309,225 B (cap 1,000,000).
+- **Deviation:** none from the narrowed spec. The m=1 RACE lines are not re-printed, because the m=1 unit is a separate extension and is unchanged.
+
+### Node validation (gpunode06 GPU 6, H100 SXM, nodejudge venv torch 2.14.1+cu130, 2026-10-29 20:35-20:39Z)
+The same bytes (sha256 7837d1e422852f91) went through guarded `hopper-probe` as the operator, with node-local staging that was unstaged after the run. Run dir: takemyjob `~/git/.takemyjob-wt/b12mval/prototypes/hopper-probe/runs/20261029-133523-gpunode06/` (branch hopper/b12mval-1029, uncommitted).
+
+- **Build and prepare:** the b12m extension compiled in 37.0 s. Import with every load_inline unit took 191 s, and prepare took 9.9 s. Register and spill counts: uc1 r48 (both cells), uc1_s8 r55, bridge r36-48, all with 0 spill and the needed occupancy (2/1 CTA/SM).
+- **Correctness:** every arm passed (rel L2 1.64-1.66e-3, worst row 1.7e-3, probe rows exact, error word 0). The judge's `check_implementation` passed on 10 shapes through graph replay with refilled inputs, outliers included. The A/B check passed at pooler and qkv m8.
+- **Codes:** pooler reused the m=1 codes (escapes 4559, max 51 per CTA). qkv encoded its own (escapes 2661, max 30 per CTA, +28.6 MB), because its m=1 cell picked another R.
+- **Race on the H100** (read flush, net us, inc/arm):
+  - P8: 24.0/18.6-18.75, pooled ratio **0.774**, GA0-GA1 3.90 us. ROUTE.
+  - Q8: 15.1/11.5, pooled ratio **0.764**, GA0-GA1 1.95 us. ROUTE.
+  - P16 (diag): pooled 0.863.
+  These absolute numbers do not transfer to the H200. The b12dens projection is 0.939 / 0.906. The judge's own gate decides.
+
+## Rules check
+Each item was checked against `git -C .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race diff`.
+- [x] CUDA-graph capturable: kernel_fn adds only `_b12m_route` (cfg, shapes, dtype, contiguity, `data_ptr() % 16` and state flags) and `_b12m_forward` (`torch.empty` plus one extension launch whose host-side tensor-map encode is not a stream op). Every `.item()` and synchronize sits in prepare-only helpers (`_b12m_rows`, `_b12m_prepare`). The graph capture and replay were validated on the H100.
+- [x] Nothing derived from `data` is cached: the tensor map is a stack-local built on each call from that call's x, and `_B12M_SUM` and `_B12M_BUILD` hold only prepare text and build state.
+- [x] Weights: a lossless 12-bit codec (section (10)'s `_b12_encode`, host + device round trip bit-exact), with escapes holding the true bf16 bits. Accumulation is fp32, followed by one bf16 rounding.
+- [x] Activations stay BF16 (x is read as bf16, the output is bf16). The KV-cache / query item is n/a: this is not attention.
+- [x] Attention full window: n/a, not attention.
+- [x] No timing patches, harness frames or I/O, module edits, reference import, subprocesses or network: `load_inline` only (as in master), and the reference is imported only by the node driver outside the submission.
+- [x] All work happens inside the timed call: one kernel per m=8 call, with no output caching or replay.
+- [x] The first line `# okc: problem=muse_bf16_proj` is kept. py_compile is OK and __pycache__ was removed.
+
+okc_lint: `OK with warnings: .../muse_bf16_proj/submission.py`. All 58 warnings are host-sync/dtype items "outside kernel_fn's call graph; fine in prepare()". There are no errors.
