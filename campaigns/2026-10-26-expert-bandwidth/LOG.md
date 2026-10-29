@@ -2352,3 +2352,9 @@ with the operator's go-ahead.
   - The sanitizer under nodejudge is VOID: prepare reaches ~78 GiB under compute-sanitizer. It needs an ea-only prepare.
   - Correction to 0325Z: moe check 03d2c99e's guard caught **0** capture collisions. Its 'alt 2' were eager warm-up picks; the gain came from priority 0 plus change A.
   - The 04:55Z GPU 1 orphans (USER compute-sanitizer decs fuzz, seed 11, 6 h idle) were killed on the user's word via audit-run.sh.
+- 2026-10-29T0615Z: the user, ~06:00Z: "have more to run with? you got tokens". Launched:
+  - Design lane `t32` (wf_4dfd24a1-fa8): moe decode_16/decode_32, the weakest rows at 1.47-1.75x (same engine as decode's weakest row, 32 sliding at 1.355x).
+  - Design lane `t1rate` (wf_d7b88f3e-5dc): the T=1 per-record consume rate.
+  - Each lane runs 3 designers at max effort, then a judge at max; build/audit/fix at high only if the judge clears the value bar.
+  - The H100 T=1 agent was re-tasked: Q3 T=16/32 anatomy, Q4 consume-rate microbench, Q5 a working sanitizer path. The fork/route agent is still running (cold-branch priority A/B).
+  - Quota: moe 17 checks / 9 runs, decode 19 / 10.
