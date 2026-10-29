@@ -14,7 +14,16 @@ controls_for: full-verify-paged-gather-gate-kernel-r2
 confirm_of: full-verify-paged-gather-gate-kernel-r2
 confirm_of_job: 184991095dff4d50
 review: proceed
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-29T224342Z
+base_sha: 37649103a331b49c92b219f1c9d06caaf5d82fc9
+base_blob: 0f7d6195263717e5dff426814b77ed679a083408
+branch: hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2-cf
+worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2-cf
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-verify-paged-gather-gate-kernel-r2-cf
