@@ -2672,3 +2672,8 @@ with the operator's go-ahead.
 ## 2026-10-29 2320Z — t1b read: no >= 5% T=1 cut; the next T=1 lever is the serial K1 -> K2 -> combine tail
 - research/h100-t1b-1029.md (takemyjob hopper/t1b-1029 70782ef; GPU 6). With E4: consume floor 1.10 us/record (K1 1.07-1.08, K2 1.03) vs ring floor 1.113-1.121; judge ~1.32 (18-20% above both). Full chain = 1.12-1.13x the ring-only chain even with consume at 0.70x the ring: the serial K1 -> K2 -> combine tail (combine ~2 us, ~7% of the block). PDL saves 5-6 us; glue outside ~0.
 - 16 consumer warps (2 groups x 8, alternate records; bit-exact after a cross-group ring wait): consume slope x1.105 but +0.7 us fixed -> net 0.13-0.22 us slower. Killed. EPF stays [shelf]. GPU 6 free.
+
+## 2026-10-29 2321Z — rega3 read (prefill): no >= 5% cut on A5b+D+SC; t128h read (moe): hybrid wins on average, gate lane started
+- research/h100-rega3-1029.md (takemyjob hopper/rgx3 2b6d50e; GPU 5; 70 EXACT lines, no C75xx). Pair vs A5b+D+SC: RS2 (wait<1> per group) low 0.997-1.045, **high 0.959-0.963**, ft 0.990-1.016; RS4 1.02-1.17; RS2 + 2-CTA multicast B 1.01-1.14 (L2 80% -> 51% with no cycle change). RS2 at N>=64 ~4% at high only (<= ~1% headline): [shelf]. Bounds: low = latency/issue (0.73 eligible warps/scheduler, issue 52%, tensor 33%): more consumer TLP or fewer dequant ops; high/ft = tensor pipe 79-85%.
+- research/h100-t128h-1029.md (GPU 3): moe T=128 forked H-16 hybrid with wh5ds mean 0.934 vs plain E5 but loses one-hot-expert draws (x1.04) -> [node-only]; gate lane t128g on GPU 3 (device-side hot-set gate with early-exit paths).
+- GPUs: 1 hsplit, 3 t128g, 4 crash triage; 5 and 6 free (6 reserved for the XL-arms validation after the crash fix).
