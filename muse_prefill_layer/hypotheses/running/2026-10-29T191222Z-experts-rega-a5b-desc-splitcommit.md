@@ -53,11 +53,20 @@ evidence: >
   27f0b9af 1.5362 (board)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T191802Z
 review_companions: null
 review_best: 1.536215653197081
 review_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
+stage: claimed
+claimed_at: 2026-10-29T191802Z
+base_sha: 80cc831d226d5a172f5b894f4e4810edc893a9d2
+base_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
+branch: hyp/muse_prefill_layer/experts-rega-a5b-desc-splitcommit
+worktree: .worktrees/muse_prefill_layer/experts-rega-a5b-desc-splitcommit
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-a5b-desc-splitcommit
