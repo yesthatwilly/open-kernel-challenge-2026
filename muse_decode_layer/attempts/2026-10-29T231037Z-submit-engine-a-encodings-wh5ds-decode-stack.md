@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/gain/2026-10-29T223938Z-engine-a-encodings-wh5ds-decode-stack.md` (branch `hyp/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `e42339989d554019` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `60932212`
 
 ## Goal
