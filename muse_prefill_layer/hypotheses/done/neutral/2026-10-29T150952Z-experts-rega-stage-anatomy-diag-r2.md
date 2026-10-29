@@ -113,12 +113,12 @@ instrument: >
   a deadline or an edit assertion stops it
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T151524Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T151524Z
 base_sha: 9047e4ba7caa809ca4b9aae6a1a556243f61a13f
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -137,6 +137,14 @@ attempt_file: 2026-10-29T153454Z-check-experts-rega-stage-anatomy-diag-r2.md
 prepared_at: 2026-10-29T153454Z
 job: cb22e6104be142ee
 dispatched_at: 2026-10-29T153506Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4938587151859157
+speedup_ci: [1.471450834458127, 1.5162665959137043]
+harvested_at: 2026-10-29T154918Z
+best_at_harvest: 1.5007957663757285
+promotion: null
+mechanism: null
 ---
 
 # experts-rega-stage-anatomy-diag-r2
@@ -271,3 +279,31 @@ warn  host-sync    L7396: torch.cuda.synchronize()  (outside kernel_fn's call gr
 (+ the prepare() synchronize before the anat call)
 ```
 `python3 -I -m py_compile` passes; the __pycache__ it left was removed.
+
+## Result
+
+- job `cb22e6104be142ee` (check), status done, passed True, tests 5/5
+- speedup 1.4939x, 95% CI [1.4715, 1.5163], score 259331.0170913896 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5007957663757285, "ci": [1.4782838298800927, 1.5233077028713644], "job": "b2941ea23dc743a3"}; base result: muse_prefill_layer/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-stage-anatomy-diag-r2.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-stage-anatomy-diag-r2.patch`; branch `hyp/muse_prefill_layer/experts-rega-stage-anatomy-diag-r2`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 700.96 | 723.96 | 0.9773 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1083.73 | 1114.63 | 0.9798 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2088.45 | 2092.23 | 0.9888 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3614.44 | 3581.78 | 0.9809 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11011.98 | 10983.86 | 1.0301 | gained |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10865.92 | 10665.97 | 1.0281 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14763.78 | 13767.61 | 1.0073 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18546.94 | 17700.08 | 0.9858 | flat |
+
+gained on full first_turn. Expected hit: 0/1. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-stage-anatomy-diag-r2`) that adds a further change in the same area is the only way to learn more.
+

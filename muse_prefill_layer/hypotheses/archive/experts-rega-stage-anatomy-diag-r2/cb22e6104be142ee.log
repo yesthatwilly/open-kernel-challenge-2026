@@ -1,0 +1,78 @@
+arm m 3637.5 t0-5 3570.5/2927.0/2308.4/3535.9/2311.0/2334.0 us
+[rega-anat] STAGE ft w13: chunks N16/32/64/128 4/4/4/241 (253), items 16192 / grid 132 -> max 123 x KS 32 = 3936 stages/CTA; warm us/stage t0-5 0.907/0.744/0.586/0.898/0.587/0.593; math floor 2194.4 us (all 2123.6, max-CTA 2194.4; 989 TF/s dense bf16 = 132 SM x 7.49 TF/SM)
+[rega-anat] TIME ft w2 pop:2.2 30608r: cold m 1841.2 t0-5 1883.9/1488.1/1178.5/1874.7/1151.7/1178.6; warm m 1927.5 t0-5 1908.4/1502.4/1177.6/1931.7/1151.7/1178.7 us
+[rega-anat] STAGE ft w2: chunks N16/32/64/128 4/4/4/241 (253), items 8096 / grid 132 -> max 62 x KS 32 = 1984 stages/CTA; warm us/stage t0-5 0.962/0.757/0.594/0.974/0.581/0.594; math floor 1110.7 us (all 1061.8, max-CTA 1110.7; 989 TF/s dense bf16 = 132 SM x 7.49 TF/SM)
+[rega-anat] TIME low w13 random 756r: cold m 287.9 t0-5 295.8/182.3/203.5/299.1/147.6/159.9; warm m 279.8 t0-5 287.1/177.1/193.0/282.9/144.9/157.2 us
+[rega-anat] TIME low w2 random 756r: cold m 149.3 t0-5 153.4/94.1/102.3/152.3/76.6/83.2; warm m 144.2 t0-5 146.3/91.6/97.9/145.7/73.6/81.6 us
+[rega-anat] TIME high w13 random 2914r: cold m 476.8 t0-5 472.9/384.4/227.2/464.1/184.2/220.2; warm m 510.4 t0-5 506.0/401.9/233.7/496.1/182.1/221.6 us
+[rega-anat] TIME high w2 random 2914r: cold m 256.9 t0-5 258.4/208.8/125.0/257.0/95.4/108.7; warm m 240.8 t0-5 242.0/193.4/118.9/242.1/93.5/104.8 us
+[rega-anat] TIME ft w13 random 16306r: cold m 1996.6 t0-5 1966.7/1554.1/1153.8/1930.1/1143.5/1200.2; warm m 2052.3 t0-5 2003.2/1575.1/1172.1/1991.3/1129.4/1216.8 us
+[rega-anat] TIME ft w2 random 16306r: cold m 997.6 t0-5 1019.3/804.8/617.0/1030.3/572.7/613.4; warm m 1027.5 t0-5 1045.5/812.2/614.9/1059.5/576.5/612.7 us
+[rega-anat] phase 47.2s (probe 39.8s, low:pop 0.3s, high:pop 0.7s, ft:pop 3.7s, low:random 0.3s, high:random 0.5s, ft:random 2.0s); prepare total 227.2s of 300s
+[rega-anat] MODEL low w13 warm pop:1 728r: m 293.9 t0-5 293.6/194.4/191.1/290.6/145.1/158.6 us; m0/m 0.999 (cold 0.998); serial t1+t2-t5 226.9 (t0/ 1.29); overlap max(t1,t2) 194.4 (t0/ 1.51); t4/t0 0.49; floor 85.1 t1/max(floor,t4) 1.34; epi t0-t3 2.9; gap g 0.338; 0.573 us/stage; spill False
+[rega-anat] MODEL low w2 warm pop:1 728r: m 146.2 t0-5 146.5/99.1/96.4/146.1/74.2/81.4 us; m0/m 1.002 (cold 1.003); serial t1+t2-t5 114.1 (t0/ 1.28); overlap max(t1,t2) 99.1 (t0/ 1.48); t4/t0 0.51; floor 47.0 t1/max(floor,t4) 1.34; epi t0-t3 0.5; gap g 0.324; 0.572 us/stage; spill False
+[rega-anat] MODEL high w13 warm pop:2 5169r: m 755.9 t0-5 746.5/589.2/355.9/735.3/340.3/366.8 us; m0/m 0.988 (cold 0.989); serial t1+t2-t5 578.3 (t0/ 1.29); overlap max(t1,t2) 589.2 (t0/ 1.27); t4/t0 0.46; floor 456.8 t1/max(floor,t4) 1.29; epi t0-t3 11.2; gap g 0.211; 0.897 us/stage; spill False
+[rega-anat] MODEL high w2 warm pop:2 5169r: m 397.4 t0-5 393.2/310.7/190.2/383.8/161.4/178.7 us; m0/m 0.989 (cold 1.009); serial t1+t2-t5 322.2 (t0/ 1.22); overlap max(t1,t2) 310.7 (t0/ 1.27); t4/t0 0.41; floor 232.9 t1/max(floor,t4) 1.33; epi t0-t3 9.3; gap g 0.210; 0.945 us/stage; spill False
+[rega-anat] MODEL ft w13 warm pop:2.2 30608r: m 3637.5 t0-5 3570.5/2927.0/2308.4/3535.9/2311.0/2334.0 us; m0/m 0.982 (cold 0.974); serial t1+t2-t5 2901.4 (t0/ 1.23); overlap max(t1,t2) 2927.0 (t0/ 1.22); t4/t0 0.65; floor 2194.4 t1/max(floor,t4) 1.27; epi t0-t3 34.6; gap g 0.180; 0.907 us/stage; spill False
+[rega-anat] MODEL ft w2 warm pop:2.2 30608r: m 1927.5 t0-5 1908.4/1502.4/1177.6/1931.7/1151.7/1178.7 us; m0/m 0.990 (cold 1.023); serial t1+t2-t5 1501.3 (t0/ 1.27); overlap max(t1,t2) 1502.4 (t0/ 1.27); t4/t0 0.60; floor 1110.7 t1/max(floor,t4) 1.30; epi t0-t3 -23.3; gap g 0.213; 0.962 us/stage; spill False
+[rega-anat] VERDICT low (warm, pop:1): w13 serial (t0/(t1+t2-t5) 1.29, t0/max(t1,t2) 1.51, gap g 0.338); w2 serial (t0/(t1+t2-t5) 1.28, t0/max(t1,t2) 1.48, gap g 0.324); gap sum(t0-max(t1,t2)) w13+w2 33.3% of rega x 40% all-row share = 13.32% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0
+[rega-anat] VERDICT high (warm, pop:2): w13 serial (t0/(t1+t2-t5) 1.29, t0/max(t1,t2) 1.27, gap g 0.211); w2 serial (t0/(t1+t2-t5) 1.22, t0/max(t1,t2) 1.27, gap g 0.210); gap sum(t0-max(t1,t2)) w13+w2 21.0% of rega x 40% all-row share = 8.41% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0
+[rega-anat] VERDICT ft (warm, pop:2.2): w13 serial (t0/(t1+t2-t5) 1.23, t0/max(t1,t2) 1.22, gap g 0.180); w2 serial (t0/(t1+t2-t5) 1.27, t0/max(t1,t2) 1.27, gap g 0.213); gap sum(t0-max(t1,t2)) w13+w2 19.2% of rega x 40% all-row share = 7.66% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 17.9 us; chunk 512 8.9 us; chunk 1024 21.3 us; chunk chosen 512 ratio 0.499 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 69.2 us; chunk 512 8.4 us; chunk 1024 21.4 us; chunk chosen 512 ratio 0.122 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 391.8 us; chunk 512 26.8 us; chunk 1024 22.8 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8028.1 us, contig-varlen 7629.2 us, contig-batched n/a us (gather alone 16.7 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4468.4 us, contig-varlen 4248.0 us, contig-batched n/a us (gather alone 12.4 us; bar 0.98 x paged, best/paged 0.951) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 901.7 us, contig-varlen 863.1 us, contig-batched n/a us (gather alone 8.5 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1630.9 us, contig-varlen 1589.4 us, contig-batched n/a us (gather alone 49.0 us; bar 0.97 x paged, best/paged 0.975) -> B [PINNED B; bar alone -> A]
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 425.5 us, contig-varlen 418.5 us, contig-batched n/a us (gather alone 16.5 us; bar 0.97 x paged, best/paged 0.984) -> B [PINNED B; bar alone -> A]
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: B [PINNED]; turn_1 b1 L753 ctx80000: B [PINNED]; setup 1.1s, prepare total 127.8s
+[rega-lo] OFF low-class candidates: LO PINNED OFF (phasec lo-skip-phase): no LO build / checks / gate; master's low class, as every logged board-era LO gate kept
+[rega-lo] phase took 0.0s; prepare total 128.5s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)
+[rega-fsilu] attrs <w13,s1> r168 l0 s14336+187392 o1 b90 rc0; <w2a,s1> r168 l0 s14336+203776 o1 b90 rc0; <w13,ft> r168 l0 s9216+187392 o1 b90 rc0; <w2a,ft> r168 l0 s9216+203776 o1 b90 rc0
+[rega-fsilu] hg sweep fast/acc (hu 1) -100:-0/-0 -88.7:-0/-2.67e-37 -87:-1.43e-36/-1.43e-36 -20:-4.12e-08/-4.12e-08 0:0/0 20:20/20 100:100/100; worst fast rel vs fp64 1.1e-07 (normal range); pass
+[rega-fsilu] ceiling (silu_mul -> hg*hu): skipped (a second nvcc build, ~40 s; build took 39s)
+[rega-fsilu] low T=753 judge-like pop:1: master w13 warm 315.6 us, 762r = 1.03x uniform; band 255-293 OUT (nearest); probes 2.2:364 1.5:321 1.2:321 1:316; prenorm True
+[rega-fsilu] low T=753 accuracy: random 747r hs rel 9.3e-06 max|d| 6.2e-02 ndiff 19; out err f/m 5.797e-04/5.824e-04 x0.995; skewed 3378r hs rel 9.0e-06 max|d| 3.1e-02 ndiff 80; out err f/m 6.952e-04/6.969e-04 x0.998; pop:1 775r hs rel 1.6e-06 max|d| 7.8e-03 ndiff 18; out err f/m 6.282e-04/6.287e-04 x0.999
+[rega-fsilu] low T=753 TIME pop:1 759r: cold w13 320.8->302.4 x0.943/0.942 pair 476.1->458.0 x0.962/0.962 (w2~155); warm w13 315.9->298.1 x0.943/0.944 pair 469.7->451.4 x0.962/0.961 (w2~154)
+[rega-fsilu] low T=753 TIME random 792r: cold w13 303.6->278.4 x0.918/0.916 pair 454.3->429.3 x0.945/0.945 (w2~151); warm w13 299.6->274.7 x0.916/0.918 pair 449.7->426.2 x0.949/0.947 (w2~150)
+[rega-fsilu] low T=753 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:1+random: pass; hg sweep True; rega_low_variant 0
+[rega-fsilu] high T=3012 judge-like pop:2: master w13 warm 769.1 us, 5140r = 1.71x uniform; band 707-763 OUT (nearest); probes 2.2:819 1.5:647 1.8:676 2:769; prenorm True
+[rega-fsilu] high T=3012 accuracy: random 3006r hs rel 3.3e-06 max|d| 3.1e-02 ndiff 62; out err f/m 5.494e-04/5.515e-04 x0.996; skewed 13580r hs rel 7.4e-06 max|d| 6.2e-02 ndiff 308; out err f/m 6.601e-04/6.607e-04 x0.999; pop:2 5216r hs rel 5.7e-06 max|d| 6.2e-02 ndiff 135; out err f/m 5.816e-04/5.826e-04 x0.998
+[rega-fsilu] high T=3012 TIME pop:2 5148r: cold w13 781.1->733.9 x0.947/0.933 pair 1159.8->1111.6 x0.964/0.953 (w2~379); warm w13 817.3->763.6 x0.936/0.933 pair 1210.0->1151.9 x0.954/0.950 (w2~393)
+[rega-fsilu] high T=3012 TIME random 3154r: cold w13 516.6->474.9 x0.919/0.919 pair 761.8->719.0 x0.943/0.945 (w2~245); warm w13 537.5->493.9 x0.919/0.919 pair 793.6->748.9 x0.944/0.944 (w2~256)
+[rega-fsilu] high T=3012 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:2+random: pass; hg sweep True
+[rega-fsilu] ft T=16384 judge-like pop:2.2: master w13 warm 3661.8 us, 30179r = 1.85x uniform; band 3400-3850 in; probes 2.2:3662; prenorm True
+[rega-fsilu] ft T=16384 accuracy: random 16247r hs rel 3.9e-06 max|d| 6.2e-02 ndiff 366; out err f/m 5.655e-04/5.664e-04 x0.998; skewed 73867r hs rel 1.1e-05 max|d| 2.5e-01 ndiff 1809; out err f/m 6.557e-04/6.563e-04 x0.999; pop:2.2 30299r hs rel 8.5e-06 max|d| 1.2e-01 ndiff 771; out err f/m 5.996e-04/6.013e-04 x0.997
+[rega-fsilu] ft T=16384 TIME pop:2.2 30627r: cold w13 4018.6->3717.3 x0.925/0.925 pair 5941.6->5668.9 x0.949/0.959 (w2~1923); warm w13 4164.0->3809.1 x0.917/0.912 pair 6141.9->5855.5 x0.956/0.951 (w2~1978)
+[rega-fsilu] ft T=16384 TIME random 16585r: cold w13 2179.1->2005.4 x0.920/0.921 pair 3207.3->3034.1 x0.945/0.947 (w2~1028); warm w13 2246.8->2068.0 x0.921/0.920 pair 3310.3->3129.9 x0.944/0.947 (w2~1063)
+[rega-fsilu] ft T=16384 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:2.2+random: pass; hg sweep True
+[rega-fsilu] phase 47.7s (build 39.3s, low 0.8s, high 1.4s, ft 6.2s); prepare total 176.2s of 300s; rega_ok {'low': True, 'high': True, 'ft': True}
+[rega-fsilu] PATH CHOSEN low: fsilu=ON; rega_low_variant 0
+[rega-fsilu] PATH CHOSEN high: fsilu=ON
+[rega-fsilu] PATH CHOSEN ft: fsilu=ON
+[rega-fsilu] PATH CHOSEN: rega_fsilu_ok {'low': True, 'high': True, 'ft': True} (ON = w13 silu_mul __fdividef/__expf; OFF = master's w13)
+[rega-w2st] no build of its own: arm a is muse_prefill_rega_fsilu_w2a's w2 (4 rega_kernel instantiations, arm b and its 2 SB instantiations dropped: that build 39.3s); w2a attrs s1 ok ft ok
+[rega-w2st] low T=753 exact (y torch.equal master's, word 0, w2 marker; pop:1 = fsilu's judge-like alpha; prenorm True): random 709r, skewed 3376r, one 753r, pop:1 744r; a passes
+[rega-w2st] low T=753 TIME pop:1 758r: cold m 156.4 a 151.7 x0.971/0.970; warm m 152.6 a 148.5 x0.973/0.973
+[rega-w2st] low T=753 TIME random 735r: cold m 145.6 a 141.5 x0.970/0.973; warm m 142.4 a 137.7 x0.966/0.968
+[rega-w2st] low T=753 TIME guard pop:2.2 1387r (rega-lo's alpha for ~1350 routes, calibrated 1356 = 1.83x uniform): cold m 190.6 a 184.0 x0.966/0.965; warm m 188.5 a 181.8 x0.965/0.964
+[rega-w2st] low T=753 GATE a/master <= 0.99 every round, cold+warm, pop:1+random: gm x0.971 max x0.973 pass; guard pop:2.2 <= 1.0 every round, cold+warm: max x0.966 pass
+[rega-w2st] high T=3012 exact (y torch.equal master's, word 0, w2 marker; pop:2 = fsilu's judge-like alpha; prenorm True): random 2935r, skewed 13609r, one 3012r, pop:2 5142r; a passes
+[rega-w2st] high T=3012 TIME pop:2 5149r: cold m 389.9 a 387.8 x0.994/0.995; warm m 394.6 a 387.2 x0.966/0.995
+[rega-w2st] high T=3012 TIME random 3011r: cold m 246.9 a 242.9 x0.986/0.982; warm m 237.9 a 232.8 x0.978/0.980
+[rega-w2st] high T=3012 GATE a/master <= 0.99 every round, cold+warm, pop:2+random: gm x0.984 max x0.995 MISS [PINNED a; timing alone MISS]
+[rega-w2st] ft T=16384 exact (y torch.equal master's, word 0, w2 marker; pop:2.2 = fsilu's judge-like alpha; prenorm True): random 16197r, skewed 73563r, one 16384r, pop:2.2 30197r; a passes
+[rega-w2st] ft T=16384 TIME pop:2.2 30255r: cold m 1813.3 a 1813.5 x1.002/0.999; warm m 1935.8 a 1934.4 x0.999/1.000
+[rega-w2st] ft T=16384 TIME random 16608r: cold m 1041.8 a 1037.4 x0.995/0.996; warm m 1058.9 a 1055.8 x0.997/0.997
+[rega-w2st] ft T=16384 GATE a/master <= 0.99 every round, cold+warm, pop:2.2+random: gm x0.998 max x1.002 MISS [PINNED a; timing alone MISS]
+[rega-w2st] phase 3.8s (low 0.4s, high 0.5s, ft 2.9s); prepare total 180.0s of 300s
+[rega-w2st] PATH CHOSEN low: w2st a (early gs/sid loads); which 1 ok True rega_low_variant 0; fsilu=ON
+[rega-w2st] PATH CHOSEN high: w2st a (early gs/sid loads) [PINNED]; which 1 ok True; fsilu=ON
+[rega-w2st] PATH CHOSEN ft: w2st a (early gs/sid loads) [PINNED]; which 1 ok True; fsilu=ON
+[rega-w2st] PATH CHOSEN: rega_w2st_ok {'low': True, 'high': True, 'ft': True} (True = arm a, the early gs/sid loads, from muse_prefill_rega_fsilu_w2a; False = master's w2)
+[rega-anat] VERDICT low (warm, pop:1): w13 serial (t0/(t1+t2-t5) 1.29, t0/max(t1,t2) 1.51, gap g 0.338); w2 serial (t0/(t1+t2-t5) 1.28, t0/max(t1,t2) 1.48, gap g 0.324); gap sum(t0-max(t1,t2)) w13+w2 33.3% of rega x 40% all-row share = 13.32% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0
+[rega-anat] VERDICT high (warm, pop:2): w13 serial (t0/(t1+t2-t5) 1.29, t0/max(t1,t2) 1.27, gap g 0.211); w2 serial (t0/(t1+t2-t5) 1.22, t0/max(t1,t2) 1.27, gap g 0.210); gap sum(t0-max(t1,t2)) w13+w2 21.0% of rega x 40% all-row share = 8.41% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0
+[rega-anat] VERDICT ft (warm, pop:2.2): w13 serial (t0/(t1+t2-t5) 1.23, t0/max(t1,t2) 1.22, gap g 0.180); w2 serial (t0/(t1+t2-t5) 1.27, t0/max(t1,t2) 1.27, gap g 0.213); gap sum(t0-max(t1,t2)) w13+w2 19.2% of rega x 40% all-row share = 7.66% headline (>= 2.5%); exact w13 eq vs fsilu, w2 eq vs w2st a, word 0

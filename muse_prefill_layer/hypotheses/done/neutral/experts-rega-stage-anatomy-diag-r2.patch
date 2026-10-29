@@ -1,0 +1,670 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index c63801e7..7cc2179e 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -645,6 +645,11 @@ def prepare(weights):
+     # experts-rega-w2-early-loads-low-class: after fsilu (its module's w2 is arm a; no build of its own), the
+     # per-class w2-alone gate of master vs arm a. Never raises; any miss keeps master's w2.
+     w2st_lines = _rega_w2st_phase(state, weights, device, t_prepare0, fsilu_info)
++    torch.cuda.synchronize()
++    # experts-rega-stage-anatomy-diag-r2: prepare-only, after w2st (it reads both per-class flag sets) and before
++    # fsilu_info is dropped (its calibrated pop alphas). Prints its own lines at once (MODEL / VERDICT last), sets
++    # nothing in state, never raises; its VERDICT lines are echoed again after the w2st block (16 KB log tail).
++    anat_lines = _rega_anat_phase(state, weights, device, t_prepare0, fsilu_info)
+     del fsilu_info
+     torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+@@ -661,6 +666,8 @@ def prepare(weights):
+         print(line[:700], flush=True)
+     for line in w2st_lines:
+         print(line[:600], flush=True)
++    for line in anat_lines:
++        print(line[:700], flush=True)
+     return state
+ 
+ 
+@@ -6770,6 +6777,644 @@ def _rega_w2st_phase(state, weights, device, t_start, info):
+     return lines
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-stage-anatomy-diag-r2 (prepare-only diagnostic; kernel_fn and everything it reaches are master's, and
++# no state key is set or changed): where a rega pipeline stage goes. One separate module, muse_prefill_rega_anat,
++# derived from _rega_fsilu_src() (the fsilu_w2a source master dispatches when rega_fsilu_ok / rega_w2st_ok are set)
++# by asserted (old, new) edits, each old occurring exactly once (else OFF). It adds a runtime int MODE argument
++# (kernel-uniform; consume_item branches on it ONCE per work item, outside the k loop, so no branch sits near the
++# wgmma calls; the module keeps master's four rega_kernel<G, BIG> instantiations):
++#   0 = master's loop and epilogue;
++#   1 = no dequant: a0 = constant non-zero bf16x2 (~1.0) set once per item (laundered through an empty asm); the
++#       producer, the full / empty barriers and the 8 wgmma + commit + wait per stage as master's;
++#   2 = no MMA: dq_stage every stage; each a0 register is an input of a zero-instruction asm volatile (no adds), and
++#       of one asm whose only instructions are a setp and 8 st.shared.v4 predicated on the pipeline's dead flag (false
++#       in a healthy run: nothing is stored) so that ptxas, which never sees the empty asm, cannot drop the dequant;
++#   3 = master's k loop, zero epilogue: zeros packed into the staging tile (no silu / gsc math); named_bar, stmatrix,
++#       the w2st sid table and every store kept;
++#   4 = producer only: consumers wait on each full barrier and arrive on its empty barrier; no epilogue;
++#   5 = mode 4 + mode 3's zero epilogue (with its stores): the serial model subtracts ingest + epilogue once
++#       (t1 + t2 - t5); t4 stays the pure ingest floor.
++# Outputs of modes 1-5 are garbage and stay in phase-local buffers; the phase has its own error tensor.
++# ---------------------------------------------------------------------------------------------------------------
++REGA_ANAT_TAG = "[rega-anat]"
++REGA_ANAT_EXT_NAME = "muse_prefill_rega_anat"
++REGA_ANAT_MODES = (0, 1, 2, 3, 4, 5)
++REGA_ANAT_GEMMS = ((0, "w13", D_EXPERT // 64), (1, "w2", D_EXPERT // 128))   # (which, name, n_tiles); K = D_EXPERT
++REGA_ANAT_BUILD_DEADLINE_S = 205.0     # no nvcc build (the -Werror probe or the plain one) once prepare() used this
++REGA_ANAT_STEP_DEADLINE_S = 255.0      # no timing step after this
++REGA_ANAT_FT_STEP_DEADLINE_S = 240.0   # an ft step (~6-8 s) starts only before this
++REGA_ANAT_FID = (0.97, 1.03)           # anat mode 0 / master's dispatched launch, warm L2, judge-like pop routing
++REGA_ANAT_PEAK_TFLOPS = 989.0          # dense bf16 tensor peak (H100 SXM; TASK.md's floor constant)
++REGA_ANAT_SHARE = 0.40                 # all-row rega w13 + w2 share of the layer (b2941ea profile, ~40% mean)
++REGA_ANAT_BAR = 0.025                  # the decision's headline bar
++REGA_ANAT_CPP_EDIT = ("int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);",
++                      "int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err, int64_t mode);")
++REGA_ANAT_EDITS = (
++    # host entry: the mode argument, checked
++    (r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
++  TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
++""",
++     r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err, int64_t mode) {
++  TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
++  TORCH_CHECK(mode >= 0 && mode <= 5, "rega_gemm: anat mode");
++"""),
++    # launch: mode as the kernel's last argument
++    (r"""reinterpret_cast<int*>(err.data_ptr()))
++  if (which == 0) {""",
++     r"""reinterpret_cast<int*>(err.data_ptr()), static_cast<int>(mode))
++  if (which == 0) {"""),
++    # kernel parameter
++    (r"""int out_ld, int* __restrict__ err) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++""",
++     r"""int out_ld, int* __restrict__ err, int mode) {
++#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
++"""),
++    # the consumer passes it to consume_item
++    (r"""                       out_ld, err, dead)
++      switch (m.bucket) {""",
++     r"""                       out_ld, err, dead, mode)
++      switch (m.bucket) {"""),
++    (r"""int* err, bool& dead) {
++  constexpr int NA = NB / 2;""",
++     r"""int* err, bool& dead, int mode) {
++  constexpr int NA = NB / 2;"""),
++    # the k loop: one branch per item; master's loop is the last (else) arm, unchanged
++    (r"""  for (int kb = 0; kb < KS; ++kb) {
++    const int s = n % STAGES;
++    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++    const uint8_t* st = smem + s * STAGE_BYTES;
++    dq_stage(st, cw, lane, a0);
++""",
++     r"""  // rega-anat: MODE is kernel-uniform; one branch per work item, outside the k loop (none near the wgmma calls).
++  if (mode == 1) {
++    // no dequant: constant non-zero bf16x2 A (~1.0), set once per item and made opaque to the compiler
++#pragma unroll
++    for (int i = 0; i < 8; ++i) {
++#pragma unroll
++      for (int j = 0; j < 4; ++j) {
++        a0[i][j] = 0x3F803F80u ^ (static_cast<uint32_t>((lane + 4 * i + j) & 7) * 0x00010001u);
++        asm volatile("" : "+r"(a0[i][j]));
++      }
++    }
++    for (int kb = 0; kb < KS; ++kb) {
++      const int s = n % STAGES;
++      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++      const uint32_t slab = smem_u32(smem + s * STAGE_BYTES + WST);
++      fence_acc<NA>(acc);
++      wgmma_fence();
++#pragma unroll
++      for (int r = 0; r < 2; ++r) {
++#pragma unroll
++        for (int k = 0; k < 4; ++k) Wg<NB>::mma(acc, a0[r * 4 + k], make_desc(slab + r * SLAB_HALF + k * 32));
++      }
++      wgmma_commit();
++      wgmma_wait<0>();
++      fence_acc<NA>(acc);
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++      ++n;
++    }
++  } else if (mode == 2) {
++    // no MMA: master's dequant every stage, its 32 registers kept live without adds (see the sink below)
++    const uint32_t sink = smem_u32(ep) + static_cast<uint32_t>(ctid & 127) * 128u;
++    for (int kb = 0; kb < KS; ++kb) {
++      const int s = n % STAGES;
++      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++      dq_stage(smem + s * STAGE_BYTES, cw, lane, a0);
++#pragma unroll
++      for (int i = 0; i < 8; ++i) {
++#pragma unroll
++        for (int j = 0; j < 4; ++j) asm volatile("" :: "r"(a0[i][j]));
++      }
++      // ptxas never sees the empty asm above (it emits no PTX), so the registers also feed one asm whose only
++      // instructions are a setp and 8 st.shared.v4 predicated on the dead flag (false in a healthy run: no store)
++      const uint32_t dz = dead ? 1u : 0u;
++      asm volatile("{\n\t.reg .pred p;\n\tsetp.ne.u32 p, %32, 0;\n\t"
++                   "@p st.shared.v4.b32 [%33], {%0, %1, %2, %3};\n\t"
++                   "@p st.shared.v4.b32 [%33+16], {%4, %5, %6, %7};\n\t"
++                   "@p st.shared.v4.b32 [%33+32], {%8, %9, %10, %11};\n\t"
++                   "@p st.shared.v4.b32 [%33+48], {%12, %13, %14, %15};\n\t"
++                   "@p st.shared.v4.b32 [%33+64], {%16, %17, %18, %19};\n\t"
++                   "@p st.shared.v4.b32 [%33+80], {%20, %21, %22, %23};\n\t"
++                   "@p st.shared.v4.b32 [%33+96], {%24, %25, %26, %27};\n\t"
++                   "@p st.shared.v4.b32 [%33+112], {%28, %29, %30, %31};\n\t}\n"
++                   :: "r"(a0[0][0]), "r"(a0[0][1]), "r"(a0[0][2]), "r"(a0[0][3]),
++                      "r"(a0[1][0]), "r"(a0[1][1]), "r"(a0[1][2]), "r"(a0[1][3]),
++                      "r"(a0[2][0]), "r"(a0[2][1]), "r"(a0[2][2]), "r"(a0[2][3]),
++                      "r"(a0[3][0]), "r"(a0[3][1]), "r"(a0[3][2]), "r"(a0[3][3]),
++                      "r"(a0[4][0]), "r"(a0[4][1]), "r"(a0[4][2]), "r"(a0[4][3]),
++                      "r"(a0[5][0]), "r"(a0[5][1]), "r"(a0[5][2]), "r"(a0[5][3]),
++                      "r"(a0[6][0]), "r"(a0[6][1]), "r"(a0[6][2]), "r"(a0[6][3]),
++                      "r"(a0[7][0]), "r"(a0[7][1]), "r"(a0[7][2]), "r"(a0[7][3]),
++                      "r"(dz), "r"(sink)
++                   : "memory");
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++      ++n;
++    }
++  } else if (mode >= 4) {
++    // producer only: wait on each full barrier, arrive on its empty barrier
++    for (int kb = 0; kb < KS; ++kb) {
++      const int s = n % STAGES;
++      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++      ++n;
++    }
++  } else {
++  // modes 0 and 3: master's k loop
++  for (int kb = 0; kb < KS; ++kb) {
++    const int s = n % STAGES;
++    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++    const uint8_t* st = smem + s * STAGE_BYTES;
++    dq_stage(st, cw, lane, a0);
++"""),
++    (r"""  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc
++  fence_acc<NA>(acc);
++""",
++     r"""  }  // rega-anat: end of the per-mode k loops
++  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc
++  fence_acc<NA>(acc);
++  if (mode == 4) return;  // rega-anat: pure producer, no epilogue
++  const bool zep = mode == 3 || mode == 5;  // rega-anat: zeros packed, no silu / gsc math
++"""),
++    # w13 epilogue: zero-pack arm
++    (r"""  if (G) {
++    // acc[4i + 0/1]: gate (fragment row g) for tokens 8i + 2t4, +1; acc[4i + 2/3]: up (row g + 8).
++""",
++     r"""  if (G && zep) {
++    // rega-anat modes 3 / 5: master's staging layout and stores, zeros packed
++#pragma unroll
++    for (int i = 0; i < NB / 8; i += 2) {
++      const int mi = (lane >> 3) & 1, rr = lane & 7;
++      const int tok = 8 * (i + mi) + rr;
++      stsm_x2_t(smem_u32(ep + tok * PITCH13 + cw * 16), 0u, 0u);
++    }
++  } else if (G) {
++    // acc[4i + 0/1]: gate (fragment row g) for tokens 8i + 2t4, +1; acc[4i + 2/3]: up (row g + 8).
++"""),
++    # w2 epilogue: zero-pack arm
++    (r"""  } else {
++#pragma unroll
++    for (int i = 0; i < NB / 8; i += 2) {
++      const uint32_t r0 = pack_bf16(acc[4 * i] * gsc, acc[4 * i + 1] * gsc);
++""",
++     r"""  } else if (zep) {
++    // rega-anat modes 3 / 5: master's staging layout and stores, zeros packed
++#pragma unroll
++    for (int i = 0; i < NB / 8; i += 2) {
++      const int mi = lane >> 3, rr = lane & 7;
++      const int tok = 8 * (i + (mi >> 1)) + rr;
++      const int col = 16 * cw + 8 * (mi & 1);
++      stsm_x4_t(smem_u32(ep + tok * PITCH2 + col * 2), 0u, 0u, 0u, 0u);
++    }
++  } else {
++#pragma unroll
++    for (int i = 0; i < NB / 8; i += 2) {
++      const uint32_t r0 = pack_bf16(acc[4 * i] * gsc, acc[4 * i + 1] * gsc);
++"""),
++)
++
++
++def _rega_anat_src():
++    """(cpp, cuda) of muse_prefill_rega_anat: _REGA_CPP with REGA_ANAT_CPP_EDIT and _rega_fsilu_src() with the
++    REGA_ANAT_EDITS, each old text occurring exactly once; else None. Master's strings are read, never edited."""
++    src = _rega_fsilu_src()
++    old, new = REGA_ANAT_CPP_EDIT
++    if src is None or _REGA_CPP.count(old) != 1:
++        return None
++    cpp = _REGA_CPP.replace(old, new)
++    for old, new in REGA_ANAT_EDITS:
++        if src.count(old) != 1:
++            return None
++        src = src.replace(old, new)
++    return cpp, src
++
++
++def _rega_anat_audit(cpp, src):
++    """Pre-build audit of the anat module (as _rega_fsilu_audit): no templated Tensor accessor, no mutable
++    file-scope / static / device globals. Returns the findings."""
++    bad = []
++    for name, text in (("cpp", cpp), ("cuda", src)):
++        for n, line in enumerate(text.splitlines(), 1):
++            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
++                bad.append(f"{name} line {n}: {line.strip()[:100]}")
++    return bad + _rega_audit_cpp(cpp + "\n" + src)
++
++
++def _rega_anat_build(name, cpp, src, probe):
++    """Compile the anat module (prepare only): (ext or None, error text, seconds). Master's flags and
++    TORCH_CUDA_ARCH_LIST=9.0a around load_inline (restored after), as _rega_build; probe=True adds -Xptxas -Werror:
++    load_inline discards a good build's output, but a failed build's exception carries ptxas's, the only in-process
++    view of a ptxas warning (the C7510 / C7512 wgmma serialization ones). No timeout: load_inline has none."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    flags = list(REGA_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else [])
++    ext, err_text = None, ""
++    try:
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        ext = load_inline(name=name, cpp_sources=cpp, cuda_sources=src,
++                          functions=["rega_init", "rega_gather", "rega_gemm"], extra_cuda_cflags=flags,
++                          verbose=False)
++    except Exception as e:
++        err_text, ext = str(e), None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    return ext, err_text, time.perf_counter() - t0
++
++
++def _rega_anat_ptxas(text):
++    """(sorted C75xx codes, up to 2 unique ptxas diagnostic lines) in a failed build's text."""
++    codes = sorted(set(re.findall(r"C75\d\d", text or "")))
++    seen = []
++    for line in (text or "").splitlines():
++        s = line.strip()
++        if "ptxas" in s and ("arning" in s or "rror" in s or "C75" in s) and "fatal" not in s:
++            key = s.split(" in function")[0][:140]
++            if key not in seen:
++                seen.append(key)
++    seen.sort(key=lambda w: "C75" not in w)
++    return codes, seen[:2]
++
++
++def _rega_anat_attrs(ext):
++    """{(gated, big): (ok, regs, local bytes, static + dynamic smem, CTAs/SM)} from rega_init (master's criteria, as
++    _rega_fsilu_attrs: launchable, occupancy >= 1, smem <= the limit, the setmaxnreg register pool, an sm_90 image)."""
++    info = ext.rega_init()
++    rows = {}
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, _, bin_v, _ = info[i:i + 10]
++        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        rows[(bool(flag & 1), bool(flag & 2))] = (good, int(regs), int(local_bytes), int(static_smem + dyn_smem),
++                                                  int(occ))
++    return rows
++
++
++def _rega_anat_attr_text(rows):
++    return " ".join(f"<{'w13' if g else 'w2'},{'ft' if b else 's1'}> r{r} l{lb} s{s} o{o}{'' if ok else ' BAD'}"
++                    for (g, b), (ok, r, lb, s, o) in sorted(rows.items()))
++
++
++def _rega_anat_launch(state, ext, which, src, dst, tabs, err, mode=None):
++    """One rega GEMM launch with the arguments _experts_rega passes (w13: xs -> hs, w2: hs -> y) into the phase's own
++    error tensor; mode=None: master's / the fsilu module's signature, else the anat module's with MODE."""
++    bank, grid = state["rega_bank"], state["rega_grid"]
++    sorted_ids, block_experts, n_padded, num_slots = tabs
++    q, gs, nt = (bank["q13"], bank["gs13"], D_EXPERT // 64) if which == 0 else (bank["q2"], bank["gs2"],
++                                                                                 D_EXPERT // 128)
++    args = (which, src, q, gs, sorted_ids, block_experts, n_padded, num_slots, nt, D_EXPERT, dst, grid, err)
++    if mode is None:
++        ext.rega_gemm(*args)
++    else:
++        ext.rega_gemm(*args, mode)
++
++
++def _rega_anat_chunks(tabs):
++    """prepare() only: the chunk table rega_kernel builds from these align tables (a chunk every 8 blocks of an
++    expert's run): per chunk (blocks, first chunk of its expert, chunk count of its expert)."""
++    _, block_experts, n_padded, _ = tabs
++    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
++    be = block_experts[:used].cpu().tolist()
++    nbs, first, cnt = [], [], []
++    b = 0
++    while b < used:
++        e, r = be[b], b
++        while r < used and be[r] == e:
++            r += 1
++        if 0 <= e < LOCAL_EXPERTS:
++            f, k = len(nbs), (r - b + 7) // 8
++            for c0 in range(b, r, 8):
++                nbs.append(min(8, r - c0))
++                first.append(f)
++                cnt.append(k)
++        b = r
++    return nbs, first, cnt
++
++
++def _rega_anat_work(chunks, n_tiles, grid, n_sm):
++    """prepare() only: one GEMM's work-item geometry under rega_kernel's static it = blockIdx.x; it += gridDim.x map
++    (decode_item's expert-group order): chunks per N bucket, items, max items of one CTA, and the wgmma math floor
++    (bucket-padded tokens x 128 weight rows per item x K x 2 FLOP; all items over the dense peak, and the busiest
++    CTA over the per-SM peak)."""
++    nbs, first, cnt = chunks
++    nc = len(nbs)
++    total = nc * n_tiles
++    bn = torch.tensor([16 << (0 if v <= 1 else 1 if v <= 2 else 2 if v <= 4 else 3) for v in nbs], dtype=torch.int64)
++    it = torch.arange(total, dtype=torch.int64)
++    cg = it // n_tiles
++    f = torch.tensor(first, dtype=torch.int64)[cg]
++    c = f + (it - f * n_tiles) % torch.tensor(cnt, dtype=torch.int64)[cg]
++    flops = bn[c].double() * (128.0 * D_EXPERT * 2.0)
++    per_cta = torch.zeros(max(grid, 1), dtype=torch.float64).index_add_(0, it % max(grid, 1), flops)
++    peak = REGA_ANAT_PEAK_TFLOPS * 1e12
++    fg = float(flops.sum()) / peak * 1e6
++    fc = float(per_cta.max()) / (peak / max(n_sm, 1)) * 1e6 if total else 0.0
++    return {"hist": [int((bn == (16 << q)).sum()) for q in range(4)], "chunks": nc, "items": total,
++            "max_items": -(-total // max(grid, 1)), "floor_all": fg, "floor_cta": fc, "floor": max(fg, fc)}
++
++
++def _rega_anat_rel(a, b):
++    """rel L2 |a - b| / |b| over bf16 tensors, in row slabs (prepare only)."""
++    num = den = 0.0
++    for i in range(0, a.shape[0], 16384):
++        x, y = a[i:i + 16384].float(), b[i:i + 16384].float()
++        num += float(((x - y) ** 2).sum())
++        den += float((y ** 2).sum())
++    return (num / max(den, 1e-30)) ** 0.5
++
++
++def _rega_anat_step(state, anat, device, cls, tokens, kind, prenorm, gen, err, exact):
++    """prepare() only, one class and routing on master's routed inputs (master's align and gather for this class,
++    _rega_fsilu_tables; hs from the w13 this class dispatches). exact: first anat mode 0 vs master's dispatched w13
++    (rega_fsilu_ok[cls]: the fsilu module, else master's module) and w2 (rega_w2st_ok[cls]: arm a, else master's):
++    'eq' when torch.equal, else rel L2 <= REGA_FSILU_HS_REL, with error word 0 and both launch markers. Then per GEMM
++    one CUDA graph each for master's dispatched launch ('m') and anat modes 0-5 ('t0'..'t5') plus an empty graph,
++    timed by _rega_fsilu_bench (cold + warm, REGA_FSILU_ROUNDS x REGA_FSILU_ALTERNATIONS). Every buffer and graph is
++    local and dropped before returning. Returns ({gemm: {l2: {name: round-mean us}}}, local routes, chunks, exact)."""
++    fext = state.get("rega_fsilu_ext")
++    fok = fext is not None and bool(state.get("rega_fsilu_ok", {}).get(cls, False))
++    wok = fext is not None and bool(state.get("rega_w2st_ok", {}).get(cls, False))
++    ext13 = fext if fok else state["rega_ext"]
++    ext2 = fext if wok else state["rega_ext"]
++    x = tw = lids = tabs = xs = hs = out13 = y = y2 = tiny = None
++    graphs, fns, res, ex = {}, {}, {}, None
++    try:
++        x, tw, lids = _rega_case(tokens, kind, gen, device)
++        local = int((lids >= 0).sum())
++        tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++        x = tw = lids = None
++        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        out13 = torch.zeros_like(hs)
++        y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++        err.zero_()
++        _rega_anat_launch(state, ext13, 0, xs, hs, tabs, err)   # the w2 input, as kernel_fn computes it
++        if exact:
++            y2 = torch.zeros_like(y)
++            _rega_anat_launch(state, anat, 0, xs, out13, tabs, err, 0)
++            _rega_anat_launch(state, ext2, 1, hs, y, tabs, err)
++            _rega_anat_launch(state, anat, 1, hs, y2, tabs, err, 0)
++            torch.cuda.synchronize()
++            word, m13, m2 = _rega_marks(err)
++            # bit-identical expected against the fsilu module (same source text on mode 0) and on w2; rel L2 <=
++            # REGA_FSILU_HS_REL accepted (the silu form when master's w13 is dispatched; a code-layout contraction
++            # difference otherwise): a misrouted mode would be off by O(1)
++            cmp = []
++            for a, b in ((out13, hs), (y2, y)):
++                if torch.equal(a, b):
++                    cmp.append(("eq", True))
++                else:
++                    rel = _rega_anat_rel(a, b)
++                    cmp.append((f"rel {rel:.1e}", rel <= REGA_FSILU_HS_REL))
++            y2 = None
++            ok = cmp[0][1] and cmp[1][1] and word == 0 and _rega_launched(m13, m2)
++            ex = (ok, f"w13 {cmp[0][0]} vs {'fsilu' if fok else 'master'}, w2 {cmp[1][0]} vs "
++                      f"{'w2st a' if wok else 'master'}, word {word}{'' if _rega_launched(m13, m2) else ' NO MARKERS'}")
++        for which, g, _ in REGA_ANAT_GEMMS:
++            src, dst, mext = (xs, out13, ext13) if which == 0 else (hs, y, ext2)
++            fns = {"m": (lambda w=which, s=src, d=dst, e=mext: _rega_anat_launch(state, e, w, s, d, tabs, err))}
++            for mode in REGA_ANAT_MODES:
++                fns[f"t{mode}"] = (lambda w=which, s=src, d=dst, md=mode:
++                                   _rega_anat_launch(state, anat, w, s, d, tabs, err, md))
++            graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
++            tiny = torch.zeros(16, dtype=torch.float32, device=device)
++            graphs["empty"] = _ssdq_graph_time(lambda t=tiny: t.zero_(), device)
++            r = _rega_fsilu_bench(graphs, device, ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
++            graphs = {}
++            res[g] = {l2: {n: sum(rd[n] for rd in rds) / max(len(rds), 1) for n in fns} for l2, rds in r.items()}
++        word = _rega_marks(err)[0]
++        if word != 0:
++            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
++        return res, local, _rega_anat_chunks(tabs), ex
++    finally:
++        graphs = fns = None
++        x = tw = lids = tabs = xs = hs = out13 = y = y2 = tiny = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_anat_step_lines(cls, kk, got, grid, n_sm):
++    """prepare() only: one step's TIME lines (per GEMM: master's dispatched launch 'm' and modes 0-5, cold and warm
++    round means) and, on the pop routing, STAGE lines (N-bucket chunk histogram, items, max stages of one CTA, warm
++    us per stage per mode, the wgmma math floor with its constant). Empty when the step did not return results."""
++    lines = []
++    if not isinstance(got, tuple):
++        return lines
++    res, local, chunks, _, kind = got
++    ks = D_EXPERT // REGA_BK
++    for _, g, nt in REGA_ANAT_GEMMS:
++        lines.append(f"{REGA_ANAT_TAG} TIME {cls} {g} {kind} {local}r: " + "; ".join(
++            f"{l2} m {r['m']:.1f} t0-5 " + "/".join(f"{r[f't{k}']:.1f}" for k in REGA_ANAT_MODES)
++            for l2, r in res[g].items()) + " us")
++        if kk == "pop":
++            geo = _rega_anat_work(chunks, nt, grid, n_sm)
++            st = geo["max_items"] * ks
++            w = res[g]["warm"]
++            lines.append(f"{REGA_ANAT_TAG} STAGE {cls} {g}: chunks N16/32/64/128 "
++                         + "/".join(str(h) for h in geo["hist"])
++                         + f" ({geo['chunks']}), items {geo['items']} / grid {grid} -> max {geo['max_items']} x KS "
++                         f"{ks} = {st} stages/CTA; warm us/stage t0-5 "
++                         + "/".join(f"{w[f't{k}'] / max(st, 1):.3f}" for k in REGA_ANAT_MODES)
++                         + f"; math floor {geo['floor']:.1f} us (all {geo['floor_all']:.1f}, max-CTA "
++                         f"{geo['floor_cta']:.1f}; {REGA_ANAT_PEAK_TFLOPS:.0f} TF/s dense bf16 = {n_sm} SM x "
++                         f"{REGA_ANAT_PEAK_TFLOPS / max(n_sm, 1):.2f} TF/SM)")
++    return lines
++
++
++def _rega_anat_verdict(t, fid, spill, exact_ok, floor):
++    """One GEMM's warm-L2 pop-routing verdict. t: {'t0'..'t5': us}. Pre-registered order: INVALID (mode 0 outside
++    REGA_ANAT_FID x master's dispatched launch, an anat instantiation spilling more than the reference module's, or
++    the mode-0 exactness check missed); ingest-bound (t4 >= 0.85 t0); overlapped (t0 <= 1.10 max(t1, t2)), with the
++    K-pair refute condition t1 <= 1.10 max(math floor, t4) and the single mode near t0; serial (t0 >= 0.90 (t1 + t2 -
++    t5)); else mixed."""
++    t0, t1, t2, t3, t4, t5 = (max(t[f"t{k}"], 1e-9) for k in REGA_ANAT_MODES)
++    if spill or not exact_ok or not (REGA_ANAT_FID[0] <= fid <= REGA_ANAT_FID[1]):
++        why = [w for w, c in (("spill", spill), ("exactness", not exact_ok),
++                              (f"m0/master {fid:.3f}", not REGA_ANAT_FID[0] <= fid <= REGA_ANAT_FID[1])) if c]
++        return "INVALID (" + ", ".join(why) + ")"
++    if t4 >= 0.85 * t0:
++        return f"ingest-bound (t4/t0 {t4 / t0:.2f})"
++    mx, ser = max(t1, t2), t1 + t2 - t5
++    if t0 <= 1.10 * mx:
++        k = t1 / max(floor, t4)
++        near = [n for n, v in (("t2 dequant", t2), ("t1 mma+slab", t1)) if v >= t0 / 1.10]
++        return (f"overlapped (t0/max(t1,t2) {t0 / mx:.2f}; t1/max(floor,t4) {k:.2f}: "
++                f"{'K-pair refutable' if k <= 1.10 else 'K-pair NOT refuted (t1 above floor/ingest)'}; near t0: "
++                f"{'/'.join(near) if near else f'neither (epi t0-t3 {t0 - t3:.1f})'})")
++    if t0 >= 0.90 * ser:
++        return f"serial (t0/(t1+t2-t5) {t0 / ser:.2f}, t0/max(t1,t2) {t0 / mx:.2f}, gap g {(t0 - mx) / t0:.3f})"
++    return f"mixed (t0/serial {t0 / ser:.2f}, t0/max {t0 / mx:.2f}, t4/t0 {t4 / t0:.2f})"
++
++
++def _rega_anat_report(out, plan, spill, grid, n_sm):
++    """prepare() only: the MODEL lines (warm L2, judge-like pop routing, per class and GEMM) and one VERDICT line per
++    class. Returns (model lines, verdict lines)."""
++    model, verdict = [], []
++    ks = D_EXPERT // REGA_BK
++    for cls in [c for c, k in plan if k == "pop"]:
++        got = out.get((cls, "pop"))
++        if not isinstance(got, tuple):
++            verdict.append(f"{REGA_ANAT_TAG} VERDICT {cls}: SKIPPED ({got or 'not run'})"[:300])
++            continue
++        res, local, chunks, ex, kind = got
++        parts, gap_us, t0_us = [], 0.0, 0.0
++        for which, g, nt in REGA_ANAT_GEMMS:
++            w, c = res[g]["warm"], res[g]["cold"]
++            t = {f"t{k}": w[f"t{k}"] for k in REGA_ANAT_MODES}
++            fid = w["t0"] / max(w["m"], 1e-9)
++            fid_c = c["t0"] / max(c["m"], 1e-9)
++            geo = _rega_anat_work(chunks, nt, grid, n_sm)
++            sp = bool(spill.get((which == 0, cls == "ft"), True))
++            v = _rega_anat_verdict(t, fid, sp, bool(ex and ex[0]), geo["floor"])
++            t0, t1, t2, t3, t4, t5 = (max(t[f"t{k}"], 1e-9) for k in REGA_ANAT_MODES)
++            mx, ser = max(t1, t2), t1 + t2 - t5
++            gap_us += max(t0 - mx, 0.0)
++            t0_us += t0
++            model.append(f"{REGA_ANAT_TAG} MODEL {cls} {g} warm {kind} {local}r: m {w['m']:.1f} t0-5 "
++                         + "/".join(f"{t[f't{k}']:.1f}" for k in REGA_ANAT_MODES)
++                         + f" us; m0/m {fid:.3f} (cold {fid_c:.3f}); serial t1+t2-t5 {ser:.1f} (t0/ {t0 / ser:.2f}); "
++                         f"overlap max(t1,t2) {mx:.1f} (t0/ {t0 / mx:.2f}); t4/t0 {t4 / t0:.2f}; floor "
++                         f"{geo['floor']:.1f} t1/max(floor,t4) {t1 / max(geo['floor'], t4):.2f}; epi t0-t3 "
++                         f"{t0 - t3:.1f}; gap g {(t0 - mx) / t0:.3f}; {(t0 / max(geo['max_items'] * ks, 1)):.3f} "
++                         f"us/stage; spill {sp}")
++            parts.append(f"{g} {v}")
++        gfrac = gap_us / max(t0_us, 1e-9)
++        verdict.append(f"{REGA_ANAT_TAG} VERDICT {cls} (warm, {kind}): " + "; ".join(parts)
++                       + f"; gap sum(t0-max(t1,t2)) w13+w2 {gfrac:.1%} of rega x {REGA_ANAT_SHARE:.0%} all-row share "
++                       f"= {gfrac * REGA_ANAT_SHARE:.2%} headline ({'>=' if gfrac * REGA_ANAT_SHARE >= REGA_ANAT_BAR else '<'}"
++                       f" {REGA_ANAT_BAR:.1%}); exact {ex[1] if ex else 'n/a'}")
++    return model, verdict
++
++
++def _rega_anat_phase(state, weights, device, t_start, info):
++    """prepare() only, after _rega_w2st_phase and before fsilu_info is dropped (its calibrated alphas). Derives,
++    audits and builds muse_prefill_rega_anat (an -Xptxas -Werror probe first: a pass is the module; a failure prints its
++    C75xx codes / ptxas lines, then the plain build), prints the anat vs reference-module attributes, then per routed
++    class (state['rega_ok']; low only when rega_low_variant == 0) on the judge-like pop routing (low, high, ft) and then
++    random (low, high, ft): TIME lines (master's dispatched launch and modes 0-5, cold + warm) and, for pop, STAGE
++    lines; MODEL and VERDICT lines last. Deadlines: no build after REGA_ANAT_BUILD_DEADLINE_S, no step after
++    REGA_ANAT_STEP_DEADLINE_S (ft: REGA_ANAT_FT_STEP_DEADLINE_S). Sets nothing in state; never raises. Returns the
++    VERDICT lines (echoed after the w2st block). weights is unused (the signature the hypothesis names)."""
++    t0 = time.perf_counter()
++    off, secs, out, plan, spill, verdict = None, {}, {}, [], {}, []
++    anat = err = None
++    grid = int(state.get("rega_grid", 0) or 0)
++    n_sm = grid
++    v = int(state.get("rega_low_variant", 0))
++    try:
++        n_sm = int(torch.cuda.get_device_properties(device).multi_processor_count)
++        routed = [c for c in REGA_FSILU_CLASSES if state.get("rega_ok", {}).get(c, False) and not (c == "low" and v)]
++        used = time.perf_counter() - t_start
++        made = _rega_anat_src()
++        if not routed:
++            off = f"no class on master's rega_kernel (rega_ok {state.get('rega_ok')}, rega_low_variant {v})"
++        elif used > REGA_ANAT_BUILD_DEADLINE_S:
++            off = f"SKIPPED: prepare already used {used:.0f}s > {REGA_ANAT_BUILD_DEADLINE_S:.0f}s before the nvcc build"
++        elif not _rega_lo_identity()[0]:
++            off = "master's v2 rega source does not hash to master's (the anat module derives from it)"
++        elif made is None:
++            off = "an anat / fsilu / w2st edit target did not occur exactly once"
++        else:
++            cpp, src = made
++            bad = _rega_anat_audit(cpp, src)
++            if bad:
++                off = f"source audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_ANAT_TAG} derived source sha256 {hashlib.sha256((cpp + src).encode()).hexdigest()[:16]} "
++                      f"({len(src)} chars; fsilu_w2a + {len(REGA_ANAT_EDITS)} anat edits + 1 cpp edit); audit ok; "
++                      f"prepare at {used:.1f}s", flush=True)
++                anat, etext, secs["probe"] = _rega_anat_build(REGA_ANAT_EXT_NAME + "_p", cpp, src, True)
++                if anat is not None:
++                    ptx = "-Werror probe passed: no ptxas warning (an info-level C75xx note would not fail it)"
++                else:
++                    codes, warns = _rega_anat_ptxas(etext)
++                    ptx = (f"-Werror probe FAILED: C75xx {','.join(codes) if codes else 'none'}"
++                           + (": " + " | ".join(warns) if warns else f" (no ptxas line; tail {etext[-160:]!r})"))
++                    used = time.perf_counter() - t_start
++                    if used > REGA_ANAT_BUILD_DEADLINE_S:
++                        off = f"SKIPPED: plain build not started (prepare {used:.0f}s > {REGA_ANAT_BUILD_DEADLINE_S:.0f}s)"
++                    else:
++                        anat, etext, secs["build"] = _rega_anat_build(REGA_ANAT_EXT_NAME, cpp, src, False)
++                        if anat is None:
++                            off = f"build failed: {etext[-240:]!r}"
++                print(f"{REGA_ANAT_TAG} ptxas {ptx}"[:600], flush=True)
++                if anat is not None:
++                    rows = _rega_anat_attrs(anat)
++                    fext = state.get("rega_fsilu_ext")
++                    ref_name, ref = ((REGA_FSILU_EXT_NAME, _rega_anat_attrs(fext)) if fext is not None
++                                     else (REGA_EXT_NAME, _rega_anat_attrs(state["rega_ext"])))
++                    spill = {k: r[2] > ref.get(k, (False, 0, 0, 0, 0))[2] for k, r in rows.items()}
++                    attrs_ok = len(rows) == 4 and all(r[0] for r in rows.values())
++                    print(f"{REGA_ANAT_TAG} attrs anat {_rega_anat_attr_text(rows)} | {ref_name} "
++                          f"{_rega_anat_attr_text(ref)} | ptxas {ptx[:90]}"[:700], flush=True)
++                    if not attrs_ok:
++                        off = "anat attribute / register-pool check failed: nothing launched"
++                    else:
++                        err = torch.zeros(3, dtype=torch.int32, device=device)
++                        gen = torch.Generator(device=device).manual_seed(20261105)
++                        plan = [(c, "pop") for c in routed] + [(c, "random") for c in routed]
++                        stop = None
++                        for cls, kk in plan:
++                            used = time.perf_counter() - t_start
++                            dl = REGA_ANAT_FT_STEP_DEADLINE_S if cls == "ft" else REGA_ANAT_STEP_DEADLINE_S
++                            if stop:
++                                out[(cls, kk)] = stop
++                                continue
++                            if used > dl:
++                                out[(cls, kk)] = f"SKIPPED: step not started (prepare {used:.0f}s > {dl:.0f}s)"
++                                print(f"{REGA_ANAT_TAG} {cls} {kk}: {out[(cls, kk)]}", flush=True)
++                                continue
++                            tokens = REGA_FSILU_TOKENS[cls]
++                            prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++                            kind = "random"
++                            if kk == "pop":
++                                alpha = (info or {}).get("alpha", {}).get(cls)
++                                if alpha is None:
++                                    n_rnd, counts = _rega_pop_counts(tokens, device)
++                                    alpha = _rega_pop_pick(counts, REGA_FSILU_POP_MULT * n_rnd)[0]
++                                kind = f"pop:{alpha:g}"
++                            tc = time.perf_counter()
++                            try:
++                                got = _rega_anat_step(state, anat, device, cls, tokens, kind, prenorm, gen, err,
++                                                      kk == "pop")
++                                out[(cls, kk)] = got + (kind,)
++                            except Exception as e:  # stop: anything after a fault would be unreliable
++                                out[(cls, kk)] = f"raised {e!r}"[:200]
++                                stop = f"an earlier step raised ({out[(cls, kk)][:80]})"
++                                print(f"{REGA_ANAT_TAG} {cls} {kind}: {out[(cls, kk)]}", flush=True)
++                            secs[f"{cls}:{kk}"] = time.perf_counter() - tc
++                            for line in _rega_anat_step_lines(cls, kk, out[(cls, kk)], grid, n_sm):
++                                print(line[:700], flush=True)
++    except Exception as e:  # a device fault would have poisoned the context; anything else is only this diagnostic
++        off = f"anat phase raised {e!r}"[:400]
++    finally:
++        anat = err = None
++        try:
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
++        except Exception as e:  # only after a device fault; never raise from this diagnostic
++            off = (off or "") + f"; final synchronize raised {e!r}"[:200]
++    try:
++        if off:
++            print(f"{REGA_ANAT_TAG} OFF: {off}"[:700], flush=True)
++        model, verdict = _rega_anat_report(out, plan, spill, grid, n_sm)
++        print(f"{REGA_ANAT_TAG} phase {time.perf_counter() - t0:.1f}s (" + ", ".join(f"{k} {s:.1f}s"
++                                                                                   for k, s in secs.items())
++              + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s", flush=True)
++        for line in model + verdict:
++            print(line[:700], flush=True)
++        if not verdict:
++            verdict = [f"{REGA_ANAT_TAG} VERDICT: none ({(off or 'no class timed')[:200]})"]
++            print(verdict[0], flush=True)
++    except Exception as e:
++        verdict = [f"{REGA_ANAT_TAG} VERDICT: report raised {e!r}"[:300]]
++        print(verdict[0], flush=True)
++    return verdict
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
