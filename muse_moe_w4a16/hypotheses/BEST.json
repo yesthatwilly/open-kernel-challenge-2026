@@ -1,20 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "8418677e467d4fb7",
- "check_job": "456d90673f4346d1",
- "mode": "submit",
- "speedup": 1.952050927455536,
+ "job": "54b70249868f468b",
+ "check_job": "54b70249868f468b",
+ "mode": "check",
+ "speedup": 1.9826789715234687,
  "ci": [
-  1.922770163543703,
-  1.9813316913673689
+  1.9529387869506167,
+  2.0124191560963207
  ],
- "score_us": 6889.420665643126,
- "commit": "9d66b13def91e7add9bc216ff8992d838278a40f",
- "submission_blob": "691018b5844d1a985d98f59021313b0c1a3ef3b7",
- "slug": "stack2",
- "master_slug": "stack2",
- "master_job": "8418677e467d4fb7",
- "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-29T100426Z",
- "note": "registered by churn.py register-landing from okc status 8418677e467d4fb7"
+ "score_us": 6782.994218003089,
+ "commit": "7da461db12b3c802a605fcdcaf2208314fe6dc60",
+ "submission_blob": "37ea90fc306c0ed8fb3d49094bf5f4acf6202307",
+ "slug": "hothalf-wh-a5b-port",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.result.json",
+ "updated_at": "2026-10-29T202411Z"
 }

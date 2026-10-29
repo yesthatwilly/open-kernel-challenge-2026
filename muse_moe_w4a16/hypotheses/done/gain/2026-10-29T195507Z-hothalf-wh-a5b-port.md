@@ -79,8 +79,9 @@ speedup: 1.9826789715234687
 speedup_ci: [1.9529387869506167, 2.0124191560963207]
 harvested_at: 2026-10-29T202409Z
 best_at_harvest: 1.952050927455536
-promotion: pending
+promotion: merged
 mechanism: null
+promotion_commit: 7da461db12b3c802a605fcdcaf2208314fe6dc60
 ---
 
 # hothalf-wh-a5b-port
