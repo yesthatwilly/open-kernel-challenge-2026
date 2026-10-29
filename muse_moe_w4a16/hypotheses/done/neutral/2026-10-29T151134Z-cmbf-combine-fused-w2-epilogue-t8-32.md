@@ -145,6 +145,7 @@ harvested_at: 2026-10-29T162118Z
 best_at_harvest: 1.952050927455536
 promotion: null
 mechanism: null
+confirm_queued: cmbf-combine-fused-w2-epilogue-t8-32-cf
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
