@@ -56,7 +56,7 @@ base_sha: 6364d94aa7863fd527376ac09288d0238158f8d7
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
 branch: hyp/muse_prefill_layer/experts-rega-low-2cta-a5b
 worktree: .worktrees/muse_prefill_layer/experts-rega-low-2cta-a5b
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T235116Z
@@ -65,6 +65,8 @@ submission_sha256: 0ef9947dcde6f19ee8b59661cd7c0f2578ba96d2528c1cdf31a56a38f3c84
 norm_sha256: 1ff9e0b91583cd42208107e250252bab9eab8765819dcac8b8071adf7d89f0ea
 submission_blob: 0112a434215de60e5629552bc7b8ccaff363f437
 lint_warnings: 125
+attempt_file: 2026-10-29T235116Z-check-experts-rega-low-2cta-a5b.md
+prepared_at: 2026-10-29T235116Z
 ---
 
 # experts-rega-low-2cta-a5b
