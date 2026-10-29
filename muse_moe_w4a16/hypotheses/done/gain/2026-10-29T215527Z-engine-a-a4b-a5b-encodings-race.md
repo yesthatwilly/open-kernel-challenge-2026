@@ -86,6 +86,7 @@ best_at_harvest: 1.974770471501011
 promotion: merged
 mechanism: null
 promotion_commit: bbd1661f3d77230ea0673d67b390da4277ee5ea8
+promotion_attempt: 2026-10-29T222813Z-submit-engine-a-a4b-a5b-encodings-race.md
 ---
 
 # engine-a-a4b-a5b-encodings-race
