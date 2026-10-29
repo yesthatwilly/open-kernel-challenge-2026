@@ -113,11 +113,20 @@ instrument: >
   a deadline or an edit assertion stops it
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T151524Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+stage: claimed
+claimed_at: 2026-10-29T151524Z
+base_sha: 9047e4ba7caa809ca4b9aae6a1a556243f61a13f
+base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+branch: hyp/muse_prefill_layer/experts-rega-stage-anatomy-diag-r2
+worktree: .worktrees/muse_prefill_layer/experts-rega-stage-anatomy-diag-r2
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-stage-anatomy-diag-r2
