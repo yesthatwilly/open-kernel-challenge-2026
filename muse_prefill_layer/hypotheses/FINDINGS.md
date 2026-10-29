@@ -1,21 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T183518Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T184218Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
 ### lead
 
-- [lead] rega stages run super-serial: t0 exceeds even dequant+MMA serial (t1+t2-t5) by 1.22-1.29x, and 18-34% of rega time sits above max(dequant-only, MMA-only) in every class; overlap/TLP levers (K-pair, ping-pong-like schedules) reopen | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check cb22e6104be142ee [rega-anat] (see previous line); CEILINGS RE-SCALED per class rows (adversary of experts-rega-low-kpair-four-consumer-wgs): low ~5.2% headline (all of g at sliding+full turn_1), high ~3%, not 13.3/8.4; the super-serial excess may partly be the producer floor in modes 1/2 (ft t2 = t4 per stage), so a TLP lever's floor is ~t4, a pure-overlap lever's ~max(t1,t2). Candidate siblings: anti-phase of master's two consumer WGs (FA3-style named barriers, 232 regs, bit-exact); deferred wgmma_wait<1> with SASS check for C7510/C7512 | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn (re-measure: measured on 1.5008, best now 1.5556)
-- [lead] dq2 A3 dequant (paired-scale prmt+IMAD + ext_prop nibbles on a word-permuted bank) in the rega tile's dq_stage: 26 -> 18 dequant SASS/k16 step, bit-exact | rows: load=turn_1, load=turn_4, load=first_turn | evidence: H100 gpunode06 rgx probe (takemyjob hopper/rgx 1a17a00; research/h100-rega-1029.md): A3/master full-mode pair x0.857 low L2, x0.888 low HBM, x0.835 low random routing, x0.923/0.908 high; 7 interleaved rounds; per-SM ratios transfer; tensor-active full 25.5% vs MMA-only 49.0% at low (issue-serialized, super-serial was a model artifact) | board: 1.5008 | blob: c63801e7 | reopen: judge read: in-flight diag experts-rega-dq2-dequant-cost-diag (routes A3 per class at <=0.97) | 2026-10-29 h100 (re-measure: measured on 1.5008, best now 1.5556)
+- [lead] rega stages run super-serial: t0 exceeds even dequant+MMA serial (t1+t2-t5) by 1.22-1.29x, and 18-34% of rega time sits above max(dequant-only, MMA-only) in every class; overlap/TLP levers (K-pair, ping-pong-like schedules) reopen | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check cb22e6104be142ee [rega-anat] (see previous line); CEILINGS RE-SCALED per class rows (adversary of experts-rega-low-kpair-four-consumer-wgs): low ~5.2% headline (all of g at sliding+full turn_1), high ~3%, not 13.3/8.4; the super-serial excess may partly be the producer floor in modes 1/2 (ft t2 = t4 per stage), so a TLP lever's floor is ~t4, a pure-overlap lever's ~max(t1,t2). Candidate siblings: anti-phase of master's two consumer WGs (FA3-style named barriers, 232 regs, bit-exact); deferred wgmma_wait<1> with SASS check for C7510/C7512 | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn (re-measure: measured on 1.5008, best now 1.5362)
+- [lead] dq2 A3 dequant (paired-scale prmt+IMAD + ext_prop nibbles on a word-permuted bank) in the rega tile's dq_stage: 26 -> 18 dequant SASS/k16 step, bit-exact | rows: load=turn_1, load=turn_4, load=first_turn | evidence: H100 gpunode06 rgx probe (takemyjob hopper/rgx 1a17a00; research/h100-rega-1029.md): A3/master full-mode pair x0.857 low L2, x0.888 low HBM, x0.835 low random routing, x0.923/0.908 high; 7 interleaved rounds; per-SM ratios transfer; tensor-active full 25.5% vs MMA-only 49.0% at low (issue-serialized, super-serial was a model artifact) | board: 1.5008 | blob: c63801e7 | reopen: judge read: in-flight diag experts-rega-dq2-dequant-cost-diag (routes A3 per class at <=0.97) | 2026-10-29 h100 (re-measure: measured on 1.5008, best now 1.5362)
 
 ### shelf
 
-- [shelf] pre-attention q/k norm + RoPE + FP8 cache store fused into one Triton kernel (front-qknorm-rope-fp8-store-fusion-restack), est ~0.5%, stack-only | rows: all | evidence: DECISIONS:418 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
-- [shelf] prepare-only rega stage anatomy (experts-rega-stage-anatomy-diag), 0% headline by itself; it is the revival test for mc2 / bm256 | rows: all | evidence: DECISIONS:421; DISTILL:185, 431 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
-- [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
-- [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
-- [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
+- [shelf] pre-attention q/k norm + RoPE + FP8 cache store fused into one Triton kernel (front-qknorm-rope-fp8-store-fusion-restack), est ~0.5%, stack-only | rows: all | evidence: DECISIONS:418 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5362)
+- [shelf] prepare-only rega stage anatomy (experts-rega-stage-anatomy-diag), 0% headline by itself; it is the revival test for mc2 / bm256 | rows: all | evidence: DECISIONS:421; DISTILL:185, 431 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5362)
+- [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5362)
+- [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5362)
+- [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5362)
 
 ### landed
 
@@ -55,7 +55,7 @@ Regenerated 2026-10-29T183518Z by `churn.py index`. Read this before writing a h
 
 ## Current best
 
-1.5556x [1.5323,1.5789] from job `835e1a443a604eb2` (check), master commit `1b14174f10`, hypothesis experts-rega-dq2-dequant-cost-diag
+1.5362x [1.5132,1.5593] from job `27f0b9af04604842` (submit), master commit `1b14174f10`, hypothesis experts-rega-dq2-dequant-cost-diag
 
 Where the time goes (per scored shape, top kernels):
 
@@ -68,7 +68,7 @@ Where the time goes (per scored shape, top kernels):
 - batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 14570.5µs vs SGLang 21360.3µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4303.6µs 29.2%, void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3259.4µs 22.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2551.1µs 17.3%
 - batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18087.1µs vs SGLang 25271.2µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7725.0µs 43.2%, void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3093.9µs 17.3%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2545.3µs 14.2%
 
-Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5556): historical, re-diagnose before minting from it (`muse_prefill_layer/hypotheses/DIAGNOSIS.md`).
+Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5362): historical, re-diagnose before minting from it (`muse_prefill_layer/hypotheses/DIAGNOSIS.md`).
 
 ## By area
 
