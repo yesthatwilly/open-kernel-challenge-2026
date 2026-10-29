@@ -133,7 +133,7 @@ review_at: 2026-10-29T162053Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T162054Z
 base_sha: cab523d330d2015479dc4d0f602a30a1722974e0
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -142,6 +142,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ordered-iss
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T163540Z
+impl_commit: d1063059d4b2188ee833aec561579d4c3ff58541
+submission_sha256: fd0dcfebdb4606b606d2640881872b6499797b9a61d254799d999c27e6adb951
+norm_sha256: d1912cafe9b38a601c2eece81510e8d32eb121c0450817575fcc5d729c6ade15
+submission_blob: d781fbcf52a3b1f0f9b0a13e268add1be0e308c2
+lint_warnings: 123
 ---
 
 # experts-rega-stage-antiphase-ordered-issue
@@ -190,3 +196,92 @@ No companion run. The ambiguity is internal: flat could mean (a) anti-phase neve
 - Why did 5fbaec9a lose x1.18-1.47 at high? An unmodelled per-handoff cost would apply here too.
 - Judge by the scored profile's rega_kernel rows at sliding turn_4 / first_turn, not only the in-prepare gate (CLAIMS.md:50).
 
+
+## Implementation notes
+
+**Mechanism:** rega w13 + w2 (low / high / ft, gated per class) on a new muse_prefill_rega_ap module: master's fsilu_w2a rega_kernel with the two consumer warpgroups' wgmma ISSUE ordered per stage by named barriers 2 / 3 (bar.sync after dq_stage, bar.arrive between commit and wait<0>), dequant outside the barrier, bit-identical outputs.
+
+Built on master blob c63801e7 in the worktree's `muse_prefill_layer/submission.py` only (+736 lines, 0 removed). All 9 edits apply exactly once to the real `_rega_fsilu_src()`, and the derived source (42134 chars) passes `_rega_fsilu_audit`. I checked this offline with an ast harness that runs `_rega_fsilu_src` / `_rega_ap_src` without torch.
+
+- **CUDA (REGA_AP_EDITS on `_rega_fsilu_src()`, master's strings never edited).** Precondition: the source has no `bar.arrive`, and its only named_bar id is 1. Otherwise `OFF: precondition`; an edit whose old text does not occur exactly once gives `OFF: edit k`.
+  - (0, E1) After `named_bar`: `bar_arrive(id, count)`, `AP_BAR_W0 = 2`, `AP_BAR_W1 = 3`, `AP_COUNT = 256`, the probe layout constants and `ap_probe_acc<NB>`.
+  - (1, E2) `consume_item(..., bool wg1, bool& started, bool probe, long long* aps)`.
+  - (2, E3a) Between `fence_acc` and `wgmma_fence`: `__syncwarp(); if (wg1) named_bar(3, 256); else { if (started) named_bar(2, 256); started = true; }`. mbar_wait(full) and dq_stage stay before it.
+  - (3, E3b) `bar_arrive(wg1 ? 2 : 3, 256)` between `wgmma_commit()` and `wgmma_wait<0>()`. wait<0> stays every stage.
+  - (4) Probe shared memory: `s_ap[53]` (long long) and `s_ap_on`.
+  - (5) Probe guard. Thread 0 of CTA 0 reads err[0] before its first error write.
+  - (6, E4) `wg1 = cw >= 4; started = false; probe = s_ap_on && (cw & 3) == 0`.
+  - (7) The WG_CONSUME macro passes the new arguments.
+  - (8) After the item loop: `if (!wg1 && started) { __syncwarp(); named_bar(2, 256); }`, then the probe write-out.
+  - Unchanged: the rega_gemm / rega_init signatures, the launch markers, the error words and the 4 `rega_kernel<G, BIG>` instantiations. The AP ops never depend on `dead`.
+- **Barrier counts, hand-checked again.** Over S stages per CTA:
+  - WG0 syncs bar 2 (S - 1) + 1 = S times, matching WG1's S arrives. WG1 syncs bar 3 S times, matching WG0's S arrives.
+  - A barrier's next phase cannot open early. Each arrive for phase n+1 comes causally after the partner's sync of phase n.
+  - A CTA with no items does no AP op. Epilogue bar 1 forms no cycle: WG1 arrives on bar 2 before reaching bar 1.
+  - Issue skew is at most 1 stage, and dequant skew at most 2 stages, both below STAGES = 4.
+- **Review item 1 (`__syncwarp`).** One `__syncwarp()` before the AP `bar.sync` (both WG branches), and one before WG0's final sync. The arrive follows `wgmma_commit` (`.sync.aligned`, so the warp is converged), so it gets no extra `__syncwarp` inside the wgmma stage.
+- **Review item 2 (skew probe).** Implemented as asked: prepare-only, runtime guard on the diagnostic launch only.
+  - The probe buffer is `REGA_AP_PROBE_INTS` = 100 int32 (>= 3 + 8): err[0..3], then 48 long longs at err + 4 (8-byte aligned).
+  - `err[0] = REGA_AP_PROBE_MAGIC` turns the probe on in CTA 0. Timed launches pass `state['rega_err']` (int[3], word 0..4), so the guard is off and there are no clock reads. An error write overwrites the magic, and the host checks that err[0] is still the magic.
+  - Lane 0 of consumer warps 0 and 4 accumulates, per N bucket (compile-time `NB`, so no dynamic register indexing): stages, sum(retire - issue), sum(issue - base), sum(retire - base), and sum(retire - previous retire within the item) with its count.
+  - Printed per class (pop routing) and per GEMM: `[rega-ap] <cls> SKEW` gives N, S, the period P in cycles, each WG's own-group latency in units of P, and the WG1 - WG0 issue and retire skew in units of P, tagged lockstep (|ret| < 0.1), anti-phase (0.25-0.75) or partial. A short `ret skew/P` goes into each PATH CHOSEN line.
+  - **Deviation:** the issue stamp is taken after the AP bar.sync and before `wgmma_fence` (the issue grant), not after commit. The whole probe warp stores it to shared memory (one value), so no clock read, branch or extra live register sits inside the wgmma pipeline stage. The probe therefore cannot trip the `-Werror` C7510 check by itself. The difference from a post-commit stamp is the issue time of 8 wgmmas (tens of cycles, against a period of thousands of cycles). The retire stamp is after wait<0> + fence_acc, as specified.
+  - **Cost in the timed launches:** one global load of err[0] by thread 0 of CTA 0, two uniform `if (probe)` branches per stage, and 428 B of static smem. The race measures this along with the rest of the change.
+- **Review item 3.** AP ops are unconditional on `dead`. Before every canary launch there is a flushed print, then an eager launch, `synchronize`, and a print of the error word, marker and finiteness.
+  - Small-class instantiations: T = 210 'one' (CTAs with 0 and 1 items) and T = 300 random.
+  - First-turn instantiations: T = 16384 random at the start of the ft class. **Deviation:** T = 210 / 300 can only reach `<G, false>`.
+- **Review item 4.** Exactly one build: `load_inline` with REGA_CUDA_CFLAGS + `-Xptxas -Werror`, only while prepare() has used < 200 s.
+  - A failed build prints up to 4 lines containing `C75` or `ptxas` as `[rega-ap] ptxas: ...` and leaves the phase OFF. There is no plain rebuild.
+  - Attributes are checked before any launch, all four instantiations: r <= 168, regs x 384 >= the 40 / 232 pool, local 0 (any spill turns it OFF), master's dynamic smem, static smem <= 16384, occupancy == 1, sm_90 image.
+- **Per class** (low / high / ft; each only if `rega_ok`; low only when rega_low_variant == 0; no step after 265 s; SKIPPED lines otherwise):
+  - Exactness on random / skewed / one / pop. Both the ap pair and master's dispatched pair (`fsilu` or master w13, `w2st a` or master w2, per state flags) run on master's xs (the norm-gather prenorm tables, as kernel_fn uses). Required: hs torch.equal (zero-prefilled), y torch.equal (REGA_W2ST_SENTINEL-prefilled), error word 0 and the marker on every launch.
+  - Then the skew probe.
+  - Then the race. Graphs pair:m / pair:ap, plus w13-alone and w2-alone graphs on pop (attribution only), through `_rega_fsilu_bench`: 2 rounds x 11 alternations, cold and warm L2, on pop (fsilu_info alpha), random and the guard (low: rega-lo's alpha nearest ~1350 routes; high / ft: 'skewed').
+  - ON only if ap / master is <= 0.97 on pop and <= 1.00 on random and on the guard, in every round of both L2 modes.
+  - Then the two-state replay check (REGA_FSILU_REPLAY_PLAN[cls], keys REGA_W2ST_STATE_KEYS + rega_ap_ext / rega_ap_ok) with ap ON.
+- **Deviation (order and early stop).** The replay check runs only after the gate passes (as fsilu / w2st / kp do), not between exactness and the race. The race stops at the first routing that misses its bar, since the gate can no longer pass. Both changes keep the 265 s deadline for high / ft, where the model predicts the gain. ON still requires every check.
+- **Dispatch (`_experts_rega`).** `ap = not variant and rega_ap_ext is not None and rega_ap_ok[_rega_class(T)]`. When `ap` is true, both GEMMs launch `rega_ap_ext.rega_gemm(0 / 1, ...)` with master's arguments and grid. Precedence: variant > ap > fsilu / w2st > master. Only prepare-time flags and the shape are read.
+- **State.** `state['rega_ap_ext']` holds the module, or None when every class is OFF. `state['rega_ap_ok']` is `{cls: bool}`.
+- **prepare().** `_rega_ap_phase` runs after `_rega_w2st_phase`, before `del fsilu_info`. It never raises: try / except / finally, then synchronize and empty_cache. Its summary (ptxas / attrs / OFF / phase / `[rega-ap] PATH CHOSEN <cls>: ap|master (...)` lines, about 2 KB) is printed when it runs and echoed again in the final block, before w2st's lines, so those stay last.
+- **Failure routing.** A gate miss, exactness miss, build or ptxas failure, attribute miss, canary failure, exception or deadline sends that class (or all classes) to master's launches. The torch.equal gate means the output cannot be wrong while ap is ON.
+- **Decision rule for the result (review item 5):**
+  - Flat, with the probe's retire skew ~0 (lockstep): the result is **inert**, not refuted. The ordering bound only once per item, and the tensor pipe interleaves the two queued groups. The follow-up is a binding variant: WG0's arrive(3) after its own wait<0> instead of after commit (a next hypothesis).
+  - Flat or slower, with the skew formed (~0.3-0.6 P): **[refuted]**, overlap does not pay on this tile, which closes overlap levers on the current rega tile (the proposed CLAIMS line).
+  - A ptxas C7510 / C7512 failure: the FA3 arrive placement serializes wgmma. Phase OFF, and that is the answer.
+  - Faster: judge by the scored profile's rega_kernel rows at sliding turn_4 / first_turn (CLAIMS.md:50), not only by the in-prepare gate.
+- **Uncertainties.**
+  - Named barriers have no timeout. A protocol error would hang until the 15-minute limit; the flushed canary prints would name the launch.
+  - The probe samples CTA 0 only, so sparse buckets are noisy (S is printed).
+  - The timing budget: the phase starts at ~181 s plus a ~37-40 s build, so ft may print SKIPPED.
+
+## Rules check
+
+Each box was ticked against `git -C .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue diff` (6 hunks: prepare() call + echo, `_experts_rega` dispatch x 3, the new ap section before kernel_fn).
+
+- [x] CUDA-graph capturable: the only kernel_fn-reachable change is in `_experts_rega`: one prepare-time dict lookup (`rega_ap_ext`, `rega_ap_ok[_rega_class(T)]`) and one more `elif` launch per GEMM with master's arguments; no `.item()` / `.cpu()` / synchronize / print; no allocation or branch on input values (shape + prepare-time flags only). Every host sync in the diff (14 lines) is inside `_rega_ap_*` prepare-only functions.
+- [x] Nothing derived from `data` is cached across calls: state gains only `rega_ap_ext` (module) and `rega_ap_ok` (plain bools) set in prepare(); probe / exactness / timing buffers are phase-local and dropped.
+- [x] Weights: unchanged (the ap kernel reads master's prepare-time rega bank, NVFP4 records dequantized in-kernel exactly as master's).
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8: n/a for attention (untouched); the expert path's xs / hs / y stay bf16 with fp32 accumulation, bit-identical to master's (torch.equal gate).
+- [x] Attention sees every key: n/a: attention code untouched.
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocesses or network: the module is built with load_inline as master's other rega modules; source edits are on Python strings (master's read, never edited); `-Xptxas -Werror` only changes the nvcc flags.
+- [x] All work happens inside the timed call; no output caching or replay: the ap launches run inside kernel_fn per call; prepare-time probe / race outputs are discarded.
+- [x] First line `# okc: problem=muse_prefill_layer` kept; no triton.autotune added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`): rc 0, `OK with warnings`. 123 warnings (master: 112); the 11 new ones are all prepare-side:
+
+```
+warn  host-sync    L648: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7093: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7105: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7129: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7144: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7195: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7196: vals = buf.tolist()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7202: full, brief = _rega_ap_probe_text(buf[4:].clone().view(torch.int64).tolist())  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7208: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7254: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L7490: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue/muse_prefill_layer/submission.py
+```
+
+`python3 -I -m py_compile` passes; the `__pycache__` it left in the worktree was deleted.
