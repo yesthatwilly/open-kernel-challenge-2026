@@ -2664,3 +2664,7 @@ with the operator's go-ahead.
 ## 2026-10-29 2316Z — glue lane: no candidate; **URGENT: master moe (2.020) crashes in prepare on the node** -> triage lane
 - research/h100-glue-1029.md (takemyjob hopper/glue-1029 f3d0fea; GPU 4). Glue on the critical path: combine 2.6-3.2 us at T<=128 (1-8% of the row), T=256 align 10.8 + post-norm 10.0 + gather 3.3 us (7.7%); router not in moe's timed call; launch gaps ~0. Even zero-cost T=256 glue = x1.010. CUDA one-CTA align slower (x0.996); ea_combine+PDL replacing post-norm x1.016 at T=256, not bitwise (rel L2 4.19e-3 vs 4.59e-3) -> T=256 stack rider.
 - **Master moe blob 09b11a9d failed prepare 2/2 on gpunode06: sticky illegal address in the [ea-enc] phase, with the node's T=1 route = v1 (the judge drew v6pe2).** A final rerun drawing v1 at T=1 could fail outright. Triage lane on GPU 4 (reproduce, root-cause, guard fix in .worktrees/muse_moe_w4a16/eae-t1-guard, validate with forced v1/v6pe2 routes; check decode's new stack for the same hazard). Until fixed, treat moe master and the decode stack as carrying a prepare-crash risk.
+
+## 2026-10-29 2319Z — **decode 1.705 LANDED** (scored e4233998 [1.680, 1.731]; +0.87% over 1.6904)
+- churn promoted it (BEST.json e4233998); rank 406. Tonight's boards: prefill 1.501 -> **1.572**, moe 1.952 -> **2.020**, decode 1.690 -> **1.705**, bf16 1.279 -> **1.284**, attention 1.634 (gate kernel shelved for a stack).
+- The [ea-enc] T=1 prepare-crash hazard (2316Z) may apply to decode's new master too: the triage lane checks both.
