@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T154921Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -48,6 +48,7 @@ Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a h
 - [refuted] DeepGEMM bf16 kernels at m=65..256 (NT route; sm90 s3 tile-count variants) | rows: load=verify_16, load=verify_32 | evidence: 2d522d47ca5c4fc9 1.2027 (regression, FINDINGS:229); 6407497bec88470e 1.2741: every cell lost or tied cuBLAS under the read flush (pooler m=256 30.2 vs 28.7 us, qkv m=256 x0.47-0.77) (LOG:1255-1257) | board: 1.2740 | blob: 94b37346 | reopen: - | 2026-10-27 churn
 - [refuted] qkv m=1 bulk12 at R=32, one CTA per SM | rows: layer=qkv_gate load=decode_1 | evidence: a3dcd4cb46a84648 R=32 read gate 1.016 (LOG:861); lost again in a642424734f54365 (LOG:1155) | board: 1.2735 | blob: - | reopen: - | 2026-10-27 campaign
 - [refuted] cuBLASLt NN-layout plan for o at m=128 (lt-nn-layout-cells-o-m128-qkv-m128, o half) | rows: layer=o load=verify_16 | evidence: review hold 2026-10-28T145555Z (queue/2026-10-26T221237Z-lt-nn-layout-cells-o-m128-qkv-m128.md, Adversarial review): NN 128x64 ran 5.5 us in 37ed8722 vs the TN plan's 5.4 us on 3e3ffc5a; the claimed 7.68 -> 7.24 us was SGLang drift (7.33-7.68 us) | board: 1.2794 | blob: - | reopen: - | 2026-10-28 churn
+- [refuted] b12mc: bulk12 row-owner with x as 2D tensor-map TMA boxes in 4-CTA clusters, multicast vs per-CTA (pooler m8/m16, qkv m8) | rows: layer=pooler load=verify_1, layer=pooler load=decode_16, layer=qkv_gate load=verify_1 | evidence: check 5f35efd59d054392 (read flush, 2 rounds, 2 CTA/SM instances with 62 clusters, 0 spill): pooler m8 inc 17.9 / mc 72.8 / uc 72.7 / cp.async bridge 24.3 us; pooler m16 inc 18.1 / mc,uc 78.5; qkv m8 inc 11.6 / mc,uc 35.3; mc/uc 0.995-1.007 (multicast adds nothing); pre-registered REFUTE (b8 4.06 >= 1.0). Caveat: the TMA arms ran 3x slower than the cp.async bridge, so the build is stalled somewhere and mc/uc was read on a stalled kernel | board: 1.2794 | blob: a36f3392 | reopen: a TMA-box build at <= the cp.async bridge (24.3 us at pooler m8) that then shows mc/uc <= 0.9 | 2026-10-29 churn
 
 ### superseded
 
@@ -142,6 +143,9 @@ Diagnosis of 2026-10-25T203424Z, written on board 1.2566 (today 1.2794): histori
 
 ### bf16 GEMM dispatch (shape-gated Triton routing, m<=16)
 - **bf16-shape-gated-triton-winners-combo** → neutral (unproven-vs-best), 1.1760x, mechanism flat 8/10 — gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). Combine, behind one shape gate in kernel_fn, the four individually-neu
+
+### bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)
+- **b12mc-multicast-x-pooler-qkv-m8-readflush-diag** → neutral (within-ci), 1.2727x, mechanism flat 0/5 — gained on unpooler decode_1; router decode_1, verify_32; pooler verify_32; lost on qkv_gate decode_32, verify_1; o verify_1; unpooler verify_1; router verify_1. Prepare-only diagnostic. kernel_fn, every routing flag and every state key the timed path reads stay byte-identical to master (62da2d9e, blob a36f3392); the dia
 
 ### combination (naive stack + bulk row-owner widened to qkv_gate/o m=1)
 - **combo-rowowner-reduce-free-m1-qkv-o-plus-naive** → neutral (unproven-vs-best), 1.2566x, mechanism hit 3/3 — gained on qkv_gate decode_1, verify_16; pooler decode_1, verify_16. Built on current master (commit 67b46a57, blob f919748b). Everything in combo-naive-pooler-m1-rowowner-qkv-m128-cublaslt (sources A and B, same routing and gate
@@ -314,6 +318,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **bf16-verify-per-cell-cublaslt-plan-selector-o-qkv256-unpoole** [bf16 GEMM dispatch (m=128/256, per-cell cuBLASLt plan selector)] neutral, within-ci: DIAGNOSIS Action 2, narrowed by today's evidence. Built on master 36c26199. Generalise mas
 - **router-zero-pdl-overlap-m9-m256** [router GEMM (m=9..256, zero-fill node overlapped with the router kernel by PDL)] neutral, within-ci: At m > 8 the router is two graph nodes: torch.zeros((m, 256), fp32) (profile: at::native v
 - **router-pdl-plus-khalf-pooled-iqr-gate** [router m=9..256 PDL (restack) + pooler m=128 khalf gate rule] neutral, within-ci: Restack of router-zero-pdl-overlap-m9-m256 (neutral 1.2715 in check a20f8048, but ROUTED i
+- **b12mc-multicast-x-pooler-qkv-m8-readflush-diag** [bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)] neutral, within-ci: Prepare-only diagnostic. kernel_fn, every routing flag and every state key the timed path 
 - **router-triton-hilo-fused** [router GEMM] regression, regression: Replace the whole router branch of kernel_fn (both the F.linear fp32 path at m<=8 and the 
 - **unpooler-slice-triton-gemv** [unpooler GEMM] regression, regression: For layer == 'unpooler' and m <= 8 only (the sliced case: n=1024, k=4096, an 8.4 MB weight
 - **qkv-gate-triton-skinny-m32** [qkv GEMM] regression, regression: Extend the skinny Triton GEMM from pooler-triton-skinny-m32 to layer == 'qkv_gate' at m <=
@@ -338,5 +343,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 hold
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 hold
-- queue: b12mc-multicast-x-pooler-qkv-m8-readflush-diag [bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

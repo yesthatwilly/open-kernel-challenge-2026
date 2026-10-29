@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T154921Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -249,5 +249,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: wg2-pingpong-consumers-occ2-b256 [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 hold
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 hold
-- queue: cmbf-combine-fused-w2-epilogue-t8-32 [post-expert norm+combine] p1 queued
+- running: cmbf-combine-fused-w2-epilogue-t8-32 [post-expert norm+combine] p1 running
 - 21 stale holds expired to `done/expired/` (not run)

@@ -1,8 +1,12 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T154922Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
+
+### lead
+
+- [lead] rega stages run super-serial: t0 exceeds even dequant+MMA serial (t1+t2-t5) by 1.22-1.29x, and 18-34% of rega time sits above max(dequant-only, MMA-only) in every class; overlap/TLP levers (K-pair, ping-pong-like schedules) reopen | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check cb22e6104be142ee [rega-anat] (see previous line); CEILINGS RE-SCALED per class rows (adversary of experts-rega-low-kpair-four-consumer-wgs): low ~5.2% headline (all of g at sliding+full turn_1), high ~3%, not 13.3/8.4; the super-serial excess may partly be the producer floor in modes 1/2 (ft t2 = t4 per stage), so a TLP lever's floor is ~t4, a pure-overlap lever's ~max(t1,t2). Candidate siblings: anti-phase of master's two consumer WGs (FA3-style named barriers, 232 regs, bit-exact); deferred wgmma_wait<1> with SASS check for C7510/C7512 | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn
 
 ### shelf
 
@@ -166,6 +170,9 @@ Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5008): histori
 ### w13 + w2 at turn_4 (1024 < T <= 4096) routed to the Triton NVFP4 engine with local-routes align, original non-persistent grid
 - **experts-triton-turn4-persistent-local-align-control-no-persi** → neutral (within-ci), 1.0557x, mechanism flat 0/4 — no shape moved outside noise. Built on master (a81d19c). Implement only parts (1) and (3) of the parent. (1) In _experts, send 1024 < T <= 4096 to _experts_triton (set MARLIN_MAX_TOKENS = 10
 
+### w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)
+- **experts-rega-stage-anatomy-diag-r2** → neutral (within-ci), 1.4939x — gained on full first_turn. Built on master (submission.py blob c63801e7, board 1.5008: fast-silu w13 and w2st arm a landed, LO phase pinned off by REGA_LO_SKIP). A prepare-only diagnostic
+
 ### w13 + w2 expert GEMMs (rega persistent item->CTA schedule)
 - **experts-rega-round-rotated-schedule** → neutral (within-ci), 1.4664x, mechanism flat 0/8 — no shape moved outside noise. Built on master (blob f4751fc0). Only the order in which rega_kernel's persistent CTAs walk items changes; every item is computed by master's code, so outputs a
 
@@ -297,6 +304,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **experts-rega-fine-n-buckets** [w13 + w2 expert GEMMs (rega wgmma N buckets at 16-row granularity)] neutral, within-ci: rega sizes each item's wgmma N (tokens) and its slab TMA box from the chunk's 16-route blo
 - **o-proj-triton-gemm-turn-gated** [o GEMM (attention output projection at 200 < T <= 4096)] neutral, within-ci: Only the call attn_output = _gemm(o, dense['o']) in kernel_fn changes, and only at 200 < T
 - **experts-rega-w2-early-loads-low-class** [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] neutral, not confirmed (pooled 1.499021779478406): Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in
+- **experts-rega-stage-anatomy-diag-r2** [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] neutral, within-ci: A prepare-only diagnostic: kernel_fn, _experts, _experts_rega and every function the timed
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
@@ -320,5 +328,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 hold
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 hold
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- queue: experts-rega-stage-anatomy-diag-r2 [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] p1 queued
+- running: experts-rega-low-kpair-four-consumer-wgs [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

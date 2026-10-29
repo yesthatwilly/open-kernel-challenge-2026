@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-29T151518Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
+Regenerated 2026-10-29T154922Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -108,7 +108,8 @@ Regenerated 2026-10-29T151518Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-27T140020Z | experts-rega-w2-epilogue-prefetch-bulk-store-cf | confirm→experts-rega-w2-epilogue-prefetch-bulk-store | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4986 | [1.476,1.521] | 59eb665f162a4ac9 | check |  | proceed | 2/3 |
 | 2026-10-27T141744Z | experts-rega-w2-early-loads-low-class-cf | confirm→experts-rega-w2-early-loads-low-class | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4994 | [1.477,1.522] | 8716d98c405f417d | check |  | proceed |  |
-| 2026-10-29T150952Z | experts-rega-stage-anatomy-diag-r2 | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-29T150952Z | experts-rega-stage-anatomy-diag-r2 | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | done/neutral | neutral | 1.4939 | [1.471,1.516] | cb22e6104be142ee | check |  | proceed | 0/1 |
+| 2026-10-29T153927Z | experts-rega-low-kpair-four-consumer-wgs | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
