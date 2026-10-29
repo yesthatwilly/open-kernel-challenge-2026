@@ -82,6 +82,7 @@ harvested_at: 2026-10-29T212710Z
 best_at_harvest: 1.279360358306445
 promotion: null
 mechanism: miss
+confirm_queued: b12-batched-escape-m8-32-race-cf
 ---
 
 # b12-batched-escape-m8-32-race
