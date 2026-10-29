@@ -128,11 +128,20 @@ evidence: >
   T=753 and x1.087-1.133 at high T=3012 (pop/random, cold/warm), stagger 0 vs 1 within 0.003
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T162053Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+stage: claimed
+claimed_at: 2026-10-29T162054Z
+base_sha: cab523d330d2015479dc4d0f602a30a1722974e0
+base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+branch: hyp/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue
+worktree: .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-stage-antiphase-ordered-issue
