@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "835e1a443a604eb2",
+ "job": "27f0b9af04604842",
  "check_job": "835e1a443a604eb2",
- "mode": "check",
- "speedup": 1.5555848458088881,
+ "mode": "submit",
+ "speedup": 1.536215653197081,
  "ci": [
-  1.5322510731217547,
-  1.5789186184960213
+  1.5131724183991246,
+  1.559258887995037
  ],
- "score_us": 249040.67498713257,
+ "score_us": 252180.67475992578,
  "commit": "1b14174f106138de92022ca58ff1e6e374acd4a5",
  "submission_blob": "d8ce4cbf6e2e54cb8294363e025022d9284a0762",
  "slug": "experts-rega-dq2-dequant-cost-diag",
  "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.result.json",
- "updated_at": "2026-10-29T183515Z"
+ "updated_at": "2026-10-29T184214Z"
 }
