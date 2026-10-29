@@ -2410,3 +2410,4 @@ with the operator's go-ahead.
   - Within the margin of dceed39d's 1.950 the headline is a tie, but it carries the real decode_1 gain and closes the class-128 drop risk.
   - Quota: moe 14 checks / 7 runs.
   - **Decode port candidate:** v6pe2 (decode's T=1 uses the same ea6 path; ~+0.3% decode) rides with the next decode build.
+- 2026-10-29T1150Z **decode 1.690 LANDED** (+1.7% over 1.661, past the margin). v4xd-stack (campaign/eb-v4xd-stack fedd40f5): v6pe2 at T=1 (pe/pe2 x1.038, decode_1 rows ~-2 us) + decode v4x-routes (T=128 cold half alone) + the priority-0 fork guard. Check 26435509 1.669, scored 7cc034f9 **1.690** [1.665, 1.716]. EPLF was not ported (moe-coupled, T16-only gain). Quota: decode 18 checks / 9 runs.
