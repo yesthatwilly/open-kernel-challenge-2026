@@ -2462,6 +2462,6 @@ with the operator's go-ahead.
 - **attn FA3 metadata fold (6d1082a6):** works: all 3 full verify rows routed, metadata bitwise, step -2.4/-2.3/-2.7 us; verify_1 full 27.8 vs board 30.1 us; headline 1.6336 (flat vs the lucky 1.634 board). [shelf] stacker (branch hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify).
 - In flight: prefill stage anti-phase (ordered wgmma issue, with an in-run retire-skew probe), build.
 
-## 2026-10-29 1655Z — prefill anti-phase read: overlap closed on the rega tile
+## 2026-10-29 1642Z — prefill anti-phase read: overlap closed on the rega tile
 - **17d3fdf1 (headline 1.4857, master's path):** ordered-issue anti-phase formed (retire skew 0.44-0.47 P at N128) but ran x1.16 low / x1.07-1.10 high / x1.10 ft slower; bit-exact, no serialization. With K-pair and the old ping-pong, overlap of dequant and MMA does not pay: the anatomy's gap is contention, not idle latency. [refuted]; reopen = a tile that changes per-SMSP dequant/MMA co-issue cost (dequant off the consumer warps, cheaper dequant).
 - 10-30 phase-A prefill angle (if any): dequant cost itself (cheaper dequant / producer-side dequant), not schedules.
