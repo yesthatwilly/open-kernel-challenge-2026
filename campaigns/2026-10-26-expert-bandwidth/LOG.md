@@ -2639,3 +2639,6 @@ with the operator's go-ahead.
 - Build OK (38 s): regs 128, lmem 0, smem 89 KB, 2 CTAs/SM, G 264, cooperative. Routed rows: unpaired q, fused RMSNorm x sigmoid(gate) in the combine. Error = master's (judge 7.14e-02 vs master 7.19e-02; relL2 1.7-1.8e-3); replay exact.
 - **First H200 measurement of the gate:** v32 kernel 277.6 us, mainloop 265.2 (2.53 TB/s), loads-only 165.4 (4.06 TB/s), math-only 233.1 (same as the H100: per-SM); v16 mainloop 139.1, loads 85.0, math 119.6. On the H200 the kernel is math-bound (loads 0.62-0.71 of math).
 - Headline 1.6422 vs the lucky 1.6340 board (+0.50%; ~+1.3% over the code level ~1.62). churn: unproven -> confirm **a47caf07** dispatched. Next attention lever: the gate's math (QK/softmax/PV latency chain), not memory.
+
+## 2026-10-29 2302Z — attention confirm a47caf07 1.6464 (pooled 1.6443, +0.63% < 1.07% pooled margin): [shelf], stack next
+- Both runs routed the gate (v16 0.903-0.916, v32 0.918-0.924). Pooled short of the margin against the lucky 1.634 board (code level ~1.62, so ~+1.5% real). risk: high -> no scored run by churn's rule. Next attention candidate: gate + FA3 metadata fold (verify_1) + dense_q, one check.
