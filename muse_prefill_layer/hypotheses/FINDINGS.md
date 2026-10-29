@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -40,6 +40,7 @@ Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a h
 - [refuted] expert groups heaviest first in the rega persistent schedule (experts-rega-lpt-group-order) | rows: load=turn_1, load=turn_4 | evidence: DECISIONS:419: rotation cut the imbalance but missed its gate; round-rotated is Do-not-try | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [refuted] atomic work-counter item scheduler for rega (experts-rega-dynamic-item-scheduler) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: DECISIONS:420: stages per CTA max/min 928/896, the imbalance premise fails | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [refuted] rega epilogue with warpgroup-local barriers and bulk stores (experts-rega-epilogue-wg-local-bulk-store) | rows: all | evidence: DECISIONS:424: w2st arm a landed; the bulk store is arm b, which lost (665c32dd) | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
+- [refuted] pf-rega-low-stream: low-class rega dequant/wgmma register ring (wait<1>) + cp.async.bulk.prefetch.L2 weight prefetch | rows: load=turn_1 | evidence: check 6edf1cb002bf42b9 1.493 (master routed): best arm P8 cold gm x1.075 SLOWER, gate missed; attrs 168 regs 0 local | board: 1.5008 | blob: c63801e7 | reopen: a ring that ptxas does not serialize (check SASS for C7510/C7512) | 2026-10-28 campaign
 
 ### superseded
 

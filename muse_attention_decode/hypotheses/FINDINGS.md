@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -18,6 +18,8 @@ Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a h
 
 - [unresolved] attention board level: 1.6340 drew both flipping gates (s2b B=17..32 routed only on the board, verify_32 sliding 27.10 vs 27.79-28.34 us; the B=2..16 grid fell back to 8b once, verify_16 sliding 20.10 vs 19.40-19.75 us); the code's level is ~1.61-1.62 | rows: layer=sliding load=verify_16, layer=sliding load=verify_32 | evidence: logs of 4e386647, ba8c8a61, bfb0457c, aa9fc860 (LOG:1970-1973); pins sw-pin-verify-all 1306b615 1.6154, sw-pin-b2-sm 8a87e3ea 1.6094, sw-pin-b17-on cb4fe7c4 1.6073, sw-pin-b17-off 2ab18645 1.6029 (LOG:1993-1995) | board: 1.6340 | blob: 2eb03f76 | reopen: pinning buys variance, not score; sw-pin-verify-all is the deterministic final-rerun candidate (~1.63) | 2026-10-28 campaign
 - [unresolved] one-pass ticket merge at sliding verify B=1 (sk-onepass-verify1-timing-fix; overrides its Do-not-try entry): routed x1.026 / x1.024 in-prepare (14.9 -> 14.6 us), but the judged row sits inside the board's own 12.66-13.90 us spread | rows: layer=sliding load=verify_1 | evidence: bfb0457c9ae84322 1.6219, scored aa9fc86078f543fb 1.6183 (DECISIONS:399-400; LOG:1303-1311); pins-onepass 4cfddb59 1.6265 vs a base level ~1.623 (LOG:2049-2052, 2081); FINDINGS:228 | board: 1.6340 | blob: 21166a14 | reopen: >= 3 runs per arm on pinned routes, or stacked with a measured verify_1 fixed-cost cut | 2026-10-28 campaign
+- [unresolved] swf stage 1 (one cluster launch per sliding-verify step): canary FAIL at B=2 lens 3/2100 C=4 (rel L2 4.91e-3 vs incumbent 5.80e-3, worst/mean row 6.8); all bands fell back | rows: load=verify_1 load=verify_16 load=verify_32 | evidence: check 109a387b34a3441a 1.624 (incumbent routes); attrs 124-125 regs, 0 B local; rungs 296ec797 chain+merge clean | board: 1.6340 | blob: 2eb03f76 | reopen: fix of the short-lens canary case (in progress for 00:00Z) | 2026-10-28 campaign
+- [unresolved] swf S1b: one cluster launch per sliding-verify step (C=16/8/4), canary rule fixed | rows: load=verify_1, load=verify_16, load=verify_32 | evidence: check 89add1cc5468453d 1.626 [1.602, 1.656] vs board 1.6340; level ~1.62, neutral | board: 1.6340 | blob: 2eb03f76 | reopen: the expert-block focus ends, or a per-row swf vs master read shows >= 2.5% headline | 2026-10-28 campaign
 
 ### landed
 

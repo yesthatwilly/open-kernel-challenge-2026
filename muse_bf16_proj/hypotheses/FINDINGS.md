@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -18,6 +18,7 @@ Regenerated 2026-10-28T171704Z by `churn.py index`. Read this before writing a h
 - [unresolved] bf16 board level: the 1.2740 board is the top of a ~1.267-1.274 spread; per-row noise between identical bytes is 1-5% | rows: all | evidence: pc-pin-rpdl-all-khalf bcc4babe 1.2671, pc-diag-pattern bf87ac81 1.2692, pc-ouns-cl4 5ff48999 1.2713 (LOG:1987, 2002-2003) | board: 1.2740 | blob: - | reopen: pin flipping races only for determinism; judge single-row effects under ~3-5% on >= 2 runs | 2026-10-28 campaign
 - [unresolved] CW=4 b12 runner-ups for pooler / o (pc-b12-cw4-pooler-o), inside the board-routing spread | rows: layer=pooler load=decode_1, layer=o load=decode_1 | evidence: phase-C check 1.2786 vs the 1.274 board (LOG:2012-2013) | board: 1.2794 | blob: - | reopen: stack with the qkv m=128 plan and judge on >= 2 runs | 2026-10-28 campaign
 - [unresolved] cuBLASLt NN-layout plan for qkv_gate at m=128 (the untried half of lt-nn-layout-cells-o-m128-qkv-m128), at most ~0.35% headline | rows: layer=qkv_gate load=verify_16 | evidence: same review; the 62da2d9e plan already re-ranks qkv m=128 TN under the read flush | board: 1.2794 | blob: - | reopen: a prepare-only NN vs TN ranking under the read flush shows a >= 10% kernel cut | 2026-10-28 churn
+- [unresolved] bf16-shelf-stack: tile-contiguous repack + L/KL Lt plans + b12 CW=4 cells, each gated (routed: tile pooler 8/16/32, o_16, unpooler_32; L m=256 qkv_gate, pooler; KL pooler m128; b12 o) | rows: load=verify_1 load=verify_16 load=verify_32 | evidence: check f37f01e7884e46b1 1.2810 vs board 1.2794 (+0.1%, inside the 1.24% margin) | board: 1.2794 | blob: a36f3392 | reopen: only as part of a bigger bf16 stack; a second run would only pool noise | 2026-10-28 campaign
 
 ### landed
 
