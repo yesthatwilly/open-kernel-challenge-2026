@@ -48,7 +48,7 @@ base_sha: 2090c7b69f865761852a7f539d70bfb97f99f2c3
 base_blob: c6e41c9acc6169ac8a532684437955b1d560835b
 branch: hyp/muse_moe_w4a16/eae-cold-iso-keepalive-fix
 worktree: .worktrees/muse_moe_w4a16/eae-cold-iso-keepalive-fix
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T235619Z
@@ -57,6 +57,8 @@ submission_sha256: 986a2badc10f5926ef04c8bbff11a537117537fbabbc063f5f16fe0c5b4d6
 norm_sha256: 8abb467d79ec28891028bcc20a3dd030d04d0e15a35b6f62ac63e8b28a13cdc4
 submission_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
 lint_warnings: 204
+attempt_file: 2026-10-29T235620Z-check-eae-cold-iso-keepalive-fix.md
+prepared_at: 2026-10-29T235620Z
 ---
 
 # eae-cold-iso-keepalive-fix
