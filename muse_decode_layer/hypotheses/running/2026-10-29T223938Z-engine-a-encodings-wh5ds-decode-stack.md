@@ -56,7 +56,7 @@ review_at: 2026-10-29T224707Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T224707Z
 base_sha: 7c345f539f26d261c6ced014d2cf6d7f85a06d22
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -65,6 +65,12 @@ worktree: .worktrees/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T230113Z
+impl_commit: 065bf75784bc70789ed4e53339fa4118b641065d
+submission_sha256: e1a44258c39b1be6a46f6f0f81223fec4b42d2979908b038cbb493ea5f19f560
+norm_sha256: 7666f3a0d03d0c8bebbf269066a834fcb3ad24b2f7bbf08c8375e4e5a8206e13
+submission_blob: 4f529d7b0f87fd4e4daa18fb355df14d73096e58
+lint_warnings: 205
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
@@ -119,3 +125,47 @@ No companion is warranted. Each sub-change has an in-run control. E is raced per
 - Which s arm did 7cc034f9 route at T=16, v4xs or v4cxs? The pooled race spans EAD4X_RACE (v4xd, v4cxd, v4xs, v4cxs), and CLAIMS.md:83 pinned v4c at T=9..16. Pin exactly the board's arm.
 - Expected per-row reading: the largest E effect should show on decode_16 and decode_32 sliding (~2.4-2.9%), and the smallest on full verify rows (~1%). If verify_16/32 gain more than ~2%, credit the wh5ds+E-cold critical-path interaction, not E alone.
 
+
+## Implementation notes
+
+**Mechanism:** Engine A A4b/A5b dequant encodings (E4/E5) on decode's v4x s twins (T=8/16/32), FAST v6 K1/K2 (T=1) and the H-16 hybrid cold half (T=128/256), plus the wh5ds wgmma hot half (T=128/256) and a T=16 v4cxs pin. Each is picked by an in-prepare exact race.
+
+- **Base.** The worktree file is decode's `hothalf-wh5ds-moe-port` (35cc220c) taken whole. Master's decode submission is unchanged since that branch's base. The moe E port follows on top.
+- **E modules.** `_EAE_COMMON/_EAE_CONSUME/_EAE_M16`, `_eae_rep/_eae_dev/_eae_src4x/_eae_src6`, `_eae_recode`, `_eae_pair` and `_eae_xcore` are copied verbatim from muse_moe_w4a16 master, with docstrings and comments stripped. The generated E sources are byte-identical to moe's: e4x sha d78b67ee4b65, e6 sha ea2a55ed5ec3. The v4x module name is still okc_campaign_engine_a_v4x_5a6b0753a8, and the wh module hash equals the branch's.
+- **Routing in the kernel path:**
+  - `_ead_core` looks up `_EAE_CORES` first.
+  - `_ead6_forward_core` gained `enc=(K1,K2)`, as in moe. K1/K2 come from `ea['ext6e']` on the E copies with flag 4096 = E5. The early combine stays on master's ext6.
+  - The `_hc_experts` cold branch now calls `_eae_pair(..., hc['cold_e'][_hc_class(T)])`. With dq 0 it makes the same launches as master.
+- **Keys.** T=1/8/16/32 are keyed by exact T (`ea['on'][T] = base:eN`), as in moe. The cold half is keyed by `_hc_class`, the same way as `cold_x`. Before routing, each class is canaried at 144/176 (class 128) and 200/240 (class 256): exact, err and tickets 0.
+- **Order and race (review fixes 2 and 3):**
+  - E module threads start after `_ead_setup` returns, so after the ea4x-dl race (~68 s). Join deadline 220 s. No class starts after 240 s, and the copy check is skipped after 248 s, which leaves master.
+  - The E phase runs after `_wh_phase` and the fork gate.
+  - Each class is picked on the isolated Engine A block: the core graph at T=1/8/16/32, and at T=128/256 the `_hc_experts` hybrid block (cold E, forked per state, against the routed wh5ds hot half). The bar is ≤0.98 in all 10 rounds (2 draws x 5) and exact: h/y on NaN-poisoned buffers, block output and kernel_fn's 3 outputs all `torch.equal`, err and tickets 0.
+  - A layer `kernel_fn` veto follows at ≤1.00 in every round (fork + serial at 128/256).
+  - T=1 arms are E4/E4, E5/E5 and E4/m. E5 runs only if every scale byte is in [0x08,0x7E].
+  - Last, a state-copy check on the picks (`_ead_copy_one` / `_hc_copy_check`). Unrouted E copies are freed.
+- **T=16 pin.** 7cc034f9 routed **v4cxs** at T=16 (anatomy line `T=16 (v4cxs)`). `EAD4X_PIN={16:'v4cxs'}` skips the pooled race at T=16. The layer and copy checks still run, and the route prints `16:s PIN v4cxs ...`. `EAD4X_BOARD[16]` is now 's'.
+- **Trims (Python only).** These are needed to stay under 1,000,000 B:
+  - The W6-G `_hcg_confirm` family, about 9.6 KB. It was a no-op when HC_PIN routes H-16; it now prints nothing.
+  - The [ea6-dl] inc-vs-v6 block bench (`_ead6_block`, `_ea6_slopes`, `EA6_FLOOR`). v6 vs incumbent is now decided by the whole-layer guard alone.
+  - The wh5ds race now races wh5ds against m only. Removed: the D0/a3/wh arms, the D0 fidelity check, the wh fallback, the A3 bank copy and `_wh_selftest`. `_WH_EDITS` and the CUDA text are unchanged. Kept: the attribute gate and the exact/replay/veto checks.
+  - Comments in the wh section were stripped.
+- **AST check.** All 54 of master's module-level strings are byte-identical, except the deleted `HCG_TAG`. Size: **993,828 B**.
+- **Prints, at the end of prepare in this order:** [hh-wh] BUILD/ROUTE/GATE/PATH (PATH says E races after it), [ea4x-dl] route (with PIN) and the cold-half line, a condensed `[hotcold] PATH`, then the [ea-enc] lines: build/join/phase-at, regs/recode/scales, per-T iso and layer, copy check and PATH CHOSEN with the reason. The last line is `[campaign] prepare at X s`. [hh-wh] ATTRS/SCALES were dropped.
+- **Deviations:**
+  - The E threads are daemon threads, as decode's other builds are, where moe's were non-daemon.
+  - The layer-exactness check is skipped (marked ` layer-nondet`) when kernel_fn m-vs-m itself differs.
+  - The state-copy check uses decode's tolerance-based helpers.
+  - After a veto, no second arm is tried.
+
+## Rules check
+- [x] CUDA-graph capturable: the kernel path changes are dict lookups and `_eae_pair` launches only, with no sync, `.item()` or value-dependent branch. All syncs are in prepare().
+- [x] Nothing derived from `data` is cached: routes are keyed by T or class, set in prepare.
+- [x] Weights: E4/E5 and wh5ds copies are lossless bit-permutations and scale packings of the NVFP4 bank, made in prepare(). Bit-exactness is gated in-run.
+- [x] Activations BF16, KV FP8, queries unchanged: no change to attention or activation dtypes.
+- [x] Attention sees every key: attention is untouched.
+- [x] No timing patches, harness access, module edits, reference import, subprocesses or network. load_inline only; the lint subprocess check is clean.
+- [x] All work happens inside the timed call; no output caching.
+- [x] Every CUDA string is byte-identical to master except the new E/wh module texts, checked by AST string-constant compare.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_decode_layer/submission.py --problem muse_decode_layer`): `OK with warnings`, 0 errors, 197 host-sync warnings (all "outside kernel_fn's call graph; fine in prepare()"), and 8 dtype warnings (uint8 repack buffers, pre-existing). py_compile OK; __pycache__ removed.
