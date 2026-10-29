@@ -80,13 +80,14 @@ speedup: 1.2973637641537636
 speedup_ci: [1.2836027160087515, 1.3111248122987758]
 harvested_at: 2026-10-29T212710Z
 best_at_harvest: 1.279360358306445
-promotion: pending
+promotion: merged
 mechanism: miss
 confirm_queued: b12-batched-escape-m8-32-race-cf
 confirm_job: c0f8969e76cf4cb7
 confirm_outcome: gain
 pooled_speedup: 1.2973637641537636
 runs: 2
+promotion_commit: 51c4c3d8c82de04fae14daffea5796394346b17f
 ---
 
 # b12-batched-escape-m8-32-race

@@ -1,20 +1,17 @@
 {
  "problem": "muse_bf16_proj",
- "job": "3e3ffc5afc57433b",
- "check_job": "474490c8258d4521",
- "mode": "submit",
- "speedup": 1.279360358306445,
+ "job": "bced57b42b87444d",
+ "check_job": "bced57b42b87444d",
+ "mode": "check",
+ "speedup": 1.2973637641537636,
  "ci": [
-  1.2601699529318484,
-  1.2985507636810416
+  1.2836027160087515,
+  1.3111248122987758
  ],
- "score_us": 3775.9494177190063,
- "commit": "62da2d9e805bd0a710a40eaa6e30439360a4f068",
- "submission_blob": "a36f33927c06500cbba267d7e0be2235eb8cd716",
- "slug": "phasec-pc-lt-qkv128-readflush",
- "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T171015Z",
- "master_slug": "phasec-pc-lt-qkv128-readflush",
- "master_job": "3e3ffc5afc57433b",
- "note": "registered by hand 2026-10-28: phase-C variant pc-lt-qkv128-readflush (campaign expert-bandwidth, branch phasec/bf16-1028 92b717c2) = the 1.274 board with the qkv m=128 cuBLASLt plan ranked and gated under the judge's read flush; check 0c9095e2 1.2844; scored 1.2794 vs 1.2740; landed on master."
+ "score_us": 3753.1322673646223,
+ "commit": "51c4c3d8c82de04fae14daffea5796394346b17f",
+ "submission_blob": "5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab",
+ "slug": "b12-batched-escape-m8-32-race",
+ "result": "muse_bf16_proj/hypotheses/done/gain/b12-batched-escape-m8-32-race.result.json",
+ "updated_at": "2026-10-29T213649Z"
 }
