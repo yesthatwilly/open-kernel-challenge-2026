@@ -47,12 +47,12 @@ evidence: >
   us, row 427.7 -> 403.2; H100 hh3: decode +1.32% (wh) -> +1.53% (wh5ds)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T203620Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T203620Z
 base_sha: 906305a67ac68840ccfdb0d90d3edf861f6b9536
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -71,6 +71,14 @@ attempt_file: 2026-10-29T212727Z-check-hothalf-wh5ds-moe-port.md
 prepared_at: 2026-10-29T212727Z
 job: 35cc220cd79e4668
 dispatched_at: 2026-10-29T212752Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.6968320479436552
+speedup_ci: [1.6713795672245002, 1.72228452866281]
+harvested_at: 2026-10-29T213648Z
+best_at_harvest: 1.6903955680487197
+promotion: null
+mechanism: null
 ---
 
 # hothalf-wh5ds-moe-port
@@ -184,3 +192,35 @@ OK with warnings: .worktrees/muse_decode_layer/hothalf-wh5ds-moe-port/muse_decod
 (209 warnings: master's 202 + 7 new `host-sync ... outside kernel_fn's call graph; fine in prepare()` in _wh_phase/_wh_replay; no errors)
 ```
 py_compile: OK; __pycache__ removed.
+
+## Result
+
+- job `35cc220cd79e4668` (check), status done, passed True, tests 13/13
+- speedup 1.6968x, 95% CI [1.6714, 1.7223], score 13330.900973619004 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.6903955680487197, "ci": [1.665039634527989, 1.7157515015694504], "job": "7cc034f917274439"}; base result: muse_decode_layer/hypotheses/BEST.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_decode_layer/hypotheses/done/neutral/hothalf-wh5ds-moe-port.result.json`, `muse_decode_layer/hypotheses/done/neutral/hothalf-wh5ds-moe-port.patch`; branch `hyp/muse_decode_layer/hothalf-wh5ds-moe-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 89.12 | 90.9 | 0.9854 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 92.37 | 95.34 | 0.9783 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 161.13 | 161.65 | 0.9832 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 254.26 | 249.12 | 0.9908 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 195.91 | 189.91 | 1.0071 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 369.92 | 364.23 | 0.989 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 139.13 | 138.07 | 0.9878 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 159.32 | 157.5 | 0.9931 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 321.11 | 315.77 | 1.034 | gained |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 460.19 | 452.58 | 1.008 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 427.74 | 396.65 | 1.0444 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 700.39 | 676.68 | 1.0358 | gained |
+
+gained on sliding verify_16, verify_32; full verify_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
