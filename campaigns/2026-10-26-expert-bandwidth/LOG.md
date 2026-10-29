@@ -2368,3 +2368,11 @@ with the operator's go-ahead.
 - 2026-10-28T2318Z: v4x256b diagnosis. The fork was really width 2, with all 30 captures distinct. **Priority -1** let the grid-filling wg hot half take the SMs first, so the fork serialized in effect. Fix for later: keep the identity guard with RT_FORK_PRIO=0, A/B on the node first. The decode port is change A only (T=256).
 - 2026-10-28T2322Z, the user: "only work on what you have in flight. no more new agents. minimize turns". The /loop /3to1 wakeups are stopped. In flight: the t1 lane wf_d5b8f0cb-af6; the original wf_f5fa83bf-200 (its t256 designers finish, then it gets stopped because its t1 lane duplicates and its q lane is moot, with no t256 relaunch); the v4x256b builder (decode port of change A); and the H100 lanes (anatomy/priority A/B and correctness) to ~04:00Z.
 - 2026-10-28T2330Z: the T=256 design panel is closed. All 3 angles (cold-engine rate, makespan/scheduling, structural/bytes) return **0% headline** (p 0.05-0.1): no design takes >= 45 us off verify_32. This agrees with the H100 anatomy. Designs are in research/phaseA-2026-10-29/t256-designs.json. Workflow wf_f5fa83bf-200 is stopped; no t256 build. The T=1 lane continues.
+- 2026-10-29T0306Z state:
+  - **T=1 panel done** (wf_d5b8f0cb-af6), and the judge says **no build** (EV 0.3%). The designs score 0 / 2.6 (p 0.3) / 2.6 (p 0.25). A single launch alone is worth only +0.9-1.3%. The bar needs the deep record ring (D=4/5, 1 CTA/SM) to bring the per-record rate to <= 1.20 us, and that rate is unmeasured.
+  - Next step: rung R0, a prints-only check of K1 at D3/4/5 for n2/n3. GO if rec(D5, n3) <= 1.20 us and <= 0.90 x rec(D3). KILL if rec(D5) >= 0.95 x rec(D3).
+  - **Fork-priority result** (H100, 20261028-160539/-160542): verify_32 runs 337-338 us with a prio-0 distinct fork, 356-358 with prio -1, and 363-365 serial or collided. Fix: RT_FORK_PRIO=0 on eb-v4x256b. Untested arm: a high-priority cold branch.
+  - **Route stability** (cs lane): moe class 8 flips 3/17 on the node; judge class 128 d 1.012-1.013 sits near its 1.01 bar.
+  - The decode check fe293d73 (v4xd256b) read 1.660, a tie.
+  - The 5-hour token limit stopped both H100 agents. The queue is empty.
+  - The window close (~04:00Z) is pending the user's go: stop the runner, remove prev.py, clean the nodejudge env, and the orphan pid 2688846/2688840 on GPU 1.
