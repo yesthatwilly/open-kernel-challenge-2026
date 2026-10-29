@@ -149,28 +149,24 @@ append-only, newest last.
 
 ## Now
 
-- **RESUMED by the user by hand at 2026-10-27T0003Z** ("run DISTILL.md", fresh session 860eee0a); the ~23:00Z STOP is
-  retired.
-- updated: 2026-10-27T0145Z (date -u); phase A; /loop /3to1 running
-- **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`, `/loop /3to1`):
-  - 00:00Z until decode's reasonable checks are spent: phase A, the biggest decode rewrites on Opus 5.5 ultracode
-    workflows (moe as testbed), built and checked;
-  - then until 18:00Z: phase B, the other problems' minor gains (moe > bf16 > attention > prefill);
-  - 18:00Z-24:00Z: phase C, use up every remaining check; `/hypothesize`; write tomorrow's phase-A plan by ~23:00Z;
-  - always: a scored submit whenever a check beats a board; never re-roll identical bytes.
-- **Today (10-27), phase A** (updated 2026-10-27T0145Z):
-  - Boards: decode **1.5275** (rank 343; was 1.4956 / 365), moe **1.7076** (384), bf16 1.2664, attention 1.5347,
-    prefill 1.4677.
-  - Killed today: dq3 / dq4, H=-8, the k-slice consumer (lever #1), wg2 (the big-T hot-half re-split). Kept: v4c and
-    b12p (P at T=1, layer x1.040).
-  - **HOLD:** no decode scored run that carries b12p until the intermittent illegal address of 8e3c26d6 is
-    diagnosed (agent running; fix branch campaign/eb-b12p-fix).
-  - In flight: workflow wf_9ffcb970-fa3 (eat18 = T <= 8 expert-block streaming; dchain-pdl = qkv / o PDL weight
-    prefetch), both on 8cfd91ce (b12p included).
-  - Next: dispatch wave-2 checks when they land (one new cell per GEMM per check); the fault fix decides what can
-    be scored. Phase B (bf16 readflush-gate, attention sk-full-line-gather) starts once decode's reasonable checks
-    are spent. Phase C from 18:00Z.
-  - Quota 01:45Z: decode 17 checks / 7 scored; moe 17 / 9; bf16, attention and prefill 20 / 10.
+- updated: 2026-10-29T1555Z (date -u); phase B (C from 18:00Z); /loop /3to1 running
+- **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`):
+  phase A 00:00Z (decode/moe ultracode rewrites) -> phase B (other problems' minor gains) -> phase C 18-24Z (spend
+  every check; tomorrow's phase-A plan by ~23:00Z); scored submit whenever a check beats a board; never re-roll bytes.
+- **User steers in force:**
+  - 10-28 22:05Z expert-block focus for phase A; **lifted 10-29 14:51Z for bf16/attn/prefill checks** ("then do those
+    three checks"), then **10-29 ~15:04Z "run all you want that youre able to"**: below-bar diagnostics and leads
+    run as user-requested hypotheses today, agent cap 3.
+  - H100: window CLOSED 10-29 14:54Z (gpunode06 cleaned, runner stopped); new GPU work needs the user's go.
+- **Boards 10-29:** moe 1.952 (rank 332), decode 1.690 (371), bf16 1.279, attention 1.634, prefill 1.501.
+- **Today's reads:** /hypothesize all minted 0 (all leads below bar). bf16 b12mc REFUTE (TMA build stalled; weak).
+  prefill rega anatomy SERIAL, g 0.18-0.34 -> [lead], ceilings ~5.2% low / ~3% high.
+- **In flight:** moe cmbf combine-fusion diag (build); prefill K-pair four-consumer check (build, stagger arm);
+  attn FA3 metadata fold check (build). Each: commit-impl -> prepare-run -> okc check -> harvest.
+- **Next:** dispatch the three as they build; phase C at 18:00Z spends what remains (cheap diagnostics only);
+  10-30 phase-A plan by ~23:00Z: the moe/decode draft (1510Z entry) plus a prefill consumer-overlap panel
+  (anti-phase consumer WGs, deferred wgmma_wait with SASS check, K-pair result).
+- **Quota 15:49Z:** moe 12 checks / 7 scored; decode 18 / 9; bf16 19 / 10; attention 20 / 10; prefill 19 / 10.
 
 ## 2026-10-26T15:35Z: campaign opened
 
