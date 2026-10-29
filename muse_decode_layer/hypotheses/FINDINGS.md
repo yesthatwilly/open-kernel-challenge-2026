@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T194717Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -183,6 +183,9 @@ Diagnosis of 2026-10-25T203237Z, written on board 1.3142 (today 1.6904): histori
 ### full decode_1 attention side (dl3 piece A enable)
 - **dl3-piece-a-gate-stride-check-fix** → neutral (unproven-vs-best), 1.3080x, mechanism hit 1/1 — gained on full decode_1. Built on master d5595769 (dense-chain-s3-t1-q-sk2-o-route-unpool landed). Piece A of s3 (kernel Q dl2_qkv + splitkv_attn_sk two-level with norm-gate epilogue + 
 
+### moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256
+- **hothalf-a3-exactn-ring-wh** → neutral (within-ci), 1.6794x — no shape moved outside noise. Port the H100-validated 'wh' stack into decode's wgmma hot half (wg_kernel<true>/<false> and its dq_stage, muse_decode_layer/submission.py ~:15330; moe twin mus
+
 ### o GEMM + pooler GEMM (L2 warm-up overlapped with attention)
 - **l2-prefetch-o-pooler-during-sliding-attention** → regression (regression), 1.1670x, mechanism miss 0/3 — lost on sliding decode_16, decode_32, verify_1. On sliding layers at 2 <= tokens <= 32 (config gate: window != 0 and 2 <= tokens <= 32, i.e. sliding decode_16, decode_32 and verify_1), overlap an L2 warm-up o
 
@@ -280,6 +283,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **dl-p-wide-tile-t16-t32** [pooler + router GEMM (kernel P, T=9..32)] neutral, within-ci: Kernel P (dl_pooler_router_kernel<NF>) streams only 2.85 TB/s at T=32 and 3.41 at T=8 (pre
 - **stack-route-topk-pdl-unpool-nf1** [routing top-k (kernel R) + post-MoE unpooler (T<=8)] neutral, within-ci: Stack two measured T=1 gains on master (BEST stack-align-par-sidestream-sliding1). Claim r
 - **sliding-sk-window-port-decode32-verify1** [FA3 call (sliding decode B=17..32 and sliding verify B=1: windowed stream-K)] neutral, within-ci: Port muse_attention_decode master's windowed stream-K sliding routes (commit 7e12891512, b
+- **hothalf-a3-exactn-ring-wh** [moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256] neutral, within-ci: Port the H100-validated 'wh' stack into decode's wgmma hot half (wg_kernel<true>/<false> a
 - **l2-prefetch-o-pooler-during-sliding-attention** [o GEMM + pooler GEMM (L2 warm-up overlapped with attention)] regression, regression: On sliding layers at 2 <= tokens <= 32 (config gate: window != 0 and 2 <= tokens <= 32, i.
 
 ## Queue and in flight
@@ -302,5 +306,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: marlin-bsm8-t17-t32-w13-atomic-t1 [w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1)] p2 hold
 - queue: marlin-hot-cold-two-class-bsm-t128-t256 [w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256)] p2 hold
 - queue: wg2-occ2-b256-decode-port [w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate)] p4 hold
-- running: hothalf-a3-exactn-ring-wh [moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256] p1 running
 - 12 stale holds expired to `done/expired/` (not run)

@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-29T194717Z. Best: 1.5792x [1.5555,1.6029] job `da80fdb9bed749a3` (check)
+Regenerated 2026-10-29T195421Z. Best: 1.5721x [1.5485,1.5957] job `9f93484606cd4f9e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -112,7 +112,7 @@ Regenerated 2026-10-29T194717Z. Best: 1.5792x [1.5555,1.6029] job `da80fdb9bed74
 | 2026-10-29T153927Z | experts-rega-low-kpair-four-consumer-wgs | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab | done/neutral | neutral | 1.4926 | [1.470,1.515] | bbca0105449c4217 | check |  | proceed | 1/4 |
 | 2026-10-29T161429Z | experts-rega-stage-antiphase-ordered-issue | primary | w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes | done/neutral | neutral | 1.4857 | [1.463,1.508] | 17d3fdf1a6594d33 | check |  | proceed | 0/3 |
 | 2026-10-29T175301Z | experts-rega-dq2-dequant-cost-diag | primary | w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route) | done/gain | gain | 1.5556 | [1.532,1.579] | 835e1a443a604eb2 | check | done | proceed | 3/3 |
-| 2026-10-29T191222Z | experts-rega-a5b-desc-splitcommit | primary | experts rega tile dq_stage / consumer stage loop (w13, w2) | done/gain | gain | 1.5792 | [1.556,1.603] | da80fdb9bed749a3 | check | merged | proceed | 0/3 |
+| 2026-10-29T191222Z | experts-rega-a5b-desc-splitcommit | primary | experts rega tile dq_stage / consumer stage loop (w13, w2) | done/gain | gain | 1.5792 | [1.556,1.603] | da80fdb9bed749a3 | check | done | proceed | 0/3 |
 
 ## Held
 
