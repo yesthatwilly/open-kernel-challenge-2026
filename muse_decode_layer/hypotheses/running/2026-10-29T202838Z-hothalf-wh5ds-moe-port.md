@@ -58,7 +58,7 @@ base_sha: 906305a67ac68840ccfdb0d90d3edf861f6b9536
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
 branch: hyp/muse_decode_layer/hothalf-wh5ds-moe-port
 worktree: .worktrees/muse_decode_layer/hothalf-wh5ds-moe-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T212726Z
@@ -67,6 +67,8 @@ submission_sha256: 4e9ab0d31a26d7d51a730baf98fa45b709b0fba873009602a4e4146aaa9cc
 norm_sha256: 6b2ad167c047e8dd7372255093ed087c6dbfecf2c08698254493a791247b0f04
 submission_blob: 7bb37a39e11419ee04a23303c491d0feccc95576
 lint_warnings: 209
+attempt_file: 2026-10-29T212727Z-check-hothalf-wh5ds-moe-port.md
+prepared_at: 2026-10-29T212727Z
 ---
 
 # hothalf-wh5ds-moe-port
