@@ -1,0 +1,62 @@
+-again m=16 (synced, error word 0)
+[cell] LAUNCH mcx pooler m16 uc i5 pooler R32 NT16 S4 MINB2 CW8 uc probe m=16 ...
+[cell] DONE   mcx pooler m16 uc i5 pooler R32 NT16 S4 MINB2 CW8 uc probe m=16 (synced, error word 0)
+[cell] check mcx pooler m16 uc i5 pooler R32 NT16 S4 MINB2 CW8 uc m=16: rel L2 1.656e-03 (<= 0.003), probe row rel 0.000e+00 (<= 0.0001)
+[prepare-time] mcx case pooler m16: 0.15s
+[cell] LAUNCH mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc random m=8 ...
+[cell] DONE   mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc random m=8 (synced, error word 0)
+[cell] LAUNCH mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc random-again m=8 ...
+[cell] DONE   mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc random-again m=8 (synced, error word 0)
+[cell] LAUNCH mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc probe m=8 ...
+[cell] DONE   mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc probe m=8 (synced, error word 0)
+[cell] check mcx qkv m8 mc i8 qkv_gate R16 NT8 S4 MINB2 CW4 mc m=8: rel L2 1.657e-03 (<= 0.003), probe row rel 0.000e+00 (<= 0.0001)
+[cell] LAUNCH mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc random m=8 ...
+[cell] DONE   mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc random m=8 (synced, error word 0)
+[cell] LAUNCH mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc random-again m=8 ...
+[cell] DONE   mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc random-again m=8 (synced, error word 0)
+[cell] LAUNCH mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc probe m=8 ...
+[cell] DONE   mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc probe m=8 (synced, error word 0)
+[cell] check mcx qkv m8 uc i9 qkv_gate R16 NT8 S4 MINB2 CW4 uc m=8: rel L2 1.657e-03 (<= 0.003), probe row rel 0.000e+00 (<= 0.0001)
+[prepare-time] mcx case qkv m8: 0.14s
+[mcx] VERDICT occupancy (cluster 4; MaxActiveClusters, CTAs/SM, regs, spill B, dyn smem; need 32 pooler, 36 qkv): i0 62cl 2/SM r39 s0 106KB | i1 62cl 2/SM r39 s0 106KB | i2 30cl 1/SM r39 s0 138KB | i3 30cl 1/SM r39 s0 138KB | i4 62cl 2/SM r47 s0 97KB | i5 62cl 2/SM r46 s0 97KB | i6 30cl 1/SM r47 s0 177KB | i7 30cl 1/SM r46 s0 177KB | i8 62cl 2/SM r45 s0 90KB | i9 62cl 2/SM r45 s0 90KB | i10 -cl 1/SM r40 s0 138KB
+[mcx] VERDICT case pooler m8 [i0/i1: R32 NT8 S6 MINB2 CW8; codes state's (b12 inst 0)]: r1 inc 17.95/0.32 mc 72.80/1.18 uc 72.74/1.22 br 24.29/0.22 ref1 13.79/0.22 (net us/IQR, base 4.93) mc/inc 4.055 uc/inc 4.052 mc/uc 1.001 br/inc 1.353 | r2 inc 17.89/0.58 mc 72.77/1.34 uc 72.70/1.66 br 24.38/0.22 ref1 13.79/0.29 (net us/IQR, base 4.90) mc/inc 4.068 uc/inc 4.064 mc/uc 1.001 br/inc 1.363; best uc/inc 4.064 (worst round); bridge == mc bits: False
+[mcx] VERDICT case pooler m16 [i4/i5: R32 NT16 S4 MINB2 CW8; codes state's (b12 inst 0)]: r1 inc 18.11/0.61 mc 78.85/1.41 uc 78.30/1.38 (net us/IQR, base 4.96) mc/inc 4.353 uc/inc 4.323 mc/uc 1.007 | r2 inc 18.05/0.22 mc 78.46/1.06 uc 78.46/1.22 (net us/IQR, base 5.06) mc/inc 4.348 uc/inc 4.348 mc/uc 1.000; best uc/inc 4.348 (worst round)
+[mcx] VERDICT case qkv m8 [i8/i9: R16 NT8 S4 MINB2 CW4; codes state's (b12 inst 2)]: r1 inc 11.52/0.26 mc 35.30/0.90 uc 35.46/0.90 (net us/IQR, base 5.06) mc/inc 3.064 uc/inc 3.078 mc/uc 0.995 | r2 inc 11.65/0.26 mc 35.26/0.99 uc 35.33/1.02 (net us/IQR, base 5.06) mc/inc 3.027 uc/inc 3.033 mc/uc 0.998; best mc/inc 3.064 (worst round)
+[mcx] VERDICT ref pooler m=1 kernel_fn (master's b12 cell): r1 13.79/0.22 us, r2 13.79/0.29 us
+[mcx] VERDICT attribution, multicast (fewer L2 reads and 4x fewer TMA issues per CTA) vs per-CTA boxes: pooler m8 mc/uc 1.001/1.001; pooler m16 mc/uc 1.007/1.000; qkv m8 mc/uc 0.995/0.998
+[mcx] VERDICT pooler m8 b8=4.064 (uc) | pooler m16 b16=4.348 (uc) | qkv m8 bq=3.064 (mc) -> REFUTE (b8 4.064 >= 1.0: neither tensor-map arm beats the incumbent; b12x stays closed); diag 0.5s
+[prepare] FINAL FLAGS: ouns_cl=8 router_cluster_ok=True nn_ok=True nn_p256_ok=True bulk_pooler_ok=True bulk_qkv_ok=True bulk_o_ok=True lt_qkv128_ok=True b12_pooler_ok=True b12_qkv_ok=True b12_o_ok=True pooler_khalf128_ok=True router_pdl_ok_16=True router_pdl_ok_32=True router_pdl_ok_128=True router_pdl_ok_256=True; prepare total 8.2s
+[prepare] DECISIONS (33 lines, re-printed for the log tail):
+  [ouns] PATH CHOSEN: unpooler slice m<=8 (n=1024) -> CUDA cluster/DSMEM split-K, cluster dim 8; self-check passed (m (1, 5, 8)) and graph-replay gate won at m (1, 8) (see the [ouns] gate lines for both medians)
+  [router_cluster] PATH CHOSEN router m<=8 (n=256): CUDA cluster kernel router_kernel<8,8>, no memset; 9 <= m <= 32: swap-AB Triton router; m > 32: hilo
+  PATH CHOSEN R-PDL router m=16 (router_pdl_ok_16): zero kernel + PDL router [read-flush, us; r1 m/c 1.031 net m/c/nopdl 4.19/4.06/4.29 IQR 0.16/0.22/0.19; r2 m/c 1.065 net m/c/nopdl 4.22/3.97/4.45 IQR 0.26/0.22/0.16] [race 32x vs master: cand worst 1.4e-07, slow-primary worst 1.5e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=32 (router_pdl_ok_32): zero kernel + PDL router [read-flush, us; r1 m/c 1.064 net m/c/nopdl 4.80/4.51/4.77 IQR 0.16/0.19/0.19; r2 m/c 1.056 net m/c/nopdl 4.80/4.54/4.90 IQR 0.19/0.19/0.26] [race 32x vs master: cand worst 1.4e-07, slow-primary worst 1.5e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=128 (router_pdl_ok_128): zero kernel + PDL router [read-flush, us; r1 m/c 1.052 net m/c/nopdl 6.50/6.18/6.53 IQR 0.16/0.19/0.16; r2 m/c 1.069 net m/c/nopdl 6.46/6.05/6.50 IQR 0.16/0.32/0.16] [race 32x vs master: cand worst 1.0e-07, slow-primary worst 1.0e-07, no-wait control 32/32 wrong (worst 1.0e+00)]
+  PATH CHOSEN R-PDL router m=256 (router_pdl_ok_256): zero kernel + PDL router [read-flush, us; r1 m/c 1.049 net m/c/nopdl 8.26/7.87/8.29 IQR 0.16/0.32/0.19; r2 m/c 1.062 net m/c/nopdl 8.22/7.74/8.10 IQR 0.32/0.19/0.13] [race 32x vs master: cand worst 7.6e-08, slow-primary worst 7.7e-08, no-wait control 32/32 wrong (worst 9.6e-01)]
+  PATH CHOSEN A pooler m=1: candidate (cand 22.66 us vs master 23.52 us)
+  PATH CHOSEN A2 qkv_gate m=1: candidate (cand 13.50 us vs master 14.53 us)
+  PATH CHOSEN A3 o m=1: candidate (cand 6.85 us vs master 7.17 us)
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,8> R=32 grid 128: read 0.838 (13.54 / 16.16 us) write 0.843 (18.85 / 22.37 us)
+  [b12] gate A12 pooler m=1 b12_kernel<32,8192,8,1,4> R=32 grid 128: read 0.839 (13.54 / 16.13 us) write 0.849 (19.01 / 22.40 us)
+  PATH CHOSEN A12 pooler m=1: candidate b12_kernel<32,8192,8,1,8> R=32 (inst 0) [chosen b12_kernel<32,8192,8,1,8> read 0.838 (13.54 vs 16.16 us), write 0.843 (18.85 vs 22.37 us); route at read <= 0.98]
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,4> R=16 grid 144: read 0.954 (9.25 / 9.70 us) write 0.895 (12.06 / 13.47 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<16,8192,6,2,8> R=16 grid 144: read 0.970 (9.41 / 9.70 us) write 0.891 (12.06 / 13.54 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,8> R=32 grid 72: read 0.987 (9.70 / 9.82 us) write 0.892 (12.16 / 13.63 us)
+  [b12] gate A2_12 qkv_gate m=1 b12_kernel<32,8192,8,1,4> R=32 grid 72: read 1.036 (10.11 / 9.76 us) write 0.910 (12.32 / 13.54 us)
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,8> R=32: fails read gate 0.987 > 0.98
+  [b12] challenger A2_12 qkv_gate b12_kernel<32,8192,8,1,4> R=32: fails read gate 1.036 > 0.98
+  PATH CHOSEN A2_12 qkv_gate m=1: candidate b12_kernel<16,8192,6,2,4> R=16 (inst 2) [chosen b12_kernel<16,8192,6,2,4> read 0.954 (9.25 vs 9.70 us), write 0.895 (12.06 vs 13.47 us); route at read <= 0.98]
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,8> R=64 grid 128: read 0.893 (4.54 / 5.09 us) write 0.869 (5.95 / 6.85 us)
+  [b12] gate A3_12 o m=1 b12_kernel<64,1024,8,1,4> R=64 grid 128: read 0.912 (4.64 / 5.09 us) write 0.883 (6.02 / 6.82 us)
+  PATH CHOSEN A3_12 o m=1: candidate b12_kernel<64,1024,8,1,8> R=64 (inst 4) [chosen b12_kernel<64,1024,8,1,8> read 0.893 (4.54 vs 5.09 us), write 0.869 (5.95 vs 6.85 us); route at read <= 0.98]
+  B-RANK qkv_gate m=128 split-K-1 Lt plans, read flush, median of 15 (us): a66/t80/s35:19.65 a66/t92/s35:19.78 a66/t104/s35:20.10 a66/t15/s35:20.10 a66/t124/s35:20.22 a66/t16/s35:23.20 a66/t396/s35:23.58 a66/t395/s35:31.74 (8 timed)
+  PATH CHOSEN B qkv_gate m=128: candidate (read-flush pick and gate; cand 14.69 us vs master 15.71 us)
+  PATH CHOSEN K pooler m=128: candidate b2 (bmm fp32 partials + _add2_cast_kernel) [read-flush gate, r1 master/cand 1.036 (net 21.82 / 21.06 us; med 26.88 / 26.11 us, IQR 0.61 / 0.64, base 5.06); r2 master/cand 1.046 (net 21.89 / 20.93 us; med 26.94 / 25.98 us, IQR 1.09 / 0.58, base 5.06); r3 master/cand 1.038 (net 21.92 / 21.12 us; med 26.98 / 26.18 us, IQR 0.83 / 0.99, base 5.06); median 1.038, pooled IQR master/cand 0.90 / 0.80 us (123 reps each); decided by POOLED: route (OLD would route, PARENT would route)]
+  K-DIAG pooler m=128 rounds 1-10: ratios 1.036 1.046 1.038 1.035 1.036 1.033 1.044 1.055 1.029 1.042; per-round IQR (1.5x) fail 3/10, ratio < 1.03 1/10; 1-3 OLD route PARENT route POOLED route; 4-6 OLD miss(iqr) PARENT miss(iqr) POOLED route; 7-9 OLD route PARENT miss(iqr) POOLED route
+  [mcx] VERDICT occupancy (cluster 4; MaxActiveClusters, CTAs/SM, regs, spill B, dyn smem; need 32 pooler, 36 qkv): i0 62cl 2/SM r39 s0 106KB | i1 62cl 2/SM r39 s0 106KB | i2 30cl 1/SM r39 s0 138KB | i3 30cl 1/SM r39 s0 138KB | i4 62cl 2/SM r47 s0 97KB | i5 62cl 2/SM r46 s0 97KB | i6 30cl 1/SM r47 s0 177KB | i7 30cl 1/SM r46 s0 177KB | i8 62cl 2/SM r45 s0 90KB | i9 62cl 2/SM r45 s0 90KB | i10 -cl 1/SM r40 s0 138KB
+  [mcx] VERDICT case pooler m8 [i0/i1: R32 NT8 S6 MINB2 CW8; codes state's (b12 inst 0)]: r1 inc 17.95/0.32 mc 72.80/1.18 uc 72.74/1.22 br 24.29/0.22 ref1 13.79/0.22 (net us/IQR, base 4.93) mc/inc 4.055 uc/inc 4.052 mc/uc 1.001 br/inc 1.353 | r2 inc 17.89/0.58 mc 72.77/1.34 uc 72.70/1.66 br 24.38/0.22 ref1 13.79/0.29 (net us/IQR, base 4.90) mc/inc 4.068 uc/inc 4.064 mc/uc 1.001 br/inc 1.363; best uc/inc 4.064 (worst round); bridge == mc bits: False
+  [mcx] VERDICT case pooler m16 [i4/i5: R32 NT16 S4 MINB2 CW8; codes state's (b12 inst 0)]: r1 inc 18.11/0.61 mc 78.85/1.41 uc 78.30/1.38 (net us/IQR, base 4.96) mc/inc 4.353 uc/inc 4.323 mc/uc 1.007 | r2 inc 18.05/0.22 mc 78.46/1.06 uc 78.46/1.22 (net us/IQR, base 5.06) mc/inc 4.348 uc/inc 4.348 mc/uc 1.000; best uc/inc 4.348 (worst round)
+  [mcx] VERDICT case qkv m8 [i8/i9: R16 NT8 S4 MINB2 CW4; codes state's (b12 inst 2)]: r1 inc 11.52/0.26 mc 35.30/0.90 uc 35.46/0.90 (net us/IQR, base 5.06) mc/inc 3.064 uc/inc 3.078 mc/uc 0.995 | r2 inc 11.65/0.26 mc 35.26/0.99 uc 35.33/1.02 (net us/IQR, base 5.06) mc/inc 3.027 uc/inc 3.033 mc/uc 0.998; best mc/inc 3.064 (worst round)
+  [mcx] VERDICT ref pooler m=1 kernel_fn (master's b12 cell): r1 13.79/0.22 us, r2 13.79/0.29 us
+  [mcx] VERDICT attribution, multicast (fewer L2 reads and 4x fewer TMA issues per CTA) vs per-CTA boxes: pooler m8 mc/uc 1.001/1.001; pooler m16 mc/uc 1.007/1.000; qkv m8 mc/uc 0.995/0.998
+  [mcx] VERDICT pooler m8 b8=4.064 (uc) | pooler m16 b16=4.348 (uc) | qkv m8 bq=3.064 (mc) -> REFUTE (b8 4.064 >= 1.0: neither tensor-map arm beats the incumbent; b12x stays closed); diag 0.5s

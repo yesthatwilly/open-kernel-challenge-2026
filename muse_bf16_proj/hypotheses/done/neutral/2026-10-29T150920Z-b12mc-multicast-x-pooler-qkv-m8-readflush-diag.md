@@ -127,12 +127,12 @@ instrument: >
   control
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T151743Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T151743Z
 base_sha: c54503e25e6fe0056cea3feba5d4e4982d602c7d
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -151,6 +151,14 @@ attempt_file: 2026-10-29T153340Z-check-b12mc-multicast-x-pooler-qkv-m8-readflush
 prepared_at: 2026-10-29T153340Z
 job: 5f35efd59d054392
 dispatched_at: 2026-10-29T153359Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.2727439298379506
+speedup_ci: [1.2536527708903813, 1.2918350887855197]
+harvested_at: 2026-10-29T154917Z
+best_at_harvest: 1.279360358306445
+promotion: null
+mechanism: flat
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
@@ -249,3 +257,53 @@ Checked against `git -C .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m
 - [x] First line still `# okc: problem=muse_bf16_proj`.
 
 Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): exit 0, 0 errors, "OK with warnings". 62 output lines vs 55 on master: the 7 new are `host-sync` warnings (prepare-only `.item()` / `torch.cuda.synchronize()` in `_mcx_*`, "outside kernel_fn's call graph; fine in prepare()") and one `dtype` warning for the 256 MB uint8 flush buffer (same as `_cell_gate`'s). Last line: `OK with warnings: .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag/muse_bf16_proj/submission.py`.
+
+## Result
+
+- job `5f35efd59d054392` (check), status done, passed True, tests 9/9
+- speedup 1.2727x, 95% CI [1.2537, 1.2918], score 3795.578895917478 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.279360358306445, "ci": [1.2601699529318484, 1.2985507636810416], "job": "3e3ffc5afc57433b"}; base result: muse_bf16_proj/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci); mechanism: flat (0/5 predicted rows past ±2%)
+- files: `muse_bf16_proj/hypotheses/done/neutral/b12mc-multicast-x-pooler-qkv-m8-readflush-diag.result.json`, `muse_bf16_proj/hypotheses/done/neutral/b12mc-multicast-x-pooler-qkv-m8-readflush-diag.patch`; branch `hyp/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.39 | 10.39 | 0.985 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.7 | 5.5 | 1.0292 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 15.02 | 14.58 | 1.0209 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 4.97 | 4.86 | 1.0497 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.11 | 4.51 | 1.0676 | gained |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.93 | 12.81 | 0.986 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.58 | 5.96 | 1.0248 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.35 | 19.22 | 1.0069 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.7 | 0.9885 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.31 | 5.2 | 0.9978 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.47 | 14.5 | 0.942 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.57 | 0.9795 | flat |
+| layer=pooler load=decode_32 m=32 | 62 | 19.93 | 20.5 | 0.9814 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.3 | 18.42 | 0.9991 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.74 | 5.74 | 0.9948 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.75 | 12.81 | 0.9659 | lost |
+| layer=o load=verify_1 m=8 | 62 | 6.11 | 6.35 | 0.9598 | lost |
+| layer=pooler load=verify_1 m=8 | 62 | 19.02 | 19.49 | 0.9835 | flat |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.19 | 5.58 | 0.9417 | lost |
+| layer=router load=verify_1 m=8 | 62 | 4.99 | 5.57 | 0.9073 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.07 | 16.12 | 1.0006 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.23 | 7.69 | 0.9942 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 21.93 | 22.1 | 0.9823 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.6 | 18.76 | 1.0076 | flat |
+| layer=router load=verify_16 m=128 | 62 | 6.98 | 7.24 | 0.9817 | flat |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.01 | 19.84 | 1.0021 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.38 | 9.32 | 0.9967 | flat |
+| layer=pooler load=verify_32 m=256 | 62 | 30.25 | 30.04 | 1.0332 | gained |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.34 | 24.47 | 1.0066 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.61 | 8.98 | 1.0537 | gained |
+
+gained on unpooler decode_1; router decode_1, verify_32; pooler verify_32; lost on qkv_gate decode_32, verify_1; o verify_1; unpooler verify_1; router verify_1. Expected hit: 0/6. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: b12mc-multicast-x-pooler-qkv-m8-readflush-diag`) that adds a further change in the same area is the only way to learn more.
+

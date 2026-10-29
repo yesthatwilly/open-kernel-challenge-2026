@@ -1,0 +1,1093 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index a36f3392..cb2f95c8 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -4126,6 +4126,1075 @@ def _b12_pick(src: str, layer: str, results: list, home_r: int, maxr: float):
+ NEW_CELL_FLAGS = NEW_CELL_FLAGS + B12_FLAGS   # section (10)'s cells join the A/B check and the FINAL FLAGS line
+ 
+ 
++# --- (12) DIAG b12mc (hypothesis b12mc-multicast-x-pooler-qkv-m8-readflush-diag): prepare-only, never routed ------
++# Sizes section (10)'s 12-bit row-owner kernel at m >= 8 with x delivered as 2D tensor-map TMA boxes (64 k x NT token
++# rows, SWIZZLE_128B, 1024 B aligned in the slot) instead of a7da6fa9's b12x 16 B cp.async pieces, in 4-CTA clusters
++# whose chunk rotation is per cluster (jc = (j + cluster id) % NCHUNK, identical in the 4 ranks). MC=true: rank r
++# issues the boxes b % 4 == r with .multicast::cluster (ctaMask 0xF), so x is read once per cluster; MC=false (the
++# control): every CTA issues all its boxes itself. Everything else is identical, including the cluster-wide empty
++# barriers (count CW * 4, released by every rank's consumers through mapa). kernel_fn, every routing flag and every
++# state key stay untouched: _mcx_diag reads state's b12 codes (or re-encodes at the instance's R), checks the arms
++# (_cell_check + mc == uc bit identity), times kernel_fn (inc) against them under the judge's READ flush (2 rounds,
++# interleaved), prints [mcx] lines and one VERDICT through _decision, and frees everything it made.
++MCX_EXT_NAME = "muse_bf16_b12mc_diag_v1"
++MCX_CL = 4                    # CTAs per cluster
++MCX_ROUNDS = 2                # read-flush timing rounds; the rule reads the WORST round
++MCX_BUDGET_S = 200.0          # skip (VERDICT n/a: budget) when prepare() has already run longer than this
++MCX_REFUTE = 1.0              # REFUTE: b8 = min(mc, uc) / inc at pooler m=8 >= this
++MCX_LEAD_B8 = 0.85            # LEAD: b8 <= this ...
++MCX_LEAD_B16 = 0.92           # ... and b16 (pooler m=16) <= this
++MCX_LEAD_QKV = 0.87           # a LEAD's mint adds qkv m=8 only if its best arm / inc <= this
++# instance id -> (layer, R, NT, S, MINB, CW, MC); must match the CUDA source's McInst / BrInst list.
++MCX_INST = {
++    0: ("pooler", 32, 8, 6, 2, 8, True), 1: ("pooler", 32, 8, 6, 2, 8, False),       # 2 CTAs/SM (106 KB)
++    2: ("pooler", 32, 8, 8, 1, 8, True), 3: ("pooler", 32, 8, 8, 1, 8, False),       # the spec's S=8, 1 CTA/SM
++    4: ("pooler", 32, 16, 4, 2, 8, True), 5: ("pooler", 32, 16, 4, 2, 8, False),     # 2 CTAs/SM (97 KB)
++    6: ("pooler", 32, 16, 8, 1, 8, True), 7: ("pooler", 32, 16, 8, 1, 8, False),     # the spec's S=8, 1 CTA/SM
++    8: ("qkv_gate", 16, 8, 4, 2, 4, True), 9: ("qkv_gate", 16, 8, 4, 2, 4, False),   # 2 CTAs/SM (90 KB)
++    10: ("pooler", 32, 8, 8, 1, 8, None),   # bridge: a7da6fa9's rotated b12x (cp.async x, no cluster), as 2980f57a
++}
++MCX_N = {"pooler": 4096, "qkv_gate": 2304}
++MCX_HOME_INST = {32: 0, 16: 2}   # a master b12 instance of each R: its b12_unpack is the device round trip
++# (name, layer, n, k, m, (mc, uc) instance pairs in preference order, bridge instance or None, add the m=1 reference)
++MCX_CASES = (
++    ("pooler m8", "pooler", 4096, 8192, 8, ((0, 1), (2, 3)), 10, True),
++    ("pooler m16", "pooler", 4096, 8192, 16, ((4, 5), (6, 7)), None, False),
++    ("qkv m8", "qkv_gate", 2304, 8192, 8, ((8, 9),), None, False),
++)
++
++_MCX_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++void mcx_run(torch::Tensor wc, torch::Tensor esc, torch::Tensor x, torch::Tensor out, torch::Tensor err,
++             int64_t inst, int64_t base);
++std::vector<int64_t> mcx_setup(int64_t inst, int64_t n);
++"""
++
++_MCX_CUDA = r"""
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAException.h>
++#include <cuda.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <cstring>
++#include <vector>
++
++#define MCX_WAIT_NS 500000000ULL   // every mbarrier wait is bounded to 0.5 s, then an error word (as B12_WAIT_NS)
++#define MCX_ESC_BYTES 2048         // per-CTA escape block (B12_ESC_BYTES in Python)
++#define MCX_TILE 384               // one m16 x k16 tile: 32 lanes x (8 L bytes + 4 code bytes)
++#define MCX_CL 4                   // CTAs per cluster (MCX_CL in Python)
++
++namespace {
++
++__device__ __forceinline__ uint32_t smem_u32(const void* p) {
++  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
++}
++__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t cnt) {
++  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(a), "r"(cnt) : "memory");
++}
++__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
++  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(a), "r"(tx) : "memory");
++}
++__device__ __forceinline__ void mbar_arrive(uint32_t a) {
++  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];" :: "r"(a) : "memory");
++}
++__device__ __forceinline__ unsigned long long gtimer() {
++  unsigned long long t;
++  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
++  return t;
++}
++// Bounded wait (CTA scope): false after MCX_WAIT_NS (the caller sets the error word and leaves the loop).
++__device__ __forceinline__ bool mbar_wait(uint32_t a, uint32_t parity) {
++  unsigned long long t0 = 0;
++  for (uint32_t it = 0;; ++it) {
++    uint32_t done;
++    asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
++                 " selp.u32 %0, 1, 0, p;\n}\n" : "=r"(done) : "r"(a), "r"(parity) : "memory");
++    if (done) return true;
++    if (it == 0) t0 = gtimer();
++    else if (gtimer() - t0 > MCX_WAIT_NS) return false;
++  }
++}
++// Bounded wait, acquire at CLUSTER scope: the producer's wait on its empty barrier, which the consumers of all 4
++// ranks release (mbar_arrive_remote), so their reads of the slot are ordered before the next copies into it.
++__device__ __forceinline__ bool mbar_wait_cluster(uint32_t a, uint32_t parity) {
++  unsigned long long t0 = 0;
++  for (uint32_t it = 0;; ++it) {
++    uint32_t done;
++    asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 p, [%1], %2;\n"
++                 " selp.u32 %0, 1, 0, p;\n}\n" : "=r"(done) : "r"(a), "r"(parity) : "memory");
++    if (done) return true;
++    if (it == 0) t0 = gtimer();
++    else if (gtimer() - t0 > MCX_WAIT_NS) return false;
++  }
++}
++__device__ __forceinline__ uint32_t cluster_rank() {
++  uint32_t r;
++  asm volatile("mov.u32 %0, %%cluster_ctarank;" : "=r"(r));
++  return r;
++}
++__device__ __forceinline__ uint32_t map_rank(uint32_t addr, uint32_t rank) {
++  uint32_t r;
++  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(r) : "r"(addr), "r"(rank));
++  return r;
++}
++// One arrival on an mbarrier of any CTA of the cluster (shared::cluster address from map_rank), release at cluster
++// scope.
++__device__ __forceinline__ void mbar_arrive_remote(uint32_t cluster_addr) {
++  asm volatile("mbarrier.arrive.release.cluster.shared::cluster.b64 _, [%0];" :: "r"(cluster_addr) : "memory");
++}
++__device__ __forceinline__ void cluster_arrive() { asm volatile("barrier.cluster.arrive.release.aligned;" ::: "memory"); }
++__device__ __forceinline__ void cluster_wait() { asm volatile("barrier.cluster.wait.acquire.aligned;" ::: "memory"); }
++// Plain 1-D bulk copy global -> shared (this CTA), completion counted on the mbarrier.
++__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
++  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
++               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
++}
++// One 2D tensor-map box into this CTA's smem (c0 = k, c1 = token row), bytes counted on bar.
++__device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3}], [%4];"
++               :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(bar) : "memory");
++}
++// The same box written at the same CTA-relative offset dst into every CTA of mask, each CTA's mbarrier at the
++// CTA-relative offset bar receiving the box's bytes (CUTLASS SM90_TMA_LOAD_MULTICAST_2D).
++__device__ __forceinline__ void tma_2d_mc(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar, uint16_t mask) {
++  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster"
++               " [%0], [%1, {%3, %4}], [%2], %5;"
++               :: "r"(dst), "l"(map), "r"(bar), "r"(c0), "r"(c1), "h"(mask) : "memory");
++}
++__device__ __forceinline__ uint32_t lds32(uint32_t a) {
++  uint32_t v;
++  asm volatile("ld.shared.u32 %0, [%1];" : "=r"(v) : "r"(a) : "memory");
++  return v;
++}
++__device__ __forceinline__ void lds64(uint32_t& v0, uint32_t& v1, uint32_t a) {
++  asm volatile("ld.shared.v2.u32 {%0,%1}, [%2];" : "=r"(v0), "=r"(v1) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void ldsm_x2(uint32_t& r0, uint32_t& r1, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];"
++               : "=r"(r0), "=r"(r1) : "r"(a) : "memory");
++}
++__device__ __forceinline__ void ldsm_x4(uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3, uint32_t a) {
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(a) : "memory");
++}
++// Bridge only (a7da6fa9's b12x): 16 B global -> shared through the LSU, completion tracked by cp_async_arrive_noinc.
++__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src) {
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" :: "r"(dst), "l"(src) : "memory");
++}
++__device__ __forceinline__ void cp_async_arrive_noinc(uint32_t bar) {
++  asm volatile("cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];" :: "r"(bar) : "memory");
++}
++__device__ __forceinline__ void mma_bf16(float* d, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
++                                         uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
++               "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
++               : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
++               : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
++}
++// Section (10)'s decode, unchanged: four high bytes from four codes, then one lane's m16n8k16 A fragment.
++__device__ __forceinline__ uint32_t b12_hi4(uint32_t c4, uint32_t base4) {
++  const uint32_t t = (c4 >> 3) & 0x01010101u;
++  return t * 0x78u + (c4 + base4);
++}
++__device__ __forceinline__ void b12_frag(uint32_t l0, uint32_t l1, uint32_t cw, uint32_t base4,
++                                         uint32_t& a0, uint32_t& a1, uint32_t& a2, uint32_t& a3) {
++  const uint32_t h0 = b12_hi4(cw & 0x0F0F0F0Fu, base4);
++  const uint32_t h1 = b12_hi4((cw >> 4) & 0x0F0F0F0Fu, base4);
++  a0 = __byte_perm(l0, h0, 0x5140);
++  a1 = __byte_perm(l0, h0, 0x7362);
++  a2 = __byte_perm(l1, h1, 0x5140);
++  a3 = __byte_perm(l1, h1, 0x7362);
++}
++
++// smem below the ring: barriers (256 B), the escape block, then EX = fp32 x values of the escapes, token-major with
++// an odd stride (ESC_CAP + 1). b12mc rounds the ring up to 1024 B (every SWIZZLE_128B box 1024 B aligned); the bridge
++// keeps b12x's 128 B.
++constexpr int mcx_esx() { return (MCX_ESC_BYTES - 256) / 8 + 1; }
++constexpr int mcx_ring_off(int nt) { return (256 + MCX_ESC_BYTES + mcx_esx() * nt * 4 + 1023) / 1024 * 1024; }
++constexpr int b12x_ring_off(int nt) { return (256 + MCX_ESC_BYTES + mcx_esx() * nt * 4 + 127) / 128 * 128; }
++
++// b12mc: a7da6fa9's rotated b12x_kernel with x as tensor-map boxes in 4-CTA clusters (see the Python section header).
++// Slot s = [WB weight bytes][NBOX boxes of NT rows x 128 B, SWIZZLE_128B: 16 B chunk c of row t at c ^ (t & 7)].
++// full_s: count 1 (the local producer's arrive.expect_tx of the whole slot, WB + NT * CKK * 2 bytes; a peer's
++// multicast bytes may land before it, which cannot complete the phase without that arrival). empty_s: count CW * 4,
++// one arrival per consumer warp of every rank, so no rank copies into slot s (its own or, with MC, its peers') before
++// all 4 ranks' consumers have freed it. m == NT (the tensor map's rows). err codes: 1 producer wait timeout, 2
++// consumer wait timeout, 3 built without sm_90, 4 dynamic smem not 1024 B aligned.
++template <int R, int K, int S, int MINB, int CW, int NT, bool MC>
++__global__ void __launch_bounds__(32 * (CW + 1), MINB)
++b12mc_kernel(const __grid_constant__ CUtensorMap tmap, const uint8_t* __restrict__ wc,
++             const uint8_t* __restrict__ esc, const __nv_bfloat16* __restrict__ x, __nv_bfloat16* __restrict__ out,
++             int* err, uint32_t base, int m) {
++#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
++  constexpr int NN = NT / 8;
++  constexpr int CKK = 8192 / R;
++  constexpr int NCHUNK = K / CKK;
++  constexpr int NS = CKK / 16;
++  constexpr int KSW = NS / CW;
++  constexpr int MT = R / 16;
++  constexpr int WB = NS * MT * MCX_TILE;     // 12288 B of weights per chunk
++  constexpr int NBOX = CKK / 64;             // x boxes per chunk (64 k each)
++  constexpr int BOXB = NT * 128;             // bytes per box
++  constexpr int SLOT = WB + NBOX * BOXB;
++  constexpr int ESX = mcx_esx();
++  constexpr int EXOFF = 256 + MCX_ESC_BYTES;
++  constexpr int RING = mcx_ring_off(NT);
++  constexpr int RP = R + 4;                  // epilogue scratch [cw][tok][RP]
++  static_assert(K % CKK == 0 && NS % CW == 0 && R % 16 == 0 && WB == 12288 && CKK % 64 == 0, "geometry");
++  static_assert(NBOX * BOXB == NT * CKK * 2, "x bytes per chunk");
++  static_assert(S >= 2 && S <= 8, "full / empty barriers live in 64 B each");
++  static_assert(RING % 1024 == 0 && SLOT % 1024 == 0 && WB % 1024 == 0 && BOXB % 1024 == 0,
++                "SWIZZLE_128B: every x box must start 1024 B aligned");
++  static_assert(CW * NT * RP * 4 <= S * SLOT, "epilogue scratch must fit in the ring");
++  static_assert(2 * (R + 1) <= 256, "row offsets must fit the escape header");
++  static_assert(NT == 8 || NT == 16, "NT");
++  static_assert(EXOFF + ESX * NT * 4 <= RING, "EX below the ring");
++  static_assert(!MC || NBOX % MCX_CL == 0, "each rank multicasts NBOX / 4 boxes");
++  static_assert(SLOT < (1 << 20), "tx-count range");
++  extern __shared__ __align__(1024) unsigned char smem[];
++  const uint32_t sbase = smem_u32(smem);
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  if (sbase & 1023u) {   // the same layout in every CTA of the launch: all of them leave here, before any barrier
++    if (tid == 0) atomicExch(err, 4);
++    return;
++  }
++  const uint32_t full0 = sbase, empty0 = sbase + 64, xbar = sbase + 128;
++  const uint32_t escs = sbase + 256, ring = sbase + RING;
++  const uint32_t rank = cluster_rank();
++  const int cid = (int)blockIdx.x / MCX_CL;   // cluster id: the 4 ranks share the chunk order
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < S; ++s) { mbar_init(full0 + 8 * s, 1); mbar_init(empty0 + 8 * s, CW * MCX_CL); }
++    mbar_init(xbar, 1);
++    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
++  }
++  // Every rank's barriers are initialised before any peer can arrive on them or multicast into this CTA.
++  cluster_arrive();
++  cluster_wait();
++
++  float acc[MT][NN][4];
++#pragma unroll
++  for (int a = 0; a < MT; ++a)
++#pragma unroll
++    for (int b = 0; b < NN; ++b)
++#pragma unroll
++      for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
++
++  float* exs = reinterpret_cast<float*>(smem + EXOFF);
++  if (warp == 0) {
++    // ---- producer: lane 0 copies the escape block, then per chunk waits the cluster-wide empty barrier, arms the
++    // local full barrier with the whole slot's bytes, bulk-copies its own 12 KB weight chunk and issues x boxes ----
++    if (lane == 0) {
++      mbar_expect_tx(xbar, (uint32_t)MCX_ESC_BYTES);
++      bulk_g2s(escs, esc + (size_t)blockIdx.x * MCX_ESC_BYTES, MCX_ESC_BYTES, xbar);
++      const uint64_t map = reinterpret_cast<uint64_t>(&tmap);
++      for (int j = 0; j < NCHUNK; ++j) {
++        const int s = j % S;
++        const uint32_t eph = ((j / S) & 1) ^ 1;
++        const int jc = (j + cid) % NCHUNK;
++        if (!mbar_wait_cluster(empty0 + 8 * s, eph)) { atomicExch(err, 1); break; }
++        const uint32_t fb = full0 + 8 * s;
++        const uint32_t slot = ring + (uint32_t)(s * SLOT);
++        mbar_expect_tx(fb, (uint32_t)SLOT);
++        bulk_g2s(slot, wc + ((size_t)blockIdx.x * NCHUNK + jc) * (size_t)WB, (uint32_t)WB, fb);
++        if constexpr (MC) {
++          for (int b = (int)rank; b < NBOX; b += MCX_CL)
++            tma_2d_mc(slot + (uint32_t)(WB + b * BOXB), map, jc * CKK + 64 * b, 0, fb,
++                      (uint16_t)((1u << MCX_CL) - 1u));
++        } else {
++#pragma unroll
++          for (int b = 0; b < NBOX; ++b) tma_2d(slot + (uint32_t)(WB + b * BOXB), map, jc * CKK + 64 * b, 0, fb);
++        }
++      }
++    }
++    __syncwarp();
++    // ---- after the stream is issued: gather x[t][k] of this CTA's escapes for the epilogue (b12x, unchanged) ----
++    if (mbar_wait(xbar, 0)) {
++      const uint16_t* roff = reinterpret_cast<const uint16_t*>(smem + 256);
++      const uint32_t* ent = reinterpret_cast<const uint32_t*>(smem + 256 + 256);
++      const int total = (int)roff[R] * m;
++      for (int p0 = 0; p0 < total; p0 += 32 * 8) {
++        float v[8];
++#pragma unroll
++        for (int u = 0; u < 8; ++u) {
++          const int p = p0 + u * 32 + lane;
++          v[u] = 0.f;
++          if (p < total) {
++            const int e = p / m, t = p - (p / m) * m;
++            v[u] = __bfloat162float(x[(size_t)t * K + (ent[2 * e] & 0xFFFFu)]);
++          }
++        }
++#pragma unroll
++        for (int u = 0; u < 8; ++u) {
++          const int p = p0 + u * 32 + lane;
++          if (p < total) exs[(p - (p / m) * m) * ESX + p / m] = v[u];
++        }
++      }
++    } else if (lane == 0) {
++      atomicExch(err, 1);
++    }
++    __syncwarp();
++  } else {
++    // ---- consumers: warp cw owns k16 steps [cw*KSW, (cw+1)*KSW) of every chunk ----
++    const int cw = warp - 1;
++    const uint32_t base4 = base * 0x01010101u;
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t ph = (j / S) & 1;
++      if (!mbar_wait(full0 + 8 * s, ph)) { if (lane == 0) atomicExch(err, 2); break; }
++      const uint32_t slot = ring + (uint32_t)(s * SLOT);
++      const uint32_t xslot = slot + WB;
++#pragma unroll
++      for (int i = 0; i < KSW; ++i) {
++        const int kk16 = cw * KSW + i;
++        // chunk-local k = kk16 * 16 + khalf * 8 sits in box kk16 / 4, 16 B chunk (kk16 % 4) * 2 + khalf of the
++        // token's 128 B row, stored at chunk ^ (tok & 7) (SWIZZLE_128B; the box is 1024 B aligned)
++        const uint32_t xb = xslot + (uint32_t)((kk16 >> 2) * BOXB);
++        const int c0 = (kk16 & 3) * 2;
++        uint32_t bfr[NN][2];
++        if constexpr (NN == 1) {
++          const int tok = lane & 7, kh = (lane >> 3) & 1;
++          ldsm_x2(bfr[0][0], bfr[0][1], xb + (uint32_t)(tok * 128 + (((c0 + kh) ^ (tok & 7)) << 4)));
++        } else {
++#pragma unroll
++          for (int p = 0; p < NN / 2; ++p) {   // (tile 2p: k lo, hi), (tile 2p+1: k lo, hi)
++            const int mi = lane >> 3;
++            const int tok = (2 * p + (mi >> 1)) * 8 + (lane & 7), kh = mi & 1;
++            ldsm_x4(bfr[2 * p][0], bfr[2 * p][1], bfr[2 * p + 1][0], bfr[2 * p + 1][1],
++                    xb + (uint32_t)(tok * 128 + (((c0 + kh) ^ (tok & 7)) << 4)));
++          }
++        }
++#pragma unroll
++        for (int mt = 0; mt < MT; ++mt) {
++          const uint32_t t = slot + (uint32_t)((kk16 * MT + mt) * MCX_TILE);
++          uint32_t l0, l1, a0, a1, a2, a3;
++          lds64(l0, l1, t + (uint32_t)lane * 8);
++          const uint32_t c = lds32(t + 256 + (uint32_t)lane * 4);
++          b12_frag(l0, l1, c, base4, a0, a1, a2, a3);
++#pragma unroll
++          for (int nn = 0; nn < NN; ++nn) mma_bf16(acc[mt][nn], a0, a1, a2, a3, bfr[nn][0], bfr[nn][1]);
++        }
++      }
++      __syncwarp();
++      if (lane == 0) {   // free slot s in every rank: no rank copies into it again before all 4 ranks did this
++#pragma unroll
++        for (uint32_t q = 0; q < (uint32_t)MCX_CL; ++q) mbar_arrive_remote(map_rank(empty0 + 8 * s, q));
++      }
++    }
++  }
++  // Every byte any rank sends to this CTA belongs to one of its NCHUNK full phases, all waited above: the ring is
++  // quiescent and can be epilogue scratch.
++  __syncthreads();
++  float* scratch = reinterpret_cast<float*>(smem + RING);   // aliases the ring: [cw][tok][RP]
++  if (warp >= 1) {
++    const int cw = warp - 1;
++#pragma unroll
++    for (int mt = 0; mt < MT; ++mt)
++#pragma unroll
++      for (int nn = 0; nn < NN; ++nn)
++#pragma unroll
++        for (int c = 0; c < 4; ++c) {
++          const int row = mt * 16 + (lane >> 2) + (c >> 1) * 8;
++          const int tok = nn * 8 + (lane & 3) * 2 + (c & 1);
++          scratch[(cw * NT + tok) * RP + row] = acc[mt][nn][c];
++        }
++  }
++  __syncthreads();
++  const int N = gridDim.x * R;
++  const uint16_t* roff = reinterpret_cast<const uint16_t*>(smem + 256);
++  const uint32_t* ent = reinterpret_cast<const uint32_t*>(smem + 256 + 256);
++  const float wfloor = __uint_as_float(base << 24);   // bf16 bits base << 8: what an escape decoded to
++  for (int idx = tid; idx < R * m; idx += 32 * (CW + 1)) {
++    const int tok = idx / R, row = idx % R;
++    float sum = scratch[tok * RP + row];
++#pragma unroll
++    for (int c = 1; c < CW; ++c) sum += scratch[(c * NT + tok) * RP + row];
++    const int e1 = (int)roff[row + 1];
++    for (int e = (int)roff[row]; e < e1; ++e) {
++      const float xv = exs[tok * ESX + e];
++      sum = fmaf(xv, __uint_as_float(ent[2 * e + 1] << 16), sum);
++      sum = fmaf(-xv, wfloor, sum);
++    }
++    out[(size_t)tok * N + (size_t)blockIdx.x * R + row] = __float2bfloat16_rn(sum);
++  }
++  // No CTA exits while a peer may still arrive on its barriers or wait on bytes this CTA multicast.
++  cluster_arrive();
++  cluster_wait();
++#else
++  if (threadIdx.x == 0) atomicExch(err, 3);
++#endif
++}
++
++// Bridge: a7da6fa9's rotated b12x_kernel, unchanged (x as 16 B cp.async pieces per CTA, jc = (j + blockIdx.x) %
++// NCHUNK, no cluster), at pooler m=8 only: ties this diag to check 2980f57a.
++template <int R, int K, int S, int MINB, int CW, int NT>
++__global__ void __launch_bounds__(32 * (CW + 1), MINB)
++b12x_kernel(const uint8_t* __restrict__ wc, const uint8_t* __restrict__ esc, const __nv_bfloat16* __restrict__ x,
++            __nv_bfloat16* __restrict__ out, int* err, uint32_t base, int m) {
++#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
++  constexpr int NN = NT / 8;
++  constexpr int CKK = 8192 / R;
++  constexpr int NCHUNK = K / CKK;
++  constexpr int NS = CKK / 16;
++  constexpr int KSW = NS / CW;
++  constexpr int MT = R / 16;
++  constexpr int WB = NS * MT * MCX_TILE;     // 12288 B of weights per chunk
++  constexpr int XS = CKK * 2 + 16;           // padded x row stride in a slot (bank-conflict free)
++  constexpr int SLOT = WB + NT * XS;
++  constexpr int ESX = mcx_esx();             // EX row stride (ESC_CAP + 1): fp32 [NT][ESX]
++  constexpr int EXOFF = 256 + MCX_ESC_BYTES;
++  constexpr int RING = b12x_ring_off(NT);
++  constexpr int RP = R + 4;                  // epilogue scratch [cw][tok][RP]: conflict-free writes and row reads
++  static_assert(K % CKK == 0 && NS % CW == 0 && R % 16 == 0 && WB == 12288, "geometry");
++  static_assert(S >= 2 && S <= 8, "full / empty barriers live in 64 B each");
++  static_assert(RING % 128 == 0 && SLOT % 128 == 0 && XS % 16 == 0, "alignment");
++  static_assert(CW * NT * RP * 4 <= S * SLOT, "epilogue scratch must fit in the ring");
++  static_assert(2 * (R + 1) <= 256, "row offsets must fit the escape header");
++  static_assert(NT == 8 || NT == 16 || NT == 32, "NT");
++  static_assert(EXOFF + ESX * NT * 4 <= RING, "EX below the ring");
++  constexpr int PPR = CKK / 8;               // 16 B pieces per x row segment of a chunk
++  extern __shared__ __align__(1024) unsigned char smem[];
++  const uint32_t sbase = smem_u32(smem);
++  const uint32_t full0 = sbase, empty0 = sbase + 64, xbar = sbase + 128;
++  const uint32_t escs = sbase + 256, ring = sbase + RING;
++  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
++  if (tid == 0) {
++#pragma unroll
++    for (int s = 0; s < S; ++s) { mbar_init(full0 + 8 * s, 1 + 32); mbar_init(empty0 + 8 * s, CW); }
++    mbar_init(xbar, 1);
++    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
++  }
++  __syncthreads();
++
++  float acc[MT][NN][4];
++#pragma unroll
++  for (int a = 0; a < MT; ++a)
++#pragma unroll
++    for (int b = 0; b < NN; ++b)
++#pragma unroll
++      for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
++
++  float* exs = reinterpret_cast<float*>(smem + EXOFF);
++  if (warp == 0) {
++    if (lane == 0) {
++      mbar_expect_tx(xbar, (uint32_t)MCX_ESC_BYTES);
++      bulk_g2s(escs, esc + (size_t)blockIdx.x * MCX_ESC_BYTES, MCX_ESC_BYTES, xbar);
++    }
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t eph = ((j / S) & 1) ^ 1;
++      const int jc = (j + (int)blockIdx.x) % NCHUNK;
++      int good = 1;
++      if (lane == 0) {
++        good = mbar_wait(empty0 + 8 * s, eph) ? 1 : 0;
++        if (good) mbar_expect_tx(full0 + 8 * s, (uint32_t)WB);
++      }
++      good = __shfl_sync(0xffffffffu, good, 0);
++      __syncwarp();   // memory order: every lane's cp.async into the slot after lane 0's empty-barrier acquire
++      if (!good) { if (lane == 0) atomicExch(err, 1); break; }
++      const uint32_t slot = ring + (uint32_t)(s * SLOT);
++      if (lane == 0)
++        bulk_g2s(slot, wc + ((size_t)blockIdx.x * NCHUNK + jc) * (size_t)WB, (uint32_t)WB, full0 + 8 * s);
++      for (int p = lane; p < m * PPR; p += 32) {
++        const int t = p / PPR, q = p - (p / PPR) * PPR;
++        cp_async16(slot + (uint32_t)(WB + t * XS + q * 16), x + (size_t)t * K + (size_t)jc * CKK + (size_t)q * 8);
++      }
++      cp_async_arrive_noinc(full0 + 8 * s);
++    }
++    asm volatile("cp.async.wait_all;" ::: "memory");   // none in flight when the ring becomes epilogue scratch
++    __syncwarp();
++    if (mbar_wait(xbar, 0)) {
++      const uint16_t* roff = reinterpret_cast<const uint16_t*>(smem + 256);
++      const uint32_t* ent = reinterpret_cast<const uint32_t*>(smem + 256 + 256);
++      const int total = (int)roff[R] * m;
++      for (int p0 = 0; p0 < total; p0 += 32 * 8) {
++        float v[8];
++#pragma unroll
++        for (int u = 0; u < 8; ++u) {
++          const int p = p0 + u * 32 + lane;
++          v[u] = 0.f;
++          if (p < total) {
++            const int e = p / m, t = p - (p / m) * m;
++            v[u] = __bfloat162float(x[(size_t)t * K + (ent[2 * e] & 0xFFFFu)]);
++          }
++        }
++#pragma unroll
++        for (int u = 0; u < 8; ++u) {
++          const int p = p0 + u * 32 + lane;
++          if (p < total) exs[(p - (p / m) * m) * ESX + p / m] = v[u];
++        }
++      }
++    } else if (lane == 0) {
++      atomicExch(err, 1);
++    }
++    __syncwarp();
++  } else {
++    const int cw = warp - 1;
++    const uint32_t base4 = base * 0x01010101u;
++    for (int j = 0; j < NCHUNK; ++j) {
++      const int s = j % S;
++      const uint32_t ph = (j / S) & 1;
++      if (!mbar_wait(full0 + 8 * s, ph)) { if (lane == 0) atomicExch(err, 2); break; }
++      const uint32_t slot = ring + (uint32_t)(s * SLOT);
++      const uint32_t xslot = slot + WB;
++#pragma unroll
++      for (int i = 0; i < KSW; ++i) {
++        const int kk16 = cw * KSW + i;
++        uint32_t bfr[NN][2];
++        if constexpr (NN == 1) {
++          ldsm_x2(bfr[0][0], bfr[0][1], xslot + (uint32_t)((lane & 7) * XS + kk16 * 32 + ((lane >> 3) & 1) * 16));
++        } else {
++#pragma unroll
++          for (int p = 0; p < NN / 2; ++p) {
++            const int mi = lane >> 3;
++            const int tok = (2 * p + (mi >> 1)) * 8 + (lane & 7);
++            ldsm_x4(bfr[2 * p][0], bfr[2 * p][1], bfr[2 * p + 1][0], bfr[2 * p + 1][1],
++                    xslot + (uint32_t)(tok * XS + kk16 * 32 + (mi & 1) * 16));
++          }
++        }
++#pragma unroll
++        for (int mt = 0; mt < MT; ++mt) {
++          const uint32_t t = slot + (uint32_t)((kk16 * MT + mt) * MCX_TILE);
++          uint32_t l0, l1, a0, a1, a2, a3;
++          lds64(l0, l1, t + (uint32_t)lane * 8);
++          const uint32_t c = lds32(t + 256 + (uint32_t)lane * 4);
++          b12_frag(l0, l1, c, base4, a0, a1, a2, a3);
++#pragma unroll
++          for (int nn = 0; nn < NN; ++nn) mma_bf16(acc[mt][nn], a0, a1, a2, a3, bfr[nn][0], bfr[nn][1]);
++        }
++      }
++      __syncwarp();
++      if (lane == 0) mbar_arrive(empty0 + 8 * s);
++    }
++  }
++  __syncthreads();   // every issued copy has been waited on by the consumers: the ring is quiescent
++  float* scratch = reinterpret_cast<float*>(smem + RING);   // aliases the ring: [cw][tok][RP]
++  if (warp >= 1) {
++    const int cw = warp - 1;
++#pragma unroll
++    for (int mt = 0; mt < MT; ++mt)
++#pragma unroll
++      for (int nn = 0; nn < NN; ++nn)
++#pragma unroll
++        for (int c = 0; c < 4; ++c) {
++          const int row = mt * 16 + (lane >> 2) + (c >> 1) * 8;
++          const int tok = nn * 8 + (lane & 3) * 2 + (c & 1);
++          scratch[(cw * NT + tok) * RP + row] = acc[mt][nn][c];
++        }
++  }
++  __syncthreads();
++  const int N = gridDim.x * R;
++  const uint16_t* roff = reinterpret_cast<const uint16_t*>(smem + 256);
++  const uint32_t* ent = reinterpret_cast<const uint32_t*>(smem + 256 + 256);
++  const float wfloor = __uint_as_float(base << 24);
++  for (int idx = tid; idx < R * m; idx += 32 * (CW + 1)) {
++    const int tok = idx / R, row = idx % R;
++    float sum = scratch[tok * RP + row];
++#pragma unroll
++    for (int c = 1; c < CW; ++c) sum += scratch[(c * NT + tok) * RP + row];
++    const int e1 = (int)roff[row + 1];
++    for (int e = (int)roff[row]; e < e1; ++e) {
++      const float xv = exs[tok * ESX + e];
++      sum = fmaf(xv, __uint_as_float(ent[2 * e + 1] << 16), sum);
++      sum = fmaf(-xv, wfloor, sum);
++    }
++    out[(size_t)tok * N + (size_t)blockIdx.x * R + row] = __float2bfloat16_rn(sum);
++  }
++#else
++  if (threadIdx.x == 0) atomicExch(err, 3);
++#endif
++}
++
++typedef CUresult (*McxEncodeFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
++                                const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
++                                CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
++
++// The driver's cuTensorMapEncodeTiled through the runtime (no -lcuda), resolved once (prepare()-only module).
++McxEncodeFn mcx_encode_fn() {
++  static McxEncodeFn cached = nullptr;
++  if (cached != nullptr) return cached;
++  void* fn = nullptr;
++  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
++#if CUDART_VERSION >= 12050
++  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
++#else
++  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
++#endif
++  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
++    (void)cudaGetLastError();
++    return nullptr;
++  }
++  cached = reinterpret_cast<McxEncodeFn>(fn);
++  return cached;
++}
++
++// Host-only: a stack-local 2D map over THIS call's x [m, K] bf16 (row stride 2K B), box {64 k, NT rows}, SWIZZLE_128B,
++// L2 promotion 128 B, no OOB fill; passed by value as the kernel's __grid_constant__ parameter.
++CUtensorMap mcx_xmap(const torch::Tensor& x, int nt) {
++  const McxEncodeFn enc = mcx_encode_fn();
++  TORCH_CHECK(enc != nullptr, "mcx: cuTensorMapEncodeTiled entry point missing");
++  CUtensorMap mp;
++  std::memset(&mp, 0, sizeof(mp));
++  const cuuint64_t dims[2] = {static_cast<cuuint64_t>(x.size(1)), static_cast<cuuint64_t>(x.size(0))};
++  const cuuint64_t strides[1] = {static_cast<cuuint64_t>(x.size(1)) * 2};
++  const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(nt)};
++  const cuuint32_t es[2] = {1, 1};
++  const CUresult rc = enc(&mp, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, x.data_ptr(), dims, strides, box, es,
++                          CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
++                          CU_TENSOR_MAP_L2_PROMOTION_L2_128B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
++  TORCH_CHECK(rc == CUDA_SUCCESS, "mcx: cuTensorMapEncodeTiled rc ", static_cast<int>(rc));
++  return mp;
++}
++
++template <int R, int K, int S, int MINB, int CW, int NT, bool MC>
++struct McInst {
++  static constexpr int SMEM = mcx_ring_off(NT) + S * (12288 + NT * (8192 / R) * 2);
++  static void prep() {
++    static bool done = false;
++    if (!done) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(b12mc_kernel<R, K, S, MINB, CW, NT, MC>,
++                                          cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
++      if constexpr (MINB > 1)
++        C10_CUDA_CHECK(cudaFuncSetAttribute(b12mc_kernel<R, K, S, MINB, CW, NT, MC>,
++                                            cudaFuncAttributePreferredSharedMemoryCarveout,
++                                            (int)cudaSharedmemCarveoutMaxShared));
++      done = true;
++    }
++  }
++  static cudaLaunchConfig_t config(int64_t n, cudaStream_t stream, cudaLaunchAttribute* attr) {
++    cudaLaunchConfig_t cfg = {};
++    cfg.gridDim = dim3(static_cast<unsigned>(n / R), 1, 1);
++    cfg.blockDim = dim3(32 * (CW + 1), 1, 1);
++    cfg.dynamicSmemBytes = SMEM;
++    cfg.stream = stream;
++    attr[0].id = cudaLaunchAttributeClusterDimension;
++    attr[0].val.clusterDim.x = MCX_CL;
++    attr[0].val.clusterDim.y = 1;
++    attr[0].val.clusterDim.z = 1;
++    cfg.attrs = attr;
++    cfg.numAttrs = 1;
++    return cfg;
++  }
++  static void launch(const torch::Tensor& wc, const torch::Tensor& esc, const torch::Tensor& x,
++                     const torch::Tensor& out, const torch::Tensor& err, uint32_t base) {
++    const int64_t n = out.size(1), m = x.size(0);
++    TORCH_CHECK(n % (R * MCX_CL) == 0 && x.size(1) == K && wc.numel() == n * K * 3 / 2, "mcx_run: shape");
++    TORCH_CHECK(esc.numel() == (n / R) * MCX_ESC_BYTES, "mcx_run: escape blocks");
++    TORCH_CHECK(m == NT && out.size(0) == m, "mcx_run: m must equal NT");
++    const CUtensorMap mp = mcx_xmap(x, NT);
++    prep();
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, b12mc_kernel<R, K, S, MINB, CW, NT, MC>, mp,
++                                      wc.data_ptr<uint8_t>(), esc.data_ptr<uint8_t>(),
++                                      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
++                                      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), err.data_ptr<int>(), base,
++                                      static_cast<int>(m)));
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++  }
++  // {regs, local (spill) B, static smem B, dyn smem B, CTAs/SM, MaxActiveClusters (cluster 4), S, MINB, R, CW, NT, MC}
++  static std::vector<int64_t> setup(int64_t n) {
++    prep();
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, b12mc_kernel<R, K, S, MINB, CW, NT, MC>));
++    int occ = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, b12mc_kernel<R, K, S, MINB, CW, NT, MC>,
++                                                                 32 * (CW + 1), (size_t)SMEM));
++    cudaLaunchAttribute attr[1];
++    cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
++    int clusters = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveClusters(&clusters, b12mc_kernel<R, K, S, MINB, CW, NT, MC>, &cfg));
++    return {(int64_t)a.numRegs, (int64_t)a.localSizeBytes, (int64_t)a.sharedSizeBytes, (int64_t)SMEM, (int64_t)occ,
++            (int64_t)clusters, (int64_t)S, (int64_t)MINB, (int64_t)R, (int64_t)CW, (int64_t)NT, (int64_t)MC};
++  }
++};
++
++template <int R, int K, int S, int MINB, int CW, int NT>
++struct BrInst {
++  static constexpr int XS = (8192 / R) * 2 + 16;
++  static constexpr int SMEM = b12x_ring_off(NT) + S * (12288 + NT * XS);
++  static void prep() {
++    static bool done = false;
++    if (!done) {
++      C10_CUDA_CHECK(cudaFuncSetAttribute(b12x_kernel<R, K, S, MINB, CW, NT>,
++                                          cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
++      done = true;
++    }
++  }
++  static void launch(const torch::Tensor& wc, const torch::Tensor& esc, const torch::Tensor& x,
++                     const torch::Tensor& out, const torch::Tensor& err, uint32_t base) {
++    const int64_t n = out.size(1), m = x.size(0);
++    TORCH_CHECK(n % R == 0 && x.size(1) == K && wc.numel() == n * K * 3 / 2, "mcx_run (bridge): shape");
++    TORCH_CHECK(esc.numel() == (n / R) * MCX_ESC_BYTES, "mcx_run (bridge): escape blocks");
++    TORCH_CHECK(m >= 2 && m <= NT && out.size(0) == m, "mcx_run (bridge): m must be 2..NT");
++    prep();
++    b12x_kernel<R, K, S, MINB, CW, NT><<<(unsigned)(n / R), 32 * (CW + 1), SMEM, at::cuda::getCurrentCUDAStream()>>>(
++        wc.data_ptr<uint8_t>(), esc.data_ptr<uint8_t>(), reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
++        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), err.data_ptr<int>(), base, (int)m);
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++  }
++  static std::vector<int64_t> setup(int64_t) {
++    prep();
++    cudaFuncAttributes a;
++    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, b12x_kernel<R, K, S, MINB, CW, NT>));
++    int occ = 0;
++    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, b12x_kernel<R, K, S, MINB, CW, NT>,
++                                                                 32 * (CW + 1), (size_t)SMEM));
++    return {(int64_t)a.numRegs, (int64_t)a.localSizeBytes, (int64_t)a.sharedSizeBytes, (int64_t)SMEM, (int64_t)occ,
++            (int64_t)-1, (int64_t)S, (int64_t)MINB, (int64_t)R, (int64_t)CW, (int64_t)NT, (int64_t)-1};
++  }
++};
++
++// Instance ids: MCX_INST in Python.
++using Mc0 = McInst<32, 8192, 6, 2, 8, 8, true>;     // pooler m=8,  2 CTAs/SM, multicast x
++using Mc1 = McInst<32, 8192, 6, 2, 8, 8, false>;    // pooler m=8,  2 CTAs/SM, per-CTA boxes
++using Mc2 = McInst<32, 8192, 8, 1, 8, 8, true>;     // pooler m=8,  1 CTA/SM (the spec's S=8)
++using Mc3 = McInst<32, 8192, 8, 1, 8, 8, false>;
++using Mc4 = McInst<32, 8192, 4, 2, 8, 16, true>;    // pooler m=16, 2 CTAs/SM
++using Mc5 = McInst<32, 8192, 4, 2, 8, 16, false>;
++using Mc6 = McInst<32, 8192, 8, 1, 8, 16, true>;    // pooler m=16, 1 CTA/SM (the spec's S=8)
++using Mc7 = McInst<32, 8192, 8, 1, 8, 16, false>;
++using Mc8 = McInst<16, 8192, 4, 2, 4, 8, true>;     // qkv_gate m=8, 2 CTAs/SM
++using Mc9 = McInst<16, 8192, 4, 2, 4, 8, false>;
++using Br10 = BrInst<32, 8192, 8, 1, 8, 8>;          // bridge: a7da6fa9 b12x pooler m=8 (inst 6 there)
++
++void mcx_check(const torch::Tensor& wc, const torch::Tensor& esc, const torch::Tensor& x, const torch::Tensor& out,
++               const torch::Tensor& err) {
++  TORCH_CHECK(wc.is_cuda() && esc.is_cuda() && x.is_cuda() && out.is_cuda() && err.is_cuda(), "mcx: cuda tensors");
++  TORCH_CHECK(wc.scalar_type() == at::kByte && esc.scalar_type() == at::kByte && x.scalar_type() == at::kBFloat16 &&
++              out.scalar_type() == at::kBFloat16 && err.scalar_type() == at::kInt, "mcx: dtypes");
++  TORCH_CHECK(wc.is_contiguous() && esc.is_contiguous() && x.is_contiguous() && out.is_contiguous(), "mcx: contiguity");
++  TORCH_CHECK(x.dim() == 2 && out.dim() == 2 && err.numel() >= 1, "mcx: dims / error word");
++  TORCH_CHECK(wc.get_device() == x.get_device() && esc.get_device() == x.get_device() &&
++              out.get_device() == x.get_device() && err.get_device() == x.get_device(), "mcx: one device");
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(wc.data_ptr()) % 16 == 0 && reinterpret_cast<uintptr_t>(esc.data_ptr()) % 16 == 0 &&
++              reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0, "mcx: 16 B alignment");
++}
++
++}  // namespace
++
++void mcx_run(torch::Tensor wc, torch::Tensor esc, torch::Tensor x, torch::Tensor out, torch::Tensor err,
++             int64_t inst, int64_t base) {
++  mcx_check(wc, esc, x, out, err);
++  TORCH_CHECK(base >= 1 && base <= 120, "mcx_run: base");
++  const uint32_t b = (uint32_t)base;
++  switch (inst) {
++    case 0: Mc0::launch(wc, esc, x, out, err, b); break;
++    case 1: Mc1::launch(wc, esc, x, out, err, b); break;
++    case 2: Mc2::launch(wc, esc, x, out, err, b); break;
++    case 3: Mc3::launch(wc, esc, x, out, err, b); break;
++    case 4: Mc4::launch(wc, esc, x, out, err, b); break;
++    case 5: Mc5::launch(wc, esc, x, out, err, b); break;
++    case 6: Mc6::launch(wc, esc, x, out, err, b); break;
++    case 7: Mc7::launch(wc, esc, x, out, err, b); break;
++    case 8: Mc8::launch(wc, esc, x, out, err, b); break;
++    case 9: Mc9::launch(wc, esc, x, out, err, b); break;
++    case 10: Br10::launch(wc, esc, x, out, err, b); break;
++    default: TORCH_CHECK(false, "mcx_run: unknown instance");
++  }
++}
++
++std::vector<int64_t> mcx_setup(int64_t inst, int64_t n) {
++  switch (inst) {
++    case 0: return Mc0::setup(n);
++    case 1: return Mc1::setup(n);
++    case 2: return Mc2::setup(n);
++    case 3: return Mc3::setup(n);
++    case 4: return Mc4::setup(n);
++    case 5: return Mc5::setup(n);
++    case 6: return Mc6::setup(n);
++    case 7: return Mc7::setup(n);
++    case 8: return Mc8::setup(n);
++    case 9: return Mc9::setup(n);
++    case 10: return Br10::setup(n);
++    default: TORCH_CHECK(false, "mcx_setup: unknown instance");
++  }
++  return {};
++}
++"""
++
++
++def _mcx_build():
++    """Compile the diag module once per process, at import, right after _b12_build (BULK_NVCC_FLAGS, 9.0a only,
++    TORCH_CUDA_ARCH_LIST restored after). Returns (ext, why): ext None on any failure (the diag then prints VERDICT
++    n/a: build and nothing else changes); never raises."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++    try:
++        from torch.utils import cpp_extension
++        print(f"[mcx] building {MCX_EXT_NAME}: extra_cuda_cflags {BULK_NVCC_FLAGS}", flush=True)
++        ext = cpp_extension.load_inline(
++            name=MCX_EXT_NAME, cpp_sources=_MCX_CPP, cuda_sources=_MCX_CUDA,
++            functions=["mcx_run", "mcx_setup"],
++            extra_cuda_cflags=list(BULK_NVCC_FLAGS), verbose=False)
++    except Exception as e:
++        tail = "\n".join(str(e).splitlines()[-60:])
++        print(f"[mcx] build FAILED after {time.perf_counter() - t0:.1f}s ({type(e).__name__}); build log "
++              f"tail:\n{tail}\n[mcx] diag off; kernel_fn and routing unchanged", flush=True)
++        return None, f"{type(e).__name__} after {time.perf_counter() - t0:.1f}s: {str(e)[-200:]}"
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    print(f"[build-time] mcx load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
++    return ext, ""
++
++
++_MCX_EXT, _MCX_BUILD_WHY = _mcx_build() if torch.cuda.is_available() else (None, "no CUDA device")
++
++
++def _mcx_label(inst: int) -> str:
++    layer, rows, nt, s, minb, cw, mc = MCX_INST[inst]
++    kind = "bridge b12x" if mc is None else ("mc" if mc else "uc")
++    return f"i{inst} {layer} R{rows} NT{nt} S{s} MINB{minb} CW{cw} {kind}"
++
++
++def _mcx_codes(state: dict, layer: str, rows: int):
++    """The 12-bit codes at R = rows: state's own (checked bit-exact by _b12_prepare) when its instance has that R,
++    else _b12_encode_checked (host + device round trips bit-exact, through a master instance of that R). prepare()-
++    only; the returned tensors are dropped with the case."""
++    inst = state.get("b12_inst_" + layer)
++    if inst is not None and B12_INST_R.get(inst) == rows and ("b12_wc_" + layer) in state:
++        return (state["b12_wc_" + layer], state["b12_esc_" + layer], state["b12_base_" + layer],
++                f"state's (b12 inst {inst})")
++    if _B12_EXT is None:
++        raise RuntimeError("no b12 module for the device round trip")
++    wc, esc, base = _b12_encode_checked(layer, state[layer], rows, MCX_HOME_INST[rows], verbose=False)
++    return wc, esc, base, "re-encoded (host + device round trips bit-exact)"
++
++
++def _mcx_time(arms: dict, dev) -> list:
++    """_cell_gate's replay loop without a routing flag (prepare()-only): every arm graph-captured (_cell_capture),
++    the CELL_FLUSH_BYTES READ flush (flush_i32.sum(), as the judge reads) before every replay, CELL_GATE_REPS reps in
++    rotating interleaved order, an empty-graph baseline subtracted; MCX_ROUNDS rounds. Returns one dict per round:
++    arm -> {net, iqr, med} (us), plus "_base"."""
++    flush = torch.empty(CELL_FLUSH_BYTES, dtype=torch.uint8, device=dev)
++    flush_i32 = flush.view(torch.int32)
++    scratch = torch.zeros(1, dtype=torch.float32, device=dev)
++    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
++
++    def replay_us(gr) -> float:
++        flush_i32.sum()
++        ev[0].record()
++        gr.replay()
++        ev[1].record()
++        ev[1].synchronize()
++        return ev[0].elapsed_time(ev[1]) * 1e3
++
++    graphs = {}
++    rounds = []
++    try:
++        g_base = _cell_capture(lambda: scratch.add_(1.0))
++        for name, fn in arms.items():
++            graphs[name] = _cell_capture(fn)
++        names = list(arms)
++        for _ in range(MCX_ROUNDS):
++            base = _ouns_median([replay_us(g_base) for _ in range(CELL_GATE_REPS)])
++            times = {name: [] for name in names}
++            for rep in range(CELL_GATE_REPS):
++                for name in names[rep % len(names):] + names[:rep % len(names)]:
++                    times[name].append(replay_us(graphs[name]))
++            st = {"_base": base}
++            for name, v in times.items():
++                sv = sorted(v)
++                med = _ouns_median(v)
++                st[name] = {"net": max(med - base, 0.25), "iqr": sv[(3 * len(sv)) // 4] - sv[len(sv) // 4],
++                            "med": med}
++            rounds.append(st)
++    finally:
++        graphs.clear()
++        g_base = None
++        torch.cuda.synchronize()
++    return rounds
++
++
++def _mcx_case(state: dict, case, info: dict, err: torch.Tensor) -> dict:
++    """One diag case (prepare()-only). Picks the first (mc, uc) instance pair whose MaxActiveClusters both reach the
++    case's cluster count, takes the codes (_mcx_codes), runs _cell_check on every arm, requires mc == uc bit-identical
++    (the bridge's identity is printed only), then times inc = kernel_fn on the final state against the arms
++    (_mcx_time). Returns a dict: ok, why, pair, codes, arms, rounds, per-round ratios, best (worst-round min of
++    mc/inc and uc/inc) and the winning arm."""
++    name, layer, n, k, m, pairs, bridge, with_ref = case
++    r = {"name": name, "ok": False, "why": "", "rounds": [], "pair": None}
++    rows = MCX_INST[pairs[0][0]][1]
++    need = n // rows // MCX_CL
++    for a, b in pairs:
++        if a in info and b in info and min(info[a][5], info[b][5]) >= need:
++            r["pair"] = (a, b)
++            break
++    if r["pair"] is None:
++        r["why"] = ("skipped: MaxActiveClusters " + ", ".join(
++            f"i{a}/i{b} {min(info[a][5], info[b][5]) if a in info and b in info else 'n/a'}" for a, b in pairs)
++            + f" < {need} needed")
++        return r
++    w = state[layer]
++    wc, esc, base, r["codes"] = _mcx_codes(state, layer, rows)
++
++    def runner(inst):
++        def run(xx):
++            out = torch.empty((xx.shape[0], n), dtype=torch.bfloat16, device=xx.device)
++            _MCX_EXT.mcx_run(wc, esc, xx, out, err, inst, base)
++            return out
++        return run
++
++    fns = {"mc": runner(r["pair"][0]), "uc": runner(r["pair"][1])}
++    if bridge is not None:
++        if bridge in info and info[bridge][4] >= 1:
++            fns["br"] = runner(bridge)
++        else:
++            print(f"[mcx] {name}: bridge {_mcx_label(bridge)} not run (setup {info.get(bridge)})", flush=True)
++    for arm in list(fns):
++        inst = r["pair"][0] if arm == "mc" else (r["pair"][1] if arm == "uc" else bridge)
++        bad = _cell_check(f"mcx {name} {arm} {_mcx_label(inst)}", fns[arm], w, m, n, k, err=err)
++        if bad and arm == "br":
++            print(f"[mcx] {name}: bridge check failed ({bad}); bridge arm dropped", flush=True)
++            del fns["br"]
++        elif bad:
++            r["why"] = f"{arm} _cell_check: {bad}"
++            return r
++    g = torch.Generator(device=w.device)
++    g.manual_seed(5309 + m)
++    xx = torch.randn((m, k), device=w.device, dtype=torch.float32, generator=g).to(torch.bfloat16)
++    outs = {arm: fn(xx) for arm, fn in fns.items()}
++    torch.cuda.synchronize()
++    code = int(err.item())
++    if code:
++        r["why"] = f"error word {code} in the bit-identity launches"
++        return r
++    if not torch.equal(outs["mc"], outs["uc"]):
++        r["why"] = "mc and uc outputs are not bit-identical"
++        return r
++    if "br" in outs:
++        r["br_same"] = bool(torch.equal(outs["br"], outs["mc"]))
++    outs.clear()
++    x = torch.randn((m, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++    data = {"x": x, "config": {"m": m, "n": n, "k": k, "layer": layer}}
++    arms = {"inc": lambda: kernel_fn(data, state)}
++    for arm, fn in fns.items():
++        arms[arm] = (lambda f=fn: f(x))
++    if with_ref:   # master's own m=1 cell of this layer (kernel_fn, b12 when routed)
++        x1 = torch.randn((1, k), device=w.device, dtype=torch.float32).to(torch.bfloat16)
++        data1 = {"x": x1, "config": {"m": 1, "n": n, "k": k, "layer": layer}}
++        arms["ref1"] = lambda: kernel_fn(data1, state)
++    r["arms"] = list(arms)
++    r["rounds"] = _mcx_time(arms, w.device)
++    arms.clear()
++    fns.clear()
++    code = int(err.item())
++    if code:
++        r["why"] = f"error word {code} after the timing rounds"
++        return r
++    rr = r["rounds"]
++    for arm in ("mc", "uc", "br"):
++        if arm in r["arms"]:
++            r[arm + "_inc"] = [s[arm]["net"] / s["inc"]["net"] for s in rr]
++    r["mc_uc"] = [s["mc"]["net"] / s["uc"]["net"] for s in rr]
++    wm, wu = max(r["mc_inc"]), max(r["uc_inc"])
++    r["best"], r["arm"] = (wm, "mc") if wm <= wu else (wu, "uc")
++    r["ok"] = True
++    return r
++
++
++def _mcx_case_txt(r: dict) -> str:
++    """One VERDICT detail line per case: both rounds' net us / IQR per arm and the ratios."""
++    if not r["ok"]:
++        return f"[mcx] VERDICT case {r['name']}: INVALID ({r['why']})"
++    a, b = r["pair"]
++    parts = []
++    for i, s in enumerate(r["rounds"]):
++        arms = " ".join(f"{arm} {s[arm]['net']:.2f}/{s[arm]['iqr']:.2f}" for arm in r["arms"])
++        rat = f"mc/inc {r['mc_inc'][i]:.3f} uc/inc {r['uc_inc'][i]:.3f} mc/uc {r['mc_uc'][i]:.3f}"
++        if "br_inc" in r:
++            rat += f" br/inc {r['br_inc'][i]:.3f}"
++        parts.append(f"r{i + 1} {arms} (net us/IQR, base {s['_base']:.2f}) {rat}")
++    extra = f"; bridge == mc bits: {r['br_same']}" if "br_same" in r else ""
++    return (f"[mcx] VERDICT case {r['name']} [i{a}/i{b}: R{MCX_INST[a][1]} NT{MCX_INST[a][2]} S{MCX_INST[a][3]} "
++            f"MINB{MCX_INST[a][4]} CW{MCX_INST[a][5]}; codes {r['codes']}]: " + " | ".join(parts)
++            + f"; best {r['arm']}/inc {r['best']:.3f} (worst round){extra}")
++
++
++def _mcx_diag(state: dict, t0: float) -> None:
++    """prepare()-only diagnostic (hypothesis b12mc-multicast-x-pooler-qkv-m8-readflush-diag). Reads state, adds no
++    key to it, frees every tensor / graph it made. Never raises. Rule (restated by the build, see the hypothesis'
++    Implementation notes): b8 / b16 / bq = worst-round min(mc, uc) / inc at pooler m=8 / pooler m=16 / qkv m=8.
++    INVALID if a pooler case is (build, occupancy, round trip, _cell_check, error word or mc != uc bits); else
++    REFUTE if b8 >= MCX_REFUTE; LEAD if b8 <= MCX_LEAD_B8 and b16 <= MCX_LEAD_B16 (qkv m=8 added only at bq <=
++    MCX_LEAD_QKV); SHELF otherwise. mc/uc is attribution only."""
++    if _MCX_EXT is None:
++        _decision(f"[mcx] VERDICT n/a: build ({_MCX_BUILD_WHY}); kernel_fn and routing unchanged")
++        return
++    el = time.perf_counter() - t0
++    if el > MCX_BUDGET_S:
++        _decision(f"[mcx] VERDICT n/a: budget (prepare() already {el:.0f} s > {MCX_BUDGET_S:.0f} s); kernel_fn and "
++                  f"routing unchanged")
++        return
++    t1 = time.perf_counter()
++    res, info, occ_txt = {}, {}, []
++    err = None
++    try:
++        err = torch.zeros(1, dtype=torch.int32, device=state["router"].device)
++        for inst, spec in MCX_INST.items():
++            try:
++                info[inst] = [int(v) for v in _MCX_EXT.mcx_setup(inst, MCX_N[spec[0]])]
++                v = info[inst]
++                occ_txt.append(f"i{inst} {v[5] if v[5] >= 0 else '-'}cl {v[4]}/SM r{v[0]} s{v[1]} {v[3] // 1024}KB")
++                print(f"[mcx] setup {_mcx_label(inst)}: regs={v[0]} local(spill)={v[1]} B static smem={v[2]} B dyn "
++                      f"smem={v[3]} B, {v[4]} CTAs/SM, cudaOccupancyMaxActiveClusters={v[5]} (grid "
++                      f"{MCX_N[spec[0]] // spec[1]})", flush=True)
++            except Exception as e:
++                occ_txt.append(f"i{inst} setup {type(e).__name__}")
++                print(f"[mcx] setup {_mcx_label(inst)} raised {type(e).__name__}: {str(e)[-300:]}", flush=True)
++        for case in MCX_CASES:
++            tc = time.perf_counter()
++            try:
++                res[case[0]] = _mcx_case(state, case, info, err)
++            except Exception as e:
++                res[case[0]] = {"name": case[0], "ok": False, "why": f"raised {type(e).__name__}: {str(e)[-300:]}"}
++            err.zero_()
++            print(f"[prepare-time] mcx case {case[0]}: {time.perf_counter() - tc:.2f}s", flush=True)
++    except Exception as e:
++        print(f"[mcx] diag raised {type(e).__name__}: {str(e)[-300:]}", flush=True)
++    finally:
++        err = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    p8, p16, q8 = (res.get(c[0]) or {"name": c[0], "ok": False, "why": "not run"} for c in MCX_CASES)
++    _decision("[mcx] VERDICT occupancy (cluster 4; MaxActiveClusters, CTAs/SM, regs, spill B, dyn smem; need 32 "
++              "pooler, 36 qkv): " + " | ".join(occ_txt))
++    for r in (p8, p16, q8):
++        _decision(_mcx_case_txt(r))
++    if p8["ok"] and "ref1" in p8["arms"]:
++        _decision("[mcx] VERDICT ref pooler m=1 kernel_fn (master's b12 cell): " + ", ".join(
++            f"r{i + 1} {s['ref1']['net']:.2f}/{s['ref1']['iqr']:.2f} us" for i, s in enumerate(p8["rounds"])))
++    _decision("[mcx] VERDICT attribution, multicast (fewer L2 reads and 4x fewer TMA issues per CTA) vs per-CTA "
++              "boxes: " + "; ".join(f"{r['name']} mc/uc " + "/".join(f"{v:.3f}" for v in r["mc_uc"])
++                                     for r in (p8, p16, q8) if r["ok"]))
++
++    def bt(r, tag):
++        return f"{tag}={r['best']:.3f} ({r['arm']})" if r["ok"] else f"{tag}=INVALID"
++
++    if not (p8["ok"] and p16["ok"]):
++        verdict = "INVALID: fix and rerun the diag once; no claim"
++    elif p8["best"] >= MCX_REFUTE:
++        verdict = (f"REFUTE (b8 {p8['best']:.3f} >= {MCX_REFUTE}: neither tensor-map arm beats the incumbent; "
++                   f"b12x stays closed)")
++    elif p8["best"] <= MCX_LEAD_B8 and p16["best"] <= MCX_LEAD_B16:
++        add_q = q8["ok"] and q8["best"] <= MCX_LEAD_QKV
++        verdict = (f"LEAD (b8 <= {MCX_LEAD_B8}, b16 <= {MCX_LEAD_B16}; arms pooler m8 {p8['arm']}, m16 {p16['arm']}; "
++                   + (f"+ qkv m8 {q8['arm']} (bq <= {MCX_LEAD_QKV})" if add_q else f"qkv m8 not added (bq > "
++                      f"{MCX_LEAD_QKV} or INVALID)") + ")")
++    else:
++        verdict = (f"SHELF (b8 {p8['best']:.3f}: LEAD needs b8 <= {MCX_LEAD_B8} and b16 <= {MCX_LEAD_B16}, REFUTE "
++                   f"b8 >= {MCX_REFUTE})")
++    _decision(f"[mcx] VERDICT {bt(p8, 'pooler m8 b8')} | {bt(p16, 'pooler m16 b16')} | {bt(q8, 'qkv m8 bq')} -> "
++              f"{verdict}; diag {time.perf_counter() - t1:.1f}s")
++
++
+ # (11) Pooler K-halves at m == 128 with fp32 partials (hypothesis pooler-khalf-m128-fp32-partials-triton-castadd,
+ # candidate (b2) only). Master runs this cell as torch.mm(x, pooler_t): a cuBLAS split-K nvjet GEMM plus a separate
+ # cublasLt splitKreduce node. Here the two K halves run as ONE strided-batched cuBLAS GEMM over master's NN weight
+@@ -4691,6 +5760,12 @@ def prepare(weights: Weights) -> dict:
+                   f"max active clusters; needs 16)", flush=True)
+     except Exception as e:
+         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
++    # Prepare-only diag (hypothesis b12mc-multicast-x-pooler-qkv-m8-readflush-diag): reads state, adds no key, frees
++    # everything it made; its [mcx] VERDICT lines are the last decision lines re-printed below.
++    try:
++        _mcx_diag(state, t0)
++    except Exception as e:
++        _decision(f"[mcx] VERDICT INVALID: diag raised {type(e).__name__}: {str(e)[-300:]}")
+     print(f"[prepare] FINAL FLAGS: ouns_cl={state['ouns_cl']} router_cluster_ok={state['router_cluster_ok']} "
+           f"nn_ok={state['nn_ok']} nn_p256_ok={state['nn_p256_ok']} "
+           + " ".join(f"{name}={state[name]}" for name in NEW_CELL_FLAGS)
