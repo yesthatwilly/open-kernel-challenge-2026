@@ -1,0 +1,25 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "E passes: CLAIMS.md:44 (ping-pong, refuted) is reopened for ping-pong-like schedules by the newer [lead] CLAIMS.md:70-71, which names this exact sibling; board/blob unmoved. The barrier protocol is hang-safe (same counts as 5fbaec9a, which ran exact on the judge). One flat run is only interpretable with an in-run indicator showing whether the anti-phase formed, and the build should add __syncwarp before the AP bar.sync.",
+ "justification": "Protocol checked by hand: WG0's bar-2 syncs (S-1 plus 1 final) equal WG1's S bar-2 arrives; WG1's bar-3 syncs equal WG0's bar-3 arrives; each arrive for phase n+1 is causally after the partner's sync for phase n, so no phase aliasing; 0-item CTAs do no AP op, 1-item ends with the final sync(2); no cycle with epilogue bar 1; mbarrier skew <= 1 stage < 4; producer empty[] dependency met. 5fbaec9a used ids 2/3, count 256, 'started' skip, final sync and arrive-after-commit and ran exact; only the sync moves from before mbar_wait+dq to after dq. Prior accurate. WEAKEST LINK: with this placement the barriers bind only once per item (KS=32 stages); afterwards anti-phase persists only if each SMSP's tensor pipe retires the two warps' wgmma groups in issue order; if the pipe round-robins, the kernel silently falls back to master's lockstep plus 2 bar ops per stage. Per-WG wgmma_wait<0> does not block overlap. VALUE: low (NB mostly 32, MMA-only 0.379 us/stage) is where the model predicts lockstep, yet carries 1.7 of the 3.5% gain; high and ft (NB128) are where a gain is predicted, ~2% headline at the 1/3-of-gap capture rate; p 0.2 honest; EV 0.7% user-requested. ap phase starts ~181 s + ~37-39 s build: fits the 200 / 265 s deadlines.",
+ "confounders": [
+  "experts-rega-w13-fast-silu-epilogue and w2st arm a (CLAIMS.md:54/56): shared by both gate arms; epilogue length sets WG0's idle at bar 1 (small at KS=32). No revert A/B needed.",
+  "experts-turn-rega-s4-port-t4096 / -first-turn-n128 (base engine): 4-stage ring, register-A variant A, 232-register split unchanged; result applies to this tile only.",
+  "combo-b rega-lo two-CTA arm: never routes (skipped since 350343bc); no interaction."
+ ],
+ "interference": "No companion run. The ambiguity is internal: flat could mean (a) anti-phase never formed or (b) it formed and overlap does not pay; only (b) supports 'closes overlap levers on this tile'. Require a cheap in-run indicator: a prepare-only skew probe (CTA 0, lane 0 of consumer warps cw0 and cw4 accumulate clock64 at issue after commit and at retire after wait<0>; print mean own-group latency and retire skew as a fraction of the stage period per class and N bucket; ~0 = lockstep fallback, ~0.3-0.6 = formed), behind a runtime guard on the diag launch only (magic value in err[0], err buffer >= 3+8 ints), not a second module (a second build breaks the 265 s deadline). If too invasive, print per-N-bucket ap/master ratios (synthetic all-NB128 vs NB32 routings) and treat a uniform x1.00 +- 0.005 as inert/undetermined, not refuted. If lockstep, the follow-up is a binding variant (WG0's arrive(3) after its wait<0>), a next hypothesis.",
+ "rules_flags": [
+  "No rules problem: bit-identical output (torch.equal gate), dispatch keyed on shape class only, synthetic prepare routings, no host sync in kernel_fn.",
+  "Hardening: add __syncwarp() before the AP bar.sync (after mbar_wait's per-lane spin exit and dq_stage, before the first .aligned wgmma) and before the final sync, as 5fbaec9a's pp_sync did.",
+  "Hang risk (named barriers have no timeout): keep the flushed print, eager launch and synchronize canary first; keep AP ops unconditional on 'dead'."
+ ],
+ "freshness": "CLAIMS.md:44 [refuted] reopened by CLAIMS.md:70-71 [lead] (cb22e610), which names this sibling; barrier placement really differs from :44. CLAIMS.md:72 K-pair refuted is a different mechanism (evidence against free-drift overlap). CLAIMS.md:68 wait<1> ring different. No [landed] claim owns the consumer schedule. Board 1.5008 / b2941ea23dc743a3 / blob c63801e7 unchanged: fresh.",
+ "companions": [],
+ "open_questions": [
+  "Does Hopper's per-SMSP tensor pipe retire two warps' queued wgmma groups in issue order? The skew probe answers it.",
+  "At low (NB 32) are the dequant warps issue-bound or latency-bound? If latency-bound, the low booking is ~0 and success is ~2% (high + ft).",
+  "Why did 5fbaec9a lose x1.18-1.47 at high? An unmodelled per-handoff cost would apply here too.",
+  "Judge by the scored profile's rega_kernel rows at sliding turn_4 / first_turn, not only the in-prepare gate (CLAIMS.md:50)."
+ ]
+}
