@@ -132,7 +132,7 @@ review_at: 2026-10-29T151743Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T151743Z
 base_sha: c54503e25e6fe0056cea3feba5d4e4982d602c7d
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -141,6 +141,12 @@ worktree: .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-di
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T153340Z
+impl_commit: b471991fcf484ece282a8b63e387cd6647020617
+submission_sha256: 694e0e660c0bb64e35b370c1f816e2733a7f64f0667b84b63f5212f0baa30eeb
+norm_sha256: aafec7f35f9fbcd8f6cabf50d4ba58f2d059a93399e072d8f1a2ad5630fd6010
+submission_blob: cb2f95c8a3228c5078eb8314b805bb900ed0a0dd
+lint_warnings: 61
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
@@ -195,3 +201,47 @@ No companion run. All comparisons are interleaved in one process under the same 
 - VERDICT line must carry both rounds of mc/inc, uc/inc, mc/uc, net us and IQR per arm, MaxActiveClusters per instance, pooler m=1 reference (16 KB tail).
 - Correct the Risk note (b12r 0.938 was write-flush); qkv m=8 threshold ~0.86-0.88.
 
+
+## Implementation notes
+
+**Mechanism:** prepare-only diag: new load_inline module muse_bf16_b12mc_diag_v1 (b12mc_kernel = a7da6fa9's rotated b12x with x as 2D tensor-map TMA boxes in 4-CTA clusters, multicast vs per-CTA arms, plus the cp.async b12x bridge) timed against kernel_fn under the read flush at pooler m=8/16 and qkv_gate m=8; kernel_fn and routing unchanged.
+
+What changed, where (worktree muse_bf16_proj/submission.py only; insert-only diff, 0 lines removed):
+- New section (12) between section (10) (`NEW_CELL_FLAGS = NEW_CELL_FLAGS + B12_FLAGS`) and section (11): constants `MCX_*`, `_MCX_CPP` / `_MCX_CUDA`, `_mcx_build()` (built at import right after `_b12_build`, BULK_NVCC_FLAGS, 9.0a only; failure -> `(None, why)`, never raises), and the prepare-only helpers `_mcx_label`, `_mcx_codes`, `_mcx_time`, `_mcx_case`, `_mcx_case_txt`, `_mcx_diag`.
+- prepare(): one `try: _mcx_diag(state, t0)` after the final occupancy re-print and before the FINAL FLAGS line. kernel_fn, every function it reaches, every flag and every state key are byte-identical to master (a36f3392); the diag adds no state key.
+- CUDA `b12mc_kernel<R, K, S, MINB, CW, NT, MC>` as the change paragraph (a)-(e): cluster (4,1,1) via cudaLaunchKernelEx + cudaLaunchAttributeClusterDimension (ouns pattern); rotation jc = (j + blockIdx.x / 4) % NCHUNK; host-encoded per-call 2D CUtensorMap over x (cuTensorMapEncodeTiled through cudaGetDriverEntryPoint[ByVersion], no -lcuda; BFLOAT16, dims {K, m}, stride 2K B, box {64, NT}, SWIZZLE_128B, L2 promotion 128B, OOB fill none) passed as `const __grid_constant__ CUtensorMap`; MC=true: rank r issues boxes b % 4 == r with `.multicast::cluster`, ctaMask 0xF; MC=false: each CTA issues all CKK/64 boxes; ring offset rounded to 1024 B (static_asserts that RING, SLOT, WB and every box are 1024-multiples, plus a runtime err-4 exit if the dynamic smem base is not 1024-aligned); ldmatrix address xslot + (kk16/4)*NT*128 + tok*128 + ((((kk16%4)*2 + khalf) ^ (tok & 7)) * 16); full_s count 1 armed by the local lane 0 with expect_tx(WB + NT*CKK*2) before it issues into the slot; empty_s count CW*4, each consumer warp's lane 0 arrives `mbarrier.arrive.release.cluster.shared::cluster` on mapa(empty_s, q) for q = 0..3, the producer waits `mbarrier.try_wait.parity.acquire.cluster` (bounded, error word 1/2); cluster arrive/wait after barrier init (replaces the first __syncthreads) and after the epilogue store. The escape gather, decode, mma loop and RP-padded epilogue are a7da6fa9's b12x unchanged.
+- Arms are checked by master's `_cell_check` (fp64 + canary + repeat bit-identity + probe row), then mc == uc required bit-identical on a seeded x (bridge == mc is printed only). Timing (`_mcx_time`) copies `_cell_gate`'s replay loop without a flag: `_cell_capture` per arm, CELL_FLUSH_BYTES READ flush (`flush_i32.sum()`) before every replay, CELL_GATE_REPS 41 reps in rotating interleaved order, empty-graph baseline subtracted per round, 2 rounds. Error word read after the checks and after timing.
+- Output: `[mcx] VERDICT occupancy` (MaxActiveClusters, CTAs/SM, regs, spill, dyn smem of every instance), one `[mcx] VERDICT case` line per case (per round: net us / IQR of every arm, mc/inc, uc/inc, mc/uc, br/inc), `[mcx] VERDICT ref pooler m=1` (kernel_fn at m=1, timed inside the pooler m=8 rotation), `[mcx] VERDICT attribution`, then the `[mcx] VERDICT ... -> LEAD|SHELF|REFUTE|INVALID` line. All go through `_decision`, so they are the last lines of the DECISIONS block re-printed at the end of prepare() (16 KB tail). Budget skip (`n/a: budget`) at > 200 s into prepare(); build failure prints `n/a: build (<why>)`. Every tensor / graph is dropped (tensor maps are host stack values), then synchronize + empty_cache.
+
+Review fixes applied:
+1. Co-residency. Instances (ids = `MCX_INST`): pooler NT=8 S=6 MINB=2 (106 KB dyn smem, 2 CTAs/SM) i0 mc / i1 uc, and the spec's S=8 MINB=1 i2/i3; pooler NT=16 S=4 MINB=2 (97 KB; S=5 would be 117 KB and not fit 2/SM) i4/i5, and S=8 MINB=1 i6/i7; qkv_gate NT=8 S=4 MINB=2 CW=4 (90 KB) i8/i9. CW=8 for every pooler instance. Every instance's cudaOccupancyMaxActiveClusters is queried at runtime (`mcx_setup`) and printed; a case uses the first (mc, uc) pair, 2/SM first, whose BOTH queries reach its cluster count (32 pooler, 36 qkv), else the case prints `skipped: MaxActiveClusters ... < need` and is INVALID.
+2. Decision rule as restated (in `_mcx_diag`): b8 / b16 / bq = WORST read-flush round of min(mc/inc, uc/inc), taking the arm whose worst-round ratio is lower (named in the VERDICT). Checked in order: INVALID if pooler m8 or m16 is INVALID (build, occupancy, round trip, _cell_check, error word, mc != uc bits): fix and rerun once, no claim; a qkv-only INVALID does not invalidate the run, it only keeps qkv out of a LEAD's mint. REFUTE if b8 >= 1.0. LEAD if b8 <= 0.85 and b16 <= 0.92 (mint pooler m8/16 + unpooler m16 with the named arm; + qkv m8 only if bq <= 0.87). SHELF otherwise. mc/uc is attribution only, printed as "multicast (fewer L2 reads and 4x fewer TMA issues per CTA) vs per-CTA boxes"; it no longer refutes.
+3. Codes: `_mcx_codes` reuses state's `b12_wc_/b12_esc_/b12_base_` of the layer when its routed instance has the case's R (pooler R=32, qkv R=16; these were checked bit-exact by `_b12_prepare`), else re-encodes with master's `_b12_encode_checked` through master instance 0 (R=32) / 2 (R=16) (host + device round trips via `b12_unpack`), dropped after the case.
+4. VERDICT lines carry both rounds of mc/inc, uc/inc, mc/uc, net us and IQR per arm, MaxActiveClusters per instance and the pooler m=1 reference, printed last (see Output above).
+5. Bridge arm included (cheap): a7da6fa9's rotated b12x_kernel<32, 8192, 8, 1, 8, 8> copied unchanged into the diag module (id 10, no cluster, cp.async x, its own 128 B ring rounding), run at pooler m=8 only, checked by `_cell_check` (a failure drops only the bridge arm), timed in the same rotation; prints br/inc per round and whether its bits equal mc's.
+6. Risk note correction: the Risk section's "b12r gate 0.938 vs judge 0.984" pair was a WRITE-flush gate, not a read-flush one. No read-flush gate-vs-judge pair exists at m >= 8 yet; at m = 1 the read-flush gate under-predicted the judge by 4-5 points on qkv / o. A LEAD from this diag therefore still needs the judge check to confirm; LEAD thresholds were not loosened for it.
+
+Deviations from the spec, and why:
+- The pooler cases prefer S=6 / S=4 at 2 CTAs/SM over the spec's S=8 MINB=1 (review fix 1); S=8 is kept as the fallback pair and printed.
+- The x tensor map is encoded per call on the host (inside graph capture, frozen in the node), not once: `_cell_check` launches on several x tensors, and this is also what the routed check would do.
+- mc/uc no longer appears in REFUTE (review fix 2). Pooler m=32 is not measured (open question in the review): a LEAD's mint should either add a pooler m=32 case or drop pooler d32 / unpooler d32.
+- `m == NT` is required by the launcher (the three cases are exactly m = NT), so the tensor map never has rows < box rows.
+
+Static verification (no GPU here): `py_compile` OK; `rewrite/bin/cuda_syntax.py` (g++ -fsyntax-only with CUDA/torch stubs) OK on all five CUDA sources, and again on _MCX_CUDA / _B12_CUDA with `__CUDA_ARCH__ 900` defined so the device bodies parse and all 11 template instances are instantiated (static_asserts evaluated; a deliberately broken CW was caught). PTX was reviewed by hand against CUTLASS's SM90 patterns: multicast operand order `[dst], [map, {c0, c1}], [bar], ctaMask(h)`; remote arrive `.release.cluster.shared::cluster` with sink `_`; producer wait `.acquire.cluster`; `fence.mbarrier_init.release.cluster` before the first cluster barrier. Ordering argument: a rank multicasts chunk j into slot s only after its local empty_s phase for chunk j - S completes, which needs CW arrivals from each of the 4 ranks, each issued after that rank waited its own full_s phase for j - S; so every peer byte lands in the phase it is counted for, and every byte sent to a CTA is consumed before its epilogue reuses the ring.
+
+Uncertainties: PTX assembly, register / spill counts and the actual MaxActiveClusters are unverified until the judge run (the occupancy line prints them). Compile adds one module of 11 kernel instances (estimate 40-60 s) to the 10-minute run budget.
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag diff` (2 hunks, both insertions: section (12) after line 4128, and the `_mcx_diag` call in prepare()).
+
+- [x] CUDA-graph capturable: kernel_fn and everything it reaches are unchanged (no hunk touches them); the new `.item()` / `synchronize()` calls are in `_mcx_*` helpers called only from prepare().
+- [x] Nothing derived from `data` is cached across calls: the diag adds no state key and no module-level container; its tensors, graphs and per-call tensor maps are dropped before prepare() returns.
+- [x] Weights: no new repack in the timed path; the diag only reuses state's lossless 12-bit codes or re-encodes them with master's checked encoder (host + device round trips bit-exact), prepare-only, and drops them.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8; queries at most FP8 E4M3: n/a for KV / queries (dense projections); x stays bf16 (TMA boxes of bf16), outputs bf16, fp32 accumulation, unchanged timed path.
+- [x] Attention sees every key: n/a (no attention in this problem); every K element is reduced in the diag kernel.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: the diag times its own graphs with torch.cuda.Event as the existing gates do; lint reports none.
+- [x] All work happens inside the timed call; no output caching or replay: the timed path is master's; the diag runs in prepare() only and is never routed.
+- [x] First line still `# okc: problem=muse_bf16_proj`.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_bf16_proj/submission.py --problem muse_bf16_proj`): exit 0, 0 errors, "OK with warnings". 62 output lines vs 55 on master: the 7 new are `host-sync` warnings (prepare-only `.item()` / `torch.cuda.synchronize()` in `_mcx_*`, "outside kernel_fn's call graph; fine in prepare()") and one `dtype` warning for the 256 MB uint8 flush buffer (same as `_cell_gate`'s). Last line: `OK with warnings: .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag/muse_bf16_proj/submission.py`.
