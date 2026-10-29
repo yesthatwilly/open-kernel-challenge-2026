@@ -2484,3 +2484,10 @@ with the operator's go-ahead.
 - The user, ~18:29Z: "if you can have more h100 tests figured out, prioritize that with tokens.  the h100 tests appear very fruitful".
 - Lanes now (cap 3): hot half (moe/decode wg_kernel ncu + A3, GPUs 1/3/4); **rega2** (beyond A3: further instruction cuts, a dequant warpgroup with SS wgmma, re-test one overlap schedule under A3; GPU 5); **fa3v** (full-verify FA3 bound + legal knob sweep for attention and decode's full rows; GPU 6).
 - Judge: prefill dq2 diag 835e1a44 in flight.
+
+## 2026-10-29 1832Z — H100 hot-half lane read (moe/decode wg_kernel)
+- research/h100-hothalf-1029.md (takemyjob hopper/hh-1029 e942c40; GPUs 1/3/4, ncu on 1). **A3 hot-half pair x0.902-0.923 (T=256), x0.894-0.898 (T=128), moe judge draws x0.866/0.890; bit-exact**; A1 alone x0.94-0.97. Instr/stage/warp: master 287, A1 255, A3 223. Est. decode +0.7% (1.690 -> ~1.703), moe +0.8% (not judge-checked; assumes the forked hot/cold halves share SMs zero-sum).
+- Nothing saturated (tensor 53-61% active at T=256, 37-42% at T=128; issue 40-52%; ALU 27-42%): A3 pays by shortening the serial per-stage chain (dequant -> wgmma -> wait<0>). Top stall barrier 19-24% = consumers waiting on their own wgmma; ring waits ~4%; producer idles 45-58%.
+- Other gaps: tail/waves 22-27% of the T=256 pair (mostly w2, 1.45 waves, 29-36% idle; upper bound since the cold half fills some); per-stage cost vs tensor floor N128 x1.36, N64 x2.1, N32 x4; 576 token columns for 386 routes; fixed costs ~13%, K-loops 85-88%.
+- [lead] claims on moe and decode (A3 alone ~0.7-0.8% < bar; reopen = stack with w2 wave/tail + per-expert N-tile padding fixes to >= 2.5%). **10-30 phase-A headline: the hot-half stack** (A3 + w2 waves + N-tile padding).
+- Node: an old orphan `decs` fuzz under compute-sanitizer runs on GPU 4 (pids 2789298/2789304, ~19 h old); left alone for the user.
