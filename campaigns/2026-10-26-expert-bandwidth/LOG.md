@@ -2642,3 +2642,6 @@ with the operator's go-ahead.
 
 ## 2026-10-29 2254Z — attention confirm a47caf07 1.6464 (pooled 1.6443, +0.63% < 1.07% pooled margin): [shelf], stack next
 - Both runs routed the gate (v16 0.903-0.916, v32 0.918-0.924). Pooled short of the margin against the lucky 1.634 board (code level ~1.62, so ~+1.5% real). risk: high -> no scored run by churn's rule. Next attention candidate: gate + FA3 metadata fold (verify_1) + dense_q, one check.
+
+## 2026-10-29 2257Z — owner: subagents may run gpunode06 directly (allow rules added); keep GPUs 1/3/4/5/6 busy on expert-block work ~14 h
+- Relayed from the owner's openclaw session (owner-approved 22:55Z): three allow rules in .claude/settings.local.json (hopper-probe run gpunode06 *). GPUs 1/3/4/5/6 only (never 0/2/7). Refusals still happening get the exact command + refusal logged here. openclaw checks gpunode06 every 30 min.
