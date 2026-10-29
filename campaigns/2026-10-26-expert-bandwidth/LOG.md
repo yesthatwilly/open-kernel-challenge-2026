@@ -2605,3 +2605,7 @@ with the operator's go-ahead.
 
 ## 2026-10-29 2144Z — user (owner-confirmed, via openclaw): continue H100 work; Engine A run approved on GPU 3
 - "continue the work you can on the h100s eligible for use. [... this approves the Engine A encoding run: hopper-probe run gpunode06 --gpus 3 nodejudge-ee-*]". The ea-enc lane resumed on GPU 3 (njenc ee-val/r1/r2/ncu/ncub). pfexp lane running on GPU 5. Eligible GPUs: 1, 3, 4, 5, 6 (0/2 overheat; 7 reserved/refused).
+
+## 2026-10-29 2154Z — Engine A encoding measured (user-approved run, GPU 3): consume-only 4-10% faster, exact
+- Run from the main session under the user's direct approval (the subagent's policy check still refused it): ee-val PASS (exact every draw, check_implementation pass, prepare 42.8 s, 1830 MHz no throttle); ee-r1/r2/ncu/ncub done (runs/20261029-144741-gpunode06 in takemyjob .worktrees ea-enc).
+- Consume-only B/E4 (A4b codes): T8 1.05-1.08, **T16 w13 1.067-1.090, T32 w13 1.079-1.086**, T128/256 cold 1.04-1.05, **ea6 K1 1.076-1.097**; B/E5 (A4b+A5b): T8-32 1.03-1.07, cold half **1.05-1.07** (E5 wins there). Normal mode ~1.00 (H100 HBM wall). Rule: >= 8% only on T16/T32 w13 and ea6 K1; the rest 4-7%. [lead]: the judge decides via an in-prepare exact race per class (E4 at T<=32, E5 at the cold half). **10-30 phase A item 1 stands** (expected ~+1-2% moe if the H200 is consumer-bound, as estimated).
