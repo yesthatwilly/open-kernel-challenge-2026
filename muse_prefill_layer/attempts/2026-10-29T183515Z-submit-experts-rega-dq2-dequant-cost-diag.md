@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_prefill_layer/hypotheses/done/gain/2026-10-29T175301Z-experts-rega-dq2-dequant-cost-diag.md` (branch `hyp/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `27f0b9af04604842` (`okc status <job>`)
 - **File:** `muse_prefill_layer/submission.py` at git `30ee3a39`
 
 ## Goal
