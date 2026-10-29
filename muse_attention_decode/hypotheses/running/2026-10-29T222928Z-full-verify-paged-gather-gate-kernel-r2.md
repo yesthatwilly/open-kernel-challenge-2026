@@ -47,7 +47,7 @@ review_at: 2026-10-29T223204Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T223204Z
 base_sha: e3a95e5080f0844b6bb601639a5bb3051e58c707
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -64,6 +64,8 @@ submission_blob: 0f7d6195263717e5dff426814b77ed679a083408
 lint_warnings: 105
 attempt_file: 2026-10-29T223301Z-check-full-verify-paged-gather-gate-kernel-r2.md
 prepared_at: 2026-10-29T223301Z
+job: 184991095dff4d50
+dispatched_at: 2026-10-29T223312Z
 ---
 
 # full-verify-paged-gather-gate-kernel-r2
