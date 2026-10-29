@@ -51,11 +51,20 @@ evidence: >
   board 7cc034f9 anatomy: expert block 57 us (S d1/v1), 98 us (S d16/d32), 253 us (S v16/v32) =
   48-68% of the rows
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T224707Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+stage: claimed
+claimed_at: 2026-10-29T224707Z
+base_sha: 7c345f539f26d261c6ced014d2cf6d7f85a06d22
+base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+branch: hyp/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack
+worktree: .worktrees/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
