@@ -113,12 +113,12 @@ instrument: >
   medians and d in us
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T151704Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T151704Z
 base_sha: 1da83323d3e8664218809cf1c921c5ffdc92545b
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
@@ -137,6 +137,14 @@ attempt_file: 2026-10-29T155357Z-check-cmbf-combine-fused-w2-epilogue-t8-32.md
 prepared_at: 2026-10-29T155357Z
 job: a5aee75176174ce4
 dispatched_at: 2026-10-29T155410Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.9674503247838624
+speedup_ci: [1.9379385699121043, 2.0041685111626464]
+harvested_at: 2026-10-29T162118Z
+best_at_harvest: 1.952050927455536
+promotion: null
+mechanism: null
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
@@ -228,3 +236,29 @@ OK with warnings: .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
 ```
 
 `python3 -I -m py_compile`: ok (__pycache__ removed). cuda_syntax.py (eb-t32d stub): `_EA2_SRC`, `_EB_SRC`, `_ES1_SRC` ok; the assembled CF module source and its generated cpp declarations: g++ -fsyntax-only rc 0.
+
+## Result
+
+- job `a5aee75176174ce4` (check), status done, passed True, tests 5/5
+- speedup 1.9675x, 95% CI [1.9379, 2.0042], score 6835.496597088116 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.952050927455536, "ci": [1.922770163543703, 1.9813316913673689], "job": "8418677e467d4fb7"}; base result: muse_moe_w4a16/hypotheses/BEST.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/cmbf-combine-fused-w2-epilogue-t8-32.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/cmbf-combine-fused-w2-epilogue-t8-32.patch`; branch `hyp/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 27.34 | 27.29 | 1.0008 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 111.48 | 105.68 | 1.007 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 140.17 | 139.1 | 1.008 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 81.18 | 77.01 | 1.0046 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 232.32 | 231.32 | 1.0338 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 291.06 | 292.19 | 0.9937 | flat |
+
+gained on verify_16 verify_16. Expected hit: 5/6. Noise ±1.7%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

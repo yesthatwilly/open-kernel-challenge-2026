@@ -1,0 +1,478 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index 691018b5..08be8b80 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -3414,6 +3414,8 @@ def prepare(weights: Weights) -> dict:
+         _ea4x_build_start(t_prepare)
+     if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X and CAMPAIGN_STACK:  # stack: the EPLF module builds in a thread (_stk_stage)
+         _stk_build_start(t_prepare)
++    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X and CAMPAIGN_STACK and CAMPAIGN_CMBF:  # cmbf diag: builds after those
++        _cmbf_build_start(t_prepare)
+     # One repacked bank: this GPU's 32 experts under EP8.
+     banks = {}
+     for start, count in ((0, 32),):
+@@ -3512,6 +3514,8 @@ def prepare(weights: Weights) -> dict:
+     if CAMPAIGN_ENGINE_A and CAMPAIGN_EA6:
+         for line in _ea6_final_lines(state):
+             print(line, flush=True)
++    if CAMPAIGN_ENGINE_A and CAMPAIGN_EA4X and CAMPAIGN_STACK and CAMPAIGN_CMBF:  # cmbf: build joined, lines last
++        _cmbf_final(t_prepare)
+     return state
+ 
+ 
+@@ -4347,6 +4351,7 @@ CAMPAIGN_EA6 = True         # expert-bandwidth S3: Engine A v6 / v6s raced at T
+ CAMPAIGN_EA6F = True        # fc: FAST v6 arms raced vs v6 at T = 1; False = the board's v6 module
+ CAMPAIGN_EA4X = True        # phase A 2026-10-29: Engine A v4x twins of v4 / v4c raced per class (ea4x_core.py)
+ CAMPAIGN_STACK = True       # stack lane 2026-10-29: EPLF arms (v4xe / v4cxe) + v6pe2 raced per class (stack_core.py)
++CAMPAIGN_CMBF = True        # cmbf diag 2026-10-29: combine fused into the w2 twins, raced print-only (cmbf_core.py)
+ # ---- begin include rewrite/lib/rt.py ----
+ # Shared prepare-time runtime for campaign 2026-10-26-decode-first-rewrite (workstream W0).
+ # Everything here runs inside prepare() only (never inside kernel_fn), so host syncs are fine; the one exception is
+@@ -8454,6 +8459,8 @@ def _ea_setup(weights, state, device, t_prepare):
+             lines.extend(_ea4x_stage(weights, bank, state, device, t_prepare))
+             if globals().get("CAMPAIGN_STACK"):  # stack: EPLF raced vs the routed arms (stack_core.py); never raises
+                 lines.extend(_stk_stage(weights, bank, state, device, t_prepare))
++                if CAMPAIGN_CMBF:  # cmbf diag: CF raced print-only (cmbf_core.py); never raises
++                    lines.extend(_cmbf_stage(weights, bank, state, device, t_prepare))
+         _ea5_drop_unused(state["ea"])
+         if any(state["ea"]["on"].values()):
+             if time.perf_counter() - t_prepare > EA_COPY_DEADLINE_S:
+@@ -12087,6 +12094,438 @@ def _stk_final_lines(state):
+                    + (f" copy {ent['copy']}" if "copy" in ent else ""))
+     return [ln[:199] for ln in out]
+ # ---- end include rewrite/lib/stack_core.py ----
++# ---- begin include rewrite/lib/cmbf_core.py ----
++# cmbf diag: ea_combine fused into the routed v4x / EPLF w2 twins (CF), its own module (hooked copies of eak4x /
++# eak4xe), raced print-only: the board's modules and the timed path stay master's.
++CMBF_ROUTE = False      # diag: CF never routes (stack3 would); its cores / buffers are dropped
++CMBF_BUILD_S, CMBF_JOIN_S, CMBF_GATE_S, CMBF_REAP_S = 120.0, 180.0, 190.0, 285.0  # s: build, join, races, end join
++CMBF_ROW = {8: 81.2, 16: 111.5, 32: 140.2, 128: 232.3}  # judge row us
++CMBF_MIDS = (0.6, 0.63)  # stack3: EPF mid %, slot-rider mid %
++CMBF_LINES = []
++_CMBF_BUILD = {}
++_CMBF_SRC_BODY = r"""
++namespace eacf {
++using namespace ea;
++using eak4::bar_consumers;
++constexpr int H = 4096, LMAX = 16, SKIP = 1 << 15;  // a CTA ends <= 14 super-groups at T <= 128 (more: err 4)
++constexpr int LST = eak4x::SMEM, RED = 1024, OWN = 1600;  // LST past s_gs; RED / OWN in the free ring
++struct Cf {
++  const float* tw;
++  const __nv_bfloat16* w;
++  __nv_bfloat16* out;
++  int* cfc;  // [T], zero between launches
++  float eps;
++};
++__device__ __forceinline__ bool loc(const int* __restrict__ ids, int r, int start, int count) {  // K1's local_ids test
++  return static_cast<unsigned>(ids[r] - start) < static_cast<unsigned>(count);
++}
++__device__ __forceinline__ int nloc(const int* __restrict__ ids, int t, int start, int count) {
++  int n = 0;
++#pragma unroll
++  for (int s = 0; s < 8; ++s) n += loc(ids, t * 8 + s, start, count);
++  return n;
++}
++__device__ __forceinline__ void bf8(const uint4& u, float* f) {  // ea_combine's bf16x8_to_f32
++  const uint32_t q[4] = {u.x, u.y, u.z, u.w};
++#pragma unroll
++  for (int i = 0; i < 4; ++i) f[2 * i] = __uint_as_float(q[i] << 16), f[2 * i + 1] = __uint_as_float(q[i] & 0xffff0000u);
++}
++__device__ __forceinline__ void ldv(const __nv_bfloat16* row, const __nv_bfloat16* w, int c0, float (&v)[16]) {
++  float a[16], b[16];  // v = y * (1 + w) on columns c0.. and 2048 + c0..; y by __ldcg (other SMs wrote it)
++  bf8(__ldcg(reinterpret_cast<const uint4*>(row + c0)), a);
++  bf8(__ldcg(reinterpret_cast<const uint4*>(row + H / 2 + c0)), a + 8);
++  bf8(*reinterpret_cast<const uint4*>(w + c0), b);
++  bf8(*reinterpret_cast<const uint4*>(w + H / 2 + c0), b + 8);
++#pragma unroll
++  for (int i = 0; i < 16; ++i) v[i] = a[i] * (b[i] + 1.0f);
++}
++__device__ __forceinline__ void cf_head(const int* __restrict__ ids, int T, int start, int count, int pdl,
++    const Cf& cf, int* lst) {
++  if (threadIdx.x == 0) lst[LMAX] = 0;
++  const int t = blockIdx.x;
++  if ((pdl & SKIP) || t >= T || threadIdx.x >= 256 || nloc(ids, t, start, count)) return;  // CTA-uniform
++  uint4* o = reinterpret_cast<uint4*>(cf.out + static_cast<size_t>(t) * H);  // no local slot: +0 row
++  o[threadIdx.x] = o[256 + threadIdx.x] = make_uint4(0u, 0u, 0u, 0u);
++}
++__device__ __forceinline__ void cf_note(int* lst, int sgrp, int* err) {  // after every epi<false>; thread 0 only
++  if (threadIdx.x == 0) {
++    const int n = lst[LMAX];
++    if (n < LMAX) lst[n] = sgrp;
++    else atomicExch(err, 4);
++    lst[LMAX] = n + 1;
++  }
++}
++// ea_combine_kernel's body and fp32 order; slots reloaded, not held
++__device__ __forceinline__ void comb_one(int t, const __nv_bfloat16* y, const int* __restrict__ ids, int start,
++    int count, const Cf& cf, float (*red)[8]) {
++  const int tid = threadIdx.x;
++  const __nv_bfloat16* yt = y + static_cast<size_t>(t) * 8 * H;
++  float v[16], acc[16];
++#pragma unroll 1
++  for (int s = 0; s < 8; ++s) {
++    if (!loc(ids, t * 8 + s, start, count)) continue;  // CTA-uniform
++    ldv(yt + s * H, cf.w, tid * 8, v);
++    float ss = 0.f;
++#pragma unroll
++    for (int i = 0; i < 16; ++i) ss += v[i] * v[i];
++#pragma unroll
++    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
++    if ((tid & 31) == 0) red[s][tid >> 5] = ss;
++  }
++  bar_consumers();
++#pragma unroll
++  for (int i = 0; i < 16; ++i) acc[i] = 0.f;
++#pragma unroll 1
++  for (int s = 0; s < 8; ++s) {
++    if (!loc(ids, t * 8 + s, start, count)) continue;
++    float tot = 0.f;
++#pragma unroll
++    for (int i = 0; i < 8; ++i) tot += red[s][i];
++    const float r = rsqrtf(tot / static_cast<float>(H) + cf.eps), g = cf.tw[t * 8 + s];
++    ldv(yt + s * H, cf.w, tid * 8, v);
++#pragma unroll
++    for (int i = 0; i < 16; ++i) acc[i] += g * v[i] * r;
++  }
++  uint32_t o[8];
++#pragma unroll
++  for (int i = 0; i < 8; ++i)
++    o[i] = (static_cast<uint32_t>(__bfloat16_as_ushort(__float2bfloat16_rn(acc[2 * i + 1]))) << 16) |
++           __bfloat16_as_ushort(__float2bfloat16_rn(acc[2 * i]));
++  uint4* orow = reinterpret_cast<uint4*>(cf.out + static_cast<size_t>(t) * H) + tid;
++  orow[0] = make_uint4(o[0], o[1], o[2], o[3]);
++  orow[256] = make_uint4(o[4], o[5], o[6], o[7]);
++}
++// CTA end. Release: barriers order all y stores before warp 0's per-token atom.add.release.gpu (CUTLASS
++// GenericBarrier); the add reaching NS x local slots owns the token: fence (acquire), barrier, __ldcg.
++template <int NS, typename M>
++__device__ __forceinline__ void cf_tail(const M& m, uint8_t* ring, const int* lst, const int* __restrict__ ids,
++    const __nv_bfloat16* y, int T, int start, int count, int pdl, const Cf& cf) {
++  if (pdl & SKIP) return;  // cf0
++  const int tid = threadIdx.x, lane = tid & 31;
++  int *cnt = reinterpret_cast<int*>(ring), *own = reinterpret_cast<int*>(ring + OWN);
++  bar_consumers();  // ring free, y and list complete
++  for (int i = tid; i < T; i += 256) cnt[i] = 0;
++  bar_consumers();
++  if ((tid >> 4) < min(lst[LMAX], LMAX)) {  // list entry tid / 16, route tid % 16
++    const int v = lst[tid >> 4] / NS;
++    if ((tid & 15) < m.v_n[v]) atomicAdd(&cnt[m.pos_r[m.v_beg[v] + (tid & 15)] >> 3], 1);
++  }
++  bar_consumers();
++  if (tid < 32) {
++    int no = 0;
++    for (int t0 = 0; t0 < T; t0 += 32) {
++      const int t = t0 + lane, n = t < T ? cnt[t] : 0;
++      bool mine = false;
++      if (n > 0) {
++        int old;
++        asm volatile("atom.release.gpu.global.add.s32 %0, [%1], %2;\n" : "=r"(old) : "l"(cf.cfc + t), "r"(n) : "memory");
++        if (old + n == NS * nloc(ids, t, start, count)) {
++          eak4x::fence_acq_rel_gpu();
++          cf.cfc[t] = 0;
++          mine = true;
++        }
++      }
++      const unsigned bal = __ballot_sync(0xffffffffu, mine);
++      if (mine) own[no + __popc(bal & ((1u << lane) - 1u))] = t;
++      no += __popc(bal);
++    }
++    if (lane == 0) own[-1] = no;
++  }
++  bar_consumers();
++#pragma unroll 1
++  for (int j = 0; j < own[-1]; ++j)  // red double-buffered
++    comb_one(own[j], y, ids, start, count, cf, reinterpret_cast<float (*)[8]>(ring + RED + (j & 1) * 256));
++}
++}  // namespace eacf
++// ---- CF host ----
++#define R __restrict__
++#define CF_ARGS const __nv_bfloat16* R h, const int* R ids, const uint8_t* R wr, const float* R gs, __nv_bfloat16* R y, \
++    float* R ws, int* R tk, int* err, int T, int start, int count, int pdl, const __grid_constant__ eacf::Cf cf
++#define CF_PASS h, ids, wr, gs, y, nullptr, ws, tk, err, T, start, count, pdl, cf
++__global__ void __launch_bounds__(288, 2) cf_w2s_kernel(CF_ARGS) { eak4xcf::expert_body_x<false, 2, false>(CF_PASS); }
++template <int PF>
++__global__ void __launch_bounds__(288, 2) cf_w2e_kernel(CF_ARGS) { eak4xecf::expert_body_e<false, PF>(CF_PASS); }
++#undef R
++constexpr int CF_SMEM = eak4x::SMEM + 128;  // + the list
++static_assert(eak4::THREADS == 288 && 2 * (CF_SMEM + 1024) <= 233472 && eacf::OWN + 1024 <= eak4::STAGE2, "CF smem");
++std::vector<int64_t> ea4xcf_info() {  // K2 s, e PF 2 / 1 / 0: ok, regs, lmem, smem, CTAs/SM; sets the smem limits
++  std::vector<int64_t> r;
++  for (const void* p : {(const void*)cf_w2s_kernel, (const void*)cf_w2e_kernel<2>, (const void*)cf_w2e_kernel<1>,
++                        (const void*)cf_w2e_kernel<0>}) {
++    cudaFuncAttributes a{};
++    int occ = 0;
++    const bool ok = cudaFuncSetAttribute(p, cudaFuncAttributeMaxDynamicSharedMemorySize, CF_SMEM) == cudaSuccess &&
++                    cudaFuncGetAttributes(&a, p) == cudaSuccess &&
++                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, p, 288, CF_SMEM) == cudaSuccess;
++    if (!ok) (void)cudaGetLastError();
++    r.insert(r.end(), {ok, a.numRegs, (int64_t)a.localSizeBytes, CF_SMEM, occ});
++  }
++  return r;
++}
++// ea4x_w2's arguments + the combine's; pdl bit 14: EPLF (PF bits 12..13), 15: cf0
++void ea4x_w2cf(torch::Tensor h, torch::Tensor ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor y, torch::Tensor ws,
++               torch::Tensor tk, torch::Tensor err, int64_t T, int64_t start, int64_t count, int64_t grid, int64_t dq,
++               int64_t pdl, torch::Tensor tw, torch::Tensor w, torch::Tensor out, torch::Tensor cfc, double eps) {
++  const int64_t sel = (pdl >> 12) & 3, K = 4096;
++  TORCH_CHECK(T >= 1 && T <= 256 && T <= grid && grid <= 512 && dq == 2 && sel <= 2 && ids.numel() == T * 8 &&
++              tw.numel() == T * 8 && out.numel() == T * K && cfc.numel() >= T && y.numel() >= T * 8 * K, "ea4x_w2cf");
++  cudaLaunchAttribute la{cudaLaunchAttributeProgrammaticStreamSerialization};
++  la.val.programmaticStreamSerializationAllowed = 1;
++  cudaLaunchConfig_t cfg{dim3(grid), dim3(288), CF_SMEM, at::cuda::getCurrentCUDAStream(), &la, unsigned(pdl & 1)};
++  const eacf::Cf cf{tw.data_ptr<float>(), (const __nv_bfloat16*)w.data_ptr(), (__nv_bfloat16*)out.data_ptr(),
++                    cfc.data_ptr<int>(), float(eps)};
++  auto go = [&](auto k) {
++    return cudaLaunchKernelEx(&cfg, k, (const __nv_bfloat16*)h.data_ptr(), ids.data_ptr<int>(), wr.data_ptr<uint8_t>(),
++                              gs.data_ptr<float>(), (__nv_bfloat16*)y.data_ptr(), ws.data_ptr<float>(), tk.data_ptr<int>(),
++                              err.data_ptr<int>(), int(T), int(start), int(count), int(pdl), cf);
++  };
++  const cudaError_t le = !(pdl >> 14 & 1) ? go(cf_w2s_kernel) : sel == 2 ? go(cf_w2e_kernel<2>)
++                         : sel == 1 ? go(cf_w2e_kernel<1>) : go(cf_w2e_kernel<0>);
++  if (le != cudaSuccess) (void)cudaGetLastError();
++  TORCH_CHECK(le == cudaSuccess, "ea4x_w2cf: ", cudaGetErrorString(le));
++}
++"""
++_CMBF_LST = "reinterpret_cast<int*>(smem + eacf::LST)"
++_CMBF_EPI = "    epi<W13>(c, m, v, si, half, wq, g, cq, s_gs[m.v_e[v]], out);\n  }\n"
++_CMBF_TAIL = f"  eacf::cf_tail<NS>(m, ring, {_CMBF_LST}, topk_ids, out, T, start, count, pdl, cf);\n"
++_CMBF_PUB = "  if (es & ES_PUB) publish();  // the head piece was this CTA's last unit\n"
++_CMBF_PATCH = [(" " * 46 + "int pdl) {\n", " " * 46 + "int pdl, const eacf::Cf& cf) {\n  static_assert(!W13, \"CF\");\n"),
++               ("  const int W = m.n_v * NS * NK;\n", f"  eacf::cf_head(topk_ids, T, start, count, pdl, cf, {_CMBF_LST});\n"
++                "  const int W = m.n_v * NS * NK;\n"),
++               (_CMBF_EPI, _CMBF_EPI[:-4] + f"    eacf::cf_note({_CMBF_LST}, sgrp, err);\n  }}\n")]
++_CMBF_CUT = {"eak4x": ("template <int DQ, bool DEFER>\n__global__", _CMBF_PATCH[2][1][-60:]),  # kernels cut;
++             "eak4xe": ("template <int PF>\n__global__", _CMBF_PUB)}  # the tail goes after the second
++
++
++def _cmbf_source():
++    base, out = _stk_source(), []
++    for nm, body in (("eak4x", _EA4X_SRC_BODY), ("eak4xe", _STK_SRC_BODY)):
++        cut, after = _CMBF_CUT[nm]
++        i, b = body.find(f"namespace {nm} {{"), len(nm) + 12
++        text = body[i + b:body.find(cut, i)]
++        for a, r in _CMBF_PATCH + [(after, after + _CMBF_TAIL)]:
++            if text.count(a) != 1 or i < 0 or not base.endswith(_STK_SRC_BODY):
++                raise RuntimeError(f"cmbf: {nm} anchor x{text.count(a)}: {a[:50]!r}")
++            text = text.replace(a, r)
++        out.append(f"namespace {nm}cf {{{text}}}  // namespace {nm}cf\n")
++    dev, host = _CMBF_SRC_BODY.split("// ---- CF host ----\n")
++    return base[:len(base) - len(_STK_SRC_BODY)] + dev + "".join(out) + host
++
++
++def _cmbf_cpp():  # the declarations, from the definitions
++    sig = _CMBF_SRC_BODY[_CMBF_SRC_BODY.find("void ea4x_w2cf("):]
++    return "#include <torch/extension.h>\nstd::vector<int64_t> ea4xcf_info();\n" + sig[:sig.find(" {")] + ";\n"
++
++
++def _cmbf_build_start(t_prepare):
++    def run():  # joins the v4x / EPLF / ea6 builds first, so it never competes with them
++        try:
++            src, ths = _cmbf_source(), [r.get("thread") for r in (_EA4X_BUILD, _STK_BUILD, _EA6_BUILD)]
++            for th in ths:
++                if th is not None:
++                    th.join(max(0.0, CMBF_BUILD_S - (time.perf_counter() - t_prepare)))
++            t0 = _CMBF_BUILD["t0"] = time.perf_counter() - t_prepare
++            _CMBF_BUILD["result"] = (
++                (None, f"not started at {t0:.0f} s", 0.0) if t0 > CMBF_BUILD_S or any(th and th.is_alive() for th in ths)
++                else _rt_build("[cmbf]", "okc_campaign_engine_a_v4xcf_" + hashlib.sha256(src.encode()).hexdigest()[:10],
++                               _cmbf_cpp(), src, ("ea4xcf_info", "ea4x_w2cf")))
++        except BaseException as e:  # prepare only
++            _CMBF_BUILD["result"] = (None, f"build raised {type(e).__name__}: {str(e)[:150]}", 0.0)
++    import hashlib
++    import threading
++    _CMBF_BUILD.clear()
++    CMBF_LINES.clear()
++    _CMBF_BUILD["thread"] = threading.Thread(target=run, name="cmbf-build", daemon=True)
++    _CMBF_BUILD["thread"].start()
++
++
++def _cmbf_run(ea, twin, mode, x, ids, tw, start, count, norm_w, poison=False, cuda_cmb=None):
++    """(out, y): the twin's K1, K2 (inc / cf / cf0) and, but for cf, _ea3_forward_core's combine."""
++    e = twin in STK_EARMS
++    sx, b, kx = ("e", STK_EARMS[twin] | ea.get("e_pf", 0), ea["ext4xe"]) if e else ("x", EA4X_ARMS[twin], ea["ext4x"])
++    T, hidden = x.shape
++    h, y, out = (torch.empty(s, device=x.device, dtype=torch.bfloat16)
++                 for s in ((T * TOP_K, ea["inter"]), (T * TOP_K, hidden), (T, hidden)))
++    lid = torch.empty((T, TOP_K), device=x.device, dtype=torch.int32)
++    for t_ in (h, y, out) if poison else ():
++        t_.fill_(float("nan"))
++    tw32, k = tw.to(torch.float32).contiguous(), "ea4xe_w" if e else "ea4x_w"
++    getattr(kx, k + "13")(x, ids, ea["w13r"], ea["gs13"], h, lid, ea["ws13" + sx], ea["tk13" + sx], ea["err" + sx], T,
++                          start, count, ea["grid"], ea["dq"], b)
++    a2 = (h, ids, ea["w2r"], ea["gs2"], y, ea["ws2" + sx], ea["tk2" + sx], ea["err" + sx], T, start, count,
++          ea.get("g2_t", {}).get(T, ea["grid"]), ea["dq"], ea["pdl"] | b)
++    if mode == "inc":
++        getattr(kx, k + "2")(*a2)
++    else:  # pdl bit 14: EPLF, 15: cf0
++        ea["extcf"].ea4x_w2cf(*a2[:-1], a2[-1] | (e << 14) | ((mode == "cf0") << 15), tw32, norm_w, out, ea["cfc"],
++                              POST_NORM_EPS)
++    if mode == "cf":
++        pass
++    elif ea.get("cmb_t", {}).get(T, 0) if cuda_cmb is None else cuda_cmb:
++        ea["ext"].ea_combine(y, lid, tw32, norm_w, out, POST_NORM_EPS, 1)
++    else:
++        _post_norm_combine_kernel[(T,)](y, lid, tw32, norm_w, out, hidden, POST_NORM_EPS, TOP_K_C=TOP_K,
++                                        BLOCK_H=triton.next_power_of_2(hidden), num_warps=8)
++    return out, y
++
++
++def _cmbf_sums(ea, sx):
++    return [int(v) for v in torch.stack([ea[k].sum() for k in ("tk13" + sx, "tk2" + sx, "err" + sx, "cfc")]).tolist()]
++
++
++def _cmbf_canary(weights, bank, state, device, t_prepare, cls, twin, gen):
++    """Eager, NaN h / y / out / partials: twin + ea_combine vs cf, cf, cf0, cf0 bitwise (out, y), sums 0."""
++    ea, start, count, sx, runs = state["ea"], bank["start"], bank["count"], "e" if twin in STK_EARMS else "x", 0
++    for T in (t for t in EA4X_CANARY_T if t in EA4X_CLASSES[cls]):
++        if time.perf_counter() - t_prepare > CMBF_GATE_S:
++            return runs, f"deadline at T={T}"
++        routs = _ea_routings(T, gen, list(range(start, start + count)), device) + (
++            list(_ea_judge_routings(T, gen, start, count, device).items()) if T > 32 else
++            [_ea4x_draws(T, gen, start, count, device)[1]] if T >= 8 else [])
++        for label, ids in routs:
++            x = torch.randn((T, weights["w2"].shape[1]), generator=gen).to(torch.bfloat16).to(device)
++            tw = torch.rand((T, TOP_K), generator=gen)
++            a = (x, ids, (tw / tw.sum(-1, keepdim=True)).to(device), start, count, state["post_norm_w"], True, 1)
++            ro, ry = _cmbf_run(ea, twin, "inc", *a)
++            for mode in ("cf", "cf", "cf0", "cf0"):
++                ea["ws13" + sx].fill_(float("nan"))
++                ea["ws2" + sx].fill_(float("nan"))
++                o, y = _cmbf_run(ea, twin, mode, *a)
++                s, runs = _cmbf_sums(ea, sx), runs + 1
++                why = ("out neq" if not torch.equal(o.view(torch.int16), ro.view(torch.int16)) else
++                       "y neq" if not torch.equal(y.view(torch.int16), ry.view(torch.int16)) else f"sums {s}" if any(s)
++                       else "")
++                if why:
++                    return runs, f"{mode} T={T} {label.split(' ')[0]} {why}"
++    return runs, ""
++
++
++def _cmbf_sass(mod, key):  # SASS instructions of the kernel whose mangled name holds key
++    try:
++        with open(mod.__file__, "rb") as f:
++            return next(str(n // 16) for cub in _es_cubins(f.read())[0] for nm, (_, n) in _es_elf_sections(cub).items()
++                        if nm.startswith(".text.") and key in nm)
++    except Exception:
++        return "?"
++
++
++def _cmbf_verdict(res):
++    """The review's (A) / (B) / (C) on pooled p50 d = inc - cf (us) of valid classes; T128 apart."""
++    dv = {c: (e["d"][1], 100.0 * e["d"][1] / e["med"]["inc"][1] / 6.0) for c, e in res.items() if e.get("valid")}
++    if 16 not in dv or 32 not in dv:
++        return [f"[cmbf] VERDICT none: valid {sorted(dv)}, needs T16 and T32"]
++    lo, hi = min(dv[16][0], dv[32][0]), max(dv[16][0], dv[32][0])
++    mid = sum(CMBF_MIDS) + sum(v[1] for c, v in dv.items() if c != 128)  # stack3 mid: EPF + slot rider + sum d/inc/6
++    return [f"[cmbf] VERDICT {'A LEAD: mint stack3' if lo >= 2.0 and mid >= 2.5 else 'C REFUTED' if hi < 1.0 else 'B SHELF'}"
++            f" | min/max(d16, d32) {lo:+.2f}/{hi:+.2f} us | stack3 mid {CMBF_MIDS[0]}+{CMBF_MIDS[1]}+" +
++            "+".join(f"T{c} {v[1]:.2f}" for c, v in dv.items() if c != 128) + f" = {mid:.2f}% (LEAD >= 2.5%) | T128 " +
++            (f"d {dv[128][0]:+.2f} us = {dv[128][1]:.2f}% apart" if 128 in dv else "-")]
++
++
++def _cmbf_stage(weights, bank, state, device, t_prepare):
++    """After _stk_stage: join, admission, per class canary, copy check (the copy clones its own zeroed cfc) and a
++    pooled paired race of inc (routed twin + combine), cf0 and cf. Print-only; never raises."""
++    ea, t0, say, added, res = state["ea"], time.perf_counter(), CMBF_LINES.append, {}, {c: {} for c in EA4X_CLASSES}
++    prev = dict(ea["on"])
++    try:
++        th = _CMBF_BUILD.get("thread")
++        th.join(max(0.0, CMBF_JOIN_S - (time.perf_counter() - t_prepare)))
++        ext, why, dt = _CMBF_BUILD.get("result", (None, "not joined", 0.0))
++        if ext is None or th.is_alive() or ea.get("dq") != 2 or "ext4x" not in ea:
++            raise RuntimeError(f"no CF ({why[:120]}; dq {ea.get('dq')})")
++        pf = (ea.get("e_pf", 0) >> STK_PF_SHIFT[1]) & 3
++        pi = 1 + STK_PF_ORDER.index(pf)
++        info, xe = [int(v) for v in ext.ea4xcf_info()], ea.get("ext4xe")
++        rows = [info[0:5], info[5 * pi:5 * pi + 5], [int(v) for v in ea["ext4x"].ea4x_info()][10:15],
++                [int(v) for v in xe.ea4xe_info()][10 + 5 * pi:15 + 5 * pi] if xe else [0] * 5]
++        ok = [r[0] == 1 and r[1] <= STK_REG_CAP and r[2] == 0 and r[4] == 2 for r in rows[:2]]
++        ok[1] = ok[1] and xe is not None
++        say(f"[cmbf] build {dt:.1f} s from {_CMBF_BUILD.get('t0', 0.0):.0f} s; regs/lmem/occ/sass " + " ".join(
++            f"{nm} {r[1]}/{r[2]}/{r[4]}/{_cmbf_sass(mod, key)}" for nm, r, mod, key in (
++                ("K2s", rows[2], ea["ext4x"], "ea4x_w2_kernelILi2ELb0EE"), ("cf", rows[0], ext, "cf_w2s_kernel"),
++                (f"| K2e p{pf}", rows[3], xe, f"ea4xe_w2_kernelILi{pf}EE"), ("cf", rows[1], ext, f"cf_w2e_kernelILi{pf}EE")))
++            + f" | admit s {ok[0]} e {ok[1]}")
++        ea["extcf"], ea["cfc"] = ext, torch.zeros(EA3_MAX_T, dtype=torch.int32, device=device)
++        added = {f"{a}.{md}": (lambda ea_, x, i, w, s, c, n, trace=None, a=a, md=md:
++                               _cmbf_run(ea_, a, md, x, i, w, s, c, n)[0])
++                 for a in ("v4xs", "v4cxs", "v4xe", "v4cxe") for md in ("cf", "cf0")}
++        _EA4X_CORES.update(added)
++        for cls, ent in res.items():
++            inc = ea["on"].get(cls)
++            twin = (inc if (inc in ("v4xs", "v4cxs") and ok[0]) or (inc in STK_EARMS and ok[1]) else
++                    STK_EBASE[inc] + "xs" if inc in STK_EARMS and ok[0] else None)  # v4xe -> v4xs, v4cxe -> v4cxs
++            ent["why"] = f"inc {inc or 'master'}" + (", no CF twin" if twin is None else ", deadline")
++            if twin is None or time.perf_counter() - t_prepare > CMBF_GATE_S:
++                continue
++            sx, arms, gen = "e" if twin in STK_EARMS else "x", (f"{twin}.cf0", f"{twin}.cf"), torch.Generator()
++            gen.manual_seed(20261106 + cls)
++            ent.update({"twin": twin + (" (EPLF CF not admitted)" if twin != inc else ""), "arms": arms})
++            try:  # a raise loses this class only
++                ent["can"] = _cmbf_canary(weights, bank, state, device, t_prepare, cls, twin, gen)
++                if ent["can"][1]:
++                    raise RuntimeError("canary " + ent["can"][1])
++                ea["cfc"].zero_()  # the copy check's state copy clones it: its own zeroed counters
++                cc = (_stk_copy_check if sx == "e" else _ea4x_copy_check)(weights, bank, state, device, cls, arms[1])
++                ent["copy"] = (cc[0] and ea["cfc"].sum().item() == 0, cc[1][:40])
++                inputs = _ea4x_draws(cls, gen, start=bank["start"], count=bank["count"], device=device)
++                per = {lab: [] for lab, _ in inputs}
++                ea["on"][cls] = twin  # the race's inc: the routed twin (arm s when EPLF's CF is not admitted)
++                for j in range(1 + EA4X_MORE):
++                    if j == 0 or time.perf_counter() - t_prepare < CMBF_GATE_S:
++                        for lab, r in _ea6_race(bank, state, device, cls, inputs, arms, weights["w2"].shape[1],
++                                                20261206 + 977 * j + cls).items():
++                            per[lab].extend(r)
++            except Exception as e:
++                ent["why"] = f"{type(e).__name__}: {str(e)[:80]}"
++                continue
++            finally:
++                ea["on"][cls] = prev[cls]
++            n = min(len(r) for r in per.values())
++            md = ent["med"] = {nm: [_rt_stats([s for r in per[lab][:n] for s in r[nm]])[0] for lab in per]
++                               for nm in ("inc",) + arms}
++            rr, pooled = _ea4x_rstats(per, list(per), arms[1])
++            ent.update({"d": [a - b for a, b in zip(md["inc"], md[arms[1]])], "n": n, "sums": _cmbf_sums(ea, sx),
++                        "wr": (min(r[0] for r in rr), pooled[0])})
++            ent["valid"] = ent["copy"][0] and not any(ent["sums"])
++    except Exception as e:  # prepare only: the routed arms stay
++        ea["on"].clear()
++        ea["on"].update(prev)
++        say(f"[cmbf] stage stopped: {type(e).__name__}: {str(e)[:160]}")
++    for cls, ent in res.items():
++        if "med" not in ent:
++            say(f"[cmbf] T{cls} {ent.get('twin', '-')}: no reading ({ent.get('why')}) | NOT ROUTED (diag)")
++            continue
++        md, (a0, a1) = ent["med"], ent["arms"]
++        f = lambda k: "/".join(f"{v:.1f}" for v in md[k])  # noqa: E731
++        say(f"[cmbf] T{cls} {ent['twin']} us p10/p50/p90 inc {f('inc')} cf0 {f(a0)} cf {f(a1)} | judge row "
++            f"{CMBF_ROW[cls]} us")
++        say(f"[cmbf] T{cls} d inc-cf " + "/".join(f"{v:+.2f}" for v in ent["d"]) + f" tax cf0-inc {md[a0][1] - md['inc'][1]:+.2f}"
++            f" fuse cf0-cf {md[a0][1] - md[a1][1]:+.2f} | inc/cf worst/pooled {ent['wr'][0]:.3f}/{ent['wr'][1]:.3f} "
++            f"r{ent['n']} | canary {ent['can'][0]} copy {ent['copy'][1]} sums {ent['sums']} | NOT ROUTED (diag)")
++    try:
++        CMBF_LINES.extend(_cmbf_verdict(res))
++        for k in ("tk13x", "tk2x", "errx", "tk13e", "tk2e", "erre"):
++            if k in ea:
++                ea[k].zero_()
++        torch.cuda.synchronize()
++    except Exception as e:
++        say(f"[cmbf] verdict / final sync raised {type(e).__name__}: {str(e)[:120]}")
++    for k in added:  # diag: kernel_fn's engine table and the state end as master's
++        _EA4X_CORES.pop(k, None)
++    ea.pop("extcf", None)
++    ea.pop("cfc", None)
++    say(f"[cmbf] stage {time.perf_counter() - t0:.1f} s, at {time.perf_counter() - t_prepare:.1f} s")
++    return [f"{EA_TAG} cmbf stage done in {time.perf_counter() - t0:.1f} s ([cmbf] lines printed last)"]
++
++
++def _cmbf_final(t_prepare):  # prepare()'s end: no CF build outlives prepare(); the [cmbf] lines
++    th = _CMBF_BUILD.get("thread")
++    if th and th.is_alive():
++        th.join(max(0.0, CMBF_REAP_S - (time.perf_counter() - t_prepare)))
++        CMBF_LINES.append(f"[cmbf] build joined at {time.perf_counter() - t_prepare:.1f} s, alive {th.is_alive()}")
++    for ln in CMBF_LINES or ["[cmbf] stage did not run"]:
++        print(ln[:199], flush=True)
++# ---- end include rewrite/lib/cmbf_core.py ----
+ # ---- campaign W3: Engine B (128 <= T <= 512); inert until turned on ----
+ CAMPAIGN_ENGINE_B = False   # W3: Engine B at 128 <= T <= 512 (cells c2 / c1, per-bucket selector, copy check)
+ # ---- begin include rewrite/lib/eb_core.py ----
