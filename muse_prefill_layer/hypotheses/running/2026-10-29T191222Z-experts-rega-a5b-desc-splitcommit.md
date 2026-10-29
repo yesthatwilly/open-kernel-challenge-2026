@@ -58,7 +58,7 @@ review_at: 2026-10-29T191802Z
 review_companions: null
 review_best: 1.536215653197081
 review_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T191802Z
 base_sha: 80cc831d226d5a172f5b894f4e4810edc893a9d2
 base_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
@@ -75,6 +75,8 @@ submission_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
 lint_warnings: 122
 attempt_file: 2026-10-29T194011Z-check-experts-rega-a5b-desc-splitcommit.md
 prepared_at: 2026-10-29T194012Z
+job: da80fdb9bed749a3
+dispatched_at: 2026-10-29T194021Z
 ---
 
 # experts-rega-a5b-desc-splitcommit
