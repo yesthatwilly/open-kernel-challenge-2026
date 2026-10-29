@@ -132,7 +132,7 @@ review_at: 2026-10-29T154811Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T154812Z
 base_sha: 06e1361569ec34702fbc0577933b82193553a264
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -149,6 +149,8 @@ submission_blob: 509bf436f7d4acbf999d8007a67dde82c15712fc
 lint_warnings: 121
 attempt_file: 2026-10-29T160458Z-check-experts-rega-low-kpair-four-consumer-wgs.md
 prepared_at: 2026-10-29T160458Z
+job: bbca0105449c4217
+dispatched_at: 2026-10-29T160516Z
 ---
 
 # experts-rega-low-kpair-four-consumer-wgs
