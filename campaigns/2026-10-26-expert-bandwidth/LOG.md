@@ -2575,3 +2575,8 @@ with the operator's go-ahead.
 ## 2026-10-29 2028Z — **moe 1.975 LANDED** (scored a5318a1f [1.945, 2.004]; +1.16% over 1.9521); decode wh5ds port minted
 - churn promoted it (BEST.json a5318a1f); [landed] claim; rank 359. The scored run is under the 1.24% judging margin on its own, but the check (1.9827) and the scored run both sit above the board and the verify_32 row moved as predicted.
 - Decode: moe's wh5ds transferred on the judge, so minted muse_decode_layer hothalf-wh5ds-moe-port (D0/a3/wh/wh5ds, per-T isolated-pair route + no-loss layer gate; user-requested, EV 0.77); review running.
+
+## 2026-10-29 2120Z — usage limit hit ~20:36Z (reset 21:20Z); four agents died; three resumed
+- The account's 5-hour limit stopped the bf16 b12 build, the decode wh5ds build, the fa3ws lane (its last note: warp specialization slower, math-only 339 vs the gate's 233 us at v32) and the pfexp lane (still setting up). Work so far is saved in each agent.
+- gpunode06 read-only at 21:20Z: no USER processes, all GPUs 0% / 0 MiB; GPU 0 still 86 C at 225 W idle. Left on the node: /tmp/USER-hopper/{fa3ws-venv, pfexp-venv, venv-cu130 (nodejudge)}; clean at lane end or the window end.
+- Resumed at 21:20Z: the bf16 b12 build, the decode wh5ds build (both phase-C checks) and the fa3ws wrap-up. pfexp waits. Decode review note: re-read 44f30364 per load (as the headline computes): wh's judged effect was only +0.17% headline (SGLang's in-run verify_32 time also fell x0.959); the T=16 ea4x race flip (s -> d) cost ~-0.38% in that run.
