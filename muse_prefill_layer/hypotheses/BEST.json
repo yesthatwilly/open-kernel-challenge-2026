@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "da80fdb9bed749a3",
+ "job": "9f93484606cd4f9e",
  "check_job": "da80fdb9bed749a3",
- "mode": "check",
- "speedup": 1.579232671320759,
+ "mode": "submit",
+ "speedup": 1.5721154841318719,
  "ci": [
-  1.5555441812509476,
-  1.6029211613905703
+  1.5485337518698938,
+  1.5956972163938499
  ],
- "score_us": 245311.4775519447,
+ "score_us": 246422.03700062525,
  "commit": "d9c22d138d4f368d228d70fb6cf64f346accaac3",
  "submission_blob": "7569df17e62ecfb6ecf85d12e2033c6611fcaade",
  "slug": "experts-rega-a5b-desc-splitcommit",
  "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json",
- "updated_at": "2026-10-29T194714Z"
+ "updated_at": "2026-10-29T195416Z"
 }

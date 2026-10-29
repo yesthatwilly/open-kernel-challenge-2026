@@ -94,4 +94,4 @@ py_compile OK; __pycache__ removed. Diff: 1 file, +498 / -196 (muse_prefill_laye
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.5721x [1.5485,1.5957], board: {"rank": 230, "team": "yesthatwilly", "speedup": 1.5721, "first": false, "ahead": 229, "to_first": 1.2929}
