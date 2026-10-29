@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/gain/2026-10-29T215527Z-engine-a-a4b-a5b-encodings-race.md` (branch `hyp/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `24f183ff300949f2` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `f994ecf5`
 
 ## Goal
