@@ -2677,3 +2677,7 @@ with the operator's go-ahead.
 - research/h100-rega3-1029.md (takemyjob hopper/rgx3 2b6d50e; GPU 5; 70 EXACT lines, no C75xx). Pair vs A5b+D+SC: RS2 (wait<1> per group) low 0.997-1.045, **high 0.959-0.963**, ft 0.990-1.016; RS4 1.02-1.17; RS2 + 2-CTA multicast B 1.01-1.14 (L2 80% -> 51% with no cycle change). RS2 at N>=64 ~4% at high only (<= ~1% headline): [shelf]. Bounds: low = latency/issue (0.73 eligible warps/scheduler, issue 52%, tensor 33%): more consumer TLP or fewer dequant ops; high/ft = tensor pipe 79-85%.
 - research/h100-t128h-1029.md (GPU 3): moe T=128 forked H-16 hybrid with wh5ds mean 0.934 vs plain E5 but loses one-hot-expert draws (x1.04) -> [node-only]; gate lane t128g on GPU 3 (device-side hot-set gate with early-exit paths).
 - GPUs: 1 hsplit, 3 t128g, 4 crash triage; 5 and 6 free (6 reserved for the XL-arms validation after the crash fix).
+
+## 2026-10-29 2330Z — rega4 read: 2-CTA/SM low-class tile x0.887-0.938 -> prefill check minted
+- research/h100-rega4-1029.md (takemyjob hopper/rgx4 290f097; GPU 5). SC-2CTA (A5b+D+SC loop, 80 regs: setmaxnreg 32/104, 3 stages, 64-row slab, N64 chunk cap, grid 264): pair vs A5b+D+SC at low L2 0.896 / HBM 0.938 / random 0.887; high 1.13, ft 1.23 (class-routed: low only). Bit-exact, no spill. ncu low w13: eligible warps 0.73 -> 1.41, issue 52 -> 63%, cycles -13%. 1-CTA control with the same caps loses (1.03-1.12), so the gain is occupancy, not the smaller tile.
+- Minted experts-rega-low-2cta-a5b (low-class arm in the per-class race; user-requested EV 0.88); review running. GPU 5 free.
