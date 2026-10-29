@@ -2381,3 +2381,7 @@ with the operator's go-ahead.
     - 16 consumer warps per SM +9-11% (register-limited on the judge);
     - ring depth: no effect.
   - The lever is a cheaper per-record dequant, capped by the coupling loss.
+- 2026-10-29T0705Z **t1rate panel closed: no build** (wf_d7b88f3e-5dc; judge EV 0.7%).
+  - Designs: consumer parallelism 0% (warps x1.00 in judge production; v6pe2 two-wave K2 rider ~1.5 us / +0.9%); instruction cost 0% (best PS post-MMA scaling +1.0-1.6%); EPF fused persistent T=1 +2.5% claimed, red-teamed to **+1.6% at p 0.45**.
+  - The judge's T=1 per-record rate (1.245-1.267 us) sits just above both floors (ring 1.113-1.121, consume ~1.13), so the T=1 row has ~2-4 us of headroom in total.
+  - EPF is recorded as [shelf]: reopen when stacked to >= 2.5%. The panel's H100 Q-D (consume at 1 CTA/SM without the register cap) is not queued: it cannot lift EPF past the bar on its own.
