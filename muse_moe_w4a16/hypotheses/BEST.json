@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "787a28152682498d",
- "check_job": "c04363bbe0ae4e0a",
+ "job": "dceed39d08a14c73",
+ "check_job": "03d2c99e043a4a6a",
  "mode": "submit",
- "speedup": 1.9253462749617603,
+ "speedup": 1.950242066503268,
  "ci": [
-  1.896466080837334,
-  1.9542264690861864
+  1.920988435505719,
+  1.9794956975008169
  ],
- "score_us": 6984.9772868867985,
- "commit": "a72163730f3722f3b11725105e02354563f43bb5",
- "submission_blob": "a131412e54259a7346afa2cd8dea7a9314a8ac92",
- "slug": "landing-787a2815",
- "master_slug": "landing-787a2815",
- "master_job": "787a28152682498d",
+ "score_us": 6895.810643707836,
+ "commit": "a96fae0582bad444e31b4505033a00f14592f138",
+ "submission_blob": "a90ff05c358908245bec6ddaf65519af8790656f",
+ "slug": "landing-dceed39d",
+ "master_slug": "landing-dceed39d",
+ "master_job": "dceed39d08a14c73",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T223922Z",
- "note": "a tie with af154932 (1.9250) inside the margin; verify_32 304.7 -> 297.1/300.9 us; landed so master = the board's bytes"
+ "updated_at": "2026-10-29T031557Z",
+ "note": "fork x1.034-1.069 restored; guard caught 2 capture collisions (alt 2); verify_32 290.8 us"
 }

@@ -2376,3 +2376,7 @@ with the operator's go-ahead.
   - The decode check fe293d73 (v4xd256b) read 1.660, a tie.
   - The 5-hour token limit stopped both H100 agents. The queue is empty.
   - The window close (~04:00Z) is pending the user's go: stop the runner, remove prev.py, clean the nodejudge env, and the orphan pid 2688846/2688840 on GPU 1.
+- 2026-10-29T0325Z: **moe 1.950** (rank 312). v4x256c is v4x256b with RT_FORK_PRIO 0.
+  - Check 03d2c99e read 1.938: fork x1.034-1.069, cold half on v4cxs, the guard caught 2 capture collisions.
+  - Scored dceed39d read **1.950** [1.921, 1.979], verify_32 290.8 us. Landed on master and registered.
+  - Credit goes to the H100 priority A/B, eb-forkprio.
