@@ -81,8 +81,9 @@ speedup: 1.7197083799532127
 speedup_ci: [1.6939127542539145, 1.7462656308644948]
 harvested_at: 2026-10-29T231035Z
 best_at_harvest: 1.6903955680487197
-promotion: pending
+promotion: merged
 mechanism: null
+promotion_commit: 10442ca2d41e8d5ab2b09728f8c5bcfe421b31ee
 ---
 
 # engine-a-encodings-wh5ds-decode-stack

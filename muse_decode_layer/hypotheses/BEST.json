@@ -1,20 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "7cc034f917274439",
- "check_job": "264355099fc74226",
- "mode": "submit",
- "speedup": 1.6903955680487197,
+ "job": "824b60fac87c4ff4",
+ "check_job": "824b60fac87c4ff4",
+ "mode": "check",
+ "speedup": 1.7197083799532127,
  "ci": [
-  1.665039634527989,
-  1.7157515015694504
+  1.6939127542539145,
+  1.7462656308644948
  ],
- "score_us": 13381.660735251082,
- "commit": "d28b23d729bb0b9aef84b18b7308ea2895d0db2e",
- "submission_blob": "315119e26cb18e755adf23c3336af2c15c72aafc",
- "slug": "v4xd-stack",
- "master_slug": "v4xd-stack",
- "master_job": "7cc034f917274439",
- "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-29T112311Z",
- "note": "registered by churn.py register-landing from okc status 7cc034f917274439"
+ "score_us": 13153.567351119973,
+ "commit": "10442ca2d41e8d5ab2b09728f8c5bcfe421b31ee",
+ "submission_blob": "4f529d7b0f87fd4e4daa18fb355df14d73096e58",
+ "slug": "engine-a-encodings-wh5ds-decode-stack",
+ "result": "muse_decode_layer/hypotheses/done/gain/engine-a-encodings-wh5ds-decode-stack.result.json",
+ "updated_at": "2026-10-29T231037Z"
 }
