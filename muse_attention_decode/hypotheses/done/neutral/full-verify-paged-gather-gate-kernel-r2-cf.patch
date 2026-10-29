@@ -1,0 +1,10 @@
+diff --git a/muse_attention_decode/submission.py b/muse_attention_decode/submission.py
+index 0f7d6195..0039c56e 100644
+--- a/muse_attention_decode/submission.py
++++ b/muse_attention_decode/submission.py
+@@ -10531,3 +10531,5 @@ if torch.cuda.is_available():
+     print(f"[fvg] summary ({len(_FVG_SUM)} lines):", flush=True)
+     for _ln in _FVG_SUM:
+         print(_ln[:600], flush=True)
++
++# churn confirm rerun of full-verify-paged-gather-gate-kernel-r2 (job 184991095dff4d50); code otherwise identical

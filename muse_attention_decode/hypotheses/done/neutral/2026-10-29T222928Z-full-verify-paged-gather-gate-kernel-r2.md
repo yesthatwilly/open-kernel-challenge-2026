@@ -75,6 +75,9 @@ best_at_harvest: 1.6339575246416982
 promotion: null
 mechanism: null
 confirm_queued: full-verify-paged-gather-gate-kernel-r2-cf
+confirm_job: a47caf0724de40ad
+confirm_outcome: neutral
+pooled_speedup: 1.6443062711486705
 ---
 
 # full-verify-paged-gather-gate-kernel-r2

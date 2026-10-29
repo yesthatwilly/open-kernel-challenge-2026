@@ -631,5 +631,24 @@
   "mechanism": null,
   "mechanism_rows": null
  },
- "mechanism": null
+ "mechanism": null,
+ "pooled": {
+  "jobs": [
+   "184991095dff4d50",
+   "a47caf0724de40ad"
+  ],
+  "speedups": [
+   1.6421954867431368,
+   1.6464170555542041
+  ],
+  "speedup": 1.6443062711486705,
+  "ci": [
+   1.6268657550587053,
+   1.6617467872386356
+  ],
+  "outcome": "neutral",
+  "detail": "unproven-vs-best",
+  "best": 1.6339575246416982,
+  "at": "2026-10-29T225407Z"
+ }
 }

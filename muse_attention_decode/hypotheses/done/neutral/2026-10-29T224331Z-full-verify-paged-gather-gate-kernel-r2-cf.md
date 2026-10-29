@@ -14,8 +14,8 @@ controls_for: full-verify-paged-gather-gate-kernel-r2
 confirm_of: full-verify-paged-gather-gate-kernel-r2
 confirm_of_job: 184991095dff4d50
 review: proceed
-status: running
-stage: dispatched
+status: done
+stage: harvested
 claimed_at: 2026-10-29T224342Z
 base_sha: 37649103a331b49c92b219f1c9d06caaf5d82fc9
 base_blob: 0f7d6195263717e5dff426814b77ed679a083408
@@ -34,6 +34,14 @@ attempt_file: 2026-10-29T224344Z-check-full-verify-paged-gather-gate-kernel-r2-c
 prepared_at: 2026-10-29T224344Z
 job: a47caf0724de40ad
 dispatched_at: 2026-10-29T224359Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.6464170555542041
+speedup_ci: [1.6217207997208911, 1.671113311387517]
+harvested_at: 2026-10-29T225407Z
+best_at_harvest: 1.6339575246416982
+promotion: null
+mechanism: null
 ---
 
 # full-verify-paged-gather-gate-kernel-r2-cf
@@ -70,4 +78,37 @@ OK with warnings: .../muse_attention_decode/submission.py
 `python3 -I -m py_compile`: OK (__pycache__ removed).
 
 Copied from `full-verify-paged-gather-gate-kernel-r2`, whose code this is; the only change is a comment.
+
+## Result
+
+- job `a47caf0724de40ad` (check), status done, passed True, tests 16/16
+- speedup 1.6464x, 95% CI [1.6217, 1.6711], score 2287.573484066112 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.6339575246416982, "ci": [1.6094481617720726, 1.6584668875113235], "job": "4e386647edd845f7"}; base result: muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel-r2.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel-r2-cf.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel-r2-cf.patch`; branch `hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2-cf`
+- confirm of `full-verify-paged-gather-gate-kernel-r2`: pooled 1.6422x (job 184991095dff4d50) and 1.6464x (job a47caf0724de40ad) → 1.6443x; best 1.6340x, two-run margin 1.07% → neutral (unproven-vs-best)
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 11.26 | 10.81 | 1.0543 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 15.74 | 15.82 | 0.9996 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.44 | 15.41 | 0.995 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 103.45 | 104.59 | 0.992 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 16.94 | 17.47 | 0.9734 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 189.43 | 190.28 | 0.9978 | flat |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.46 | 13.11 | 1.0011 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.35 | 30.11 | 1.0018 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 19.21 | 19.4 | 0.9992 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 151.44 | 151.72 | 0.9968 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 27.83 | 27.64 | 0.9933 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 282.33 | 282.99 | 0.9981 | flat |
+
+gained on sliding decode_1. Noise ±1.5%.
+
+## Follow-ups
+
+- pooled verdict for `full-verify-paged-gather-gate-kernel-r2`: neutral (unproven-vs-best); this file is the record of the rerun only.
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
 
