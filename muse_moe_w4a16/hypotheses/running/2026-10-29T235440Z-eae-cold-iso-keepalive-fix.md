@@ -37,11 +37,20 @@ evidence: >
   bytes (sha 986a2bad, 948,330 B) passed 4/4; the moe board 24f183ff (2.0201) carries the bug
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T235601Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: c6e41c9acc6169ac8a532684437955b1d560835b
+stage: claimed
+claimed_at: 2026-10-29T235601Z
+base_sha: 2090c7b69f865761852a7f539d70bfb97f99f2c3
+base_blob: c6e41c9acc6169ac8a532684437955b1d560835b
+branch: hyp/muse_moe_w4a16/eae-cold-iso-keepalive-fix
+worktree: .worktrees/muse_moe_w4a16/eae-cold-iso-keepalive-fix
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # eae-cold-iso-keepalive-fix
