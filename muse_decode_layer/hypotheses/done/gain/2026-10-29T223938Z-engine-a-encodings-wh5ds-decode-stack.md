@@ -84,6 +84,7 @@ best_at_harvest: 1.6903955680487197
 promotion: merged
 mechanism: null
 promotion_commit: 10442ca2d41e8d5ab2b09728f8c5bcfe421b31ee
+promotion_attempt: 2026-10-29T231037Z-submit-engine-a-encodings-wh5ds-decode-stack.md
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
