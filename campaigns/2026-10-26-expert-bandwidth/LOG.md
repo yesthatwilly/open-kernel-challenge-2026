@@ -2415,3 +2415,9 @@ with the operator's go-ahead.
   - Readings: the late-CTA set is STABLE across replays (ov 0.74, rr 0.93-0.97) but NOT explained by work (corr 0.32; cost 0.00). The net tail beyond the unit step is 6-14 us.
   - Interpretation: a per-SM/position effect that the static stream-K split cannot see. Recorded as [unresolved].
   - **Next lane t32d:** a design panel for a dynamic (atomic work-queue) tail in the v4x twins, which absorbs the effect whatever its cause.
+- 2026-10-29T1505Z **t32d lane closed.**
+  - The panel judged EV 0.45% and built rung t32r. Check 0069fec4 read **MID [SLOT POS]**.
+  - The stable late set is the co-resident slot: the younger CTA on each SM is late (P_young 1.00). That is warp-scheduler age priority, not SM speed; per-SM rates don't carry across draws.
+  - The rebalancing ceiling is 3.07%, but static, dynamic and slot designs capture only 0.08 / 0.08 / 0.79%. 1 CTA/SM is slower.
+  - No build. The t32i claim is closed as [shelf].
+  - Quota: moe 12 checks / 7 runs, decode 18 / 9.
