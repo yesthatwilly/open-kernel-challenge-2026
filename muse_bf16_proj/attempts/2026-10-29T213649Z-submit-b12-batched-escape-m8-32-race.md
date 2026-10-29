@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_bf16_proj/hypotheses/done/gain/2026-10-29T200122Z-b12-batched-escape-m8-32-race.md` (branch `hyp/muse_bf16_proj/b12-batched-escape-m8-32-race`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `14ea7be493204308` (`okc status <job>`)
 - **File:** `muse_bf16_proj/submission.py` at git `0684d0c2`
 
 ## Goal
