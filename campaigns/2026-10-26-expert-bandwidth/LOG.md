@@ -2438,3 +2438,15 @@ with the operator's go-ahead.
   - **Pending the user:**
     - whether bf16/attention/prefill get phase-C checks (focus since 10-28 22:05Z says no);
     - the gpunode06 close-out (runner 11735, prev.py, nodejudge env).
+
+## 2026-10-29 1520Z — /hypothesize all --n 5 (user); focus lifted for bf16/attn/prefill; gpunode06 closed
+- The user: "/hypothesize all --n 5; then do those three checks then submit all the hypothesis, then clean up gpunode06". Read "those three checks" as bf16/attention/prefill's unused checks (the open question), so the expert-block focus is lifted for them.
+- Five mint agents (Opus, ~0.76M tokens total): **0 files minted on every problem**; every lead fell below the bar (dry-run exit 3 where tried):
+  - decode: full-verify attn off FA3 EV 0.57% (+1.9% at parity); bulk12 dense GEMMs EV ~0.7%; boundary PDL ~0.25%; decode expert-shelf stack ~1.7% < 2.5%.
+  - attn: full verify B=16/32 wgmma loop EV 0.9% (every custom loop lost to FA3); fvs, fullv-sk, swf S1b measured dead; FA3 metadata fold EV 0.45%.
+  - prefill: rega K-pair four-consumer EV 0.73% (2.1% x 0.35); every other row at its ceiling or refuted; rega stage-anatomy diag already queued (hold).
+  - moe: stack3 (EPF + slot rider + combine) mid 2.0%, EV 0.6% (EPF mostly consumed by v6pe2).
+  - bf16: multicast-x bulk12 m>=8 EV 0.63%; m128/256 GEMM rewrite EV ~0.5%.
+- Claims appended (screen): decode 2, attn 3, prefill 1, moe 2, bf16 1.
+- gpunode06 close-out (user's go): runner stop (queue/STOP), the untracked prev.py link removed, `hopper-probe clean gpunode06 nodejudge` (13G), /tmp/USER-hopper removed via audit-run. No GPU processes at close.
+- Nothing to submit: churn's queues hold no value-case files. Checks left: moe 12, decode 18, bf16/attn/prefill 20 each.
