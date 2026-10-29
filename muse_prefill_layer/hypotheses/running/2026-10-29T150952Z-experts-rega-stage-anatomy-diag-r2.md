@@ -118,7 +118,7 @@ review_at: 2026-10-29T151524Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T151524Z
 base_sha: 9047e4ba7caa809ca4b9aae6a1a556243f61a13f
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -135,6 +135,8 @@ submission_blob: 7cc2179e987ab39cdacbf1caeb14d4e64cbfa4b6
 lint_warnings: 118
 attempt_file: 2026-10-29T153454Z-check-experts-rega-stage-anatomy-diag-r2.md
 prepared_at: 2026-10-29T153454Z
+job: cb22e6104be142ee
+dispatched_at: 2026-10-29T153506Z
 ---
 
 # experts-rega-stage-anatomy-diag-r2
