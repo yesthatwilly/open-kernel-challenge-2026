@@ -105,7 +105,7 @@ review_at: 2026-10-29T155002Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T155002Z
 base_sha: e18a2af19d9a60bde63f1ca29903b996d02a80a5
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -122,6 +122,8 @@ submission_blob: c6dc7efbd0129f26e2122d1027da01f903dd3148
 lint_warnings: 108
 attempt_file: 2026-10-29T160833Z-check-fa3-metadata-fold-preattn-full-verify.md
 prepared_at: 2026-10-29T160833Z
+job: 6d1082a6c0dd4f80
+dispatched_at: 2026-10-29T160846Z
 ---
 
 # fa3-metadata-fold-preattn-full-verify
