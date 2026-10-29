@@ -2411,3 +2411,7 @@ with the operator's go-ahead.
   - Quota: moe 14 checks / 7 runs.
   - **Decode port candidate:** v6pe2 (decode's T=1 uses the same ea6 path; ~+0.3% decode) rides with the next decode build.
 - 2026-10-29T1150Z **decode 1.690 LANDED** (+1.7% over 1.661, past the margin). v4xd-stack (campaign/eb-v4xd-stack fedd40f5): v6pe2 at T=1 (pe/pe2 x1.038, decode_1 rows ~-2 us) + decode v4x-routes (T=128 cold half alone) + the priority-0 fork guard. Check 26435509 1.669, scored 7cc034f9 **1.690** [1.665, 1.716]. EPLF was not ported (moe-coupled, T16-only gain). Quota: decode 18 checks / 9 runs.
+- 2026-10-29T1335Z **t32i 12fc6651: VOID** (stamp tax 1.1-1.4 us > 1).
+  - Readings: the late-CTA set is STABLE across replays (ov 0.74, rr 0.93-0.97) but NOT explained by work (corr 0.32; cost 0.00). The net tail beyond the unit step is 6-14 us.
+  - Interpretation: a per-SM/position effect that the static stream-K split cannot see. Recorded as [unresolved].
+  - **Next lane t32d:** a design panel for a dynamic (atomic work-queue) tail in the v4x twins, which absorbs the effect whatever its cause.
