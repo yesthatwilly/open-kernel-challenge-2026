@@ -2,60 +2,24 @@
 
 The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
 append-only, newest last.
-- **NOW: 2026-10-28, phase A of the 3:1 rhythm.** updated: 2026-10-28T1735Z (date -u), session 0605b7cc.
-  - **The user, ~09:51Z:** `/loop /3to1` after `/clear`, right after the session-limit reset (09:50Z). This restarts the
-    3:1 rhythm and ends the 0257Z pause. The H100 window (below) still ends at **13:40Z at the latest**.
-  - **User bullets carried forward (verbatim):**
-    - ~1415Z: "i killing these hyopthesis due to low yield youre reporting.  i need you to update /hypothesize so that
-      it is creating ONLY the most valuable ones for H100 or checks.  yes, its the same thing ti did before except right
-      now i need it really really stringent on what it hypothesizes, because i cant get small ROI for the tokens this
-      skill takes.  i need it only producing the most promising leads.  with that said, right now, where is the msot
-      gain to be gotten?  if there was one area of the kernel you wanted a learn-about-anything-you-can-ask, what
-      would it be?  put it in the form of what aspect of the kernel do you wish you had a perfect answer to"
-    - ~1400Z: "what is the best use of 1 hour remaining quota reset time to use up 7M tokens." (with
-      /workflow-authoring; ultracode on). Read as: spend it now on token-heavy work that uses no checks; the <= 3-agent
-      cap is lifted for this window.
-    - ~0530Z: "yes go ahead and keep doing stuff with the h100. work it autonomously for at least hte next 8 hours",
-      corrected mid-turn to **"at MOST the next 8"** (hard stop 13:40Z). In scope: H100 (gpunode06) jobs and judge checks /
-      scored runs of H100-derived candidates. H200 (gpunode26) held.
-    - 0257Z: "basically do nothing; all the running agents need to finish. i need everytoken i can spare".
-    - ~0320Z: "okay what did you learn from what just finished; anything to launch? do the work here but dont do it
-      autonomously right now". Picks: "1 Land moe board, 2 Decode-port check, 3 Queue H100 moe program" (all done).
-    - ~0410Z, a pasted reviewer plan the user endorsed: "Approve the P3 audit, then a targeted missing-counter capture --
-      not another broad rewrite ... a correct, spill-free two- and four-m-tile reuse sweep, with unchanged dq2 ...
-      Fragment-order repacking should be the other independent experiment."
-    - ~0515Z picks: "Release m456 + m08t8, Queue P3b when drafted, Harvest the M1 results" (all done).
-    - ~0035Z / ~0100Z: "use the h100 freely for the next 6 hours" (superseded by the 0530Z window).
-  - **Session limit:** the user's limit stopped both workflows at ~08:20Z (reset 09:50Z): the L4 port (its builder
-    mid-edit; the edits were left uncommitted in .worktrees/eb-l4) and the v6 fixed-cost workflow (2 designs returned;
-    the judge never ran). Both were relaunched at 09:58Z from where they stopped. Keep agent use lean.
-  - **Boards:** moe **1.8941** (327/979; X1v6 on fc, 12:06Z); decode **1.6551** (345/863; v4c pinned at T=9..16, 13:46Z); bf16
-    **1.2794** (438/1236; qkv128 read-flush plan, 13:01Z); attention 1.6340 (472/933; a lucky draw, level ~1.61-1.62);
-    prefill **1.5008** (221/570; pinned near-ties, 13:20Z). Today: moe 1.7340 -> 1.8941 (+9.2%); decode 1.5926 -> 1.6551 (+3.9%); bf16 1.2740 ->
-    1.2794.
-  - **Quota 1455Z (checks, runs):** bf16_proj 10 8; attention_decode 10 5; moe_w4a16 10 7; decode_layer 10 5; prefill_layer 10 15 (shared with musespark-b1's churn ticks).
-  - **In flight:**
-    - **Split with session musespark-b1 (c24a6e21, ~14:55Z):** it runs the churn ticks (claims, implements and
-      dispatches queue picks; commits churn paths and .claude/skills/hypothesize); this session runs the campaign
-      (LOG, Now, trim, phase-A panels, memory) and runs no churn ticks. Campaign checks reserved for tonight: moe 1 +
-      decode 1 (verify the trim branches) and attention 2 (the attn-fixed panel's diagnostics); message it before
-      each dispatch.
-    - churn (musespark-b1): attention sliding-verify1-pseudo-fused-preattn-rope check 7284659f read
-      **1.6191** [1.5948, 1.6433], neutral at the code's ~1.62 level (66e589b9). Churn is done for today.
-    - **Phase-A bases, verified on the judge:** moe campaign/eb-trim 742f3209 (827,317 B; check 2864f0f4 1.8873
-      PASS) and decode campaign/eb-trimd 8cb23d1f (893,346 B; check 6985e7f4 1.6452 PASS).
-    - attn-fixed panel DONE (research/phaseA-2026-10-29/attn-fixed.json): swf wins; its tonight rungs are building
-      in `attn-swf-rungs-1028` (wf_c0bd87c5-5d2; worktrees attn-rung-cc, attn-rung-swf; phasec tag attn-rungs).
-    - engineA panel DONE (research/phaseA-2026-10-29/engineA.json): v4x wins; tonight's TC-A (moe) / TC-B (decode)
-      rungs building in `engA-fx-rungs-1028` (wf_3972725f-acd; worktrees pc-moe-fx, pc-dec-fx; tags moe-fx, dec-fx).
-      Both rung builds are the phase-A shape's "diagnostic rung first" step (ultracode; cap-exempt).
-  - **Next:**
-    - **Phase B** until 18:00Z: the two design panels only. Churn (musespark-b1) found nothing runnable, and no
-      minor-gain spending happens without a lead that clears the value bar (the user, ~1415Z).
-    - **Phase C** from 18:00Z: the reserved campaign checks (moe 1 + decode 1 trim checks, attention 2 panel
-      diagnostics), plus any other panel diagnostic that clears the bar (tell musespark-b1 before each dispatch).
-      Tomorrow's phase-A plan by ~23:00Z from the two panels' final specs.
-    - H100 window closed at 13:37Z; no GPU work without a new go-ahead.
+- **NOW: 2026-10-29, phase A of the 3:1 rhythm (expert block).** updated: 2026-10-29T0450Z (date -u), session c24a6e21.
+  - **The user, ~04:45Z:** "commit the h100-cs report.  ready to go autonomous, those things you describe: all of em, and then
+    follow up with it per any of the known loops, e.g., 3to1 or any unfinished campaigns"; then "what h100 ideas are being
+    explored?  put out some agents to get those in use". Read as: /loop /3to1 resumes; H100 gpunode06 reopened (to 12:00Z at the
+    latest, H200 held); the GPU 1 orphan pids 2688846/2688840 stay the user's call.
+  - **Expert-block focus stands** (10-28 22:05Z): moe/decode only; attention, bf16 and prefill get no new tokens.
+  - **Boards 0441Z:** moe **1.950** (314/1016); decode **1.661** (370/889); prefill 1.501 (245/597); bf16 1.279 (473/1271);
+    attention 1.634 (510/974). Quota: moe 19 checks / 9 runs, the rest 20 / 10.
+  - **In flight (phase-A workflows, build -> audit -> fix, each returns a check-ready commit + attempt):**
+    - wf_1d6718ba-871 `v6deep-r0`: moe T=1 rung R0 (prints only), .worktrees/eb-v6deep from eb-v4x256c.
+    - wf_1de8ed7d-8d2 `v4x-routes`: moe route robustness (s alone in every class, pooled/hysteresis races), .worktrees/eb-v4x-routes.
+    - wf_633beb18-44a `v4xd-forkguard`: decode port of the guarded prio-0 fork stream, .worktrees/eb-v4xd-forkguard from eb-v4xd256b.
+  - **H100 agents (gpunode06):** T=1 lane (w2 prefetch before the PDL wait; R0 node pre-read) -> research/h100-t1-1029.md;
+    fork/route lane (cold-branch high priority; route-flip counts; decode guard A/B + sanitize) -> research/h100-fork-1029.md.
+  - **Pending the user:** gpunode06 close-out (runner stop, prev.py, nodejudge env clean) is deferred to the end of the new window;
+    the GPU 1 orphan kill.
+  - **Next:** dispatch each lane's check as it lands (scored run on any check that beats its board); port route robustness
+    to decode if it holds on moe; H100 Q1 results may mint a T=1 build.
 - **(10-27 blocks below are kept for the user's bullets.)**
 - **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
   "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
