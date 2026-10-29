@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-29T222816Z. Best: 2.0646x [2.0336,2.0955] job `702f1004b45f4bfa` (check)
+Regenerated 2026-10-29T223319Z. Best: 2.0201x [1.9898,2.0504] job `24f183ff300949f2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -95,7 +95,7 @@ Regenerated 2026-10-29T222816Z. Best: 2.0646x [2.0336,2.0955] job `702f1004b45f4
 | 2026-10-29T151134Z | cmbf-combine-fused-w2-epilogue-t8-32 | primary | post-expert norm+combine | done/neutral | neutral | 1.9675 | [1.938,2.004] | a5aee75176174ce4 | check |  | proceed | 5/6 |
 | 2026-10-29T162119Z | cmbf-combine-fused-w2-epilogue-t8-32-cf | confirm→cmbf-combine-fused-w2-epilogue-t8-32 | post-expert norm+combine | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-29T195507Z | hothalf-wh-a5b-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/gain | gain | 1.9827 | [1.953,2.012] | 54b70249868f468b | check | done | proceed | 0/3 |
-| 2026-10-29T215527Z | engine-a-a4b-a5b-encodings-race | primary | Engine A dequant (dq2) in ea4x/v4x/ea6 kernels at T=1..32 and the T=128/256 cold half | done/gain | gain | 2.0646 | [2.034,2.096] | 702f1004b45f4bfa | check | merged | proceed | 0/4 |
+| 2026-10-29T215527Z | engine-a-a4b-a5b-encodings-race | primary | Engine A dequant (dq2) in ea4x/v4x/ea6 kernels at T=1..32 and the T=128/256 cold half | done/gain | gain | 2.0646 | [2.034,2.096] | 702f1004b45f4bfa | check | done | proceed | 0/4 |
 
 ## Held
 
