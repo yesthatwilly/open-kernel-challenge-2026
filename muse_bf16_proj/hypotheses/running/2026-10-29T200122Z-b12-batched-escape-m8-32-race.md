@@ -61,7 +61,7 @@ base_sha: 69eaf6972f9cd230611dddd4bb025a1dbf631d8a
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
 branch: hyp/muse_bf16_proj/b12-batched-escape-m8-32-race
 worktree: .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T212209Z
@@ -70,6 +70,8 @@ submission_sha256: 7837d1e422852f91a995c3bc960614a411f0cb4aabf584aa9c70fe09983ed
 norm_sha256: 6a001bc2811e29072474f4cb3f5160bc7340a3492911325721a6db4baeaac7af
 submission_blob: 5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab
 lint_warnings: 58
+attempt_file: 2026-10-29T212210Z-check-b12-batched-escape-m8-32-race.md
+prepared_at: 2026-10-29T212210Z
 ---
 
 # b12-batched-escape-m8-32-race
