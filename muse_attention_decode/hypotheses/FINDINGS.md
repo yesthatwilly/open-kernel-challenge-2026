@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T224335Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T225411Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -198,6 +198,7 @@ Diagnosis of 2026-10-25T203356Z, written on board 1.5295 (today 1.6340): histori
 ### full-layer verify attention (FA3 call at verify_16 / verify_32)
 - **full-verify-paged-gather-gate-kernel** → neutral (within-ci), 1.6154x — gained on sliding verify_1; lost on full decode_32; sliding verify_16. Replace master's FA3 call on the full-attention verify rows at B=16 and B=32 (q_len 8, paged FP8 KV, ctx ~80000) with the H100-validated gate kernel from takemy
 - **full-verify-paged-gather-gate-kernel-r2** → neutral (unproven-vs-best), 1.6422x — gained on full verify_16, verify_32; lost on sliding decode_1; full decode_32. Same change as full-verify-paged-gather-gate-kernel (restacked from its patch), with the one build fix its judge run needed: _FVG_FLAGS used -std=c++17, and the
+- **full-verify-paged-gather-gate-kernel-r2-cf** → neutral (unproven-vs-best), 1.6464x — gained on sliding decode_1. Confirmation rerun of full-verify-paged-gather-gate-kernel-r2: its implementation commit 37649103a331b49c92b219f1c9d06caaf5d82fc9 unchanged except one trailing 
 
 ### launch overhead
 - **splitkv-pdl-attn-to-combine** → neutral (within-ci), 1.3929x — lost on full decode_32. Programmatic dependent launch between master's kernel A (splitkv_attn_kernel) and kernel B (splitkv_combine_kernel), full decode 1 < batch <= 64. (1) In splitkv
@@ -336,6 +337,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **sk-onepass-verify1-timing-fix** [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] neutral, within-ci: Restack of sk-ticket-merge-onepass (neutral 1.6177 in check ba8c8a61; twins compiled, merg
 - **fa3-metadata-fold-preattn-full-verify** [FA3 call (scheduler metadata folded into pre-attention, full verify)] neutral, within-ci: Fold FA3's varlen scheduler metadata (what flash::prepare_varlen_num_blocks_kernel<NumWarp
 - **full-verify-paged-gather-gate-kernel** [full-layer verify attention (FA3 call at verify_16 / verify_32)] neutral, within-ci: Replace master's FA3 call on the full-attention verify rows at B=16 and B=32 (q_len 8, pag
+- **full-verify-paged-gather-gate-kernel-r2** [full-layer verify attention (FA3 call at verify_16 / verify_32)] neutral, not confirmed (pooled 1.6443062711486705): Same change as full-verify-paged-gather-gate-kernel (restacked from its patch), with the o
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
 - **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
@@ -374,5 +376,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 hold
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 hold
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 hold
-- queue: full-verify-paged-gather-gate-kernel-r2-cf [full-layer verify attention (FA3 call at verify_16 / verify_32)] p1 queued
 - 17 stale holds expired to `done/expired/` (not run)

@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-29T224335Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-29T225411Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -120,7 +120,7 @@ Regenerated 2026-10-29T224335Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-29T154210Z | fa3-metadata-fold-preattn-full-verify | primary | FA3 call (scheduler metadata folded into pre-attention, full verify) | done/neutral | neutral | 1.6336 | [1.609,1.666] | 6d1082a6c0dd4f80 | check |  | proceed | 2/5 |
 | 2026-10-29T215944Z | full-verify-paged-gather-gate-kernel | primary | full-layer verify attention (FA3 call at verify_16 / verify_32) | done/neutral | neutral | 1.6154 | [1.591,1.640] | 06c051723643462f | check |  | proceed | 0/4 |
 | 2026-10-29T222928Z | full-verify-paged-gather-gate-kernel-r2 | primary | full-layer verify attention (FA3 call at verify_16 / verify_32) | done/neutral | neutral | 1.6422 | [1.618,1.667] | 184991095dff4d50 | check |  | proceed | 0/3 |
-| 2026-10-29T224331Z | full-verify-paged-gather-gate-kernel-r2-cf | confirm→full-verify-paged-gather-gate-kernel-r2 | full-layer verify attention (FA3 call at verify_16 / verify_32) | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-29T224331Z | full-verify-paged-gather-gate-kernel-r2-cf | confirm→full-verify-paged-gather-gate-kernel-r2 | full-layer verify attention (FA3 call at verify_16 / verify_32) | done/neutral | neutral | 1.6464 | [1.622,1.671] | a47caf0724de40ad | check |  | proceed |  |
 
 ## Held
 
