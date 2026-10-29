@@ -49,11 +49,20 @@ evidence: >
   the moe draw -> +1.29% moe headline; A5b landed on prefill (9f934846 1.5721)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T200135Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
+stage: claimed
+claimed_at: 2026-10-29T200135Z
+base_sha: db626b766d6eb2e9ef1ad995ca86f6aac6305898
+base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
+branch: hyp/muse_moe_w4a16/hothalf-wh-a5b-port
+worktree: .worktrees/muse_moe_w4a16/hothalf-wh-a5b-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # hothalf-wh-a5b-port
