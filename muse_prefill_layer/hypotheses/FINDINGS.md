@@ -1,20 +1,21 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T175948Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T183518Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
 ### lead
 
-- [lead] rega stages run super-serial: t0 exceeds even dequant+MMA serial (t1+t2-t5) by 1.22-1.29x, and 18-34% of rega time sits above max(dequant-only, MMA-only) in every class; overlap/TLP levers (K-pair, ping-pong-like schedules) reopen | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check cb22e6104be142ee [rega-anat] (see previous line); CEILINGS RE-SCALED per class rows (adversary of experts-rega-low-kpair-four-consumer-wgs): low ~5.2% headline (all of g at sliding+full turn_1), high ~3%, not 13.3/8.4; the super-serial excess may partly be the producer floor in modes 1/2 (ft t2 = t4 per stage), so a TLP lever's floor is ~t4, a pure-overlap lever's ~max(t1,t2). Candidate siblings: anti-phase of master's two consumer WGs (FA3-style named barriers, 232 regs, bit-exact); deferred wgmma_wait<1> with SASS check for C7510/C7512 | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn
+- [lead] rega stages run super-serial: t0 exceeds even dequant+MMA serial (t1+t2-t5) by 1.22-1.29x, and 18-34% of rega time sits above max(dequant-only, MMA-only) in every class; overlap/TLP levers (K-pair, ping-pong-like schedules) reopen | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check cb22e6104be142ee [rega-anat] (see previous line); CEILINGS RE-SCALED per class rows (adversary of experts-rega-low-kpair-four-consumer-wgs): low ~5.2% headline (all of g at sliding+full turn_1), high ~3%, not 13.3/8.4; the super-serial excess may partly be the producer floor in modes 1/2 (ft t2 = t4 per stage), so a TLP lever's floor is ~t4, a pure-overlap lever's ~max(t1,t2). Candidate siblings: anti-phase of master's two consumer WGs (FA3-style named barriers, 232 regs, bit-exact); deferred wgmma_wait<1> with SASS check for C7510/C7512 | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn (re-measure: measured on 1.5008, best now 1.5556)
+- [lead] dq2 A3 dequant (paired-scale prmt+IMAD + ext_prop nibbles on a word-permuted bank) in the rega tile's dq_stage: 26 -> 18 dequant SASS/k16 step, bit-exact | rows: load=turn_1, load=turn_4, load=first_turn | evidence: H100 gpunode06 rgx probe (takemyjob hopper/rgx 1a17a00; research/h100-rega-1029.md): A3/master full-mode pair x0.857 low L2, x0.888 low HBM, x0.835 low random routing, x0.923/0.908 high; 7 interleaved rounds; per-SM ratios transfer; tensor-active full 25.5% vs MMA-only 49.0% at low (issue-serialized, super-serial was a model artifact) | board: 1.5008 | blob: c63801e7 | reopen: judge read: in-flight diag experts-rega-dq2-dequant-cost-diag (routes A3 per class at <=0.97) | 2026-10-29 h100 (re-measure: measured on 1.5008, best now 1.5556)
 
 ### shelf
 
-- [shelf] pre-attention q/k norm + RoPE + FP8 cache store fused into one Triton kernel (front-qknorm-rope-fp8-store-fusion-restack), est ~0.5%, stack-only | rows: all | evidence: DECISIONS:418 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] prepare-only rega stage anatomy (experts-rega-stage-anatomy-diag), 0% headline by itself; it is the revival test for mc2 / bm256 | rows: all | evidence: DECISIONS:421; DISTILL:185, 431 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen
+- [shelf] pre-attention q/k norm + RoPE + FP8 cache store fused into one Triton kernel (front-qknorm-rope-fp8-store-fusion-restack), est ~0.5%, stack-only | rows: all | evidence: DECISIONS:418 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
+- [shelf] prepare-only rega stage anatomy (experts-rega-stage-anatomy-diag), 0% headline by itself; it is the revival test for mc2 / bm256 | rows: all | evidence: DECISIONS:421; DISTILL:185, 431 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
+- [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
+- [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
+- [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5556)
 
 ### landed
 
@@ -54,20 +55,20 @@ Regenerated 2026-10-29T175948Z by `churn.py index`. Read this before writing a h
 
 ## Current best
 
-1.5008x [1.4783,1.5233] from job `b2941ea23dc743a3` (submit), master commit `350343bcf2`, hypothesis phasec-final-near-ties-nolo
+1.5556x [1.5323,1.5789] from job `835e1a443a604eb2` (check), master commit `1b14174f10`, hypothesis experts-rega-dq2-dequant-cost-diag
 
 Where the time goes (per scored shape, top kernels):
 
-- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 701.0µs vs SGLang 1074.1µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 249.9µs 35.3%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.8µs 21.8%, void (anonymous namespace)::rega_kernel<false, false>((an... 127.4µs 18.0%
-- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1083.7µs vs SGLang 1453.5µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 405.5µs 35.2%, void (anonymous namespace)::rega_kernel<true, false>((ano... 237.1µs 20.6%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.5µs 13.3%
-- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2088.5µs vs SGLang 3365.4µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false>((ano... 703.9µs 31.3%, void (anonymous namespace)::rega_kernel<false, false>((an... 372.6µs 16.6%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.2µs 14.6%
-- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3614.4µs vs SGLang 4941.7µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1545.6µs 42.5%, void (anonymous namespace)::rega_kernel<true, false>((ano... 681.0µs 18.7%, void (anonymous namespace)::rega_kernel<false, false>((an... 347.4µs 9.5%
-- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11012.0µs vs SGLang 16825.8µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3197.4µs 28.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2540.5µs 22.8%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1668.5µs 14.9%
-- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10865.9µs vs SGLang 16952.0µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true>((anon... 3441.1µs 31.4%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2537.9µs 23.1%, void (anonymous namespace)::rega_kernel<false, true>((ano... 1799.0µs 16.4%
-- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 14763.8µs vs SGLang 20926.5µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4318.4µs 27.8%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3757.6µs 24.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2571.2µs 16.6%
-- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18546.9µs vs SGLang 25560.7µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7725.1µs 42.1%, void (anonymous namespace)::rega_kernel<true, true>((anon... 3411.9µs 18.6%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2544.8µs 13.9%
+- batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6: yours 709.6µs vs SGLang 1138.5µs (SoL 257.0µs) · void (anonymous namespace)::rega_kernel<true, false, 3>((... 246.5µs 34.5%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 154.6µs 21.6%, void (anonymous namespace)::rega_kernel<false, false, 3>(... 127.7µs 17.9%
+- batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6: yours 1067.1µs vs SGLang 1478.0µs (SoL 496.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 405.6µs 34.7%, void (anonymous namespace)::rega_kernel<true, false, 3>((... 247.5µs 21.2%, nvjet_sm90_tst_128x192_64x5_2x1_v_bz_coopB_TNN 153.1µs 13.1%
+- batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6: yours 2077.8µs vs SGLang 3457.9µs (SoL 1036.3µs) · void (anonymous namespace)::rega_kernel<true, false, 3>((... 654.5µs 30.2%, void (anonymous namespace)::rega_kernel<false, false, 3>(... 338.2µs 15.6%, nvjet_sm90_tst_256x152_64x4_1x2_h_bz_coopA_TNT 327.0µs 15.1%
+- batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6: yours 3533.6µs vs SGLang 4928.0µs (SoL 1992.4µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 1542.6µs 42.2%, void (anonymous namespace)::rega_kernel<true, false, 3>((... 635.2µs 17.4%, void (anonymous namespace)::rega_kernel<false, false, 3>(... 328.9µs 9.0%
+- batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 11052.8µs vs SGLang 17605.3µs (SoL 5518.4µs) · void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3209.4µs 28.7%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2555.5µs 22.9%, void (anonymous namespace)::rega_kernel<false, true, 3>((... 1650.3µs 14.8%
+- batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6: yours 10545.9µs vs SGLang 17127.0µs (SoL 5663.4µs) · void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3243.0µs 30.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2564.6µs 23.9%, void (anonymous namespace)::rega_kernel<false, true, 3>((... 1695.5µs 15.8%
+- batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 14570.5µs vs SGLang 21360.3µs (SoL 7710.0µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 4303.6µs 29.2%, void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3259.4µs 22.2%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2551.1µs 17.3%
+- batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6: yours 18087.1µs vs SGLang 25271.2µs (SoL 9847.7µs) · void cutlass::device_kernel<flash::enable_sm90_or_later<f... 7725.0µs 43.2%, void (anonymous namespace)::rega_kernel<true, true, 3>((a... 3093.9µs 17.3%, nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN 2545.3µs 14.2%
 
-Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5008): historical, re-diagnose before minting from it (`muse_prefill_layer/hypotheses/DIAGNOSIS.md`).
+Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5556): historical, re-diagnose before minting from it (`muse_prefill_layer/hypotheses/DIAGNOSIS.md`).
 
 ## By area
 
@@ -176,6 +177,9 @@ Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5008): histori
 
 ### w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes
 - **experts-rega-stage-antiphase-ordered-issue** → neutral (within-ci), 1.4857x, mechanism miss 0/8 — no shape moved outside noise. Built on master (submission.py blob c63801e7, board 1.5008; master dispatches the muse_prefill_rega_fsilu_w2a module: fast-silu w13 in every class, w2st arm a w
+
+### w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route)
+- **experts-rega-dq2-dequant-cost-diag** → gain (gain), 1.5556x, mechanism flat 7/8 [gain not attributable to the mechanism (race/draw?)] — gained on sliding first_turn, turn_1, turn_4; full first_turn, turn_1. Built on master (submission.py blob c63801e7, board 1.5008). Changes the INSTRUCTION COST of the rega dequant, not the stage schedule. A prepare-only diagnostic
 
 ### w13 + w2 expert GEMMs (rega persistent item->CTA schedule)
 - **experts-rega-round-rotated-schedule** → neutral (within-ci), 1.4664x, mechanism flat 0/8 — no shape moved outside noise. Built on master (blob f4751fc0). Only the order in which rega_kernel's persistent CTAs walk items changes; every item is computed by master's code, so outputs a
@@ -337,5 +341,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 hold
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 hold
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- running: experts-rega-dq2-dequant-cost-diag [w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route)] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

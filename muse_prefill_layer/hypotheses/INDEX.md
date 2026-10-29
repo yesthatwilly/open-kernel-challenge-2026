@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-29T175948Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
+Regenerated 2026-10-29T183518Z. Best: 1.5556x [1.5323,1.5789] job `835e1a443a604eb2` (check)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -111,7 +111,7 @@ Regenerated 2026-10-29T175948Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-29T150952Z | experts-rega-stage-anatomy-diag-r2 | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | done/neutral | neutral | 1.4939 | [1.471,1.516] | cb22e6104be142ee | check |  | proceed | 0/1 |
 | 2026-10-29T153927Z | experts-rega-low-kpair-four-consumer-wgs | primary | w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab | done/neutral | neutral | 1.4926 | [1.470,1.515] | bbca0105449c4217 | check |  | proceed | 1/4 |
 | 2026-10-29T161429Z | experts-rega-stage-antiphase-ordered-issue | primary | w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes | done/neutral | neutral | 1.4857 | [1.463,1.508] | 17d3fdf1a6594d33 | check |  | proceed | 0/3 |
-| 2026-10-29T175301Z | experts-rega-dq2-dequant-cost-diag | primary | w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route) | running | running |  |  |  |  |  | proceed |  |
+| 2026-10-29T175301Z | experts-rega-dq2-dequant-cost-diag | primary | w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route) | done/gain | gain | 1.5556 | [1.532,1.579] | 835e1a443a604eb2 | check | merged | proceed | 3/3 |
 
 ## Held
 

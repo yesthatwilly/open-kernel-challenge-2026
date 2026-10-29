@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T183518Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -8,6 +8,7 @@ Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a h
 
 - [lead] engineA-v4x-s1: Engine A v4 stream-K fix-up cost D=+4.62 us/kernel (K1 +4.35, K2 +4.90), onset E1 +5.40 E2 +5.74 on the H200; v4x S1 BUILD mid | rows: load=decode_16 load=decode_32 load=verify_1 load=verify_16 | evidence: TC-A check f720d749741445bc [pcd-fx] lines (phasec/moe-fx-1028 9d3c3d3e); decision rule engineA.json final.tonight[0] | board: 1.8941 | blob: 54068229 | reopen: - | 2026-10-28 campaign (re-measure: measured on 1.8941, best now 1.9521)
 - [lead] engineA-v4x-s1: v4x twins (warp-scan pass list, gs in smem, 32-bit split; arm s single-thread ticket fence, arm d end-of-CTA ticket round) bitwise-clean and faster per class: s x1.050/1.031/1.035/1.026, d x1.031/1.018/1.022/1.012 at T8/16/32/128 | rows: load=decode_16 load=decode_32 load=verify_1 load=verify_16 | evidence: check f045f71064ce4104 1.881 (nothing routed: route-selection bug, 's alone' fallback never tried d); fix-up D i/s/d K1 +3.84/+3.47/+3.89 K2 +4.61/+3.94/+4.32 | board: 1.8941 | blob: 54068229 | reopen: - | 2026-10-28 campaign (re-measure: measured on 1.8941, best now 1.9521)
+- [lead] dq2 A3 dequant in the wgmma hot half (wg_kernel dq_stage): 35.9 -> ~27.9 instr per k16 step per warp, bit-exact; shortens the serial dequant->wgmma->wait chain | rows: load=verify_16, load=verify_32 | evidence: H100 gpunode06 hh probe (takemyjob hopper/hh-1029 e942c40; research/h100-hothalf-1029.md): hot-half pair A3/master x0.902-0.923 T=256, x0.894-0.898 T=128, moe judge draws x0.866/0.890; est decode +0.7%, moe +0.8% headline (not judge-checked); also w2 1.45 waves (tail 22-27% of T=256 pair, upper bound) and 576 token columns computed for 386 routes | board: 1.952 | blob: 691018b5 | reopen: stack with a w2 wave/tail fix and per-expert N-tile (padding) fix to >= 2.5%; judge check of the stack | 2026-10-29 h100
 
 ### shelf
 

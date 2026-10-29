@@ -1,12 +1,13 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T183518Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
 ### lead
 
 - [lead] engineA-v4x-s1 decode: Engine A v4 stream-K fix-up D_dec=+5.12 us/kernel (K1 +5.58, K2 +4.66), T=128 cold-half onset E2c +4.35 on the H200; v4x S1 BUILD | rows: load=decode_16 load=decode_32 load=verify_1 load=verify_16 load=verify_32 | evidence: TC-B check b47f8f7382d04d47 [pcd-dfx] lines (phasec/dec-fx-1028 b0a3762e); the run failed a verify_32 routing recheck at repetition 8 (cause under investigation) | board: 1.6551 | blob: b04cdf5c | reopen: - | 2026-10-28 campaign (re-measure: measured on 1.6551, best now 1.6904)
+- [lead] dq2 A3 dequant in the wgmma hot half (wg_kernel dq_stage): 35.9 -> ~27.9 instr per k16 step per warp, bit-exact; shortens the serial dequant->wgmma->wait chain | rows: load=verify_16, load=verify_32 | evidence: H100 gpunode06 hh probe (takemyjob hopper/hh-1029 e942c40; research/h100-hothalf-1029.md): hot-half pair A3/master x0.902-0.923 T=256, x0.894-0.898 T=128, moe judge draws x0.866/0.890; est decode +0.7%, moe +0.8% headline (not judge-checked); also w2 1.45 waves (tail 22-27% of T=256 pair, upper bound) and 576 token columns computed for 386 routes | board: 1.690 | blob: 315119e2 | reopen: stack with a w2 wave/tail fix and per-expert N-tile (padding) fix to >= 2.5%; judge check of the stack | 2026-10-29 h100
 
 ### shelf
 
