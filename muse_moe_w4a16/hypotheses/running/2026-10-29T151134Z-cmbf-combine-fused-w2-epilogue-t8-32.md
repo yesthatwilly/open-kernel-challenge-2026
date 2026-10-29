@@ -113,11 +113,20 @@ instrument: >
   medians and d in us
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T151704Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
+stage: claimed
+claimed_at: 2026-10-29T151704Z
+base_sha: 1da83323d3e8664218809cf1c921c5ffdc92545b
+base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
+branch: hyp/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
+worktree: .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
