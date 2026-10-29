@@ -80,4 +80,4 @@ OK with warnings: .worktrees/muse_moe_w4a16/hothalf-wh-a5b-port/muse_moe_w4a16/s
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.9748x [1.9451,2.0044], board: {"rank": 359, "team": "yesthatwilly", "speedup": 1.9748, "first": false, "ahead": 358, "to_first": 1.3629}

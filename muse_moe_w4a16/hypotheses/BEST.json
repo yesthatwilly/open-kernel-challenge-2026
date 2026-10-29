@@ -1,17 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "54b70249868f468b",
+ "job": "a5318a1f98984a5f",
  "check_job": "54b70249868f468b",
- "mode": "check",
- "speedup": 1.9826789715234687,
+ "mode": "submit",
+ "speedup": 1.974770471501011,
  "ci": [
-  1.9529387869506167,
-  2.0124191560963207
+  1.945148914428496,
+  2.004392028573526
  ],
- "score_us": 6782.994218003089,
+ "score_us": 6810.158544541066,
  "commit": "7da461db12b3c802a605fcdcaf2208314fe6dc60",
  "submission_blob": "37ea90fc306c0ed8fb3d49094bf5f4acf6202307",
  "slug": "hothalf-wh-a5b-port",
  "result": "muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.result.json",
- "updated_at": "2026-10-29T202411Z"
+ "updated_at": "2026-10-29T202807Z"
 }
