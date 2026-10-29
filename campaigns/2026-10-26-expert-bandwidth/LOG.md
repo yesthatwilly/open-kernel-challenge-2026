@@ -2571,3 +2571,7 @@ with the operator's go-ahead.
 - **54b70249 1.9827 [1.953, 2.012]:** wh5ds routed at T=256 (wg_kernel<G,14>; pair us m 115.1 / a3 101.2 / wh 98.9 / wh5ds 92.8; forked kfn wh5ds/m .887-.953, serial worst .953; exact + copy PASS); T=128 master. **verify_32 row 291.1 -> 274.4 us** (review predicted 272-276). churn harvested gain; scored **a5318a1f** of the same bytes (sha 8c4b56a9) dispatched.
 - **b12dens** (research/h100-b12dens-1029.md, takemyjob hopper/b12dens-1029 6d80717, GPU 6): at the judge's real escape density (51/30 max per CTA), uc1_g1 projects pooler m8 0.939, qkv m8 0.906, pooler m16 1.03; bridges >= 1.09, b12r 1.006 (model reproduces the judged bridge within 0.2%, b12r ~2%). GA0-GA1 gather cost pooler m8 3.84, m16 7.61, qkv m8 0.86 us. -> spend the bf16 check: build started (routable pooler m8 + qkv m8 with uc1_g1; pooler m16 diag; GA0 diag; gate 0.95).
 - H100 lanes running: fa3ws (GPU 4), pfexp (GPU 5).
+
+## 2026-10-29 2028Z — **moe 1.975 LANDED** (scored a5318a1f [1.945, 2.004]; +1.16% over 1.9521); decode wh5ds port minted
+- churn promoted it (BEST.json a5318a1f); [landed] claim; rank 359. The scored run is under the 1.24% judging margin on its own, but the check (1.9827) and the scored run both sit above the board and the verify_32 row moved as predicted.
+- Decode: moe's wh5ds transferred on the judge, so minted muse_decode_layer hothalf-wh5ds-moe-port (D0/a3/wh/wh5ds, per-T isolated-pair route + no-loss layer gate; user-requested, EV 0.77); review running.
