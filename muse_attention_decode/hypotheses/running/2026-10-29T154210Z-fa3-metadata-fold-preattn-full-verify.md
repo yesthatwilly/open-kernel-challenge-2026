@@ -111,7 +111,7 @@ base_sha: e18a2af19d9a60bde63f1ca29903b996d02a80a5
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 branch: hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify
 worktree: .worktrees/muse_attention_decode/fa3-metadata-fold-preattn-full-verify
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T160832Z
@@ -120,6 +120,8 @@ submission_sha256: 2b6cab1536b44a38a079b444ebe6bc692cb3574eccd3f6a9d87a57685019b
 norm_sha256: 28d8cf9b2d7ab00f86b7759f4b4cd64c45f22df763217282c6515c390e427fa2
 submission_blob: c6dc7efbd0129f26e2122d1027da01f903dd3148
 lint_warnings: 108
+attempt_file: 2026-10-29T160833Z-check-fa3-metadata-fold-preattn-full-verify.md
+prepared_at: 2026-10-29T160833Z
 ---
 
 # fa3-metadata-fold-preattn-full-verify
