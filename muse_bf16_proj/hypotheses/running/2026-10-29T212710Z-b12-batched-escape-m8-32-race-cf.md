@@ -15,7 +15,7 @@ confirm_of: b12-batched-escape-m8-32-race
 confirm_of_job: bced57b42b87444d
 review: proceed
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T212727Z
 base_sha: 84995d9e32799d8c940b71c9d279bedaad12e6d1
 base_blob: 5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab
@@ -24,6 +24,12 @@ worktree: .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race-cf
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T212737Z
+impl_commit: 1a8b6edc3f59c32b01680754d13eafcfb94f3eff
+submission_sha256: f5fa3671f2bbe9a6872de3d2af728cdea07bad7ae6ddb50b5b865d90464d3dd3
+norm_sha256: 6a001bc2811e29072474f4cb3f5160bc7340a3492911325721a6db4baeaac7af
+submission_blob: ededf8220bf604b63b4e8564beadcf3a6556ef8b
+lint_warnings: 58
 ---
 
 # b12-batched-escape-m8-32-race-cf
