@@ -124,7 +124,7 @@ base_sha: 9047e4ba7caa809ca4b9aae6a1a556243f61a13f
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
 branch: hyp/muse_prefill_layer/experts-rega-stage-anatomy-diag-r2
 worktree: .worktrees/muse_prefill_layer/experts-rega-stage-anatomy-diag-r2
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T153453Z
@@ -133,6 +133,8 @@ submission_sha256: b7d3e604c299b3cd70beeaffbe997b46cee7b5540e95da5275f4b424257ae
 norm_sha256: 183a04a464325f26c8d9458cf1b71e1471515edd14226c6d2b9ce16f7cb6ea78
 submission_blob: 7cc2179e987ab39cdacbf1caeb14d4e64cbfa4b6
 lint_warnings: 118
+attempt_file: 2026-10-29T153454Z-check-experts-rega-stage-anatomy-diag-r2.md
+prepared_at: 2026-10-29T153454Z
 ---
 
 # experts-rega-stage-anatomy-diag-r2
