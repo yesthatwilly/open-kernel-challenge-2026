@@ -127,12 +127,12 @@ decision: >
   random ratios; OFF by spill -> close, the 112-register budget is the blocker.
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T154811Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T154812Z
 base_sha: 06e1361569ec34702fbc0577933b82193553a264
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -151,6 +151,14 @@ attempt_file: 2026-10-29T160458Z-check-experts-rega-low-kpair-four-consumer-wgs.
 prepared_at: 2026-10-29T160458Z
 job: bbca0105449c4217
 dispatched_at: 2026-10-29T160516Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4925744641635206
+speedup_ci: [1.4701858472010678, 1.5149630811259733]
+harvested_at: 2026-10-29T162119Z
+best_at_harvest: 1.5007957663757285
+promotion: null
+mechanism: miss
 ---
 
 # experts-rega-low-kpair-four-consumer-wgs
@@ -394,3 +402,31 @@ OK with warnings: submission.py
 </details>
 
 `python3 -I -m py_compile` passed; worktree `__pycache__` removed.
+
+## Result
+
+- job `bbca0105449c4217` (check), status done, passed True, tests 5/5
+- speedup 1.4926x, 95% CI [1.4702, 1.5150], score 259554.1524403017 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5007957663757285, "ci": [1.4782838298800927, 1.5233077028713644], "job": "b2941ea23dc743a3"}; base result: muse_prefill_layer/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci); mechanism: miss (0/4 predicted rows past ±2%)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-kpair-four-consumer-wgs.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-kpair-four-consumer-wgs.patch`; branch `hyp/muse_prefill_layer/experts-rega-low-kpair-four-consumer-wgs`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 700.96 | 723.54 | 0.976 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1083.73 | 1111.11 | 0.9889 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2088.45 | 2053.33 | 0.9868 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3614.44 | 3592.7 | 0.9945 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11011.98 | 11556.59 | 1.0213 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10865.92 | 10868.62 | 1.0187 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14763.78 | 14901.68 | 1.0077 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18546.94 | 18317.67 | 0.9909 | flat |
+
+no shape moved outside noise. Expected hit: 1/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-low-kpair-four-consumer-wgs`) that adds a further change in the same area is the only way to learn more.
+
