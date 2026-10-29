@@ -2385,3 +2385,10 @@ with the operator's go-ahead.
   - Designs: consumer parallelism 0% (warps x1.00 in judge production; v6pe2 two-wave K2 rider ~1.5 us / +0.9%); instruction cost 0% (best PS post-MMA scaling +1.0-1.6%); EPF fused persistent T=1 +2.5% claimed, red-teamed to **+1.6% at p 0.45**.
   - The judge's T=1 per-record rate (1.245-1.267 us) sits just above both floors (ring 1.113-1.121, consume ~1.13), so the T=1 row has ~2-4 us of headroom in total.
   - EPF is recorded as [shelf]: reopen when stacked to >= 2.5%. The panel's H100 Q-D (consume at 1 CTA/SM without the register cap) is not queued: it cannot lift EPF past the bar on its own.
+- 2026-10-29T0655Z **Both H100 lanes are done** (research/h100-fork-1029.md, h100-t32-1029.md, h100-t1-1029.md):
+  - **Cold branch at priority -1:** x0.953-0.965 vs the board's fork, so it is refuted; RT_FORK_PRIO 0 stays.
+  - **Route stability:** the board routes s at class 128 only if d qualifies first. Judge d128 reads 1.011/1.013 against 1.01, with a between-prepare sd of 0.0022, so about 15-20% of judge prepares drop class 128 to v4c (~-0.3%). eb-v4x-routes removes this (s128 sits ~8 sd above its bar).
+  - **Scored 0523cad00e07415c (v4x-routes, same bytes as check 2d72cc8c) read 1.930**, below the board's 1.9502, so it does not land; the board keeps dceed39d.
+  - **Decode fork guard:** 0 collisions in 12 prepares, and the fork is worth only x1.007-1.017. Safe, no value; it rides with the next decode candidate.
+  - **Sanitizer path fixed** (Q5, mk_lean_any.py in git-scratch-c24a6e/t1-1029/): the cause was _combo_ref_fp32 retaining 66 GiB under compute-sanitizer; with a CPU reference, prepare peaks at 11-17 GiB. Board ea6 and eb-v6deep D4/D5 are clean: memcheck and synccheck 0 errors.
+  - The node's queue runner 11735 is still up. GPU 1 was added to queue/reserved. The nodejudge env is still on gpunode06, and the close-out waits on the user.
