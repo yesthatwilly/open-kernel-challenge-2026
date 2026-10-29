@@ -62,7 +62,7 @@ review_at: 2026-10-29T190531Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T190532Z
 base_sha: 9a165fa3daa30898af37b9dcd47adf0056de57e3
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -79,6 +79,8 @@ submission_blob: 0e45203e9f2feab93221928726e1b59575c7e6d5
 lint_warnings: 209
 attempt_file: 2026-10-29T194525Z-check-hothalf-a3-exactn-ring-wh.md
 prepared_at: 2026-10-29T194525Z
+job: 44f303647100481b
+dispatched_at: 2026-10-29T194534Z
 ---
 
 # hothalf-a3-exactn-ring-wh
