@@ -47,11 +47,20 @@ evidence: >
   us, row 427.7 -> 403.2; H100 hh3: decode +1.32% (wh) -> +1.53% (wh5ds)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T203620Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+stage: claimed
+claimed_at: 2026-10-29T203620Z
+base_sha: 906305a67ac68840ccfdb0d90d3edf861f6b9536
+base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
+branch: hyp/muse_decode_layer/hothalf-wh5ds-moe-port
+worktree: .worktrees/muse_decode_layer/hothalf-wh5ds-moe-port
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # hothalf-wh5ds-moe-port
