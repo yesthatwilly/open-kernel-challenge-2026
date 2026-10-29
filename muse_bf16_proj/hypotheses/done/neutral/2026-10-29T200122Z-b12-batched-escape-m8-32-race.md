@@ -50,12 +50,12 @@ evidence: >
   1.2794 (3e3ffc5a); triage shares pooler/qkv m8-32 ~25%
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T200826Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T202329Z
 base_sha: 69eaf6972f9cd230611dddd4bb025a1dbf631d8a
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -74,6 +74,14 @@ attempt_file: 2026-10-29T212210Z-check-b12-batched-escape-m8-32-race.md
 prepared_at: 2026-10-29T212210Z
 job: bced57b42b87444d
 dispatched_at: 2026-10-29T212219Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 1.2871382237194895
+speedup_ci: [1.2678311503636972, 1.3064452970752818]
+harvested_at: 2026-10-29T212710Z
+best_at_harvest: 1.279360358306445
+promotion: null
+mechanism: miss
 ---
 
 # b12-batched-escape-m8-32-race
@@ -185,3 +193,53 @@ Each item was checked against `git -C .worktrees/muse_bf16_proj/b12-batched-esca
 - [x] The first line `# okc: problem=muse_bf16_proj` is kept. py_compile is OK and __pycache__ was removed.
 
 okc_lint: `OK with warnings: .../muse_bf16_proj/submission.py`. All 58 warnings are host-sync/dtype items "outside kernel_fn's call graph; fine in prepare()". There are no errors.
+
+## Result
+
+- job `bced57b42b87444d` (check), status done, passed True, tests 9/9
+- speedup 1.2871x, 95% CI [1.2678, 1.3064], score 3753.1322673646223 µs vs SGLang 4830.8 µs
+- best at harvest: {"speedup": 1.279360358306445, "ci": [1.2601699529318484, 1.2985507636810416], "job": "3e3ffc5afc57433b"}; base result: muse_bf16_proj/hypotheses/BEST.result.json
+- **outcome: neutral** (unproven-vs-best); mechanism: miss (2/10 predicted rows past ±2%)
+- files: `muse_bf16_proj/hypotheses/done/neutral/b12-batched-escape-m8-32-race.result.json`, `muse_bf16_proj/hypotheses/done/neutral/b12-batched-escape-m8-32-race.patch`; branch `hyp/muse_bf16_proj/b12-batched-escape-m8-32-race`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| layer=qkv_gate load=decode_1 m=1 | 62 | 10.39 | 10.58 | 0.9947 | flat |
+| layer=o load=decode_1 m=1 | 62 | 5.7 | 5.55 | 1.005 | flat |
+| layer=pooler load=decode_1 m=1 | 62 | 15.02 | 14.97 | 1.0158 | flat |
+| layer=unpooler load=decode_1 m=1 | 62 | 4.97 | 4.99 | 1.0348 | gained |
+| layer=router load=decode_1 m=1 | 62 | 5.11 | 5.26 | 0.9795 | flat |
+| layer=qkv_gate load=decode_16 m=16 | 62 | 12.93 | 12.89 | 0.9876 | flat |
+| layer=o load=decode_16 m=16 | 62 | 6.58 | 6.31 | 1.0283 | flat |
+| layer=pooler load=decode_16 m=16 | 62 | 19.35 | 19.58 | 1.0065 | flat |
+| layer=unpooler load=decode_16 m=16 | 62 | 18.62 | 18.71 | 0.9871 | flat |
+| layer=router load=decode_16 m=16 | 62 | 5.31 | 5.25 | 1.0075 | flat |
+| layer=qkv_gate load=decode_32 m=32 | 62 | 13.47 | 14.38 | 0.959 | lost |
+| layer=o load=decode_32 m=32 | 62 | 6.34 | 6.7 | 0.9688 | lost |
+| layer=pooler load=decode_32 m=32 | 62 | 19.93 | 20.21 | 0.9932 | flat |
+| layer=unpooler load=decode_32 m=32 | 62 | 18.3 | 18.68 | 0.9893 | flat |
+| layer=router load=decode_32 m=32 | 62 | 5.74 | 5.85 | 0.9906 | flat |
+| layer=qkv_gate load=verify_1 m=8 | 62 | 12.75 | 11.68 | 1.0463 | gained |
+| layer=o load=verify_1 m=8 | 62 | 6.11 | 6.23 | 0.9926 | flat |
+| layer=pooler load=verify_1 m=8 | 62 | 19.02 | 16.01 | 1.203 | gained |
+| layer=unpooler load=verify_1 m=8 | 62 | 5.19 | 5.61 | 0.9686 | lost |
+| layer=router load=verify_1 m=8 | 62 | 4.99 | 5.34 | 0.9396 | lost |
+| layer=qkv_gate load=verify_16 m=128 | 62 | 16.07 | 15.74 | 1.0055 | flat |
+| layer=o load=verify_16 m=128 | 62 | 7.23 | 7.41 | 0.9723 | flat |
+| layer=pooler load=verify_16 m=128 | 62 | 21.93 | 22.34 | 0.9859 | flat |
+| layer=unpooler load=verify_16 m=128 | 62 | 18.6 | 19.32 | 0.9739 | flat |
+| layer=router load=verify_16 m=128 | 62 | 6.98 | 7.57 | 0.9448 | lost |
+| layer=qkv_gate load=verify_32 m=256 | 62 | 20.01 | 20.0 | 0.976 | flat |
+| layer=o load=verify_32 m=256 | 62 | 9.38 | 9.66 | 0.9646 | lost |
+| layer=pooler load=verify_32 m=256 | 62 | 30.25 | 30.15 | 0.9965 | flat |
+| layer=unpooler load=verify_32 m=256 | 62 | 24.34 | 24.22 | 0.9968 | flat |
+| layer=router load=verify_32 m=256 | 62 | 9.61 | 9.28 | 1.0384 | gained |
+
+gained on unpooler decode_1; qkv_gate verify_1; pooler verify_1; router verify_32; lost on qkv_gate decode_32; o decode_32, verify_32; unpooler verify_1; router verify_1, verify_16. Expected hit: 2/4. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+
