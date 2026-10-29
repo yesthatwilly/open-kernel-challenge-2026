@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-29T195421Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274439` (submit)
+Regenerated 2026-10-29T212714Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274439` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -88,6 +88,7 @@ Regenerated 2026-10-29T195421Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274
 | 2026-10-25T212731Z | marlin-hot-cold-two-class-bsm-t128-t256 | primary | w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-29T190020Z | hothalf-a3-exactn-ring-wh | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6794 | [1.654,1.705] | 44f303647100481b | check |  | proceed | 0/4 |
+| 2026-10-29T202838Z | hothalf-wh5ds-moe-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 

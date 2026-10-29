@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -147,6 +147,9 @@ Diagnosis of 2026-10-25T203424Z, written on board 1.2566 (today 1.2794): histori
 
 ### bf16 GEMM dispatch (shape-gated Triton routing, m<=16)
 - **bf16-shape-gated-triton-winners-combo** → neutral (unproven-vs-best), 1.1760x, mechanism flat 8/10 — gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). Combine, behind one shape gate in kernel_fn, the four individually-neu
+
+### bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels
+- **b12-batched-escape-m8-32-race** → neutral (unproven-vs-best), 1.2871x, mechanism miss 2/10 — gained on unpooler decode_1; qkv_gate verify_1; pooler verify_1; router verify_32; lost on qkv_gate decode_32; o decode_32, verify_32; unpooler verify_1; router verify_1, verify_16. Add bulk12 kernels for the m=8/16/32 cells of pooler, qkv_gate (and o if it fits), each raced per cell in prepare against master's incumbent (swap-AB Triton / c
 
 ### bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)
 - **b12mc-multicast-x-pooler-qkv-m8-readflush-diag** → neutral (within-ci), 1.2727x, mechanism flat 0/5 — gained on unpooler decode_1; router decode_1, verify_32; pooler verify_32; lost on qkv_gate decode_32, verify_1; o verify_1; unpooler verify_1; router verify_1. Prepare-only diagnostic. kernel_fn, every routing flag and every state key the timed path reads stay byte-identical to master (62da2d9e, blob a36f3392); the dia
@@ -347,5 +350,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 hold
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 hold
-- running: b12-batched-escape-m8-32-race [bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels] p1 running
+- queue: b12-batched-escape-m8-32-race-cf [bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

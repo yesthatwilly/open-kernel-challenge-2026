@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -307,4 +307,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: marlin-bsm8-t17-t32-w13-atomic-t1 [w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1)] p2 hold
 - queue: marlin-hot-cold-two-class-bsm-t128-t256 [w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256)] p2 hold
 - queue: wg2-occ2-b256-decode-port [w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate)] p4 hold
+- running: hothalf-wh5ds-moe-port [moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256] p1 running
 - 12 stale holds expired to `done/expired/` (not run)

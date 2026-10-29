@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T202811Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -54,6 +54,7 @@ Regenerated 2026-10-29T202811Z by `churn.py index`. Read this before writing a h
 - [landed] dedicated priority=-1 W6-M fork stream (_rt_fork_stream) instead of the torch pool stream | rows: load=verify_32 | evidence: reopened at priority 0 as v4x256c: check 03d2c99e 1.938 (fork x1.034-1.069, alt 2), scored dceed39d 1.950; gpunode06 eb-forkprio prio 0 337-338 vs -1 356-358 us | board: 1.950 | blob: a90ff05c | reopen: - | 2026-10-29 campaign
 - [landed] v4x256c: W6-M fork stream at priority 0, never the capture stream (_rt_fork_stream/_rt_fork_pick), plus v4cxs qualifying alone on the T=256 cold half | rows: load=verify_32 | evidence: job dceed39d08a14c73 (okc status dceed39d08a14c73), check 03d2c99e043a4a6a, master a96fae0582 | board: 1.9502 | blob: a90ff05c | reopen: - | 2026-10-29 campaign
 - [landed] stack2: v6pe2 two-wave ea6 K2 at T=1 + EPLF stream-K fix-up with fixed roles (routed at T16) + v4x-routes robust class-128 routing | rows: load=decode_1 load=decode_16 load=verify_16 | evidence: job 8418677e467d4fb7 (okc status 8418677e467d4fb7), check 456d90673f4346d1, master 9d66b13def | board: 1.9521 | blob: 691018b5 | reopen: - | 2026-10-29 campaign
+- [landed] hot half wh5ds at T=256 (A3 + A5b codes/scales + per-stage descriptor + split commit, wh exact-N/ring) in wg_kernel<G,14>, routed by isolated-pair race + fork no-loss gate (hothalf-wh-a5b-port) | rows: load=verify_32 | evidence: check 54b70249868f468b 1.9827 (verify_32 291.1 -> 274.4 us; pair m 115.1 -> wh5ds 92.8 us; forked kfn .887-.953); scored a5318a1f98984a5f 1.9748 [1.945, 2.004]; H100 hh2/hh3 | board: 1.9748 | blob: 37ea90fc | reopen: - | 2026-10-29 churn
 
 ### refuted
 
