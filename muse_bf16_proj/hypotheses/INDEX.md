@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-29T213652Z. Best: 1.2974x [1.2836,1.3111] job `bced57b42b87444d` (check)
+Regenerated 2026-10-29T214210Z. Best: 1.2839x [1.2646,1.3031] job `14ea7be493204308` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -94,7 +94,7 @@ Regenerated 2026-10-29T213652Z. Best: 1.2974x [1.2836,1.3111] job `bced57b42b874
 | 2026-10-27T132918Z | router-hilo-m128-m256-readflush-config-sweep | primary | router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T143409Z | router-pdl-plus-khalf-pooled-iqr-gate | primary | router m=9..256 PDL (restack) + pooler m=128 khalf gate rule | done/neutral | neutral | 1.2723 | [1.253,1.291] | 023f4260e86e423e | check |  | proceed | 4/6 |
 | 2026-10-29T150920Z | b12mc-multicast-x-pooler-qkv-m8-readflush-diag | primary | bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster) | done/neutral | neutral | 1.2727 | [1.254,1.292] | 5f35efd59d054392 | check |  | proceed | 0/6 |
-| 2026-10-29T200122Z | b12-batched-escape-m8-32-race | primary | bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels | done/gain | gain | 1.2974 | [1.284,1.311] | bced57b42b87444d | check | merged | proceed | 2/4 |
+| 2026-10-29T200122Z | b12-batched-escape-m8-32-race | primary | bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels | done/gain | gain | 1.2974 | [1.284,1.311] | bced57b42b87444d | check | done | proceed | 2/4 |
 | 2026-10-29T212710Z | b12-batched-escape-m8-32-race-cf | confirm→b12-batched-escape-m8-32-race | bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels | done/gain | gain | 1.3076 | [1.288,1.327] | c0f8969e76cf4cb7 | check | via-parent | proceed |  |
 
 ## Held
