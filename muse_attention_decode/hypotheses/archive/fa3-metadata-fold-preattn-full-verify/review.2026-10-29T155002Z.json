@@ -1,0 +1,31 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Proceed. Fresh (board 1.6340, blob 2eb03f76) and user-requested; differs in mechanism from the refuted side-stream attempt (CLAIMS.md:53): it removes FA3's prepare node rather than moving it, the saving that claim's reopen measured. The headline is unreadable (0.73% inside the CI and the ~1% swing from flipping sliding-verify gates, CLAIMS.md:64), so judge per row: full verify_1, the profile's prepare row, and the in-run race lines. Before building, fix two places where an unchecked mistake could give wrong output instead of no route: the split cap (NUM_SPLITS_STATIC) and the guard on the t == tokens programs.",
+ "justification": "Every full-verify row on 4e386647 and f1043d2c shows prepare_varlen_num_blocks_kernel<1|2,true>: 2.7-2.8 us (B=1), 3.1 (B=16), 3.4-3.5 (B=32). Passing scheduler_metadata sets skip_scheduler_metadata_computation and removes the node (proved by full decode_1 with the judge's metadata). f1043d2c measured the in-graph saving at -2.1 (B=16) / -2.5 us (B=32), ~70% of the row because FA3 PDL-overlaps part of prepare. The stated layout matches upstream mha_fwd but cannot be verified on this node (no sgl_kernel), so gates (a) size match and (b) bitwise match arbitrate; a differing build means no route. verify_1 uses spread 'fixed' (length 80000 at B=1), so the B=1 bitwise gate checks one point; route keys (B, max_pages) are known at import. Value arithmetic checks out (0.238/0.076/0.044 %/us). WEAKEST LINK: the B=1 row carries 0.48 of the 0.73% and is unmeasured; pre-attention there is 1.4-1.6 us so the metadata program is least hidden and removing prepare loses its prologue overlap: net 1.2-1.7 us as likely as 2.0. B=32's 0.7% sits at the 1.005x race bar, so its route may flip. Prior difference real (side-stream 42964d93 still launched prepare; fa3-scheduler-metadata-full-verify never ran). CLAIMS.md:42 does not apply.",
+ "confounders": [
+  "fused-preattention-triton: its span (1.4-1.6 us B=1, 2.7-4.1 us B=16/32) sets how much the metadata program hides; not an attribution confounder because the race is paired in-run.",
+  "fa3-hdim128-head-pairing + paired-heads-launch-cleanup: set the geometry (B=16/32 paired view num_heads_k 1, hd 128; B=1 unpaired hkv 2, hd 64); constants must be recovered per row from the actual views.",
+  "s2b / sw17 sliding verify gates (CLAIMS.md:58, 60, 64): flip between runs, ~+-1% headline; read full verify rows, the profile and PATH CHOSEN lines, never the headline.",
+  "FA3's own PDL launch after prepare: part of the row already hidden; f1043d2c accounts for it at B=16/32, not at B=1."
+ ],
+ "interference": "No companions; gate (d) alternates graph replays of master's step vs the fold on cloned judge-shape inputs and prints step times and the prepare delta per row; the profile shows whether the prepare row is gone and FA3 main/combine stayed within ~1% of 4e386647. Full verify_1 (30.1 -> ~28.1 us, ~6.6%) is readable from one run; verify_16 (1.2%) and verify_32 (0.7%) only from race lines plus profile. Record as a per-row [shelf] (a stacker, e.g. with CLAIMS.md:65), not a board candidate.",
+ "rules_flags": [
+  "Fresh inputs: metadata recomputed per call from cache_seqlens into a per-call torch.empty; only shape constants frozen. B=1's judge length is constant, so a lazy hardcoded B=1 vector would pass correctness and break the rule: the gate's B=1 edge sets with other lengths must match the library.",
+  "Semaphore written 0 on every call by the metadata program; gate (c)'s two-replay torch.equal covers it.",
+  "Wrong-output risk 1, split cap: if NUM_SPLITS_STATIC is recovered too high, unsampled draws can exceed the host's out_accum size (OOB writes). Require a cap-binding sample per row ('one long + many short' at B=16/32) or clamp to the smallest cap consistent with the samples, never larger.",
+  "Wrong-output risk 2, t == tokens guard: extra programs must not run the existing body (OOB loc_ptr read, garbage cache-row store). Use an explicit runtime branch around the whole body, and add to gate (c) a torch.equal of the entire k_cache/v_cache vs master after one call.",
+  "Other metadata errors are no-route or harmless (permutation, clamped splits, shape-constant m blocks).",
+  "No host syncs; graph-capturable; every-key attention unchanged."
+ ],
+ "freshness": "BEST 1.6340 (4e386647edd845f7), blob 2eb03f76: fresh. CLAIMS.md:53 [refuted] FA3 call-site tweaks / side stream, reopen 'only inside the attn-fixed rewrite' can no longer be met (attn-fixed chose swf; fvs refuted CLAIMS.md:79, 80); this is a different mechanism taking the reopen's measured saving, user-requested: not held. No [landed] claim owns full verify rows with another mechanism; CLAIMS.md:63 refuted, FA3 still owns them.",
+ "companions": [],
+ "open_questions": [
+  "Tie order in varlen_batch_idx: try both tie rules (stable on batch index vs other) on the all-equal-length edge set and adopt the one that matches the library.",
+  "fp32 blocks_per_sm: FA3 built with --use_fast_math; Triton div.full.f32 may differ by 1 ulp near integers; memory-safe only with a correct cap.",
+  "Gate's get_scheduler_metadata call must pass cu_seqlens_q and max_seqlen_k = page_table.shape[1]*page_size.",
+  "Print the metadata program's added pre-attention time (META on vs off) in PATH CHOSEN to separate fold overhead from lost PDL overlap at B=1.",
+  "Consider >= 1.00x bars at B=16/32 once gates (a)-(c) pass (bitwise-equal output, a node removed).",
+  "Confirm the harvest matcher treats direction 'same' as 'flat'."
+ ]
+}

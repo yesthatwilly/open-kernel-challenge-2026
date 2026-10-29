@@ -99,8 +99,12 @@ evidence: >
   30.94 us (moving, not removing, the node loses); row rates from attn-fixed.json: verify_1
   0.238%/us, verify_16 0.076%/us, verify_32 0.044%/us
 user_requested: true
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-29T155002Z
+review_companions: null
+review_best: 1.6339575246416982
+review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 ---
 
 # fa3-metadata-fold-preattn-full-verify
@@ -127,3 +131,30 @@ Fold FA3's varlen scheduler metadata (what flash::prepare_varlen_num_blocks_kern
 ## Risk
 
 User-requested under 'run all you want that youre able to' (2026-10-29 1504Z); below the value bar: ~0.73% headline is under the judge margin (1.24%), so it cannot land alone and is read per row (prepare row gone, full verify rows -2 us) or stacked later. Correctness risk: the port must match this build's prepare_varlen_num_blocks_kernel<NumWarps, Sort=true> bit for bit (statement order, fp32 ceilf, stable descending sort, nheads_in_l2 rule, semaphore zero); the import gate compares against the library's own get_scheduler_metadata and FA3 output torch.equal, and falls back to master on any mismatch, so the failure mode is 'no route' (flat), not wrong output. Version risk: if the installed build differs from upstream (vector count, layout, pad semantics), gate (a) finds no matching tuple and nothing routes. Perf risk: the extra program (one warp, B <= 32, [32,32] rank tile) must not lengthen the pre-attention launch by more than ~0.3 us; the race catches it. The side-stream attempt showed full verify_1 losing 0.7 us when the prepare kernel was moved rather than removed; here no kernel and no stream edge is added. Not input-derived caching: only shape-only constants (block sizes, static split cap, SM count) are frozen per (B, page-table width); metadata is rebuilt every call.
+
+## Adversarial review
+
+Reviewed 2026-10-29T155002Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed. Fresh (board 1.6340, blob 2eb03f76) and user-requested; differs in mechanism from the refuted side-stream attempt (CLAIMS.md:53): it removes FA3's prepare node rather than moving it, the saving that claim's reopen measured. The headline is unreadable (0.73% inside the CI and the ~1% swing from flipping sliding-verify gates, CLAIMS.md:64), so judge per row: full verify_1, the profile's prepare row, and the in-run race lines. Before building, fix two places where an unchecked mistake could give wrong output instead of no route: the split cap (NUM_SPLITS_STATIC) and the guard on the t == tokens programs.
+
+### Justification
+Every full-verify row on 4e386647 and f1043d2c shows prepare_varlen_num_blocks_kernel<1|2,true>: 2.7-2.8 us (B=1), 3.1 (B=16), 3.4-3.5 (B=32). Passing scheduler_metadata sets skip_scheduler_metadata_computation and removes the node (proved by full decode_1 with the judge's metadata). f1043d2c measured the in-graph saving at -2.1 (B=16) / -2.5 us (B=32), ~70% of the row because FA3 PDL-overlaps part of prepare. The stated layout matches upstream mha_fwd but cannot be verified on this node (no sgl_kernel), so gates (a) size match and (b) bitwise match arbitrate; a differing build means no route. verify_1 uses spread 'fixed' (length 80000 at B=1), so the B=1 bitwise gate checks one point; route keys (B, max_pages) are known at import. Value arithmetic checks out (0.238/0.076/0.044 %/us). WEAKEST LINK: the B=1 row carries 0.48 of the 0.73% and is unmeasured; pre-attention there is 1.4-1.6 us so the metadata program is least hidden and removing prepare loses its prologue overlap: net 1.2-1.7 us as likely as 2.0. B=32's 0.7% sits at the 1.005x race bar, so its route may flip. Prior difference real (side-stream 42964d93 still launched prepare; fa3-scheduler-metadata-full-verify never ran). CLAIMS.md:42 does not apply.
+
+### Confounders on the current kernel
+- fused-preattention-triton: its span (1.4-1.6 us B=1, 2.7-4.1 us B=16/32) sets how much the metadata program hides; not an attribution confounder because the race is paired in-run.
+- fa3-hdim128-head-pairing + paired-heads-launch-cleanup: set the geometry (B=16/32 paired view num_heads_k 1, hd 128; B=1 unpaired hkv 2, hd 64); constants must be recovered per row from the actual views.
+- s2b / sw17 sliding verify gates (CLAIMS.md:58, 60, 64): flip between runs, ~+-1% headline; read full verify rows, the profile and PATH CHOSEN lines, never the headline.
+- FA3's own PDL launch after prepare: part of the row already hidden; f1043d2c accounts for it at B=16/32, not at B=1.
+
+### Interference and A/B needs
+No companions; gate (d) alternates graph replays of master's step vs the fold on cloned judge-shape inputs and prints step times and the prepare delta per row; the profile shows whether the prepare row is gone and FA3 main/combine stayed within ~1% of 4e386647. Full verify_1 (30.1 -> ~28.1 us, ~6.6%) is readable from one run; verify_16 (1.2%) and verify_32 (0.7%) only from race lines plus profile. Record as a per-row [shelf] (a stacker, e.g. with CLAIMS.md:65), not a board candidate.
+
+### Open questions
+- Tie order in varlen_batch_idx: try both tie rules (stable on batch index vs other) on the all-equal-length edge set and adopt the one that matches the library.
+- fp32 blocks_per_sm: FA3 built with --use_fast_math; Triton div.full.f32 may differ by 1 ulp near integers; memory-safe only with a correct cap.
+- Gate's get_scheduler_metadata call must pass cu_seqlens_q and max_seqlen_k = page_table.shape[1]*page_size.
+- Print the metadata program's added pre-attention time (META on vs off) in PATH CHOSEN to separate fold overhead from lost PDL overlap at B=1.
+- Consider >= 1.00x bars at B=16/32 once gates (a)-(c) pass (bitwise-equal output, a node removed).
+- Confirm the harvest matcher treats direction 'same' as 'flat'.
+
