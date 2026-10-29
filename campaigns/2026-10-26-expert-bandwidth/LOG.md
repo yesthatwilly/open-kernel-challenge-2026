@@ -2634,3 +2634,8 @@ with the operator's go-ahead.
 ## 2026-10-29 2239Z — user steer: keep the H100 running >= 14 h; stay on the expert block
 - The user: "yes, keep h100 running at least for the next 14 hours.  stay focused on expert block, because this is where all the gains are, right?" Answer recorded: mostly yes (decode anatomy: expert block 48-68% of sliding rows, x1.24 at 1.3x floor vs attention x1.064, dense x1.033; tonight's landings prefill/moe all expert-block); the exception is full-verify attention (~29% of full verify rows), whose gate-kernel r2 check is already in flight.
 - Overnight: expert-block H100 lanes (agents build CPU-side, the main thread launches GPU runs, since subagent node runs are refused by the policy) + phase A at 00:00Z = decode port of the moe Engine A encodings (+ wh5ds rider + T=16 pin).
+
+## 2026-10-29 2243Z — attention r2 18499109: gate kernel ROUTED (v16 0.903-0.916, v32 0.919-0.920), 1.6422; confirm a47caf07
+- Build OK (38 s): regs 128, lmem 0, smem 89 KB, 2 CTAs/SM, G 264, cooperative. Routed rows: unpaired q, fused RMSNorm x sigmoid(gate) in the combine. Error = master's (judge 7.14e-02 vs master 7.19e-02; relL2 1.7-1.8e-3); replay exact.
+- **First H200 measurement of the gate:** v32 kernel 277.6 us, mainloop 265.2 (2.53 TB/s), loads-only 165.4 (4.06 TB/s), math-only 233.1 (same as the H100: per-SM); v16 mainloop 139.1, loads 85.0, math 119.6. On the H200 the kernel is math-bound (loads 0.62-0.71 of math).
+- Headline 1.6422 vs the lucky 1.6340 board (+0.50%; ~+1.3% over the code level ~1.62). churn: unproven -> confirm **a47caf07** dispatched. Next attention lever: the gate's math (QK/softmax/PV latency chain), not memory.
