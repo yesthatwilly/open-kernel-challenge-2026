@@ -2392,3 +2392,9 @@ with the operator's go-ahead.
   - **Decode fork guard:** 0 collisions in 12 prepares, and the fork is worth only x1.007-1.017. Safe, no value; it rides with the next decode candidate.
   - **Sanitizer path fixed** (Q5, mk_lean_any.py in git-scratch-c24a6e/t1-1029/): the cause was _combo_ref_fp32 retaining 66 GiB under compute-sanitizer; with a CPU reference, prepare peaks at 11-17 GiB. Board ea6 and eb-v6deep D4/D5 are clean: memcheck and synccheck 0 errors.
   - The node's queue runner 11735 is still up. GPU 1 was added to queue/reserved. The nodejudge env is still on gpunode06, and the close-out waits on the user.
+- 2026-10-29T0740Z **t32 lane:**
+  - The panel (wf_4dfd24a1-fa8) judged EV 1% and built the prints-only oracle rung t32p (campaign/eb-t32 55a6d696).
+  - **Check d2261ab8 read 1.938: MID+Hflag.**
+    - L* = 3.08 us per kernel (iso K1 3.66, K2 3.98; prod 3.08), H = 1.39/1.57, E = 2.08/2.54.
+    - v4xr is slower (wr 0.98): refuted. EPLF goes to [shelf]; per the MID rule it rides a later moe build as a raced arm.
+  - **Next, a stack lane `stack`** (the [shelf] stacking rule): EPLF (decode_16/32, verify_1/16) plus the t1rate v6pe2 two-wave K2 rider (decode_1, host-only, ~+0.9%), as raced arms in one moe build on campaign/eb-v4x-routes (the board plus robust class-128 routing). Expected about +2-3.5% if both capture; briefs in git-scratch-c24a6e/stack-1029-briefs.md.
