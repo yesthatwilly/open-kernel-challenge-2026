@@ -138,7 +138,7 @@ base_sha: c54503e25e6fe0056cea3feba5d4e4982d602c7d
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
 branch: hyp/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag
 worktree: .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T153340Z
@@ -147,6 +147,8 @@ submission_sha256: 694e0e660c0bb64e35b370c1f816e2733a7f64f0667b84b63f5212f0baa30
 norm_sha256: aafec7f35f9fbcd8f6cabf50d4ba58f2d059a93399e072d8f1a2ad5630fd6010
 submission_blob: cb2f95c8a3228c5078eb8314b805bb900ed0a0dd
 lint_warnings: 61
+attempt_file: 2026-10-29T153340Z-check-b12mc-multicast-x-pooler-qkv-m8-readflush-diag.md
+prepared_at: 2026-10-29T153340Z
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
