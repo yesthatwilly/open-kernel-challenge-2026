@@ -118,7 +118,7 @@ review_at: 2026-10-29T151704Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T151704Z
 base_sha: 1da83323d3e8664218809cf1c921c5ffdc92545b
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
@@ -127,6 +127,12 @@ worktree: .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T155356Z
+impl_commit: 42ee20ddf03e82dd4a76c80a7d6185687e5a16ea
+submission_sha256: aabff6091f36f05e29239481407f45801210f1b95a52ba54587cadb588beb82d
+norm_sha256: db17c1745521add433448cd16960a4ec2ba54603c16adcc9dcec0e81f731efba
+submission_blob: 08be8b80f820bab310402d564c9aa1c1f305c5ae
+lint_warnings: 198
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
@@ -183,3 +189,38 @@ No companion run. Print-only diag, paired in-process race, CMBF_ROUTE = False. R
 - T128 ride-along: last CTA may own several tokens serially; do not pool with T8-32.
 - Copy check: the graph replayed on a state copy must use its own zeroed cfc buffer.
 
+
+## Implementation notes
+
+**Mechanism:** print-only diag: ea_combine fused into the routed w2 twins' K2 (v4xs / v4cxs arm s and EPLF v4xe / v4cxe) as per-token last-arriver counters plus ea_combine's body at the CTA end (arm CF, own module ea4xcf), raced as inc / cf0 / cf at T8 / 16 / 32 / 128; the timed path is master's on every row.
+
+What changed (muse_moe_w4a16/submission.py only, +439 lines, 0 deleted; new section `rewrite/lib/cmbf_core.py` after stack_core.py plus four prepare-time hooks):
+- **CF module (ea4xcf), its own background build.** `_cmbf_source()` takes `_stk_source()`'s eak..eak4x base and appends: namespace `eacf` (the fused combine), then text copies of the `eak4x` and `eak4xe` namespaces renamed `eak4xcf` / `eak4xecf` with their `__global__` kernels cut and hooks spliced at four anchors (each must occur exactly once or the build raises): the `expert_body_*` signature gains `const eacf::Cf& cf` (plus `static_assert(!W13)`), `eacf::cf_head` before `const int W = ...` (right after `griddep_launch`), `eacf::cf_note` after the loop's `epi<W13>` call (one call site covers the aligned owner, the ticket finisher and EPLF's fixed-role finisher), and `eacf::cf_tail` after the loop (arm s) / after EPLF's end-of-CTA `publish()`. Kernels: `cf_w2s_kernel` (= expert_body_x<false, 2, false>) and `cf_w2e_kernel<PF>` for PF 2 / 1 / 0, all `__launch_bounds__(288, 2)`, dynamic smem = 113,136 + 128 B (the 16-entry super-group list + count, past s_gs; 2 x (113,264 + 1024) = 228,576 <= 233,472). One entry point `ea4x_w2cf` (deviation: the spec named two, ea4x_w2cf / ea4xe_w2cf; one entry with pdl bit 14 = EPLF, PF in bits 12..13 as ea4xe_w2, saves ~1 KB), bit 15 = cf0 (tail off). `ea4xcf_info()` gives ok / regs / lmem / smem / occ per instance. The board's `_EA2_SRC`, `_EA4X_SRC_BODY`, `_STK_SRC_BODY`, `_ea4x_source()` and `_stk_source()` are byte-identical to master (checked by exec'ing both files' builders); kernel_fn, `_ea_forward`, `_ea3_forward_core` and every other function the timed call reaches are unchanged (only `prepare` and `_ea_setup` differ, by the hooks).
+- **Device protocol (eacf).** cf_head: thread 0 zeroes the list count; unless cf0, K2 CTA t < T writes out[t] = +0 when topk_ids[t, 0..7] has no local id (K1's local_ids predicate on the input, so no K1 dependency). cf_note: thread 0 only appends sgrp to smem (overflow > 16 sets err 4); nothing is carried in registers across consume / consume2. cf_tail (consumer warps, CTA end): bar_consumers (ring free, all y stores and the list complete); per-token counts of finished (super-group, route) pairs in ring smem (16 entries x 16 routes = one smem atomicAdd per thread); bar_consumers; warp 0, one lane per touched token: `atom.release.gpu.global.add.s32` (review fix 1: every counting lane's RMW is itself a release, after the CTA barriers that order every warp's y stores, the CUTLASS GenericBarrier idiom); the add that makes cfc[t] reach 32 x n_local(t) owns t: that lane `fence.acq_rel.gpu` (acquire), resets cfc[t] = 0, records t (ballot compaction); bar_consumers; then for each owned token comb_one = ea_combine_kernel's body in its fp32 order (per local slot ss over i 0..15 from 0.f, xor tree 16..1, red[s][warp]; one barrier; tot over warps 0..7 from 0.f, rsqrtf(tot / 4096 + eps), acc += g * v * r in slot order, bf16 rn, k = 2i packing). Register-lean (review fix 4): no 8-slot hoist; each local slot's two y uint4 are __ldcg-loaded in pass 1 and reloaded in pass 2, (1 + w) recomputed; red is double-buffered by token parity in ring smem so one barrier per token suffices. No fp atomics, no inter-CTA waits or spins, no host sync.
+- **Host (cmbf).** `_cmbf_build_start` (prepare entry, after `_stk_build_start`): a daemon thread first joins the v4x / EPLF / ea6 build threads (bounded by CMBF_BUILD_S = 120 s) and compiles CF only if they are done and it is still before 120 s, so it never competes with ext4x / STK (review fix 6). `_cmbf_stage` (in `_ea_setup` right after `_stk_stage`): joins until CMBF_JOIN_S = 180 s; admission per instance regs <= STK_REG_CAP (96), 0 B lmem, 2 CTAs/SM (arm-s CF, and EPLF CF at the board's K2 PF from e_pf); prints regs/lmem/occ/SASS-instruction-count of the board's K2 s, CF s, the board's K2 e (its PF) and CF e (SASS from the module .so's sm_90 cubin .text via the existing `_es_cubins` / `_es_elf_sections`). Per class 8 / 16 / 32 / 128: twin = the routed arm (v4xs / v4cxs / v4xe / v4cxe); if the routed arm is EPLF and its CF instance is not admitted, the arm-s twin of the same base (v4xs / v4cxs) is raced instead, with the race's inc set to that arm-s twin (review: read T16 on v4xs-CF vs v4xs + ea_combine); classes on any other engine get no reading. Then canary (eager, NaN-poisoned h / y / out and partials, every EA4X_CANARY_T of the class x `_ea_routings` (+ judge draws at 128, the judge p50 draw at T >= 8): twin + ea_combine vs cf, cf, cf0, cf0, out and y bitwise as int16 views, tickets / flags / err / cfc all 0 after each call), copy check (`_ea4x_copy_check` for arm s, `_stk_copy_check` for EPLF, with the CF arm; cfc is zeroed first so the `_wg_copy_tree` state copy clones its own zeroed counters, review fix 5; this state's cfc must be 0 after), then the paired race: `_ea6_race` (kernel_fn graphs, cold L2, baseline-subtracted) of inc, cf0 and cf on `_ea4x_draws` p10 / p50 / p90, 1 + EA4X_MORE calls pooled (6 rounds). The CF cores are registered in `_EA4X_CORES` only for the stage and removed after it, and `extcf` / `cfc` are popped from the state, so after prepare the engine table and state are master's. `_cmbf_final` (prepare's last step) joins a build still running (until 285 s, so no build outlives prepare) and prints the [cmbf] lines last.
+- **Output.** `[cmbf] build ...` (build s, start s, regs/lmem/occ/sass of the four kernels, admission); per class two lines: `[cmbf] T<c> <twin> us p10/p50/p90 inc a/b/c cf0 a/b/c cf a/b/c | judge row <111.5 / 140.2 / 81.2 / 232.3> us` and `[cmbf] T<c> d inc-cf p10/p50/p90 tax cf0-inc (p50) fuse cf0-cf (p50) | inc/cf worst/pooled | rounds | canary runs, copy, sums | NOT ROUTED (diag)`; then the VERDICT line.
+- **Decision as implemented (review fix 3, restating (A)).** A class reading is valid only with a clean canary, a passing copy check and zero tickets / err / cfc after the race. d_c = pooled p50 (inc - cf) in us. stack3 mid = EPF mid 0.6% + slot-rider mid 0.63% + sum over the valid classes T8 / T16 / T32 of (d_c / inc_c) / 6 x 100%, inc_c the race's own pooled p50 inc. (A) LEAD (mint stack3, CF routed per class by the EA4X_MARGIN race) only if min(d16, d32) >= 2.0 us AND stack3 mid >= 2.5%; (C) REFUTED if max(d16, d32) < 1.0 us; else (B) SHELF. T128 is printed on its own (d and its /6 term), never pooled into the mid. No valid T16 or T32 reading -> VERDICT none (fix once, never re-roll identical bytes, else close unmeasured). Note the arithmetic: at inc ~113 / 154 us, d16 = d32 = 2.0 us adds only ~0.3% + 0.2%, so (A) in practice also needs a large T8 term; (B) is the likely outcome even at d >= 2 us.
+- **Deviations / notes.** (1) Spec (5) said kernel_fn / `_ea3_forward_core` gain a cf flag; per the brief's fix 6 (timed path byte-identical) the CF path is a separate prepare-only runner (`_cmbf_run`) dispatched through `_EA4X_CORES` during the stage; CMBF_ROUTE = False is a documented constant and stack3 would add the per-class route (set ea['on'][t] to `<twin>.cf` and keep `extcf` / `cfc`). (2) Zero rows use topk_ids (input) instead of K1's local_ids (same predicate), so no wait on K1 is needed. (3) cf0's combine follows the class's `cmb_t` (ea_combine, else Triton), as the incumbent; the canary compares everything to ea_combine. (4) **Size: +25,624 B (file 989,807 B).** The spec's <= 12 KB / 988,500 B target could not hold two CF instantiations' host code, the canary, copy check, three-arm race, admission/SASS print and verdict; after compaction the file is under the 990,000 B campaign budget (193 B margin) but 1,307 B over 988,500. (5) Cannot compile or run here: the assembled CF source (133 KB) passes g++ -fsyntax-only with the repo's cuda_stub (templates instantiated), anchors resolve once each; register count, PTX (`atom.release.gpu.global.add.s32`) and bitwise equality are only checked on the judge (admission / canary).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32 diff` (one file, +439 / -0):
+- [x] CUDA-graph capturable: kernel_fn and every function it reaches are byte-identical to master; the CF runner (prepare-only, graph-captured in the race) has no `.item()` / `.cpu()` / sync / tensor print and branches only on T, the twin and prepare-set state; the three new host-sync warnings (L12373 `_cmbf_sums`, L12469 `.item()` after the copy check, L12510 synchronize) are in prepare-only code.
+- [x] Nothing derived from `data` is cached across calls: cfc counters are scratch that each owner resets within the call (and are dropped from the state after the stage); no output or routing is stored.
+- [x] Weights: untouched; CF reads the same repacked NVFP4 records (w2r / gs2) as the board's twins.
+- [x] Activations BF16 where SGLang keeps BF16: y and out stay bf16; the combine is ea_combine's fp32 math bitwise. n/a for KV / queries (no attention here).
+- [x] Attention sees every key: n/a: MoE expert block, no attention.
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocesses or network: the only new build is a torch load_inline in a prepare-time thread (as the existing ea4x / stack builds), joined before prepare returns.
+- [x] All work happens inside the timed call; no output caching or replay: the timed path is master's (diag, print-only); CF is never routed.
+- [x] First line `# okc: problem=muse_moe_w4a16` kept; no triton.autotune added.
+
+Lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_moe_w4a16/submission.py --problem muse_moe_w4a16`): rc 0, `OK with warnings` (198 warnings vs master's 195; the 3 new ones are prepare-only host syncs):
+
+```
+warn  host-sync    L12373: return [int(v) for v in torch.stack([ea[k].sum() for k in ("tk13" + sx, "tk2" + sx, "err" + sx, "cfc")]).tolist()]  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L12469: ent["copy"] = (cc[0] and ea["cfc"].sum().item() == 0, cc[1][:40])  (outside kernel_fn's call graph; fine in prepare())
+warn  host-sync    L12510: torch.cuda.synchronize()  (outside kernel_fn's call graph; fine in prepare())
+OK with warnings: .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32/muse_moe_w4a16/submission.py
+```
+
+`python3 -I -m py_compile`: ok (__pycache__ removed). cuda_syntax.py (eb-t32d stub): `_EA2_SRC`, `_EB_SRC`, `_ES1_SRC` ok; the assembled CF module source and its generated cpp declarations: g++ -fsyntax-only rc 0.
