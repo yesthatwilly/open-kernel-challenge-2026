@@ -53,11 +53,20 @@ evidence: >
   (research/h100-ea-enc-1029.md)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T215954Z
 review_companions: null
 review_best: 1.974770471501011
 review_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
+stage: claimed
+claimed_at: 2026-10-29T215954Z
+base_sha: 973f86b3744c4b9b1d60469442fad05d8fca5783
+base_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
+branch: hyp/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race
+worktree: .worktrees/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # engine-a-a4b-a5b-encodings-race
