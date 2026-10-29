@@ -118,7 +118,7 @@ review_at: 2026-10-29T151704Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T151704Z
 base_sha: 1da83323d3e8664218809cf1c921c5ffdc92545b
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
@@ -135,6 +135,8 @@ submission_blob: 08be8b80f820bab310402d564c9aa1c1f305c5ae
 lint_warnings: 198
 attempt_file: 2026-10-29T155357Z-check-cmbf-combine-fused-w2-epilogue-t8-32.md
 prepared_at: 2026-10-29T155357Z
+job: a5aee75176174ce4
+dispatched_at: 2026-10-29T155410Z
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
