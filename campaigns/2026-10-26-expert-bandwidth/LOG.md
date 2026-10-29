@@ -2404,3 +2404,9 @@ with the operator's go-ahead.
   - No scored run.
   - **stack2 started:** fix EPLF's register cap or spill (reuse .worktrees/eb-stack) and re-check. v6pe2 is kept.
   - Quota: moe 15 checks / 8 runs.
+- 2026-10-29T1020Z **moe 1.952 (rank 332): stack2 LANDED** (master 9d66b13d; scored 8418677e467d4fb7 [1.923, 1.981]; check 456d9067 1.953).
+  - **stack2:** v4x-routes (robust class-128 routing) + v6pe2 (two-wave ea6 K2 at T=1; ratio 1.039, decode_1 27.3-27.6 us vs ~29.3) + EPLF.
+  - **EPLF:** admitted after the spill fix (the cap is 96, not 112, because of the 4-sub-partition register split; loop state packed into one int; PF2 smem prefetch 95-96 regs, lmem 0). It routed only at T16 (1.011/1.000). At T8/T32/T128 it reads level (0.98-1.01), so the oracle's 3.08 us/kernel is mostly not captured by EPLF's form.
+  - Within the margin of dceed39d's 1.950 the headline is a tie, but it carries the real decode_1 gain and closes the class-128 drop risk.
+  - Quota: moe 14 checks / 7 runs.
+  - **Decode port candidate:** v6pe2 (decode's T=1 uses the same ea6 path; ~+0.3% decode) rides with the next decode build.

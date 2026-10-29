@@ -1,17 +1,17 @@
 {
  "schema": 1,
  "problem": "muse_moe_w4a16",
- "slug": "landing-dceed39d",
- "job": "dceed39d08a14c73",
+ "slug": "stack2",
+ "job": "8418677e467d4fb7",
  "mode": "submit",
  "duplicate_of": null,
- "content_hash": "b69e19393dac27c56bd706d23d47cf2bfec907a61c6ef820394f35ce7a76a68e",
+ "content_hash": "8cc9dbca2318cb836705f841f8f93f08df6c9ce850aed9bc00a668a64e3f93fe",
  "submission_sha256": null,
- "submission_blob": "a90ff05c358908245bec6ddaf65519af8790656f",
- "impl_commit": "a96fae0582bad444e31b4505033a00f14592f138",
+ "submission_blob": "691018b5844d1a985d98f59021313b0c1a3ef3b7",
+ "impl_commit": "9d66b13def91e7add9bc216ff8992d838278a40f",
  "base_sha": null,
- "created_at": 1793243531.4475424,
- "finished_at": 1793243734.731039,
+ "created_at": 1793268035.3679104,
+ "finished_at": 1793268244.5531983,
  "gpu": "H200",
  "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
  "status": "done",
@@ -23,12 +23,12 @@
   "passed": 5
  },
  "first_failing": null,
- "speedup": 1.950242066503268,
+ "speedup": 1.952050927455536,
  "speedup_ci": [
-  1.920988435505719,
-  1.9794956975008169
+  1.922770163543703,
+  1.9813316913673689
  ],
- "score_us": 6895.810643707836,
+ "score_us": 6889.420665643126,
  "baseline_us": 13448.5,
  "flags": [],
  "checks": {
@@ -43,33 +43,33 @@
    "case": {
     "bs": 1,
     "load": "decode 1",
-    "seed": 2985416856689596029,
+    "seed": 6343959798026804535,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 28407.46534370756,
-   "baseline_ns": 76911.99891269207,
-   "speedup": 2.707457282165745,
-   "speedup_of_medians": 3.061783466458335,
-   "err_ns": 620.2056889124805,
+   "median_ns": 27342.679096089694,
+   "baseline_ns": 76847.9979597032,
+   "speedup": 2.8105511420310427,
+   "speedup_of_medians": 3.1598682959782165,
+   "err_ns": 584.3726566171058,
    "speed_of_light_ns": 11416.507733333334,
    "status": "pass",
    "top_kernels": [
     [
      "void eak6::ea6_kernel<true, 3, 2, true>(__nv_bfloat16 con...",
-     14.6,
-     54.2
+     19.6,
+     55.5
     ],
     [
      "void eak6::ea6_kernel<false, 2, 2, true>(__nv_bfloat16 co...",
-     9.8,
-     36.4
+     12.8,
+     36.2
     ],
     [
      "eak6::ea6_cmb_kernel(__nv_bfloat16 const*, int const*, fl...",
-     2.5,
-     9.4
+     2.9,
+     8.3
     ]
    ]
   },
@@ -79,33 +79,33 @@
    "case": {
     "bs": 16,
     "load": "decode 16",
-    "seed": 2985574026645851374,
+    "seed": 6343978476533763463,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 111646.58005432152,
-   "baseline_ns": 193951.9946463406,
-   "speedup": 1.737196021158673,
-   "speedup_of_medians": 1.7568114993162225,
-   "err_ns": 1517.0041892901188,
+   "median_ns": 111481.8324110885,
+   "baseline_ns": 195007.99616798759,
+   "speedup": 1.7492356552671016,
+   "speedup_of_medians": 1.7617807900629647,
+   "err_ns": 1589.641819531229,
    "speed_of_light_ns": 52519.458133333326,
    "status": "pass",
    "top_kernels": [
     [
      "void eak4x::ea4x_w13_kernel<2, false>(__nv_bfloat16 const...",
-     59.8,
-     60.6
+     67.2,
+     59.8
     ],
     [
      "void eak4x::ea4x_w2_kernel<2, false>(__nv_bfloat16 const*...",
-     36.2,
-     36.7
+     41.9,
+     37.2
     ],
     [
      "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
-     2.6,
-     2.6
+     3.3,
+     3.0
     ]
    ]
   },
@@ -115,33 +115,33 @@
    "case": {
     "bs": 32,
     "load": "decode 32",
-    "seed": 2985731196602106720,
+    "seed": 6343997155040722392,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 140054.97159079532,
-   "baseline_ns": 206192.0021660626,
-   "speedup": 1.4722219413138913,
-   "speedup_of_medians": 1.4581353722058763,
-   "err_ns": 1828.9779722775136,
+   "median_ns": 140174.70678510203,
+   "baseline_ns": 205856.0037985444,
+   "speedup": 1.4685673936463912,
+   "speedup_of_medians": 1.4582341954209248,
+   "err_ns": 1811.6041633680393,
    "speed_of_light_ns": 70755.39626666668,
    "status": "pass",
    "top_kernels": [
     [
      "void eak4x::ea4x_w13_kernel<2, false>(__nv_bfloat16 const...",
-     73.9,
-     61.4
+     81.1,
+     62.5
     ],
     [
      "void eak4x::ea4x_w2_kernel<2, false>(__nv_bfloat16 const*...",
-     43.2,
-     35.9
+     45.3,
+     34.9
     ],
     [
      "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
-     3.2,
-     2.7
+     3.4,
+     2.6
     ]
    ]
   },
@@ -151,33 +151,33 @@
    "case": {
     "bs": 8,
     "load": "verify 1",
-    "seed": 2985888366558362067,
+    "seed": 6344015833547681322,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 76437.93705305373,
-   "baseline_ns": 142288.00125420094,
-   "speedup": 1.8614840580462326,
-   "speedup_of_medians": 1.9476566266057047,
-   "err_ns": 1246.9322762202326,
+   "median_ns": 81176.37023876983,
+   "baseline_ns": 149696.00597396493,
+   "speedup": 1.8440835126484891,
+   "speedup_of_medians": 1.80617767568214,
+   "err_ns": 1503.6143743794523,
    "speed_of_light_ns": 37318.92906666667,
    "status": "pass",
    "top_kernels": [
     [
      "void eak4x::ea4x_w13_kernel<2, false>(__nv_bfloat16 const...",
-     38.0,
-     57.5
+     46.9,
+     62.1
     ],
     [
      "void eak4x::ea4x_w2_kernel<2, false>(__nv_bfloat16 const*...",
-     25.0,
-     37.9
+     25.9,
+     34.3
     ],
     [
      "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
-     3.0,
-     4.6
+     2.7,
+     3.6
     ]
    ]
   },
@@ -187,33 +187,33 @@
    "case": {
     "bs": 128,
     "load": "verify 16",
-    "seed": 2986045536514617415,
+    "seed": 6344034512054640253,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 232704.54991599548,
-   "baseline_ns": 468223.9983230829,
-   "speedup": 2.01209644801577,
-   "speedup_of_medians": 2.0268734986924883,
-   "err_ns": 1979.2171270569838,
+   "median_ns": 232319.48987139534,
+   "baseline_ns": 455327.9955871403,
+   "speedup": 1.959921639976032,
+   "speedup_of_medians": 1.9949526735296008,
+   "err_ns": 2014.6871311388136,
    "speed_of_light_ns": 101341.04746666664,
    "status": "pass",
    "top_kernels": [
     [
      "void eak4x::ea4x_w13_kernel<2, false>(__nv_bfloat16 const...",
-     164.6,
-     61.8
+     150.0,
+     60.9
     ],
     [
      "void eak4x::ea4x_w2_kernel<2, false>(__nv_bfloat16 const*...",
-     88.0,
-     33.0
+     80.8,
+     32.8
     ],
     [
      "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
-     13.8,
-     5.2
+     15.3,
+     6.2
     ]
    ]
   },
@@ -223,38 +223,38 @@
    "case": {
     "bs": 256,
     "load": "verify 32",
-    "seed": 2986202706470872764,
+    "seed": 6344053190561599185,
     "sharding": "ep8",
     "weight": 60
    },
    "weight": 60,
-   "median_ns": 290845.793029318,
-   "baseline_ns": 617024.0114443004,
-   "speedup": 2.1214816450245264,
-   "speedup_of_medians": 2.1233344236933647,
-   "err_ns": 2011.794114689713,
+   "median_ns": 291055.4556491038,
+   "baseline_ns": 617119.9972741306,
+   "speedup": 2.1202832150933117,
+   "speedup_of_medians": 2.0993903484199756,
+   "err_ns": 2006.9001568513347,
    "speed_of_light_ns": 108944.31573333332,
    "status": "pass",
    "top_kernels": [
     [
      "void eak4x::ea4x_w13_kernel<2, false>(__nv_bfloat16 const...",
-     134.6,
-     31.7
+     146.7,
+     32.9
     ],
     [
      "void eak4x::ea4x_w2_kernel<2, false>(__nv_bfloat16 const*...",
-     108.4,
-     25.6
-    ],
-    [
-     "void (anonymous namespace)::wg_kernel<true>((anonymous na...",
-     84.8,
-     20.0
+     122.8,
+     27.5
     ],
     [
      "void (anonymous namespace)::wg_kernel<false>((anonymous n...",
-     77.9,
-     18.4
+     84.1,
+     18.9
+    ],
+    [
+     "void (anonymous namespace)::wg_kernel<true>((anonymous na...",
+     71.8,
+     16.1
     ]
    ]
   }
@@ -262,39 +262,39 @@
  "loads": [
   {
    "load": "decode 1",
-   "sglang_ns": 4614719.934761524,
-   "yours_ns": 1704447.9206224536,
-   "speedup": 2.707457282165745
+   "sglang_ns": 4610879.877582192,
+   "yours_ns": 1640560.7457653817,
+   "speedup": 2.8105511420310427
   },
   {
    "load": "decode 16",
-   "sglang_ns": 11637119.678780437,
-   "yours_ns": 6698794.803259291,
-   "speedup": 1.7371960211586732
+   "sglang_ns": 11700479.770079255,
+   "yours_ns": 6688909.94466531,
+   "speedup": 1.7492356552671016
   },
   {
    "load": "decode 32",
-   "sglang_ns": 12371520.129963756,
-   "yours_ns": 8403298.295447718,
-   "speedup": 1.4722219413138915
+   "sglang_ns": 12351360.227912664,
+   "yours_ns": 8410482.407106122,
+   "speedup": 1.4685673936463912
   },
   {
    "load": "verify 1",
-   "sglang_ns": 8537280.075252056,
-   "yours_ns": 4586276.223183224,
-   "speedup": 1.8614840580462324
+   "sglang_ns": 8981760.358437896,
+   "yours_ns": 4870582.21432619,
+   "speedup": 1.844083512648489
   },
   {
    "load": "verify 16",
-   "sglang_ns": 28093439.899384975,
-   "yours_ns": 13962272.994959729,
-   "speedup": 2.01209644801577
+   "sglang_ns": 27319679.73522842,
+   "yours_ns": 13939169.39228372,
+   "speedup": 1.959921639976032
   },
   {
    "load": "verify 32",
-   "sglang_ns": 37021440.686658025,
-   "yours_ns": 17450747.58175908,
-   "speedup": 2.121481645024526
+   "sglang_ns": 37027199.836447835,
+   "yours_ns": 17463327.338946227,
+   "speedup": 2.1202832150933117
   }
  ],
  "attribution": null

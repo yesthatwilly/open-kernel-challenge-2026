@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "dceed39d08a14c73",
- "check_job": "03d2c99e043a4a6a",
+ "job": "8418677e467d4fb7",
+ "check_job": "456d90673f4346d1",
  "mode": "submit",
- "speedup": 1.950242066503268,
+ "speedup": 1.952050927455536,
  "ci": [
-  1.920988435505719,
-  1.9794956975008169
+  1.922770163543703,
+  1.9813316913673689
  ],
- "score_us": 6895.810643707836,
- "commit": "a96fae0582bad444e31b4505033a00f14592f138",
- "submission_blob": "a90ff05c358908245bec6ddaf65519af8790656f",
- "slug": "landing-dceed39d",
- "master_slug": "landing-dceed39d",
- "master_job": "dceed39d08a14c73",
+ "score_us": 6889.420665643126,
+ "commit": "9d66b13def91e7add9bc216ff8992d838278a40f",
+ "submission_blob": "691018b5844d1a985d98f59021313b0c1a3ef3b7",
+ "slug": "stack2",
+ "master_slug": "stack2",
+ "master_job": "8418677e467d4fb7",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-29T031557Z",
- "note": "fork x1.034-1.069 restored; guard caught 2 capture collisions (alt 2); verify_32 290.8 us"
+ "updated_at": "2026-10-29T100426Z",
+ "note": "registered by churn.py register-landing from okc status 8418677e467d4fb7"
 }
