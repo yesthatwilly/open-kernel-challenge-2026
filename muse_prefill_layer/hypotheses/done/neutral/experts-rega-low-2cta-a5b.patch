@@ -1,0 +1,741 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index 7569df17..0112a434 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -3594,9 +3594,11 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # prepare sets it only where the arm's hs and y were torch.equal to this class's dispatched fsilu w13 + w2st w2. Each
+     # arm reads its own prepare-time re-encoded bank copy (state['rega_dq_bank'][arm]: A3 permuted codes, A5b ENC4 codes
+     # + packed scales). Shape + prepare-time values only; never on the rega_gemm_lo path. Absent keys: master.
++    # experts-rega-low-2cta-a5b: 7 = S2 (SC-2CTA, low class only; A5b's bank copy, stored under key 7 too; the dq
++    # module's host launches it on 2 x the SM-count grid passed).
+     dq = 0 if variant else int(state.get("rega_dq_ok", {}).get(_rega_class(num_tokens), 0))
+     dq_ext = state.get("rega_dq_ext") if dq else None
+-    dq_bank = (state.get("rega_dq_bank") or {}).get(dq) if dq in (3, 5) else bank
++    dq_bank = (state.get("rega_dq_bank") or {}).get(dq) if dq in (3, 5, REGA_DQ_S2) else bank
+     if dq_ext is None or dq_bank is None:
+         dq = 0
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+@@ -6843,13 +6845,24 @@ def _rega_w2st_phase(state, weights, device, t_start, info):
+ # ---------------------------------------------------------------------------------------------------------------
+ REGA_DQ_TAG = "[rega-dq]"
+ REGA_DQ_EXT_NAME = "muse_prefill_rega_dq"
+-REGA_DQ_NAMES = {0: "DQ0", 3: "A3", 5: "A5b"}   # A5b = A5b+D+SC (rgx2 arm 6)
++REGA_DQ_NAMES = {0: "DQ0", 3: "A3", 5: "A5b", 7: "S2"}   # A5b = A5b+D+SC (rgx2 arm 6); S2 = SC-2CTA (rgx4 arm 2)
+ REGA_DQ_ALL = (0, 3, 5)
+ REGA_DQ_ARMS = (3, 5)
+ REGA_DQ_NEW = 5                         # the A5b+D+SC arm
++# experts-rega-low-2cta-a5b: arm id 7 = S2 = SC-2CTA (takemyjob hopper/rgx4 4dc233f arm 2): A5b+D+SC's k loop and
++# master's epilogues (fast-silu w13, w2st arm a) in rega_kernel<G, false, 5, 1>: 2 CTAs/SM (launch bounds (384, 2),
++# 80 registers, setmaxnreg 32 producer / 104 consumers), 3-stage ring, 64-row slab, chunks <= 4 blocks (N <= 64),
++# grid 2 x SMs (the host doubles the SM-count grid it is passed). Small-capacity build only (w13 + w2: 2 inst.), raced
++# and routable at the LOW class only, reading A5b's re-encoded bank. Gate: _rega_dq_route_pick.
++REGA_DQ_S2 = 7
++REGA_DQ_S2_REGS, REGA_DQ_S2_OCC = 80, 2  # cudaFuncGetAttributes numRegs / CTAs per SM required before ANY S2 launch
++REGA_DQ_S2_POOL = 32 * 128 + 104 * 256  # the setmaxnreg split: exactly 80 x 384 (fewer registers: consumers hang)
++REGA_DQ_S2_CHB = 4                      # blocks of 16 per chunk (N64 cap)
++REGA_DQ_S2_MAXC = 512                   # C++ MAXC (small-capacity chunk table)
++REGA_DQ_S2_GUARD_RATIO = 1.00           # S2 / A5b pair on the guard routing (~REGA_LO_GUARD_ROUTES), every round
+ REGA_DQ_MODES = (0, 2, 5)
+-REGA_DQ_INST = 12                       # rega_kernel<G, BIG, DQ>: 2 x 2 x 3
+-REGA_DQ_PROBE_INST = 4                  # the ptxas probe build: rega_kernel<G, BIG, 5> only
++REGA_DQ_INST = 14                       # rega_kernel<G, BIG, DQ, 0>: 2 x 2 x 3, + S2's <G, false, 5, 1>: 2
++REGA_DQ_PROBE_INST = 2                  # the ptxas probe build: S2's rega_kernel<G, false, 5, 1> only (14 + 2 = 16)
+ REGA_DQ_PROBE_START_S = 120.0           # the probe build starts only before this many prepare() seconds
+ REGA_DQ_PROBE_DEF = "-DREGA_DQ_PTXAS_PROBE"
+ REGA_DQ_PROBE_STOP = "-lrega_dq_ptxas_probe_deliberate_stop"   # a library that does not exist: the link fails
+@@ -6989,17 +7002,50 @@ __device__ __forceinline__ uint64_t dq_desc_at(uint32_t lo, uint32_t off) {
+   asm("mov.b64 %0, {%1, %2};\n" : "=l"(d) : "r"(lo + off), "r"(0x40000040u));
+   return d;
+ }
+-// records [R0, R1) of one stage's wgmma with the D descriptors
+-template <int NB, int R0, int R1>
++// records [R0, R1) of one stage's wgmma with the D descriptors (SH = the slab half's bytes: SLAB_HALF, or S2's 8192;
++// slab + 2 SH <= 2^18 for every shared address, so the 14-bit address field never carries)
++template <int NB, int R0, int R1, int SH = SLAB_HALF>
+ __device__ __forceinline__ void dq_batch_d(float (&acc)[NB / 2], const uint32_t (&a)[8][4], uint32_t slab) {
+   const uint32_t lo = dq_desc_lo(slab);
+ #pragma unroll
+   for (int r = R0; r < R1; ++r) {
+ #pragma unroll
+     for (int k = 0; k < 4; ++k)
+-      Wg<NB>::mma(acc, a[r * 4 + k], dq_desc_at(lo, static_cast<uint32_t>(r * (SLAB_HALF >> 4) + k * 2)));
++      Wg<NB>::mma(acc, a[r * 4 + k], dq_desc_at(lo, static_cast<uint32_t>(r * (SH >> 4) + k * 2)));
+   }
+ }
++// ---- S2 = SC-2CTA (experts-rega-low-2cta-a5b; takemyjob hopper/rgx4 4dc233f arm 2: RGX_STAGES 3, RGX_SLABN 64,
++// RGX_MINB 2, RGX_CHB 4, RGX_PREG 32, RGX_CREG 104). Geo<0> is master's geometry exactly (every S2 = 0 use below
++// compiles to master's constants); Geo<1> = 2 CTAs/SM: 2 x 384 threads x 80 registers = 61440; producer 80 -> 32 frees
++// exactly what consumers 80 -> 104 take. 104 registers hold N64 (32 acc + 32 A), not N128: chunks <= 4 blocks.
++template <int S2>
++struct Geo {
++  static constexpr int STG = S2 ? 3 : STAGES;            // ring depth
++  static constexpr int SLABH = S2 ? 64 * 128 : SLAB_HALF;  // one SWIZZLE_128B box: 64 / 128 rows x 64 bf16
++  static constexpr int STB = WST + 2 * SLABH;            // stage bytes
++  static constexpr int CHB = S2 ? 4 : 8;                 // blocks of 16 rows per chunk
++  static constexpr int ROWS = S2 ? 64 : 128;             // epilogue staging rows (= the largest N bucket)
++  static constexpr int PREG = S2 ? 32 : 40;              // producer setmaxnreg.dec
++  static constexpr int CREG = S2 ? 104 : 232;            // consumer setmaxnreg.inc
++  static constexpr int REGS = S2 ? 80 : 168;             // registers per thread at launch the split needs
++  static_assert(SLABH % 1024 == 0 && STB % 1024 == 0, "S2: 1024-aligned stages and slab halves");
++  static_assert(PREG * 128 + CREG * 256 == REGS * THREADS, "S2: the setmaxnreg pool is exactly the launch registers");
++  static_assert(REGS * THREADS * (S2 ? 2 : 1) <= 65536, "S2: register file");
++};
++template <bool G, int S2>
++struct SmemS {
++  static constexpr int EPI = Geo<S2>::ROWS * (G ? PITCH13 : PITCH2);
++  static constexpr int BYTES = 1024 + Geo<S2>::STG * Geo<S2>::STB + EPI;
++};
++static_assert(SmemS<true, 0>::BYTES == Smem<true>::BYTES && SmemS<false, 0>::BYTES == Smem<false>::BYTES,
++              "S2 = 0 is master's shared memory");
++static_assert(SmemS<true, 1>::BYTES == 87040 && SmemS<false, 1>::BYTES == 95232, "S2 dynamic smem (rgx4 arm 2)");
++static_assert(2 * (SmemS<false, 1>::BYTES + (Cap<false>::SBE + 2 * Cap<false>::C) * 4 + 1024 + 1024) <= 228 * 1024,
++              "S2: two CTAs (dynamic + static bound + 1 KB reserve each) in the 228 KB SM");
++// S2's chunk table: <= nb / 4 + MAXE chunks; the host admits nb <= S2_MAXBLK only (the low class at its worst case,
++// T = 1024 with every route local: (1024 x 8 + 32 x 15) / 16 = 542 blocks -> <= 168 chunks of MAXC 512)
++constexpr int S2_MAXBLK = 4 * (MAXC - MAXE);
++static_assert(S2_MAXBLK / 4 + MAXE <= MAXC && (1024 * 8 + MAXE * 15 + 15) / 16 <= S2_MAXBLK, "S2 chunk table");
+ // dq_stage of arm DQ: DQ 0 IS master's dq_stage; A3 / A5b load the same uint4 codes / uint2 scales per record.
+ template <int DQ>
+ __device__ __forceinline__ void dq_stage_t(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4], uint32_t m16,
+@@ -7141,11 +7187,13 @@ REGA_DQ_EDITS = (
+     # 2-3. consume_item: template int DQ, runtime mode
+     (r"""template <int NB, bool G>
+ __device__ __forceinline__ void consume_item(""",
+-     r"""template <int NB, bool G, int DQ>
++     r"""template <int NB, bool G, int DQ, int S2>
+ __device__ __forceinline__ void consume_item("""),
+     (r"""int* err, bool& dead) {
+   constexpr int NA = NB / 2;""",
+      r"""int* err, bool& dead, int mode) {
++  static_assert(S2 == 0 || (DQ == 5 && NB <= 64), "S2: the A5b+D+SC arm, N <= 64 only");
++  using GS = Geo<S2>;  // S2 = 0: master's STAGES / STAGE_BYTES / SLAB_HALF
+   constexpr int NA = NB / 2;"""),
+     # 4. the k loop: one branch per item; MODE 0 is master's loop with the arm's dequant (DQ 0: master's dq_stage)
+     (r"""  for (int kb = 0; kb < KS; ++kb) {
+@@ -7162,18 +7210,19 @@ __device__ __forceinline__ void consume_item("""),
+   if (mode == 5) {
+     // pure dequant issue: the producer is off (no ring waits, no MMA, no epilogue); KS stage dequants of the stage
+     // buffers into the sink
+-    const uint32_t sink = smem_u32(ep) + static_cast<uint32_t>(ctid & 127) * 128u;
++    // (S2: the sink is the stage area, 76800 B >= 128 x 128 B; S2's staging tile is only 64 rows)
++    const uint32_t sink = smem_u32(S2 ? smem : ep) + static_cast<uint32_t>(ctid & 127) * 128u;
+     for (int kb = 0; kb < KS; ++kb) {
+-      dq_stage_t<DQ>(smem + (kb % STAGES) * STAGE_BYTES, cw, lane, a0, m16, m28);
++      dq_stage_t<DQ>(smem + (kb % GS::STG) * GS::STB, cw, lane, a0, m16, m28);
+       dq_sink(a0, dead, sink);
+     }
+   } else if (mode == 2) {
+     // no MMA: the arm's dequant every stage, ring waits and releases as master's
+-    const uint32_t sink = smem_u32(ep) + static_cast<uint32_t>(ctid & 127) * 128u;
++    const uint32_t sink = smem_u32(S2 ? smem : ep) + static_cast<uint32_t>(ctid & 127) * 128u;
+     for (int kb = 0; kb < KS; ++kb) {
+-      const int s = n % STAGES;
+-      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
+-      dq_stage_t<DQ>(smem + s * STAGE_BYTES, cw, lane, a0, m16, m28);
++      const int s = n % GS::STG;
++      mbar_wait(full0 + 8 * s, (n / GS::STG) & 1, err, dead);
++      dq_stage_t<DQ>(smem + s * GS::STB, cw, lane, a0, m16, m28);
+       dq_sink(a0, dead, sink);
+       if (lane == 0) mbar_arrive(empty0 + 8 * s);
+       ++n;
+@@ -7182,19 +7231,20 @@ __device__ __forceinline__ void consume_item("""),
+     // MODE 0, A5b+D+SC (rgx2 RGX_SCHED 1 with RGX_SC_MINN 16: every N bucket): record 0's dequant, its 4 wgmma
+     // (D descriptors), commit; record 1's dequant into a0[4..7] (not read by the group in flight) under them, its 4
+     // wgmma, commit, wait 0. The k order and accumulator chain are master's; two commit groups instead of one.
++    // S2: the same loop on Geo<1>'s ring (3 stages, 64-row slab halves); per output element the same k order.
+     for (int kb = 0; kb < KS; ++kb) {
+-      const int s = n % STAGES;
+-      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
+-      const uint8_t* st = smem + s * STAGE_BYTES;
++      const int s = n % GS::STG;
++      mbar_wait(full0 + 8 * s, (n / GS::STG) & 1, err, dead);
++      const uint8_t* st = smem + s * GS::STB;
+       const uint32_t slab = smem_u32(st + WST);
+       dq5_rec<0>(st, cw, lane, a0, m28);
+       fence_acc<NA>(acc);
+       wgmma_fence();
+-      dq_batch_d<NB, 0, 1>(acc, a0, slab);
++      dq_batch_d<NB, 0, 1, GS::SLABH>(acc, a0, slab);
+       wgmma_commit();
+       dq5_rec<1>(st, cw, lane, a0, m28);  // a0[4..7]: not read by the group in flight
+       wgmma_fence();
+-      dq_batch_d<NB, 1, 2>(acc, a0, slab);
++      dq_batch_d<NB, 1, 2, GS::SLABH>(acc, a0, slab);
+       wgmma_commit();
+       wgmma_wait<0>();  // both groups retired: a0[] may be rewritten and this stage released at once
+       fence_acc<NA>(acc);
+@@ -7221,8 +7271,8 @@ __device__ __forceinline__ void consume_item("""),
+     (r"""template <bool G, bool BIG>
+ __global__ void __launch_bounds__(THREADS, 1)
+ rega_kernel(""",
+-     r"""template <bool G, bool BIG, int DQ>
+-__global__ void __launch_bounds__(THREADS, 1)
++     r"""template <bool G, bool BIG, int DQ, int S2>
++__global__ void __launch_bounds__(THREADS, S2 ? 2 : 1)
+ rega_kernel("""),
+     (r"""int out_ld, int* __restrict__ err) {
+ #if defined(__CUDA_ARCH_FEAT_SM90_ALL)
+@@ -7236,37 +7286,91 @@ rega_kernel("""),
+       const int KC = K / 64;"""),
+     (r"""  consume_item<NB_, G>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
+                        out_ld, err, dead)""",
+-     r"""  consume_item<NB_, G, DQ>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
++     r"""  consume_item<NB_, G, DQ, S2>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
+                        out_ld, err, dead, mode)"""),
++    # 5b. experts-rega-low-2cta-a5b: the kernel's ring / slab / chunk / setmaxnreg geometry from Geo<S2> (S2 = 0:
++    # master's constants, the same code); S2 = 1 never instantiates the N128 bucket (error word 3 if one appeared)
++    (r"""  __shared__ __align__(8) uint64_t bars[2 * STAGES];
++""",
++     r"""  using GK = Geo<S2>;  // experts-rega-low-2cta-a5b: S2 = 0 is master's geometry
++  __shared__ __align__(8) uint64_t bars[2 * GK::STG];
++"""),
++    (r"""  uint8_t* ep = smem + STAGES * STAGE_BYTES;
++  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STAGES]);
++""",
++     r"""  uint8_t* ep = smem + GK::STG * GK::STB;
++  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[GK::STG]);
++"""),
++    (r"""    for (int s = 0; s < STAGES; ++s) {
++      mbar_init(full0 + 8 * s, 1);""",
++     r"""    for (int s = 0; s < GK::STG; ++s) {
++      mbar_init(full0 + 8 * s, 1);"""),
++    ("((b - s_first[e]) & 7) == 0) {", "((b - s_first[e]) & (GK::CHB - 1)) == 0) {"),
++    ("        while (cn < 8 && b + cn < nb && be[b + cn] == e) ++cn;\n",
++     "        while (cn < GK::CHB && b + cn < nb && be[b + cn] == e) ++cn;\n"),
++    (r"""    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n" ::: "memory");""",
++     r"""    asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(GK::PREG) : "memory");"""),
++    (r"""    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");""",
++     r"""    asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(GK::CREG) : "memory");"""),
++    (r"""          const int s = n % STAGES;
++          mbar_wait(empty0 + 8 * s, ((n / STAGES) & 1) ^ 1, err, dead);
++          const uint32_t st = smem_u32(smem + s * STAGE_BYTES);""",
++     r"""          const int s = n % GK::STG;
++          mbar_wait(empty0 + 8 * s, ((n / GK::STG) & 1) ^ 1, err, dead);
++          const uint32_t st = smem_u32(smem + s * GK::STB);"""),
++    ("          tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);\n",
++     "          tma_2d(st + WST + GK::SLABH, map, kb * BK + 64, m.slot0, fb);\n"),
++    (r"""        case 2: WG_CONSUME(64); break;
++        default: WG_CONSUME(128); break;
++""",
++     r"""        case 2: WG_CONSUME(64); break;
++        default:
++          if constexpr (S2 == 0) {
++            WG_CONSUME(128);
++          } else {  // S2: chunks <= 4 blocks never reach N128; a table bug -> error word 3 (the producer times out)
++            if (ctid == 0) atomicExch(err, 3);
++          }
++          break;
++"""),
+     # 6. the canary kernel, inside the anonymous namespace
+     ("}  // namespace\n", _REGA_DQ_CANARY + "}  // namespace\n"),
+     # 7. attributes: 12 rows (the ptxas probe build: DQ 5's 4), flag = G + 2 BIG + 4 DQ
+     (r"""template <bool G, bool BIG>
+ void info_one(std::vector<int64_t>& r) {
+   const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);""",
+-     r"""template <bool G, bool BIG, int DQ>
++     r"""template <bool G, bool BIG, int DQ, int S2>
+ void info_one(std::vector<int64_t>& r) {
+-  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG, DQ>);"""),
+-    ("  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));", "  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0) + 4 * DQ);"),
++  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG, DQ, S2>);"""),
++    # flag = G + 2 BIG + 4 DQ; S2 (experts-rega-low-2cta-a5b) reports arm id 7; its own dynamic smem (set here,
++    # before any launch, as every instantiation's)
++    ("  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));", "  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0) + 4 * (S2 ? 7 : DQ));"),
++    ("cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<G>::BYTES);",
++     "cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, SmemS<G, S2>::BYTES);"),
++    ("cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, Smem<G>::BYTES);",
++     "cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, SmemS<G, S2>::BYTES);"),
++    ("  r.push_back(Smem<G>::BYTES);", "  r.push_back(SmemS<G, S2>::BYTES);"),
+     (r"""  info_one<true, false>(r);
+   info_one<false, false>(r);
+   info_one<true, true>(r);
+   info_one<false, true>(r);
+ """,
+      r"""#if !defined(REGA_DQ_PTXAS_PROBE)
+-  info_one<true, false, 0>(r);
+-  info_one<false, false, 0>(r);
+-  info_one<true, true, 0>(r);
+-  info_one<false, true, 0>(r);
+-  info_one<true, false, 3>(r);
+-  info_one<false, false, 3>(r);
+-  info_one<true, true, 3>(r);
+-  info_one<false, true, 3>(r);
++  info_one<true, false, 0, 0>(r);
++  info_one<false, false, 0, 0>(r);
++  info_one<true, true, 0, 0>(r);
++  info_one<false, true, 0, 0>(r);
++  info_one<true, false, 3, 0>(r);
++  info_one<false, false, 3, 0>(r);
++  info_one<true, true, 3, 0>(r);
++  info_one<false, true, 3, 0>(r);
++  info_one<true, false, 5, 0>(r);
++  info_one<false, false, 5, 0>(r);
++  info_one<true, true, 5, 0>(r);
++  info_one<false, true, 5, 0>(r);
+ #endif
+-  info_one<true, false, 5>(r);
+-  info_one<false, false, 5>(r);
+-  info_one<true, true, 5>(r);
+-  info_one<false, true, 5>(r);
++  // experts-rega-low-2cta-a5b: S2 (the ptxas probe build instantiates only these 2)
++  info_one<true, false, 5, 1>(r);
++  info_one<false, false, 5, 1>(r);
+ """),
+     # 8. host entry: mode and dq, checked; the launch picks rega_kernel<G, BIG, dq>
+     (r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
+@@ -7275,10 +7379,17 @@ void info_one(std::vector<int64_t>& r) {
+      r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err, int64_t mode, int64_t dq) {
+   TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
+   TORCH_CHECK(mode == 0 || mode == 2 || mode == 5, "rega_gemm: dq mode");
+-  TORCH_CHECK(dq == 0 || dq == 3 || dq == 5, "rega_gemm: dq arm");
++  TORCH_CHECK(dq == 0 || dq == 3 || dq == 5 || dq == 7, "rega_gemm: dq arm");
++  TORCH_CHECK(grid > 0 && grid <= 65535, "rega_gemm: grid");
+ """),
+-    ("#define WG_LAUNCH(G_, B_)", "#define WG_LAUNCH(G_, B_, D_)"),
+-    ("  rega_kernel<G_, B_><<<", "  rega_kernel<G_, B_, D_><<<"),
++    # experts-rega-low-2cta-a5b: S2 (dq 7) = rega_kernel<G, false, 5, 1>, small-capacity tables only and at most
++    # S2_MAXBLK blocks (its chunk table can then never overflow); grid = 2 x the SM-count grid passed
++    ("  const bool big = blocks_len > MAXBLK;\n",
++     "  const bool big = blocks_len > MAXBLK;\n"
++     "  TORCH_CHECK(dq != 7 || (!big && blocks_len <= S2_MAXBLK), \"rega_gemm: S2 (dq 7) table size\");\n"),
++    ("#define WG_LAUNCH(G_, B_)", "#define WG_LAUNCH(G_, B_, D_, S_)"),
++    ("  rega_kernel<G_, B_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(",
++     "  rega_kernel<G_, B_, D_, S_><<<static_cast<unsigned>(S_ ? 2 * grid : grid), THREADS, SmemS<G_, S_>::BYTES, stream>>>("),
+     (r"""reinterpret_cast<int*>(err.data_ptr()))
+   if (which == 0) {
+     if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);
+@@ -7289,13 +7400,14 @@ void info_one(std::vector<int64_t>& r) {
+ """,
+      r"""reinterpret_cast<int*>(err.data_ptr()), static_cast<int>(mode))
+ #if defined(REGA_DQ_PTXAS_PROBE)
+-#define WG_DQ(G_, B_) WG_LAUNCH(G_, B_, 5)
++#define WG_DQ(G_, B_) WG_LAUNCH(G_, false, 5, 1)
+ #else
+-#define WG_DQ(G_, B_)                     \
+-  switch (dq) {                           \
+-    case 3: WG_LAUNCH(G_, B_, 3); break;  \
+-    case 5: WG_LAUNCH(G_, B_, 5); break;  \
+-    default: WG_LAUNCH(G_, B_, 0); break; \
++#define WG_DQ(G_, B_)                          \
++  switch (dq) {                                \
++    case 3: WG_LAUNCH(G_, B_, 3, 0); break;    \
++    case 5: WG_LAUNCH(G_, B_, 5, 0); break;    \
++    case 7: WG_LAUNCH(G_, false, 5, 1); break; \
++    default: WG_LAUNCH(G_, B_, 0, 0); break;   \
+   }
+ #endif
+   if (which == 0) {
+@@ -7370,8 +7482,8 @@ def _rega_dq_build_bg(cpp, src, res, t_start):
+ def _rega_dq_probe_bg(cpp, src):
+     """experts-rega-a5b-desc-splitcommit: the ptxas probe (background thread only, no print, no CUDA call). load_inline
+     discards a successful build's output, but a failed build's exception carries ninja's whole output, so this builds
+-    the SAME source with the same flags plus REGA_DQ_PROBE_DEF (only rega_kernel<G, BIG, 5> is instantiated: 4
+-    instantiations) and -Xptxas -v (ptxas prints every function's registers / spills; nothing in the code changes), and
++    the SAME source with the same flags plus REGA_DQ_PROBE_DEF (experts-rega-low-2cta-a5b: only S2's rega_kernel<G,
++    false, 5, 1> is instantiated: 2 instantiations; A5b's 168-register probe is proven clean on the judge) and -Xptxas -v (ptxas prints every function's registers / spills; nothing in the code changes), and
+     links against a library that does not exist (REGA_DQ_PROBE_STOP), so the build fails at the link, after ptxas ran.
+     Its module is never loaded. Returns {'state', 'secs', 'regs', 'spill', 'c7510', 'c7512', 'warn', 'ptxas'}."""
+     t0 = time.perf_counter()
+@@ -7402,7 +7514,7 @@ def _rega_dq_ptxas_parse(text):
+             c7510 += "C7510" in t
+             c7512 += "C7512" in t
+             if "Compiling entry function" in t or "Function properties for" in t:
+-                cur = "k5" if ("rega_kernel" in t and "Li5E" in t) else None
++                cur = "k5" if ("rega_kernel" in t and "Li5ELi1E" in t) else None  # S2 = rega_kernel<G, false, 5, 1>
+             if ("arning" in t or "C751" in t) and len(warn) < 2:
+                 w = " ".join(t.split(" in function")[0].split(" in the function")[0].split())[:160]
+                 if w not in warn:
+@@ -7422,12 +7534,12 @@ def _rega_dq_ptxas_parse(text):
+ 
+ 
+ def _rega_dq_probe_text(pr):
+-    """One compact line: the A5b instantiations' registers / spill bytes and C7510 / C7512 counts from the probe."""
++    """One compact line: the S2 instantiations' registers / spill bytes and C7510 / C7512 counts from the probe."""
+     if not pr or "regs" not in pr:
+         return f"ptxas probe: {(pr or {}).get('state', 'n/a')}"
+     regs = "/".join(str(r) for r in pr["regs"]) or "?"
+     spill = "/".join(str(x) for x in pr["spill"]) or "?"
+-    return (f"ptxas probe A5b ({pr['state']}, {pr.get('secs', 0.0):.0f}s, {pr['ptxas']} lines): regs {regs} spill "
++    return (f"ptxas probe S2 ({pr['state']}, {pr.get('secs', 0.0):.0f}s, {pr['ptxas']} lines): regs {regs} spill "
+             f"{spill}; C7510 {pr['c7510']} C7512 {pr['c7512']}"
+             + ("; " + " | ".join(pr["warn"]) if pr["warn"] else "; no ptxas warning")
+             + (f"; tail {pr['tail']!r}" if pr.get("tail") else ""))
+@@ -7443,10 +7555,11 @@ def _rega_dq_start(t_start):
+     job = {"thread": None, "res": {}, "env": None, "off": None, "t0": None, "wait": 0.0}
+     try:
+         used = time.perf_counter() - t_start
+-        # the module's 12 instantiations + the ptxas probe's 4 (built after it in the same thread): 16, today's need
++        # the module's 14 instantiations (12 + S2's 2) + the ptxas probe's 2 (S2 only, built after it in the same
++        # thread): 16, the need of master's 12 + 4 (experts-rega-low-2cta-a5b review: never more)
+         est = REGA_DQ_EST_4INST_S * (REGA_DQ_INST + REGA_DQ_PROBE_INST) / 4
+         need = used + REGA_DQ_BUILD_MARGIN * est + REGA_DQ_BUILD_PAD_S
+-        job["est"] = est
++        job["est"], job["need"] = est, need
+         made = None
+         if need > REGA_DQ_BUILD_LIMIT_S:
+             job["off"] = (f"budget (t {used:.1f}s + {REGA_DQ_BUILD_MARGIN} x est {est:.0f}s + {REGA_DQ_BUILD_PAD_S:.0f}s"
+@@ -7488,8 +7601,8 @@ def _rega_dq_start(t_start):
+                         cpus = f"{os.cpu_count()} CPUs"
+                     print(f"{REGA_DQ_TAG} nvcc build started in a background thread (nice +10, {cpus}) at "
+                           f"{job['t0']:.1f}s "
+-                          f"({REGA_DQ_INST} rega_kernel<G, BIG, DQ> instantiations, DQ {REGA_DQ_ALL}, + the canary; then "
+-                          f"the ptxas probe ({REGA_DQ_PROBE_INST}) if before {REGA_DQ_PROBE_START_S:.0f}s; est {est:.0f}s, gate "
++                          f"({REGA_DQ_INST} rega_kernel<G, BIG, DQ, S2> instantiations, DQ {REGA_DQ_ALL} + S2, + the "
++                          f"canary; then the S2 ptxas probe ({REGA_DQ_PROBE_INST}) if before {REGA_DQ_PROBE_START_S:.0f}s; est {est:.0f}s, gate "
+                           f"{need:.0f}s <= {REGA_DQ_BUILD_LIMIT_S:.0f}s; source sha256 "
+                           f"{hashlib.sha256((cpp + src).encode()).hexdigest()[:16]}, {len(src)} chars, "
+                           f"{len(REGA_DQ_EDITS)} edits; arch flags {flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS})",
+@@ -7534,6 +7647,12 @@ def _rega_dq_attrs(ext):
+         flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, _, bin_v, _ = info[i:i + 10]
+         good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
+                 and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
++        if int(flag) >> 2 == REGA_DQ_S2:
++            # experts-rega-low-2cta-a5b hang safety: S2's setmaxnreg 32 / 104 split needs EXACTLY 80 registers at
++            # launch (fewer: the consumers' setmaxnreg.inc waits forever), no local memory, and 2 CTAs per SM
++            good = (bool(a_ok) and regs == REGA_DQ_S2_REGS and regs * REGA_THREADS == REGA_DQ_S2_POOL
++                    and local_bytes == 0 and occ == REGA_DQ_S2_OCC and static_smem + dyn_smem <= REGA_SMEM_LIMIT
++                    and bin_v == 90 and not flag & 2)
+         rows[(bool(flag & 1), bool(flag & 2), int(flag) >> 2)] = (good, int(regs), int(local_bytes),
+                                                                  int(static_smem + dyn_smem), int(occ))
+     return rows
+@@ -7547,7 +7666,14 @@ def _rega_dq_attr_text(rows):
+                      + " l" + "/".join(str(r[2]) for r in rs) + " o" + "/".join(str(r[4]) for r in rs)
+                      + ("" if all(r[0] for r in rs) else " BAD:" + "".join(str(d) for d, r in zip(REGA_DQ_ALL, rs)
+                                                                          if not r[0])))
+-    return "; ".join(parts)
++    return "; ".join(parts) + "; " + _rega_dq_s2_attr_text(rows)
++
++
++def _rega_dq_s2_attr_text(rows):
++    """S2's two instantiations (w13, w2): 'S2 r80/80 l0/0 o2/2 ok' (ok = _rega_dq_attrs' hang-safety criteria)."""
++    rs = [rows.get((g, False, REGA_DQ_S2), (False, 0, -1, 0, 0)) for g in (True, False)]
++    return (f"S2 r{rs[0][1]}/{rs[1][1]} l{rs[0][2]}/{rs[1][2]} o{rs[0][4]}/{rs[1][4]} "
++            + ("ok" if all(r[0] for r in rs) else "BAD (no S2 launch)"))
+ 
+ 
+ def _rega_dq_luts(device):
+@@ -7769,16 +7895,34 @@ def _rega_dq_maxdiff(a, b):
+     return m
+ 
+ 
+-def _rega_dq_exact(state, ext, banks, ds, device, cls, tokens, kind, prenorm, gen, err, announce):
++def _rega_dq_hist(tabs):
++    """prepare() only (experts-rega-low-2cta-a5b): these align tables' chunks as ([N16, N32, N64, N128] at master's
++    8-block cap, chunks at S2's 4-block cap, the most blocks of one expert)."""
++    _, be, npad, _ = tabs
++    used = min(int(npad.cpu()[0]) // REGA_BSM, be.numel())
++    b = be[:used].cpu().long()
++    cnt = torch.bincount(b[(b >= 0) & (b < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS).tolist()
++    h = [0, 0, 0, 0]
++    for c in cnt:
++        full, r = divmod(c, 8)
++        h[3] += full
++        if r:
++            h[0 if r <= 1 else 1 if r <= 2 else 2 if r <= 4 else 3] += 1
++    return h, sum(-(-c // REGA_DQ_S2_CHB) for c in cnt), max(cnt)
++
++
++def _rega_dq_exact(state, ext, banks, ds, device, cls, tokens, kind, prenorm, gen, err, announce, hist=False):
+     """prepare() only, one routing on master's routed inputs (_rega_fsilu_tables: the judge path's align + gather):
+     hs_m / y_m from the w13 / w2 this class dispatches, then per DQ in ds (0 first) hs_d (MODE 0 w13 on xs) and y_d
+     (MODE 0 w2 on hs_m), y buffers prefilled with the same sentinel (unwritten rows compared too); every launch error
+     word 0 and both markers. announce (the phase's first step): each dq launch printed before and synchronized +
+     printed after, and MODE 2 / 5 of every DQ launched once eagerly the same way. Returns ({d: (hs == master,
+-    y == master, hs == DQ0, y == DQ0, max|hs - ref|, max|y - ref|)} (ref: DQ0 for an arm, master for DQ0), routes)."""
++    y == master, hs == DQ0, y == DQ0, max|hs - ref|, max|y - ref|)} (ref: DQ0 for an arm, master for DQ0), routes,
++    _rega_dq_hist of the tables when hist else None)."""
+     x, tw, lids = _rega_case(tokens, kind, gen, device)
+     local = int((lids >= 0).sum())
+     tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++    hst = _rega_dq_hist(tabs) if hist else None
+     x = tw = lids = None
+     ext13, ext2 = _rega_dq_dispatched(state, cls)
+     hs_m = y_m = hs_0 = y_0 = hs = y = None
+@@ -7839,7 +7983,7 @@ def _rega_dq_exact(state, ext, banks, ds, device, cls, tokens, kind, prenorm, ge
+                     if word != 0 or not _rega_launched(m13, m2):
+                         raise RuntimeError(f"{REGA_DQ_NAMES[d]} MODE {mode} left error word {word} "
+                                            f"({REGA_ERR_TEXT.get(word, '?')}) markers {m13:#x}/{m2:#x}")
+-        return out, local
++        return out, local, hst
+     finally:
+         hs_m = y_m = hs_0 = y_0 = hs = y = xs = tabs = None
+         torch.cuda.synchronize()
+@@ -7930,8 +8074,11 @@ def _rega_dq_time_lines(cls, kind, local, r, ds):
+             f"{REGA_DQ_NAMES[d]} {m[str(d)]:.1f} x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['m'], 1e-9)) for rd in rds)
+             + " x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['0'], 1e-9)) for rd in rds)
+             + (" x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['3'], 1e-9)) for rd in rds)
+-               if d == REGA_DQ_NEW and 3 in ds else "") for d in ds if d))
+-    lines.append(f"{REGA_DQ_TAG} TIME {cls} pair {kind} {local}r (us; per round vs master / vs DQ0 [/ A5b vs A3]): "
++               if d == REGA_DQ_NEW and 3 in ds else "")
++            + (" x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['5'], 1e-9)) for rd in rds)
++               if d == REGA_DQ_S2 and REGA_DQ_NEW in ds else "") for d in ds if d))
++    lines.append(f"{REGA_DQ_TAG} TIME {cls} pair {kind} {local}r (us; per round vs master / vs DQ0 [/ A5b vs A3; S2 vs "
++                 f"A5b]): "
+                  + "; ".join(parts))
+     return lines
+ 
+@@ -7949,16 +8096,34 @@ def _rega_dq_class(state, ext, banks, ds, device, cls, gen, err, t_start, info,
+         alpha = _rega_pop_pick(counts, REGA_FSILU_POP_MULT * n_rnd)[0]
+     pop = f"pop:{alpha:g}"
+     dl = REGA_DQ_FT_STEP_DEADLINE_S if cls == "ft" else REGA_DQ_STEP_DEADLINE_S
+-    res = {"pop": pop, "exact": {}, "time": {}, "local": {}, "arm_off": {}, "late": None, "timed": []}
++    res = {"pop": pop, "exact": {}, "time": {}, "local": {}, "arm_off": {}, "late": None, "timed": [], "guard": None}
+     live = list(ds)
+-    for kind in REGA_W2ST_EXACT_KINDS + (pop,):
++    # experts-rega-low-2cta-a5b: with S2 raced (low only), master's REGA_LO guard routing (_rega_pop_pick(counts,
++    # REGA_LO_GUARD_ROUTES = 1350) at T = 753, the judge turn_1 load; V64 died there) is an exactness routing and a
++    # timed routing too: S2's must-pass <= REGA_DQ_S2_GUARD_RATIO x A5b term
++    guard = ()
++    if REGA_DQ_S2 in live:
++        n_rnd, counts = _rega_pop_counts(tokens, device)
++        g_alpha, g_cnt = _rega_pop_pick(counts, REGA_LO_GUARD_ROUTES)
++        gk = f"pop:{g_alpha:g}"
++        if gk != pop:
++            guard = (gk,)
++            res["guard"] = {"kind": gk, "cnt": g_cnt, "x": g_cnt / max(n_rnd, 1.0), "hist": None}
++    for kind in REGA_W2ST_EXACT_KINDS + (pop,) + guard:
+         used = time.perf_counter() - t_start
+         if used > dl:
+             res["late"] = f"exact {kind} not started (prepare {used:.0f}s > {dl:.0f}s)"
+             return res
+-        ex, local = _rega_dq_exact(state, ext, banks, live, device, cls, tokens, kind, prenorm, gen, err, announce)
++        ex, local, hst = _rega_dq_exact(state, ext, banks, live, device, cls, tokens, kind, prenorm, gen, err,
++                                        announce, hist=kind in guard)
+         announce = False
+         res["exact"][kind] = ex
++        if hst is not None:
++            res["guard"]["hist"], res["guard"]["local"] = hst, local
++            print(f"{REGA_DQ_TAG} guard {kind} {local}r (calibrated {res['guard']['cnt']:.0f} for "
++                  f"{REGA_LO_GUARD_ROUTES} = {res['guard']['x']:.2f}x uniform): chunks N16/32/64/128 "
++                  f"{'/'.join(str(v) for v in hst[0])} = {sum(hst[0])} at cap 8 -> {hst[1]} at S2's cap 4; max "
++                  f"{hst[2]} blocks of one expert", flush=True)
+         for d in live[1:]:
+             e = ex[d]
+             if not (e[2] and e[3]):
+@@ -7968,7 +8133,7 @@ def _rega_dq_class(state, ext, banks, ds, device, cls, gen, err, t_start, info,
+             f"{REGA_DQ_NAMES[d]} vs master {'eq' if e[0] else 'NE'}/{'eq' if e[1] else 'NE'}"
+             + ("" if not d else f" vs DQ0 {'eq' if e[2] else 'NE'}/{'eq' if e[3] else 'NE'}")
+             + (f" {e[4]:.3g}/{e[5]:.3g}" if e[4] or e[5] else "") for d, e in ex.items()), flush=True)
+-    for kind in (pop, "random"):
++    for kind in (pop, "random") + (guard if REGA_DQ_S2 in live else ()):
+         used = time.perf_counter() - t_start
+         if used > dl:
+             res["late"] = f"timing {kind} not started (prepare {used:.0f}s > {dl:.0f}s)"
+@@ -8033,7 +8198,7 @@ def _rega_dq_route_pick(res):
+         return [], "not every check ran"
+     n_need = 2 * 2 * REGA_FSILU_ROUNDS
+     passing, notes = [], []
+-    for d in [d for d in res["timed"] if d]:
++    for d in [d for d in res["timed"] if d and d != REGA_DQ_S2]:
+         exact_m = all(res["exact"][k][d][0] and res["exact"][k][d][1] for k in kinds)
+         rm, r0, r3 = [], [], []
+         for k in tk:
+@@ -8052,15 +8217,59 @@ def _rega_dq_route_pick(res):
+                      + ("" if exact_m else " !eq-m") + (" pass" if ok else " miss"))
+         if ok:
+             passing.append(d)
+-    return [d for d in (REGA_DQ_NEW, 3) if d in passing], "; ".join(notes)
++    order = [d for d in (REGA_DQ_NEW, 3) if d in passing]
++    if REGA_DQ_S2 in res["timed"]:
++        ok, text = _rega_dq_s2_gate(res, REGA_DQ_NEW in passing)
++        notes.insert(0, text)
++        if ok:
++            order.insert(0, REGA_DQ_S2)
++    return order, "; ".join(notes)
++
++
++def _rega_dq_s2_gate(res, a5b_ok):
++    """experts-rega-low-2cta-a5b: S2's gate (the low class only; it is raced nowhere else). S2 passes only when A5b
++    passes its own gate (S2 is measured against the A5b+D+SC this class would route), its hs and y are torch.equal to
++    master's dispatched launches (fast-silu w13 + w2st w2) on EVERY exactness routing including the guard routing,
++    its pair MODE 0 is <= REGA_DQ_ROUTE_RATIO x A5b AND x master AND x DQ0 in every round and L2 mode on pop and
++    random, AND <= REGA_DQ_S2_GUARD_RATIO x A5b in every round and L2 mode on the guard routing. (ok, text: worst
++    rounds 'S2 / master'm 'S2 / DQ0'd 'S2 / A5b'b, guard g'S2 / A5b'b, exactness count eq n/N, pass / miss)."""
++    d, g = str(REGA_DQ_S2), res.get("guard") or {}
++    gk = g.get("kind")
++    kinds = REGA_W2ST_EXACT_KINDS + (res["pop"],) + ((gk,) if gk else ())
++    ex = [res["exact"][k][REGA_DQ_S2] for k in kinds if REGA_DQ_S2 in res["exact"].get(k, {})]
++    n_eq = sum(1 for e in ex if e[0] and e[1])
++    rm, r0, r5, rg = [], [], [], []
++    for k in (res["pop"], "random", gk):
++        for l2 in ("cold", "warm"):
++            for rd in (res["time"].get(k) or {}).get("pair", {}).get(l2, []) if k else []:
++                if k == gk:
++                    rg.append(rd[d] / max(rd.get("5", 0.0), 1e-9))
++                else:
++                    rm.append(rd[d] / max(rd["m"], 1e-9))
++                    r0.append(rd[d] / max(rd["0"], 1e-9))
++                    r5.append(rd[d] / max(rd.get("5", 0.0), 1e-9))
++    n_need = 2 * 2 * REGA_FSILU_ROUNDS
++    ok = (a5b_ok and gk is not None and n_eq == len(kinds) and len(rm) == n_need and len(r5) == n_need
++          and len(rg) == n_need // 2 and max(rm) <= REGA_DQ_ROUTE_RATIO and max(r0) <= REGA_DQ_ROUTE_RATIO
++          and max(r5) <= REGA_DQ_ROUTE_RATIO and max(rg) <= REGA_DQ_S2_GUARD_RATIO)
++    w = (lambda v: _rega_dq_r(max(v)) if v else "-")
++    return ok, (f"S2 {w(rm)}m/{w(r0)}d/{w(r5)}b<={REGA_DQ_ROUTE_RATIO} g{w(rg)}b<={REGA_DQ_S2_GUARD_RATIO:g} "
++                f"eq{n_eq}/{len(kinds)}{'' if a5b_ok else ' A5b-miss'}{'' if gk else ' no-guard'} "
++                + ("pass" if ok else "miss"))
+ 
+ 
+-def _rega_dq_ratio_text(t, ds, l2, absolute):
++def _rega_dq_ratio_text(t, ds, l2, absolute, short=False):
+     """Per GEMM: [master us 'm', DQ0 MODE 0/2/5 us 'D0',] DQ0 fidelity 'f' (DQ0 MODE 0 / master), then each arm's MODE
+-    0/2/5 vs DQ0 [its MODE 0 vs master]."""
++    0/2/5 vs DQ0 [its MODE 0 vs master]. short (experts-rega-low-2cta-a5b: high / ft, to fit S2's low lines in the
++    summary cap): each arm's MODE 0 vs DQ0 [vs master] only."""
+     parts = []
+     for g in ("w13", "w2"):
+         m = _rega_dq_means(t[g][l2])
++        if short:
++            parts.append(f"{g} f{_rega_dq_r(m['0:0'] / max(m['m'], 1e-9))} " + " ".join(
++                f"{REGA_DQ_NAMES[d]} {_rega_dq_r(m[f'{d}:0'] / max(m['0:0'], 1e-9))}"
++                f"[{_rega_dq_r(m[f'{d}:0'] / max(m['m'], 1e-9))}]" for d in ds if d))
++            continue
+         parts.append(f"{g}" + (f" m{m['m']:.1f} D0 " + "/".join(f"{m[f'0:{md}']:.1f}" for md in REGA_DQ_MODES)
+                                if absolute else "")
+                      + f" f{_rega_dq_r(m['0:0'] / max(m['m'], 1e-9))} " + " ".join(
+@@ -8075,16 +8284,24 @@ def _rega_dq_pair_text(t, ds, l2):
+     return " ".join(f"{REGA_DQ_NAMES[d]} {_rega_dq_r(m[str(d)] / max(m['0'], 1e-9))}/"
+                     f"{_rega_dq_r(m[str(d)] / max(m['m'], 1e-9))}"
+                     + (f"/{_rega_dq_r(m[str(d)] / max(m['3'], 1e-9))}a" if d == REGA_DQ_NEW and 3 in ds else "")
++                    + (f"/{_rega_dq_r(m[str(d)] / max(m['5'], 1e-9))}b" if d == REGA_DQ_S2 and REGA_DQ_NEW in ds
++                       else "")
+                     for d in ds if d)
+ 
+ 
+-REGA_DQ_KEY = (f"{REGA_DQ_TAG} key: RATIOS m=master us, D0=DQ0 MODE 0/2/5 us, f=DQ0/m, arm=MODE 0/2/5 vs DQ0 [MODE 0 vs "
+-               f"m]; PAIR (w13+w2 MODE 0) arm vs DQ0/vs m[/A5b vs A3 'a']; A5b = A5b+D+SC")
++REGA_DQ_KEY = (f"{REGA_DQ_TAG} key: RATIOS m=master us, D0=DQ0 MODE 0/2/5 us, f=DQ0/m, arm=MODE 0/2/5 (high/ft: 0) vs "
++               f"DQ0 [MODE 0 vs m]; PAIR (w13+w2 MODE 0) arm vs DQ0/m[/A3 'a'; S2/A5b 'b']; A5b=A5b+D+SC; S2=SC-2CTA")
++# S2's chunk-table worst case: the low class at T = REGA_LOW_MAX with every route local (blocks of 16, then <= 4 per
++# chunk + one partial per expert) vs the C++ MAXC (S2_MAXBLK is asserted in C++ and checked per launch by the host)
++REGA_DQ_S2_WORST_BLOCKS = -(-(REGA_LOW_MAX * TOP_K + LOCAL_EXPERTS * (REGA_BSM - 1)) // REGA_BSM)
++REGA_DQ_S2_WORST_CHUNKS = REGA_DQ_S2_WORST_BLOCKS // REGA_DQ_S2_CHB + LOCAL_EXPERTS
+ 
+ 
+-def _rega_dq_summary(head, out, verdict, route):
+-    """The summary: header lines, then per class RATIOS (warm pop with absolute us | cold pop), PAIR (pop warm, pop
+-    cold, random warm), ROUTE (short; the full gate / replay text is printed during the phase) and VERDICT lines."""
++def _rega_dq_summary(head, out, verdict, route, v=0):
++    """The summary: header lines, then per class RATIOS (warm pop with absolute us | cold pop; high / ft: MODE 0 only,
++    warm), PAIR (pop warm, pop cold, random warm; low with S2 raced: + the guard routing warm / cold and its chunk
++    histogram), ROUTE (short; the full gate / replay text is printed during the phase; low: + S2's chunk-table worst
++    case and rega_low_variant v) and VERDICT lines."""
+     lines = list(head) + [REGA_DQ_KEY]
+     for cls, res in out.items():
+         if not isinstance(res, dict):
+@@ -8094,17 +8311,31 @@ def _rega_dq_summary(head, out, verdict, route):
+         t = res["time"].get(pop)
+         off = "".join(f"; {REGA_DQ_NAMES[d]} OFF {w}" for d, w in res["arm_off"].items())[:200]
+         if t is not None:
+-            lines.append(f"{REGA_DQ_TAG} RATIOS {cls} {pop} {res['local'].get(pop, 0)}r warm "
+-                         + _rega_dq_ratio_text(t, ds, "warm", True) + " | cold "
+-                         + _rega_dq_ratio_text(t, ds, "cold", False) + off)
++            if cls == "low":
++                lines.append(f"{REGA_DQ_TAG} RATIOS {cls} {pop} {res['local'].get(pop, 0)}r warm "
++                             + _rega_dq_ratio_text(t, ds, "warm", True) + " | cold "
++                             + _rega_dq_ratio_text(t, ds, "cold", False) + off)
++            else:
++                lines.append(f"{REGA_DQ_TAG} RATIOS {cls} {pop} {res['local'].get(pop, 0)}r warm "
++                             + _rega_dq_ratio_text(t, ds, "warm", False, short=True) + off)
+             tr = res["time"].get("random")
++            g = res.get("guard") or {}
++            tg = res["time"].get(g.get("kind")) if g else None
++            gh = g.get("hist")
+             lines.append(f"{REGA_DQ_TAG} PAIR {cls} pop warm {_rega_dq_pair_text(t, ds, 'warm')}; cold "
+                          f"{_rega_dq_pair_text(t, ds, 'cold')}"
+-                         + (f"; random warm {_rega_dq_pair_text(tr, ds, 'warm')}" if tr is not None else ""))
++                         + (f"; random warm {_rega_dq_pair_text(tr, ds, 'warm')}" if tr is not None else "")
++                         + (f"; guard {g['kind']} {g.get('local', 0)}r N16/32/64/128 "
++                            + ("/".join(str(x) for x in gh[0]) + f" c8 {sum(gh[0])}->c4 {gh[1]}" if gh else "?")
++                            + f" warm {_rega_dq_pair_text(tg, ds, 'warm')}; cold {_rega_dq_pair_text(tg, ds, 'cold')}"
++                            if tg is not None else ""))
+         else:
+             lines.append(f"{REGA_DQ_TAG} RATIOS {cls}: not timed ({res.get('late') or '?'}){off}"[:300])
+-        lines.append(f"{REGA_DQ_TAG} ROUTE {cls}: {route.get(cls, ('master', ''))[0]}")
+-        lines.append(f"{REGA_DQ_TAG} VERDICT {cls} (warm {pop}): {verdict.get(cls, 'n/a')}")
++        lines.append(f"{REGA_DQ_TAG} ROUTE {cls}: {route.get(cls, ('master', ''))[0]}"
++                     + (f" | S2 ctab<={REGA_DQ_S2_WORST_CHUNKS}/{REGA_DQ_S2_MAXC} at T={REGA_LOW_MAX}; "
++                        f"rega_low_variant {v}" if cls == "low" else ""))
++        vt = verdict.get(cls, "n/a")  # high / ft: cut to its head (room for S2's low lines; full text printed above)
++        lines.append(f"{REGA_DQ_TAG} VERDICT {cls} (warm {pop}): {vt if cls == 'low' else vt.split(', MODE 5')[0]}")
+     return lines
+ 
+ 
+@@ -8114,7 +8345,8 @@ def _rega_dq_cap(lines, limit):
+     if total <= limit:
+         return lines
+     over = total - limit
+-    longest = sorted(range(len(lines)), key=lambda i: -len(lines[i]))
++    # experts-rega-low-2cta-a5b: the low class's lines (S2's RATIOS / PAIR / ROUTE) are cut last
++    longest = sorted(range(len(lines)), key=lambda i: (" low" in lines[i], -len(lines[i])))
+     out = list(lines)
+     for i in longest:
+         if over <= 0:
+@@ -8162,6 +8394,9 @@ def _rega_dq_phase(state, weights, device, t_start, info, job):
+         else:
+             rows = _rega_dq_attrs(ext)
+             print(f"{REGA_DQ_TAG} attrs DQ0/A3/A5b {_rega_dq_attr_text(rows)}", flush=True)
++            if not all(rows.get((g, False, REGA_DQ_S2), (False,))[0] for g in (True, False)):
++                arm_off[REGA_DQ_S2] = (f"attrs (need r{REGA_DQ_S2_REGS} l0 o{REGA_DQ_S2_OCC}; never launched): "
++                                       + _rega_dq_s2_attr_text(rows))
+             print(f"{REGA_DQ_TAG} {_rega_dq_probe_text(res.get('probe'))}"[:600], flush=True)
+             if len(rows) != REGA_DQ_INST:
+                 off = f"rega_init returned {len(rows)} instantiations, not {REGA_DQ_INST}"
+@@ -8198,6 +8433,8 @@ def _rega_dq_phase(state, weights, device, t_start, info, job):
+                     secs[f"bank{d}"] = time.perf_counter() - tc
+                     print(f"{REGA_DQ_TAG} {name}: {'ok, lossless (inverse checked per chunk)' if d in banks else 'FAILED'}"
+                           f" in {secs[f'bank{d}']:.1f}s", flush=True)
++                if REGA_DQ_NEW in banks:  # S2 reads A5b's re-encoded bank (the same tensors, no copy)
++                    banks[REGA_DQ_S2] = banks[REGA_DQ_NEW]
+                 err = torch.zeros(3, dtype=torch.int32, device=device)
+                 gen = torch.Generator(device=device).manual_seed(20261029)
+                 stop, announce = None, True
+@@ -8208,6 +8445,14 @@ def _rega_dq_phase(state, weights, device, t_start, info, job):
+                     inst = {d: all(rows.get((g, big, d), (False, 0, 1))[0] and rows[(g, big, d)][2] == 0
+                                    for g in (True, False)) for d in REGA_DQ_ALL}
+                     ds = [0] + [d for d in REGA_DQ_ARMS if d not in arm_off and inst[d]]
++                    # experts-rega-low-2cta-a5b: S2 at the low class only, with A5b raced (its bank and its gate
++                    # reference) and both S2 instantiations at exactly 80 registers, no local memory and 2 CTAs/SM
++                    # (arm_off otherwise: never launched)
++                    if (cls == "low" and REGA_DQ_NEW in ds and REGA_DQ_S2 not in arm_off
++                            and REGA_DQ_S2 in banks):
++                        ds.append(REGA_DQ_S2)
++                    print(f"{REGA_DQ_TAG} {cls}: raced {[REGA_DQ_NAMES[d] for d in ds]}; rega_low_variant {v}",
++                          flush=True)
+                     if stop:
+                         out[cls] = stop
+                     elif not inst[0]:
+@@ -8267,15 +8512,18 @@ def _rega_dq_phase(state, weights, device, t_start, info, job):
+                 + f" (est {job.get('est', 0.0):.0f}s, join waited {job.get('wait', 0.0):.1f}s); phase "
+                 f"{time.perf_counter() - t0:.1f}s (" + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items() if k != "build")
+                 + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s; rega_dq_ok "
+-                + (str(state.get("rega_dq_ok")) if "rega_dq_ok" in state else "none (master)")]
++                + (str(state.get("rega_dq_ok")) if "rega_dq_ok" in state else "none (master)")
++                + f"; need {job.get('need', 0.0):.0f}s (14+2 inst); rega_low_variant {v}"]
+         if off:
+             head.append(f"{REGA_DQ_TAG} OFF: {off}"[:500])
+         if rows:
+-            uniform = (all(r[0] and r[2] == 0 for r in rows.values())
+-                       and len({(r[1], r[4]) for r in rows.values()}) == 1)
+-            r0 = next(iter(rows.values()))
+-            head.append(f"{REGA_DQ_TAG} attrs {len(rows)} inst (cudaFuncGetAttributes): all ok r{r0[1]} l0 o{r0[4]}"
+-                        if uniform else f"{REGA_DQ_TAG} attrs DQ0/A3/A5b {_rega_dq_attr_text(rows)}")
++            base = {k: r for k, r in rows.items() if k[2] != REGA_DQ_S2}
++            uniform = (all(r[0] and r[2] == 0 for r in base.values())
++                       and len({(r[1], r[4]) for r in base.values()}) == 1)
++            r0 = next(iter(base.values()), (False, 0, -1, 0, 0))
++            head.append(f"{REGA_DQ_TAG} attrs {len(rows)} inst (cudaFuncGetAttributes): {len(base)} DQ0/A3/A5b all ok "
++                        f"r{r0[1]} l0 o{r0[4]}; {_rega_dq_s2_attr_text(rows)}"
++                        if uniform else f"{REGA_DQ_TAG} attrs {len(rows)} inst DQ0/A3/A5b {_rega_dq_attr_text(rows)}")
+         if res.get("probe"):
+             head.append(f"{REGA_DQ_TAG} {_rega_dq_probe_text(res.get('probe'))}"[:400])
+         if scales is not None:
+@@ -8285,7 +8533,7 @@ def _rega_dq_phase(state, weights, device, t_start, info, job):
+                                                                      for d, x in canary[0].items())
+                            + f" mismatching; D desc {canary[3][0]}/{canary[3][1]} mismatching" if canary else "")
+                         + "".join(f"; {REGA_DQ_NAMES[d]} OFF: {w}" for d, w in arm_off.items() if w))
+-        lines = _rega_dq_cap(_rega_dq_summary(head, out, verdict, route), REGA_DQ_SUMMARY_MAX)
++        lines = _rega_dq_cap(_rega_dq_summary(head, out, verdict, route, v), REGA_DQ_SUMMARY_MAX)
+         for line in lines:
+             print(line, flush=True)
+     except Exception as e:

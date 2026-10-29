@@ -45,12 +45,12 @@ evidence: >
   SM cycles -13%; prefill board 1.5721 (9f934846)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T233429Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T233706Z
 base_sha: 6364d94aa7863fd527376ac09288d0238158f8d7
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
@@ -69,6 +69,14 @@ attempt_file: 2026-10-29T235116Z-check-experts-rega-low-2cta-a5b.md
 prepared_at: 2026-10-29T235116Z
 job: 074a0e02f4e94efd
 dispatched_at: 2026-10-29T235128Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5677656639181956
+speedup_ci: [1.5442491789594226, 1.5912821488769684]
+harvested_at: 2026-10-29T235816Z
+best_at_harvest: 1.5721154841318719
+promotion: null
+mechanism: null
 ---
 
 # experts-rega-low-2cta-a5b
@@ -180,3 +188,31 @@ OK with warnings: .worktrees/muse_prefill_layer/experts-rega-low-2cta-a5b/muse_p
 (warnings only: host-sync / dtype in prepare-only code outside kernel_fn's call graph, as on master; 0 errors)
 ```
 `python3 -I -m py_compile`: ok (`__pycache__` removed).
+
+## Result
+
+- job `074a0e02f4e94efd` (check), status done, passed True, tests 5/5
+- speedup 1.5678x, 95% CI [1.5442, 1.5913], score 247105.74348961783 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5721154841318719, "ci": [1.5485337518698938, 1.5956972163938499], "job": "9f93484606cd4f9e"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-2cta-a5b.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-low-2cta-a5b.patch`; branch `hyp/muse_prefill_layer/experts-rega-low-2cta-a5b`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 661.91 | 677.76 | 0.9806 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1030.83 | 1061.59 | 0.9942 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 1936.06 | 1956.21 | 0.989 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3491.54 | 3474.99 | 1.0004 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11160.68 | 11199.23 | 0.9622 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10326.33 | 10378.86 | 1.0054 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14556.85 | 14182.87 | 1.0018 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17600.87 | 17489.84 | 0.9904 | flat |
+
+lost on full first_turn. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-low-2cta-a5b`) that adds a further change in the same area is the only way to learn more.
+
