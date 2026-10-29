@@ -2439,7 +2439,7 @@ with the operator's go-ahead.
     - whether bf16/attention/prefill get phase-C checks (focus since 10-28 22:05Z says no);
     - the gpunode06 close-out (runner 11735, prev.py, nodejudge env).
 
-## 2026-10-29 1520Z — /hypothesize all --n 5 (user); focus lifted for bf16/attn/prefill; gpunode06 closed
+## 2026-10-29 1503Z — /hypothesize all --n 5 (user); focus lifted for bf16/attn/prefill; gpunode06 closed
 - The user: "/hypothesize all --n 5; then do those three checks then submit all the hypothesis, then clean up gpunode06". Read "those three checks" as bf16/attention/prefill's unused checks (the open question), so the expert-block focus is lifted for them.
 - Five mint agents (Opus, ~0.76M tokens total): **0 files minted on every problem**; every lead fell below the bar (dry-run exit 3 where tried):
   - decode: full-verify attn off FA3 EV 0.57% (+1.9% at parity); bulk12 dense GEMMs EV ~0.7%; boundary PDL ~0.25%; decode expert-shelf stack ~1.7% < 2.5%.
@@ -2451,6 +2451,6 @@ with the operator's go-ahead.
 - gpunode06 close-out (user's go): runner stop (queue/STOP), the untracked prev.py link removed, `hopper-probe clean gpunode06 nodejudge` (13G), /tmp/USER-hopper removed via audit-run. No GPU processes at close.
 - Nothing to submit: churn's queues hold no value-case files. Checks left: moe 12, decode 18, bf16/attn/prefill 20 each.
 
-## 2026-10-29 1535Z — user steer: "run all three diagnostics", then "run all you want that youre able to"
+## 2026-10-29 1504Z — user steer: "run all three diagnostics", then "run all you want that youre able to"
 - Minting (user-requested, below bar OK): prefill rega stage-anatomy diag (re-mint on current blob), bf16 multicast-x bulk12 m=8 diag, moe combine-into-w2-epilogue check. Then churn review/build/check.
 - Second wave (user-requested under "run all you want"): the screen's best rejected leads that can build today — prefill rega K-pair four-consumer, attn FA3 metadata fold; stack3 only if combine reads >= 2 us/row. Agent cap 3 (outside phase A).
