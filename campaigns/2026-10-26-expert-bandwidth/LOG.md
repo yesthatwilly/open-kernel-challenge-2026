@@ -2668,3 +2668,7 @@ with the operator's go-ahead.
 ## 2026-10-29 2319Z — **decode 1.705 LANDED** (scored e4233998 [1.680, 1.731]; +0.87% over 1.6904)
 - churn promoted it (BEST.json e4233998); rank 406. Tonight's boards: prefill 1.501 -> **1.572**, moe 1.952 -> **2.020**, decode 1.690 -> **1.705**, bf16 1.279 -> **1.284**, attention 1.634 (gate kernel shelved for a stack).
 - The [ea-enc] T=1 prepare-crash hazard (2316Z) may apply to decode's new master too: the triage lane checks both.
+
+## 2026-10-29 2320Z — t1b read: no >= 5% T=1 cut; the next T=1 lever is the serial K1 -> K2 -> combine tail
+- research/h100-t1b-1029.md (takemyjob hopper/t1b-1029 70782ef; GPU 6). With E4: consume floor 1.10 us/record (K1 1.07-1.08, K2 1.03) vs ring floor 1.113-1.121; judge ~1.32 (18-20% above both). Full chain = 1.12-1.13x the ring-only chain even with consume at 0.70x the ring: the serial K1 -> K2 -> combine tail (combine ~2 us, ~7% of the block). PDL saves 5-6 us; glue outside ~0.
+- 16 consumer warps (2 groups x 8, alternate records; bit-exact after a cross-group ring wait): consume slope x1.105 but +0.7 us fixed -> net 0.13-0.22 us slower. Killed. EPF stays [shelf]. GPU 6 free.
