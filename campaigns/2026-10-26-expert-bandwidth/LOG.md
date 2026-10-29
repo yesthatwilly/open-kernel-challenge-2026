@@ -2626,3 +2626,7 @@ with the operator's go-ahead.
 - **702f1004 2.0646 [2.034, 2.096]:** every class routed: T=1 E4/E4 0.967, T=8 E4 0.960, T=16 E4 0.953, T=32 E4 0.951, T=128 E5 0.955, T=256 E4 0.974 (cold half iso 0.960); scales 0x5D..0x7E (E5 eligible); regs 4x 82/83, 6 64-70, lmem 0; build 51 s, phase at 150 s. **The H200 is consumer-bound for Engine A after all**: the H100's consume-only 4-10% surfaced as 3-5% per class. churn harvested gain; scored **24f183ff** dispatched (master sha 09b11a9d = checked bytes).
 - **attention 06c05172 1.6154 (master kept):** the fvg extension failed to compile: _FVG_FLAGS had -std=c++17, PyTorch's headers require C++20. Minted full-verify-paged-gather-gate-kernel-r2 (restacked + -std=c++20 / extra_cflags); short review running.
 - **Decode port of the Engine A encodings is now the 10-30 phase-A #1** (decode runs the same ea4x/ea6 kernels at T<=32 and the cold half).
+
+## 2026-10-29 2233Z — **moe 2.020 LANDED** (scored 24f183ff [1.990, 2.050]; +2.29% over 1.9748); attention r2 18499109 dispatched
+- moe tonight: 1.952 -> 1.975 (wh5ds) -> **2.020** (Engine A A4b/A5b encodings); rank 333. [landed] claim; BEST.json 24f183ff.
+- attention r2 (gate kernel with -std=c++20, 3000-char build-error capture, wg_pv setp in register form; edited by the main thread) dispatched **18499109**.
