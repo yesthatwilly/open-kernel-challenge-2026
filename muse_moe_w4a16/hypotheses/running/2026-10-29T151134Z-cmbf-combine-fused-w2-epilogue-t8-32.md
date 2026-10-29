@@ -124,7 +124,7 @@ base_sha: 1da83323d3e8664218809cf1c921c5ffdc92545b
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
 branch: hyp/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
 worktree: .worktrees/muse_moe_w4a16/cmbf-combine-fused-w2-epilogue-t8-32
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T155356Z
@@ -133,6 +133,8 @@ submission_sha256: aabff6091f36f05e29239481407f45801210f1b95a52ba54587cadb588beb
 norm_sha256: db17c1745521add433448cd16960a4ec2ba54603c16adcc9dcec0e81f731efba
 submission_blob: 08be8b80f820bab310402d564c9aa1c1f305c5ae
 lint_warnings: 198
+attempt_file: 2026-10-29T155357Z-check-cmbf-combine-fused-w2-epilogue-t8-32.md
+prepared_at: 2026-10-29T155357Z
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
