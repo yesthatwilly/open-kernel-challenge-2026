@@ -1,0 +1,27 @@
+{
+ "model": "opus",
+ "verdict": "proceed",
+ "summary": "Proceed. The single diag run can be read: a paired, interleaved in-prepare race (41 reps x 6 pooled rounds per draw, cold L2, baseline subtracted) resolves about 0.2-0.3 us, far finer than the 1.0 / 2.0 us thresholds. The bitwise/determinism argument holds apart from one release-ordering slip that must be fixed in the build. Rule (A) is miscalibrated: d >= 2 us at T16/T32 alone does not lift stack3 to 2.5%.",
+ "justification": "A. Plausible. The incumbent ea_combine (PDL-linked, w loaded before the wait, X0b prefetch) already hides launch/prologue; remaining cost is the post-K2 critical path, 2.5-2.95 us on gpunode06 nsys (h100-t32-1029 Q3), 2.6 / 3.2 us in the judge profile at decode 16 / 32, ~2% of the row (each load 1/6 of the geomean, TASK.md:42). Design matches code: in eakx::expert_body_x, sgrp = v*NS + si with NS = 32 for w2; epi<false> runs exactly once per (sgrp, pass) by the aligned owner (~10341) or ticket/deferred finisher (~10369); y rows pos_r = t*8 + slot match ea_combine's layout, so 'count reaches NS x n_t' detects a fully written token, and a last-arriver owner with ea_combine's per-element fp32 order gives bitwise-equal deterministic output. No fp atomics, no inter-CTA waits. 96-register cap right (STK_REG_CAP 96, __launch_bounds__(288,2)). WEAKEST LINK: the fused tail costs ~1.5-2.4 us against a 2.5-2.9 us path, so d is most likely 0.5-1.4 us; CLAIMS:99 (late CTAs are co-resident-slot CTAs) puts token ownership on the slowest CTAs. Still interpretable: thresholds are far apart relative to resolution. prior difference is real. Resolution: _rt_time interleaves with rotating/flipping order, 256 MB flush, events, empty-graph baseline; 246 samples per arm per draw; SE of median ~0.1 us.",
+ "confounders": [
+  "stack2 / EPLF (CLAIMS:95, :97): T16 reads the EPLF twin at 95/96 registers; if the EPLF CF instantiation spills, T16 has no reading; EPLF and arm s use different finisher hooks.",
+  "engineA-v4x-s1 / v4x-routes (CLAIMS:84, :91): a class falling back to v4/v4c has no CF instantiation, so no reading.",
+  "carrier CUDA combine at class 128 (CLAIMS:69) and X0b combine prefetch/PDL (DISTILL:67): define the incumbent; d measures only the post-K2 path left exposed.",
+  "T=16/32 late-CTA set (CLAIMS:98-99): last-arriver ownership serializes the tail behind the slowest CTAs; a real design cost."
+ ],
+ "interference": "No companion run. Print-only diag, paired in-process race, CMBF_ROUTE = False. Remove the codegen confound IN-RUN: add a third race arm 'cf0' = the same CF instantiation with the tail skipped by a runtime flag, still followed by ea_combine (inc vs cf0 = hook/codegen tax; cf0 vs cf = fusion), or print kernel-only w2 timing of twin vs CF-w2 plus regs/SASS size. Print the race's inc absolute us per class next to the judge row (111.5 / 140.2 / 81.2 / 232.3).",
+ "rules_flags": [
+  "None on the timed path (CMBF_ROUTE = False; integer tickets reset by finishers; no host sync, no fp atomics).",
+  "A third concurrent background nvcc build (ea4xcf beside ext4x and STK) could push those past their join limits (EA4X 190 s, STK ~208-214 s); start/join it so it cannot starve them, and stay well inside 300 s prepare; no daemon build may run after prepare."
+ ],
+ "freshness": "Fresh: board 1.9521 / blob 691018b5 unchanged. Newest claim CLAIMS:101 [shelf] combine fused into v4x w2 epilogue; CLAIMS:100 [shelf] stack3 names this measurement as its reopen. CLAIMS:39 [refuted] is Triton post-norm on Marlin, a different mechanism. CLAIMS:69 [landed] is the incumbent, not an owner conflict. No hold under E.",
+ "companions": [],
+ "open_questions": [
+  "RELEASE-ORDERING SLIP (must fix): thread 0's fence.acq_rel.gpu does not order other threads' atomicAdds; each counting thread must run its own fence.acq_rel.gpu (or atom.add.release.gpu) after bar_consumers, or bar_consumers after thread 0's fence and before the atomics.",
+  "Rule (A) arithmetic: d = 2.0 us at T16 and T32 is ~0.54% headline, below stack3's combine mid 0.75%. Restate (A): stack3 mid = EPF mid + slot-rider mid + sum over classes of (d_c / inc_c)/6 from the race's own inc_c; mint only if >= 2.5%. Use min(d16, d32) for (A), max(d16, d32) for (C), else (B).",
+  "If EPLF CF fails admission, read T16 on v4xs-CF vs v4xs + ea_combine.",
+  "Register-lean tail: do not unroll ea_combine's 8-slot uint4 hoist (64 regs); per-token count aggregation over T ints in free ring smem; sgrp list overflow (> 16) sets the err word.",
+  "T128 ride-along: last CTA may own several tokens serially; do not pool with T8-32.",
+  "Copy check: the graph replayed on a state copy must use its own zeroed cfc buffer."
+ ]
+}

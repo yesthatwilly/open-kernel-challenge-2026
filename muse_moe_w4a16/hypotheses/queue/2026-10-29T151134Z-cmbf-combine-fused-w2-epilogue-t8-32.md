@@ -112,8 +112,12 @@ instrument: >
   instantiation without the combine launch; one [cmbf] line per class 8/16/32/128 with inc/cf
   medians and d in us
 user_requested: true
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-29T151704Z
+review_companions: null
+review_best: 1.952050927455536
+review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
 ---
 
 # cmbf-combine-fused-w2-epilogue-t8-32
@@ -143,3 +147,30 @@ DIAG (print-only race; the board's arms stay routed, so the timed path is master
 ## Risk
 
 Why diag, not check: the lever is <= 2.6-3.2 us on 111-140 us rows (<= 0.4% headline per row, ~1.5% over four rows at full capture), under the judge's 1.24% margin and inside one row's run-to-run spread (~1-2 us), so a routed check's headline cannot resolve 1 vs 2 us; a paired in-process race on judge-like draws resolves ~0.3 us and keeps the timed path = board (no stale-board or scored-run question). The CF arm is still built routable (cf_t per class, incumbent fallback) so stack3 flips CMBF_ROUTE only. Risks: (1) the fused tail is serial on the critical CTA: fence + one integer atomic round + acquire + y L2 trip + store ~1.5-2.4 us vs the separate kernel's 2.6-3.2, so d may land at 0.5-1.2 us (the fc estimate) -> outcome C is the most likely; (2) register cap: __launch_bounds__(288, 2) gives 96 regs/thread (2 CTAs x 9 warps put 5 warps on a 16,384-register sub-partition), arm s is at 93 and EPLF at 95, so the hooks must carry nothing across consume2 and the end-of-CTA body must be the register-lean form; admission refuses spill > 0; (3) compile time of the extra module inside prepare's deadlines (EA4X 190-210 s, STK 208-214 s): the stage gates on its own deadlines and prints 'skipped' past them; (4) size: <= 12 KB added under the 988,500 B budget. The hyp.py claim hits (CLAIMS:90 T=1 w2 prefetch, :92 t1 deep ring, :96 v4xr unit order) share identifiers only (_ea6_race, v4xs / v4cxs); none touches the combine.
+
+## Adversarial review
+
+Reviewed 2026-10-29T151704Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed. The single diag run can be read: a paired, interleaved in-prepare race (41 reps x 6 pooled rounds per draw, cold L2, baseline subtracted) resolves about 0.2-0.3 us, far finer than the 1.0 / 2.0 us thresholds. The bitwise/determinism argument holds apart from one release-ordering slip that must be fixed in the build. Rule (A) is miscalibrated: d >= 2 us at T16/T32 alone does not lift stack3 to 2.5%.
+
+### Justification
+A. Plausible. The incumbent ea_combine (PDL-linked, w loaded before the wait, X0b prefetch) already hides launch/prologue; remaining cost is the post-K2 critical path, 2.5-2.95 us on gpunode06 nsys (h100-t32-1029 Q3), 2.6 / 3.2 us in the judge profile at decode 16 / 32, ~2% of the row (each load 1/6 of the geomean, TASK.md:42). Design matches code: in eakx::expert_body_x, sgrp = v*NS + si with NS = 32 for w2; epi<false> runs exactly once per (sgrp, pass) by the aligned owner (~10341) or ticket/deferred finisher (~10369); y rows pos_r = t*8 + slot match ea_combine's layout, so 'count reaches NS x n_t' detects a fully written token, and a last-arriver owner with ea_combine's per-element fp32 order gives bitwise-equal deterministic output. No fp atomics, no inter-CTA waits. 96-register cap right (STK_REG_CAP 96, __launch_bounds__(288,2)). WEAKEST LINK: the fused tail costs ~1.5-2.4 us against a 2.5-2.9 us path, so d is most likely 0.5-1.4 us; CLAIMS:99 (late CTAs are co-resident-slot CTAs) puts token ownership on the slowest CTAs. Still interpretable: thresholds are far apart relative to resolution. prior difference is real. Resolution: _rt_time interleaves with rotating/flipping order, 256 MB flush, events, empty-graph baseline; 246 samples per arm per draw; SE of median ~0.1 us.
+
+### Confounders on the current kernel
+- stack2 / EPLF (CLAIMS:95, :97): T16 reads the EPLF twin at 95/96 registers; if the EPLF CF instantiation spills, T16 has no reading; EPLF and arm s use different finisher hooks.
+- engineA-v4x-s1 / v4x-routes (CLAIMS:84, :91): a class falling back to v4/v4c has no CF instantiation, so no reading.
+- carrier CUDA combine at class 128 (CLAIMS:69) and X0b combine prefetch/PDL (DISTILL:67): define the incumbent; d measures only the post-K2 path left exposed.
+- T=16/32 late-CTA set (CLAIMS:98-99): last-arriver ownership serializes the tail behind the slowest CTAs; a real design cost.
+
+### Interference and A/B needs
+No companion run. Print-only diag, paired in-process race, CMBF_ROUTE = False. Remove the codegen confound IN-RUN: add a third race arm 'cf0' = the same CF instantiation with the tail skipped by a runtime flag, still followed by ea_combine (inc vs cf0 = hook/codegen tax; cf0 vs cf = fusion), or print kernel-only w2 timing of twin vs CF-w2 plus regs/SASS size. Print the race's inc absolute us per class next to the judge row (111.5 / 140.2 / 81.2 / 232.3).
+
+### Open questions
+- RELEASE-ORDERING SLIP (must fix): thread 0's fence.acq_rel.gpu does not order other threads' atomicAdds; each counting thread must run its own fence.acq_rel.gpu (or atom.add.release.gpu) after bar_consumers, or bar_consumers after thread 0's fence and before the atomics.
+- Rule (A) arithmetic: d = 2.0 us at T16 and T32 is ~0.54% headline, below stack3's combine mid 0.75%. Restate (A): stack3 mid = EPF mid + slot-rider mid + sum over classes of (d_c / inc_c)/6 from the race's own inc_c; mint only if >= 2.5%. Use min(d16, d32) for (A), max(d16, d32) for (C), else (B).
+- If EPLF CF fails admission, read T16 on v4xs-CF vs v4xs + ea_combine.
+- Register-lean tail: do not unroll ea_combine's 8-slot uint4 hoist (64 regs); per-token count aggregation over T ints in free ring smem; sgrp list overflow (> 16) sets the err word.
+- T128 ride-along: last CTA may own several tokens serially; do not pool with T8-32.
+- Copy check: the graph replayed on a state copy must use its own zeroed cfc buffer.
+
