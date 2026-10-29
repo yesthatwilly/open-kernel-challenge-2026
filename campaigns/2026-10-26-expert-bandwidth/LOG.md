@@ -2500,3 +2500,8 @@ with the operator's go-ahead.
 ## 2026-10-29 1842Z — **prefill 1.536 LANDED** (scored 27f0b9af, [1.513, 1.559]; board was 1.5008, +2.36%)
 - dq2 A3 in the rega tile's dq_stage, routed per class (check 835e1a44 1.5556). Master 1b14174f; BEST.json -> 27f0b9af; [landed] claim. Rank 246 (252.18 ms); #1 2.033x.
 - First H100-derived landing of the window: node A3 ratios predicted the judge's to within ~0.01-0.02.
+
+## 2026-10-29 1856Z — H100 fa3v lane read; fa3gate lane started
+- research/h100-fa3-1029.md (takemyjob hopper/fa3v c67d880; GPU 6). No FA3 knob >= 10%: precomputed metadata + dense_q (bitwise) 1.05-1.06 at full v1, ~1.006 at v16/v32 ([shelf] stacker with CLAIMS:82 fold); pack_gqa +-0.1%; num_splits >= FA3's own is a no-op, ns=1 is 3-21x slower (LOG:2043's claim does not hold on full verify); head-pairing flip 0.80-0.83.
+- Bound: per-SM memory parallelism (1 CTA/SM, ~24-32 KB in flight; DRAM 60-63%, tensor ~26%); same-row paged gather 2.72/2.79 TB/s -> FA3 main 172/324 us vs 123/236 ceiling (1.37-1.40x). v1 is fixed-cost bound (prepare 4 + combine 8 of 32 us). FP8 error grows with keys/split (6e-3 at 57 splits, 3.9e-2 at 4). [node-only] claim.
+- Next lane **fa3gate** (GPU 6): mainloop-only stream-K paged-gather gate (>= 64 KB in flight/SM; pass = >= 2.6 TB/s at v32 and end-to-end <= 0.85x), worth ~+7% attention headline if it lands, ports to decode's full verify rows.
