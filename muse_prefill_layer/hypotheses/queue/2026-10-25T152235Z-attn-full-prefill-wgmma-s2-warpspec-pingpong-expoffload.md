@@ -77,10 +77,10 @@ controls_for: null
 rewrite_stage: 2
 replaces: "flash_attn_with_kvcache (FA3 cutlass::device_kernel<flash::...> + FlashAttnFwdCombine) on full-attention layers at page_size 1"
 review: proceed
-status: running
+status: hold
 review_at: 2026-10-25T212615Z
 review_companions: null
-stage: claimed
+stage: null
 claimed_at: 2026-10-25T212615Z
 base_sha: 227ec481c126a03a5a6fea46bf672e6f3f8ff689
 base_blob: f3e8bf0e46f3da14de298fec7290d3889b749c5c
@@ -89,6 +89,8 @@ worktree: .worktrees/muse_prefill_layer/attn-full-prefill-wgmma-s2-warpspec-ping
 mode: check
 restack_of: null
 stale_base: true
+hold_reason: "released 2026-10-29T151514Z: zombie claim (stage claimed since 2026-10-25T212615Z, no job in 24 h); re-review to run it"
+released_at: 2026-10-29T151514Z
 ---
 
 # attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload

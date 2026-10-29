@@ -58,10 +58,10 @@ prior: "full-verify1-wgmma-s4-batch1-grid-sm: same idea, held because its s3 bas
 rewrite_stage: 7
 replaces: "full verify batch 1 (q_len 8): prepare_varlen_num_blocks + FA3 main + FlashAttnFwdCombine + rms_norm_gate"
 review: proceed
-status: running
+status: hold
 review_at: 2026-10-25T212855Z
 review_companions: null
-stage: claimed
+stage: null
 claimed_at: 2026-10-27T212857Z
 base_sha: d708cbde0daeb3705686792cd6d030c115406b9b
 base_blob: 3cd54814f4dcbb30997660d9de6dfacd05908e07
@@ -70,6 +70,8 @@ worktree: .worktrees/muse_attention_decode/full-verify1-wgmma-s7-grid-sm-two-lev
 mode: null
 restack_of: null
 stale_base: true
+hold_reason: "released 2026-10-29T151514Z: zombie claim (stage claimed since 2026-10-27T212857Z, no job in 24 h); re-review to run it"
+released_at: 2026-10-29T151514Z
 ---
 
 # full-verify1-wgmma-s7-grid-sm-two-level
