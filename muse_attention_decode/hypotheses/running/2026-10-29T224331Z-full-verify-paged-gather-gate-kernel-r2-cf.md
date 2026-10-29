@@ -15,7 +15,7 @@ confirm_of: full-verify-paged-gather-gate-kernel-r2
 confirm_of_job: 184991095dff4d50
 review: proceed
 status: running
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T224342Z
 base_sha: 37649103a331b49c92b219f1c9d06caaf5d82fc9
 base_blob: 0f7d6195263717e5dff426814b77ed679a083408
@@ -24,6 +24,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel-
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T224343Z
+impl_commit: aaae17696203ec6225081ff36f595518bbcb9cef
+submission_sha256: 0792aaa3f717e9b1f8f4f7a5c4061e2d66760d4e4390bce2ac8d54ad399d480f
+norm_sha256: 139856ac1aefff5e19ea405807d72d6e1149eed43376726291b8bea4e188fa1b
+submission_blob: 0039c56e69b9ce34892424ff02ed8cbd68224630
+lint_warnings: 105
 ---
 
 # full-verify-paged-gather-gate-kernel-r2-cf
