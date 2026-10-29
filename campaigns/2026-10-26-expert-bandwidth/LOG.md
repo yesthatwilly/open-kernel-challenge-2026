@@ -2450,3 +2450,7 @@ with the operator's go-ahead.
 - Claims appended (screen): decode 2, attn 3, prefill 1, moe 2, bf16 1.
 - gpunode06 close-out (user's go): runner stop (queue/STOP), the untracked prev.py link removed, `hopper-probe clean gpunode06 nodejudge` (13G), /tmp/USER-hopper removed via audit-run. No GPU processes at close.
 - Nothing to submit: churn's queues hold no value-case files. Checks left: moe 12, decode 18, bf16/attn/prefill 20 each.
+
+## 2026-10-29 1535Z — user steer: "run all three diagnostics", then "run all you want that youre able to"
+- Minting (user-requested, below bar OK): prefill rega stage-anatomy diag (re-mint on current blob), bf16 multicast-x bulk12 m=8 diag, moe combine-into-w2-epilogue check. Then churn review/build/check.
+- Second wave (user-requested under "run all you want"): the screen's best rejected leads that can build today — prefill rega K-pair four-consumer, attn FA3 metadata fold; stack3 only if combine reads >= 2 us/row. Agent cap 3 (outside phase A).
