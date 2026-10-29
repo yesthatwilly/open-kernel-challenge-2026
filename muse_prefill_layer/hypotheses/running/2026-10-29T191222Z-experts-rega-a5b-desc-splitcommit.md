@@ -64,7 +64,7 @@ base_sha: 80cc831d226d5a172f5b894f4e4810edc893a9d2
 base_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
 branch: hyp/muse_prefill_layer/experts-rega-a5b-desc-splitcommit
 worktree: .worktrees/muse_prefill_layer/experts-rega-a5b-desc-splitcommit
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T194011Z
@@ -73,6 +73,8 @@ submission_sha256: 8c34de1978cebdf3e9f0527f2db231f8c9d1501ec54a51d919a2262d48528
 norm_sha256: ab35c8c29c8c69a933405d3446940bbc72afb84abe1d86a6b0371769973f63bd
 submission_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
 lint_warnings: 122
+attempt_file: 2026-10-29T194011Z-check-experts-rega-a5b-desc-splitcommit.md
+prepared_at: 2026-10-29T194012Z
 ---
 
 # experts-rega-a5b-desc-splitcommit
