@@ -83,8 +83,9 @@ speedup: 1.579232671320759
 speedup_ci: [1.5555441812509476, 1.6029211613905703]
 harvested_at: 2026-10-29T194713Z
 best_at_harvest: 1.536215653197081
-promotion: pending
+promotion: merged
 mechanism: null
+promotion_commit: d9c22d138d4f368d228d70fb6cf64f346accaac3
 ---
 
 # experts-rega-a5b-desc-splitcommit

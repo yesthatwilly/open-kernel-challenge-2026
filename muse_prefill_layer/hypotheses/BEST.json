@@ -1,17 +1,17 @@
 {
  "problem": "muse_prefill_layer",
- "job": "27f0b9af04604842",
- "check_job": "835e1a443a604eb2",
- "mode": "submit",
- "speedup": 1.536215653197081,
+ "job": "da80fdb9bed749a3",
+ "check_job": "da80fdb9bed749a3",
+ "mode": "check",
+ "speedup": 1.579232671320759,
  "ci": [
-  1.5131724183991246,
-  1.559258887995037
+  1.5555441812509476,
+  1.6029211613905703
  ],
- "score_us": 252180.67475992578,
- "commit": "1b14174f106138de92022ca58ff1e6e374acd4a5",
- "submission_blob": "d8ce4cbf6e2e54cb8294363e025022d9284a0762",
- "slug": "experts-rega-dq2-dequant-cost-diag",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-dq2-dequant-cost-diag.result.json",
- "updated_at": "2026-10-29T184214Z"
+ "score_us": 245311.4775519447,
+ "commit": "d9c22d138d4f368d228d70fb6cf64f346accaac3",
+ "submission_blob": "7569df17e62ecfb6ecf85d12e2033c6611fcaade",
+ "slug": "experts-rega-a5b-desc-splitcommit",
+ "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json",
+ "updated_at": "2026-10-29T194714Z"
 }
