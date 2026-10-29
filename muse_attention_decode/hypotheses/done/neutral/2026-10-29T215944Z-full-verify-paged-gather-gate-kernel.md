@@ -50,12 +50,12 @@ evidence: >
   0.83-0.84); error vs fp32 1.67e-3 (FA3 6.3e-3..3.9e-2), judge metric 2.46-2.79e-2 vs bounds
   0.076-0.085; attention triage shares verify_16 full 12.4%, verify_32 full 13.2% (board 4e386647)
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T220405Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T220405Z
 base_sha: 91aa9ba6749c86329bf85d64ec022f8893a3af68
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -74,6 +74,14 @@ attempt_file: 2026-10-29T221723Z-check-full-verify-paged-gather-gate-kernel.md
 prepared_at: 2026-10-29T221723Z
 job: 06c051723643462f
 dispatched_at: 2026-10-29T221743Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.6153707615545347
+speedup_ci: [1.5911402001312167, 1.6396013229778525]
+harvested_at: 2026-10-29T222811Z
+best_at_harvest: 1.6339575246416982
+promotion: null
+mechanism: null
 ---
 
 # full-verify-paged-gather-gate-kernel
@@ -162,3 +170,35 @@ warn  dtype      L7646: q = torch.full(..., dtype=torch.uint8 ...).view(FP8)   [
 OK with warnings: .../muse_attention_decode/submission.py
 ```
 `python3 -I -m py_compile`: OK (__pycache__ removed).
+
+## Result
+
+- job `06c051723643462f` (check), status done, passed True, tests 16/16
+- speedup 1.6154x, 95% CI [1.5911, 1.6396], score 2331.5390433187868 µs vs SGLang 3766.3 µs
+- best at harvest: {"speedup": 1.6339575246416982, "ci": [1.6094481617720726, 1.6584668875113235], "job": "4e386647edd845f7"}; base result: muse_attention_decode/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel.result.json`, `muse_attention_decode/hypotheses/done/neutral/full-verify-paged-gather-gate-kernel.patch`; branch `hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_1 page=1 | 46 | 10.82 | 11.38 | 0.9726 | flat |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_1 page=1 | 16 | 15.62 | 15.47 | 0.9925 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_16 page=1 spread=agentic | 46 | 15.38 | 15.77 | 0.9872 | flat |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_16 page=1 spread=agentic | 16 | 104.77 | 105.4 | 0.9963 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=decode_32 page=1 spread=agentic | 46 | 16.81 | 17.06 | 0.9996 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=decode_32 page=1 spread=agentic | 16 | 177.91 | 190.81 | 0.9264 | lost |
+| batch=1 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_1 page=1 q_len=8 | 46 | 13.9 | 13.08 | 1.0625 | gained |
+| batch=1 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_1 page=1 q_len=8 | 16 | 30.09 | 29.53 | 0.9995 | flat |
+| batch=16 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 19.51 | 20.02 | 0.9593 | lost |
+| batch=16 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 162.74 | 163.82 | 0.9989 | flat |
+| batch=32 ctx=80000 dist=soft heads=tp8 layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 27.1 | 27.58 | 0.9816 | flat |
+| batch=32 ctx=80000 dist=coherent heads=tp8 layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 302.09 | 302.29 | 1.0013 | flat |
+
+gained on sliding verify_1; lost on full decode_32; sliding verify_16. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: full-verify-paged-gather-gate-kernel`) that adds a further change in the same area is the only way to learn more.
+
