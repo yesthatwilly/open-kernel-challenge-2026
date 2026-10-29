@@ -2344,3 +2344,11 @@ with the operator's go-ahead.
   - Check 03d2c99e read 1.938: fork x1.034-1.069, cold half on v4cxs, the guard caught 2 capture collisions.
   - Scored dceed39d read **1.950** [1.921, 1.979], verify_32 290.8 us. Landed on master and registered.
   - Credit goes to the H100 priority A/B, eb-forkprio.
+- 2026-10-29T0600Z harvest, 10-29 phase A (the user, ~05:10Z: "build the r0 rung, v4x-routes and v4xd-forkguard lanes"; "run the h100 lanes"):
+  - v4x-routes 405357b5 check 2d72cc8c **1.936** (board 1.950): PASS, routes unchanged on the judge, no scored run -> [shelf] for the final reruns.
+  - v4xd-forkguard 91e09235 check 3390f868 **1.663** (board 1.661): a tie, board-eq distinct, bcap 0 -> [shelf]; it rides on the next decode candidate.
+  - R0 rung 1394cc63 check d1b5d75d 1.930: **[r0] VERDICT KILL D=4/5** (rec5 1.327 vs rec3 1.306 us). The T=1 deep-ring lane is refuted.
+  - H100 T=1 lane (research/h100-t1-1029.md, 7eefe539): ea6 K2 already has 2 w2 records resident before griddepcontrol.wait; an L2 prefetch is slower (+0.7..2.0 us); node D5/D3 1.044. The only T=1 lever left is the per-record consume rate (~1.3 us/record on the judge, 8 consumer warps).
+  - The sanitizer under nodejudge is VOID: prepare reaches ~78 GiB under compute-sanitizer. It needs an ea-only prepare.
+  - Correction to 0325Z: moe check 03d2c99e's guard caught **0** capture collisions. Its 'alt 2' were eager warm-up picks; the gain came from priority 0 plus change A.
+  - The 04:55Z GPU 1 orphans (USER compute-sanitizer decs fuzz, seed 11, 6 h idle) were killed on the user's word via audit-run.sh.
