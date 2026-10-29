@@ -2536,3 +2536,8 @@ with the operator's go-ahead.
 ## 2026-10-29 1954Z — **prefill 1.572 LANDED** (scored 9f934846 [1.549, 1.596]; +2.34% over 1.536); decode wh flat -> [shelf] rider
 - Prefill tonight: 1.5008 -> 1.5362 (A3) -> **1.5721** (A5b+D+SC), rank 246 -> **230**. Both from H100 lanes; [landed] claim; BEST.json 9f934846.
 - **decode wh 44f30364: 1.6794 [1.654, 1.705] vs board 1.6904 (flat).** Routed T=128/256 (pair .90/.84, layer fork .97-.98, exact 16/16). Profile: verify_32 sliding hot pair 153.5 -> 122.8 us (x0.80; row 427.7 -> 403.2), verify_32 full 130.6 -> 124.7; verify_16 sliding hot pair 69.6 -> 92.8 (single-draw profile; the in-run T=128 race read wh .90). Other rows drew slower on this run. Per the review's rule: [shelf], ride wh (+A5b per hh3) on the next decode candidate.
+
+## 2026-10-29 2000Z — H100 prefill turn_1 anatomy lane: no non-rega lever >= 10%
+- research/h100-pf-t1-1029.md (takemyjob hopper/pf-t1-1029 5df5ba1; GPU 7). turn_1 sliding: rega 317 us (48.6%), dense bf16 212 (32.5%, at cuBLAS's ceiling), FA3 32.6 (5%), norm_residual x2 42.6 (6.5%), glue 49 (7.5%). turn_1 full: FA3 410 us (41%).
+- FA3 full: exp unit 70% busy (one exp/score), pure-exp floor 266 vs 401 us, tensor ~32%: the lever is moving part of the exps to the FMA pipe (~1.48x exp ceiling, ~2-3% headline across full rows; a rewrite; the last one lost x0.881). Half-precision exps refuted (0.989x). [node-only] claim with that reopen. CLAIMS:39 correction: the 39 us kernel is qkv_gate, not o.
+- 10-30 plan candidate (prefill): FA3-style full-prefill attention with FMA-pipe exp emulation (Cody-Waite + polynomial for a fraction of the scores).
