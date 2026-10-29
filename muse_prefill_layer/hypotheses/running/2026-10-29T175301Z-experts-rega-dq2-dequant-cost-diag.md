@@ -127,11 +127,20 @@ instrument: >
   '[rega-dq] VERDICT <cls>' line per class, all within the last 16 KB of the log
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T175903Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+stage: claimed
+claimed_at: 2026-10-29T175904Z
+base_sha: 2f7dcbf03b7345f8e21d32c433510942d4a23926
+base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
+branch: hyp/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag
+worktree: .worktrees/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # experts-rega-dq2-dequant-cost-diag
