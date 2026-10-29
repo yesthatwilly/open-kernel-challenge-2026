@@ -149,24 +149,23 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-29T1743Z (date -u); phase B -> C at 18:00Z; /loop /3to1 running
+- updated: 2026-10-29T1832Z (date -u); **phase C**; /loop /3to1 running
 - **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`):
   phase A 00:00Z (decode/moe ultracode rewrites) -> phase B (other problems' minor gains) -> phase C 18-24Z (spend
   every check; tomorrow's phase-A plan by ~23:00Z); scored submit whenever a check beats a board; never re-roll bytes.
 - **User steers in force:**
-  - 10-28 22:05Z expert-block focus for phase A; **lifted 10-29 14:51Z for bf16/attn/prefill checks** ("then do those
-    three checks"), then **10-29 ~15:04Z "run all you want that youre able to"**: below-bar diagnostics and leads
-    run as user-requested hypotheses today, agent cap 3.
-  - H100: window CLOSED 10-29 14:54Z (gpunode06 cleaned, runner stopped); new GPU work needs the user's go.
-- **Boards 10-29 (unchanged):** moe 1.952, decode 1.690, bf16 1.279, attention 1.634 (lucky draw; code level ~1.62),
-  prefill 1.501.
-- **Today's reads:** prefill anatomy [lead] then K-pair, anti-phase refuted (overlap closed on the rega tile);
-  attn FA3 metadata fold [shelf] stacker; moe combine fusion refuted (stack3 closed); bf16 b12mc refuted (weak).
-- **In flight:** mint of the prefill rega dequant-cost diag (cheaper dq_stage arms, bit-exact, gated route),
-  user-requested; then review -> build -> check.
-- **Next:** phase C spends checks only on questions that move the 10-30 plan (no board-beating candidate exists
-  today: attention's fold + onepass lands ~1.63 < 1.654 needed); 10-30 phase-A plan by ~23:00Z.
-- **Quota 1742Z:** bf16 19 checks / 10 scored; attention 19 / 10; moe 11 / 7; decode 18 / 9; prefill 17 / 10.
+  - 10-28 22:05Z expert-block focus for phase A; **lifted 10-29 14:51Z for bf16/attn/prefill checks**, then
+    **10-29 ~15:04Z "run all you want that youre able to"**: below-bar diagnostics run as user-requested hypotheses.
+  - **H100 OPEN 10-29 18:04Z -> 10-30 ~14:00Z** (the user: "use the h100 for anything you can come up wth ... next 20
+    hours. no matter what mode youre in"); gpunode06 only, H200 held; at the end stop the runner and clean the node.
+- **Boards 10-29 (unchanged):** moe 1.952, decode 1.690, bf16 1.279, attention 1.634, prefill 1.501.
+- **Tonight's lever:** the RS-wgmma dequant's instruction count. H100 rega lane: dq2 A3 26 -> 18 SASS/step, pair
+  x0.84-0.89 low / x0.91-0.92 high, bit-exact ([lead], research/h100-rega-1029.md).
+- **In flight:** prefill dq2 judge diag **835e1a44** (routes A3 per class at <= 0.97: a board candidate; scored run if
+  it beats 1.5008 by the margin); H100 hot-half lane (moe/decode wg_kernel ncu + A3 A/B, GPUs 1/3/4).
+- **Next:** harvest 835e1a44; on a beat, scored run of the same bytes. 10-30 phase-A plan by ~23:00Z, headed by the
+  A3 port to the moe/decode hot half if the hot-half lane confirms.
+- **Quota 1828Z:** prefill 16 checks after 835e1a44; bf16 19; attention 19; moe 11; decode 18.
 
 ## 2026-10-26T15:35Z: campaign opened
 
