@@ -42,7 +42,7 @@ review_at: 2026-10-29T235601Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: c6e41c9acc6169ac8a532684437955b1d560835b
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T235601Z
 base_sha: 2090c7b69f865761852a7f539d70bfb97f99f2c3
 base_blob: c6e41c9acc6169ac8a532684437955b1d560835b
@@ -59,6 +59,8 @@ submission_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
 lint_warnings: 204
 attempt_file: 2026-10-29T235620Z-check-eae-cold-iso-keepalive-fix.md
 prepared_at: 2026-10-29T235620Z
+job: 582bb33467dc4663
+dispatched_at: 2026-10-29T235633Z
 ---
 
 # eae-cold-iso-keepalive-fix
