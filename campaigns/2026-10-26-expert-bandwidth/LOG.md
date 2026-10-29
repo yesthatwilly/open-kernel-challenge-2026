@@ -2454,3 +2454,8 @@ with the operator's go-ahead.
 ## 2026-10-29 1504Z — user steer: "run all three diagnostics", then "run all you want that youre able to"
 - Minting (user-requested, below bar OK): prefill rega stage-anatomy diag (re-mint on current blob), bf16 multicast-x bulk12 m=8 diag, moe combine-into-w2-epilogue check. Then churn review/build/check.
 - Second wave (user-requested under "run all you want"): the screen's best rejected leads that can build today — prefill rega K-pair four-consumer, attn FA3 metadata fold; stack3 only if combine reads >= 2 us/row. Agent cap 3 (outside phase A).
+
+## 2026-10-29 1625Z — run-all wave: three diagnostics read, second wave building
+- **bf16 b12mc (5f35efd5, 1.2727 = noise, master's timed path):** REFUTE by rule; TMA-box arms 72.7 us vs inc 17.9 at pooler m8 (bridge cp.async 24.3 = 2980f57a), mc/uc 0.995-1.007. The TMA build stalled 3x vs the bridge, so weak evidence; claim [refuted] with reopen "a TMA build at <= the bridge, then mc/uc <= 0.9".
+- **prefill rega stage anatomy (cb22e610):** valid (mode0 0.98-1.00, no spill, bit-exact), VERDICT SERIAL in every class; low w13 t0 293.6 vs MMA-only 194.4 / dequant-only 191.1 / producer 145.1 us, g 0.34 (low), 0.21 (high), 0.18-0.21 (ft). [lead]; ceilings re-scaled to ~5.2% (low) / ~3% (high). **Prefill phase-A candidate for 10-30:** consumer overlap (anti-phase of the two consumer WGs, deferred wgmma_wait with SASS check, K-pair result).
+- In flight: moe cmbf build; prefill K-pair build (proceed, stagger arm + ptxas capture in-run); attn FA3 metadata fold (review).
