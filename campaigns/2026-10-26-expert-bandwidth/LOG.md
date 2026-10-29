@@ -2518,3 +2518,7 @@ with the operator's go-ahead.
 - Losers: A4 (IMAD.HI shift) x1.03-1.11; A3+D alone ~0.97 low/flat high; A3+SC alone 1.02-1.06 low; register ring / deferred wait x1.04-1.12 at low (pf-rega-low-stream's reopen answered: stays refuted). SC wins only on the cheaper issue.
 - Next bound: low = dependency wait + per-stage wgmma wait, pure dequant ALU-pipe 68-71%; high = tensor 79% active (~20% from its floor).
 - Expected judge pair vs A3 ~0.93-0.96 low, ~0.94-0.95 high -> minting a prefill check tonight (16 checks left).
+
+## 2026-10-29 1930Z — gpunode06 GPU 4 orphan killed (owner, relayed); lanes raised to 5-6
+- FYI relayed from the owner's openclaw session: the orphan decs fuzz on gpunode06 GPU 4 (pids 2789304/2789298, USER, started 10-28 ~23:11Z, `decs.py --sub decode-296c2f3a.py --mode fuzz --level san --seed 11`, cwd run-20261028-154716-1910024 already deleted, ppid 1) was killed with SIGTERM at ~19:20Z with the owner's approval, via bin/audit-run.sh. Both pids gone. GPU 4 is free.
+- The user, ~19:30Z: "feel free to use like 5 or 6 lanes" -> concurrent agents up to 6 for this window.
