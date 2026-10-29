@@ -49,12 +49,12 @@ evidence: >
   the moe draw -> +1.29% moe headline; A5b landed on prefill (9f934846 1.5721)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T200135Z
 review_companions: null
 review_best: 1.952050927455536
 review_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T200135Z
 base_sha: db626b766d6eb2e9ef1ad995ca86f6aac6305898
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
@@ -73,6 +73,14 @@ attempt_file: 2026-10-29T202008Z-check-hothalf-wh-a5b-port.md
 prepared_at: 2026-10-29T202008Z
 job: 54b70249868f468b
 dispatched_at: 2026-10-29T202018Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.9826789715234687
+speedup_ci: [1.9529387869506167, 2.0124191560963207]
+harvested_at: 2026-10-29T202409Z
+best_at_harvest: 1.952050927455536
+promotion: pending
+mechanism: null
 ---
 
 # hothalf-wh-a5b-port
@@ -206,3 +214,29 @@ warn  host-sync    L15733: torch.cuda.synchronize()  (outside kernel_fn's call g
 OK with warnings: .worktrees/muse_moe_w4a16/hothalf-wh-a5b-port/muse_moe_w4a16/submission.py
 ```
 (rc 0; every warning is prepare-side; the new ones are the `_wh_*` prepare functions above.)
+
+## Result
+
+- job `54b70249868f468b` (check), status done, passed True, tests 5/5
+- speedup 1.9827x, 95% CI [1.9529, 2.0124], score 6782.994218003089 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.952050927455536, "ci": [1.922770163543703, 1.9813316913673689], "job": "8418677e467d4fb7"}; base result: muse_moe_w4a16/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.result.json`, `muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.patch`; branch `hyp/muse_moe_w4a16/hothalf-wh-a5b-port`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 27.34 | 27.65 | 0.9874 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 111.48 | 104.06 | 1.011 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 140.17 | 140.41 | 1.0011 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 81.18 | 75.15 | 1.0131 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 232.32 | 230.0 | 1.0157 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 291.06 | 274.38 | 1.0676 | gained |
+
+gained on verify_32 verify_32. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
