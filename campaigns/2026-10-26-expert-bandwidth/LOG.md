@@ -2655,3 +2655,8 @@ with the operator's go-ahead.
 
 ## 2026-10-29 2306Z — ea-enc2 read: E4XL/E5XL +2-4% consume-only (below the 5% rule) -> [shelf] rider
 - GPU 3 runs went through without refusal (22:55Z allow rules work). Loop trim + ldmatrix.x4: SASS 617 -> 566 issued/record, consume-only +1.4-5.5% per class (only T256 w13 E5XL passes 5%); bit-exact. Rides as extra raced arms in the next Engine A candidate. GPU 3 free.
+
+## 2026-10-29 2310Z — **decode stack check 824b60fa: 1.7197 (+1.73% over 1.6904)**; scored e4233998 dispatched
+- wh5ds routed T=128 (pair .751-.841) and T=256 (.808-.822), layer gate .930-.955 PASS. Engine A E4 routed T=8 (iso .962, layer .981-.986), T=16 (PIN v4cxs; iso .952, layer .987-.992), T=32 (iso .954, layer .979-.986), T=128 cold (iso .969, layer .983-.988); T=1 master (layer veto 1.007), T=256 master (iso .979 > .98 in a round). Prepare 128.3 s; size 993,828 B.
+- churn harvested gain; master = checked bytes (e1a44258); scored **e4233998** dispatched.
+- Follow-ups: T=256 cold E (iso .977-.983) and T=1 (layer .997-1.007) sit on the bars; the XL arms (ea-enc2 shelf) could tip both.
