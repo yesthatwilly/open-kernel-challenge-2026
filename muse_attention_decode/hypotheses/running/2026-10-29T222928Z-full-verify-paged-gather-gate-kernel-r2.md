@@ -42,11 +42,20 @@ evidence: >
   judge 06c051723643462f fvg build failed on the C++17 flag, master kept
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T223204Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+stage: claimed
+claimed_at: 2026-10-29T223204Z
+base_sha: e3a95e5080f0844b6bb601639a5bb3051e58c707
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2
+worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel-r2
+mode: null
+restack_of: full-verify-paged-gather-gate-kernel
+stale_base: null
 ---
 
 # full-verify-paged-gather-gate-kernel-r2
