@@ -47,7 +47,7 @@ review_at: 2026-10-29T223204Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T223204Z
 base_sha: e3a95e5080f0844b6bb601639a5bb3051e58c707
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
@@ -56,6 +56,12 @@ worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel-
 mode: null
 restack_of: full-verify-paged-gather-gate-kernel
 stale_base: null
+implemented_at: 2026-10-29T223301Z
+impl_commit: 37649103a331b49c92b219f1c9d06caaf5d82fc9
+submission_sha256: 65e27326262544aaf568f231004cc9590e6f74ef2c217956b5e3e7b47b1f539d
+norm_sha256: 139856ac1aefff5e19ea405807d72d6e1149eed43376726291b8bea4e188fa1b
+submission_blob: 0f7d6195263717e5dff426814b77ed679a083408
+lint_warnings: 105
 ---
 
 # full-verify-paged-gather-gate-kernel-r2
@@ -100,3 +106,29 @@ No companions are needed. This is a one-flag restack of a reviewed hypothesis, a
 - Raise the build error capture from str(e)[-600:] to about 3000 chars, as [sw] does (L8840). The parent's 600-char tail cut off the root compiler line. A second failure in this never-compiled text should be diagnosable from one judge log.
 - TORCH_CUDA_ARCH_LIST is not pinned for fvg. torch adds its default sm_90 gencode next to the explicit compute_90a, which compiles the #else stub (error bit 4). Master's sk/skF builders also set and restore os.environ['TORCH_CUDA_ARCH_LIST'] while the fvg thread runs, so the arch list depends on timing. The runtime should load the sm_90a cubin on H100/H200. If the stub ran, the import-time counter/error-word check (L10205) keeps master, so this is safe but could waste the check. Optional: drop the duplicate gencode, or note in the [fvg] print which cubin ran (fvg_attr numRegs > ~40 implies the real kernel).
 
+
+## Implementation notes
+
+Restacked the parent (full-verify-paged-gather-gate-kernel, patch applied cleanly on master by churn claim) and changed four lines, all in the [fvg] section, as the r2 review asked:
+- `_FVG_FLAGS`: `-std=c++17` -> `-std=c++20` (the parent judge run 06c05172 failed on PyTorch's `#error C++20 or later`; the hypothesis's extra_cuda_cflags overrode PyTorch's default C++20). extra_cflags not added (the review found main.cpp already builds as C++20; master's sk/skF/slide pass none).
+- build-error capture `str(e)[-600:]` -> `[-3000:]` (the 600-char tail cut off the root compiler line).
+- `wg_pv`: `setp.ne.b32 p, 1, 0` -> `setp.ne.b32 p, %37, 0` with a new `"r"(1)` input, the same register form as `wg_qk` (removes a literal first operand; same semantics: scale-d = 1).
+No other change. Done by the main thread (no agent); py_compile OK, __pycache__ removed.
+## Rules check
+
+- [x] CUDA-graph capturable: `_fvg_forward` makes Triton + one ext launch on the current stream; no `.item()/.cpu()/synchronize()` in kernel_fn's call graph (lint: none); branches only on config (`_fvg_gate`) and shapes (`_fvg_shape_ok`); lens/page table read on device; capture verified in prepare by `_alt_check` and the race graphs.
+- [x] Nothing derived from `data` is cached across calls: `_FVG_BUF` holds partials/counters sized from G and batch only; `_FVG_ROUTE` frozen at import from synthetic races.
+- [x] Weights: n/a: attention problem has no weights; nothing repacked.
+- [x] Activations BF16 where SGLang keeps BF16; KV cache FP8 (read as e4m3, untouched format); queries rounded to FP8 E4M3 (as FA3); P f16 and fp32 O/softmax (finer than FA3); output bf16.
+- [x] Attention sees every key: stream-K covers every 64-key tile of every request; only causal / length masking on the last tiles.
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import (own fp64 reference), subprocesses (a `threading.Thread` around load_inline, as master's builds) or network.
+- [x] All work happens inside the timed call: pre-attention, attention, combine and epilogue all run per call; no output caching or replay.
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_attention_decode/submission.py --problem muse_attention_decode`):
+
+```
+warn  host-sync  ... (outside kernel_fn's call graph; fine in prepare())   [x ~105, master's prepare + [fvg] prepare lines]
+warn  dtype      L7646: q = torch.full(..., dtype=torch.uint8 ...).view(FP8)   [master, pre-existing]
+OK with warnings: .../muse_attention_decode/submission.py
+```
+`python3 -I -m py_compile`: OK (__pycache__ removed).
