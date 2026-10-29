@@ -149,7 +149,7 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-29T1832Z (date -u); **phase C**; /loop /3to1 running
+- updated: 2026-10-29T1828Z (date -u); **phase C**; /loop /3to1 running
 - **Operating policy: the 3:1 daily rhythm** (the user, 2026-10-27T0011Z; `campaigns/DAILY-RHYTHM.md`, `/3to1`):
   phase A 00:00Z (decode/moe ultracode rewrites) -> phase B (other problems' minor gains) -> phase C 18-24Z (spend
   every check; tomorrow's phase-A plan by ~23:00Z); scored submit whenever a check beats a board; never re-roll bytes.
