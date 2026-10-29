@@ -61,7 +61,7 @@ base_sha: 91aa9ba6749c86329bf85d64ec022f8893a3af68
 base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
 branch: hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel
 worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T221722Z
@@ -70,6 +70,8 @@ submission_sha256: 8208363790e1fceed7afcdb891653ff13f066a2da67b85268ea9ba7056404
 norm_sha256: 4933135fda60fb0e3bfa611e805cf05b3ed62938dc5b5a7902ec6b402af9b14a
 submission_blob: 5af6d05f5e3bd04457ce4d0cd4b32bef563809c3
 lint_warnings: 105
+attempt_file: 2026-10-29T221723Z-check-full-verify-paged-gather-gate-kernel.md
+prepared_at: 2026-10-29T221723Z
 ---
 
 # full-verify-paged-gather-gate-kernel
