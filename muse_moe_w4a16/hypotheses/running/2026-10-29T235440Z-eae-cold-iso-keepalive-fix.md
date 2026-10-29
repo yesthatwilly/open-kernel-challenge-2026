@@ -42,7 +42,7 @@ review_at: 2026-10-29T235601Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: c6e41c9acc6169ac8a532684437955b1d560835b
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T235601Z
 base_sha: 2090c7b69f865761852a7f539d70bfb97f99f2c3
 base_blob: c6e41c9acc6169ac8a532684437955b1d560835b
@@ -51,6 +51,12 @@ worktree: .worktrees/muse_moe_w4a16/eae-cold-iso-keepalive-fix
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T235619Z
+impl_commit: 92e1dcd354eded46c17b1dbeba6fa86cbec59b46
+submission_sha256: 986a2badc10f5926ef04c8bbff11a537117537fbabbc063f5f16fe0c5b4d6760
+norm_sha256: 8abb467d79ec28891028bcc20a3dd030d04d0e15a35b6f62ac63e8b28a13cdc4
+submission_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
+lint_warnings: 204
 ---
 
 # eae-cold-iso-keepalive-fix
@@ -94,3 +100,19 @@ No companions. The diff changes no kernel, route, threshold or pick input: it on
 - Is cold (_hm_align(...)[1][6]) a view into a persistent hm buffer that kernel_fn's T=256 replays overwrite? If so, the printed 'cold iso' ratios time a drifting routing. This is harmless to picks but worth knowing before trusting crat.
 - Optional hardening: have _rt_graph return or hold fn (e.g. attach it to the graph object) so that every future external-buffer capture is kept alive by construction.
 
+
+## Implementation notes
+
+Applied the 3-line hunk from branch hyp/muse_moe_w4a16/eae-t1-guard (b743b4e4) to `_eae_class` only (main thread, no agent): `keep = []` beside graphs/outs/iso; `keep.append((h3, y3, l3))` after the cold-iso buffers are allocated; `keep` deleted with the graphs after `_rt_time`. Resulting file sha256 986a2bad, 948,330 B: identical to the bytes validated 4/4 on gpunode06 with the SGLang baseline in process (research/h100-eae-crash-1029.md). No other change: kernel_fn, routes and picks (from `rat` on the kernel_fn graphs) are unchanged; `crat` is print-only.
+
+## Rules check
+
+- [x] CUDA-graph capturable: no change to kernel_fn or its call graph; the edit is in prepare-only timing code.
+- [x] Nothing derived from `data` is cached across calls: `keep` lives only inside `_eae_class` and is deleted before it returns.
+- [x] Weights: unchanged (no repack change).
+- [x] Activations BF16 where SGLang keeps BF16: unchanged.
+- [x] Attention sees every key: n/a (MoE expert block).
+- [x] No timing patches, harness frames/I/O/secrets, module edits, reference import, subprocesses or network: none added; the fix only extends three prepare-time tensors' lifetime.
+- [x] All work happens inside the timed call; no output caching or replay: unchanged.
+- [x] Size: `wc -c` = 948,330 B < 1,000,000.
+- [x] First line kept; `python3 -I -m py_compile` OK; __pycache__ removed; okc_lint: OK with warnings (prepare-only, same as master).
