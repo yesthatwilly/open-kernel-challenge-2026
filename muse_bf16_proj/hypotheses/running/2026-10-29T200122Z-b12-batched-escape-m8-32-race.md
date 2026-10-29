@@ -50,11 +50,20 @@ evidence: >
   1.2794 (3e3ffc5a); triage shares pooler/qkv m8-32 ~25%
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T200826Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
+stage: claimed
+claimed_at: 2026-10-29T202329Z
+base_sha: 69eaf6972f9cd230611dddd4bb025a1dbf631d8a
+base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
+branch: hyp/muse_bf16_proj/b12-batched-escape-m8-32-race
+worktree: .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # b12-batched-escape-m8-32-race
