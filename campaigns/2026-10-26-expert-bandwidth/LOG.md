@@ -2372,3 +2372,12 @@ with the operator's go-ahead.
     - **Dequant is the knob:** removing it gives x1.8; DQ1 is 26% slower.
     - Doubling the consumer warps per SM gives +10-12% (K2).
     - The replicates are pending.
+- 2026-10-29T0700Z **H100 Q4 final, for the t1rate judge** (7e0a713a, research/h100-t1-1029.md; 2 replicates x 2 rounds):
+  - With HBM out of the loop (consume only), K1 runs 1.22-1.25 us/record/CTA and K2 1.25-1.30 on the node. At judge clock that is 1.13-1.16.
+  - The judge measures 1.31-1.37, about 15-20% above both its consume floor and its HBM floor (~1.01-1.15). Consume and bandwidth are nearly balanced.
+  - **Upper bound for any T=1 consume-rate design: ~0.2-0.25 us/record, i.e. ~2.5-4 us on decode_1 (~1.5-2.5% headline).**
+  - Knobs:
+    - dequant is ~44% of consume time (no-dequant x1.76-1.80);
+    - 16 consumer warps per SM +9-11% (register-limited on the judge);
+    - ring depth: no effect.
+  - The lever is a cheaper per-record dequant, capped by the coupling loss.
