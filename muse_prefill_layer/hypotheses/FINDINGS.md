@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T154922Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -15,7 +15,6 @@ Regenerated 2026-10-29T154922Z by `churn.py index`. Read this before writing a h
 - [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen
-- [shelf] rega low class K-pair: four consumer warpgroups split each stage's two 64-k records over one 128-route slab (experts-rega-low-kpair-four-consumer-wgs), est ~2.1% headline if the occ2 TLP effect (~10%) transfers without V64's chunk split; stack-only | rows: load=turn_1 | evidence: LESSONS:180 (V64 occ2 0.887 vs occ1 0.984, 73b40cd1); b2941ea23dc743a3 profile 0 (rega 249.9 + 127.4 us of 701) | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 screen
 
 ### landed
 
@@ -46,6 +45,7 @@ Regenerated 2026-10-29T154922Z by `churn.py index`. Read this before writing a h
 - [refuted] atomic work-counter item scheduler for rega (experts-rega-dynamic-item-scheduler) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: DECISIONS:420: stages per CTA max/min 928/896, the imbalance premise fails | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [refuted] rega epilogue with warpgroup-local barriers and bulk stores (experts-rega-epilogue-wg-local-bulk-store) | rows: all | evidence: DECISIONS:424: w2st arm a landed; the bulk store is arm b, which lost (665c32dd) | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [refuted] pf-rega-low-stream: low-class rega dequant/wgmma register ring (wait<1>) + cp.async.bulk.prefetch.L2 weight prefetch | rows: load=turn_1 | evidence: check 6edf1cb002bf42b9 1.493 (master routed): best arm P8 cold gm x1.075 SLOWER, gate missed; attrs 168 regs 0 local | board: 1.5008 | blob: c63801e7 | reopen: a ring that ptxas does not serialize (check SASS for C7510/C7512) | 2026-10-28 campaign
+- [refuted] rega low class K-pair: four consumer warpgroups split each stage's two 64-k records over one 128-route slab (experts-rega-low-kpair-four-consumer-wgs), stagger 0 and 1 | rows: load=turn_1, load=turn_4 | evidence: check bbca0105449c4217 [rega-kp]: -Werror probe clean (no C7510/C7512), r96 l0 o1, accuracy x0.70-0.74 of master's error; low T=753 kp/master w13 x1.110-1.140, w2 x1.104-1.120 (pop/random, cold/warm, both staggers within 0.003); high T=3012 x1.087-1.133; gate kept master in both classes. More WGs at 112 regs + smem split-K reduction loses 10-14% against the super-serial gap (cb22e610) | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn
 
 ### superseded
 
@@ -201,6 +201,9 @@ Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5008): histori
 ### w13 + w2 expert GEMMs at 1024 < T <= 4096 (turn_4): ssdq producer weight feed, TMA raw-code smem ring instead of register __ldg prefetch
 - **experts-turn4-ssdq-s2-tma-raw-weight-ring** → neutral (unproven-vs-best), 1.1293x, mechanism hit 2/2 — gained on sliding turn_4; full turn_4. Stage 2 of the ssdq line, built on master (experts-turn4-ssdq-s1b-dataptr-symbol-fix landed: ssdq_kernel serves 1024 < T <= 4096). Only the PRODUCER's weight fe
 
+### w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab
+- **experts-rega-low-kpair-four-consumer-wgs** → neutral (within-ci), 1.4926x, mechanism miss 0/4 — no shape moved outside noise. Built on master (submission.py blob c63801e7, board 1.5008; fast-silu w13 and w2st arm a are what master dispatches at the low class, the LO phase is pinned off
+
 ### w13 + w2 expert GEMMs at 200 < T <= 1024 (turn_1, rega low class): two resident CTAs per SM with a 64- or 32-route slab, to hide consumer dequant latency
 - **experts-rega-low-class-two-ctas-per-sm** → neutral (unproven-vs-best), 1.4173x, mechanism flat 1/2 — gained on sliding turn_1. Rewrite stage 3 of the rega line, built on master a1a5497d (experts-turn-rega-s4-first-turn-n128). It touches ONLY the 'low' class (200 < T <= REGA_LOW_MAX = 10
 
@@ -305,6 +308,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **o-proj-triton-gemm-turn-gated** [o GEMM (attention output projection at 200 < T <= 4096)] neutral, within-ci: Only the call attn_output = _gemm(o, dense['o']) in kernel_fn changes, and only at 200 < T
 - **experts-rega-w2-early-loads-low-class** [rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class] neutral, not confirmed (pooled 1.499021779478406): Restack of experts-rega-w2-epilogue-prefetch-bulk-store (neutral, check 665c32dd; patch in
 - **experts-rega-stage-anatomy-diag-r2** [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] neutral, within-ci: A prepare-only diagnostic: kernel_fn, _experts, _experts_rega and every function the timed
+- **experts-rega-low-kpair-four-consumer-wgs** [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab] neutral, within-ci: GOAL: the ~10% TLP effect that two CTAs/SM showed at the low class (V64 occ2 0.887x vs its
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
@@ -328,5 +332,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 hold
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 hold
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- running: experts-rega-low-kpair-four-consumer-wgs [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab] p2 running
+- running: experts-rega-stage-antiphase-ordered-issue [w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes] p2 running
 - 22 stale holds expired to `done/expired/` (not run)

@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T154921Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -13,6 +13,7 @@ Regenerated 2026-10-29T154921Z by `churn.py index`. Read this before writing a h
 - [shelf] PERHEAD cluster DSMEM merge by push instead of pull at sliding decode_1 (sliding-decode1-ph-push-merge), est ~0.6%, high risk | rows: layer=sliding load=decode_1 | evidence: DECISIONS:439 | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] fast-math epilogues (o/L, rsqrt, sigmoid) in the routed attention kernels (attn-fast-math-epilogues), est ~0.2% | rows: layer=sliding load=decode_1, layer=sliding load=verify_1 | evidence: DECISIONS:440 | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] stack of onepass merge + PERHEAD push merge + fast-math epilogues (combo-tail-onepass-push-fastepi), est ~0.6% | rows: layer=sliding load=decode_1, layer=sliding load=verify_1, layer=full load=decode_16, layer=full load=decode_32 | evidence: DECISIONS:441; its onepass part is [unresolved] above, not Do-not-try | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] FA3 scheduler metadata folded into the pre-attention kernel (one META program), FA3 prepare node removed on full verify rows (fa3-metadata-fold-preattn-full-verify) | rows: layer=full load=verify_1, layer=full load=verify_16, layer=full load=verify_32 | evidence: check 6d1082a6c0dd4f80: metadata bitwise == library on 156-162 samples/row (caps 57/8/4 binding, stable tie), output/FA3/k_cache/v_cache torch.equal, all 3 rows routed; in-run race step 32.45->30.06 (1.085/1.074x), 160.98->158.66 (1.016/1.013x), 301.30->298.62 us (1.009x); judge rows verify_1 full 27.8 us (board 30.1), verify_16 full 161.4 (162.7), verify_32 full 299.8 (302.1); headline 1.6336 vs board 1.6340 (lucky-draw board; flat within the sliding-gate flips); ~+0.7% expected; branch hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify | board: 1.6340 | blob: 2eb03f76 | reopen: stack with another attention row gain to >= 1.24% over the board (e.g. the [unresolved] onepass verify_1) | 2026-10-29 churn
 
 ### unresolved
 
@@ -108,6 +109,9 @@ Diagnosis of 2026-10-25T203356Z, written on board 1.5295 (today 1.6340): histori
 
 ### FA3 call (schedule, off critical path)
 - **fa3-scheduler-metadata-side-stream** → regression (regression), 1.2245x, mechanism miss 0/11 — lost on sliding decode_1, decode_16, decode_32, verify_1, verify_16, verify_32; full verify_1. Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding shape, full paired shapes at batch > 1, full verify_1), FA3 runs flash
+
+### FA3 call (scheduler metadata folded into pre-attention, full verify)
+- **fa3-metadata-fold-preattn-full-verify** → neutral (within-ci), 1.6336x, mechanism flat 1/3 — gained on sliding verify_1; full verify_1; lost on full decode_32. Fold FA3's varlen scheduler metadata (what flash::prepare_varlen_num_blocks_kernel<NumWarps, Sort> writes, 2.8-3.4 us per call on the board profile) into master
 
 ### attention boundary
 - **paired-heads-launch-cleanup** → gain (gain), 1.2436x, mechanism hit 5/5 — gained on full decode_1, decode_16, decode_32, verify_1, verify_16. Stacked on fa3-hdim128-head-pairing (and using fused-preattention-triton's kernel, which must have landed too): remove the five pad/un-pad launches the pairing 
@@ -316,6 +320,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **sliding-verify1-pseudo-fused-preattn-rope** [sliding-layer attention (batch-1 verify, PSEUDO stream-K kernel, pre-attention fold)] neutral, within-ci: DIAGNOSIS action 3(ii). Stacked on merge-perkvhead-v3chain-sv32-tiled (build on its branch
 - **sk-ticket-merge-onepass** [stream-K ticket merge (splitkv_attn_sk_kernel merge_range: full decode 1<B<=64, PSEUDO sliding verify_1, sk-window sliding decode_32)] neutral, within-ci: ONE mechanism, the load structure of the in-kernel ticket merge in _SK_CUDA splitkv_attn_s
 - **sk-onepass-verify1-timing-fix** [stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs)] neutral, within-ci: Restack of sk-ticket-merge-onepass (neutral 1.6177 in check ba8c8a61; twins compiled, merg
+- **fa3-metadata-fold-preattn-full-verify** [FA3 call (scheduler metadata folded into pre-attention, full verify)] neutral, within-ci: Fold FA3's varlen scheduler metadata (what flash::prepare_varlen_num_blocks_kernel<NumWarp
 - **fa3-window-trimmed-page-table** [page table (sliding)] regression, regression: On sliding-window layers only (config window != 0) hand FA3 a window-trimmed view of each 
 - **fa3-scheduler-metadata-side-stream** [FA3 call (schedule, off critical path)] regression, regression: Wherever master calls flash_attn_with_kvcache with scheduler_metadata=None (every sliding 
 - **sliding-fused-hoist-first-tile** [sliding-layer attention (batched decode, gather prologue)] regression, regression: In master _sliding_fused_kernel, issue the first old-key tile's gather before the query wo
@@ -354,5 +359,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 hold
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 hold
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 hold
-- queue: fa3-metadata-fold-preattn-full-verify [FA3 call (scheduler metadata folded into pre-attention, full verify)] p3 queued
 - 17 stale holds expired to `done/expired/` (not run)

@@ -1,6 +1,6 @@
 # muse_attention_decode hypotheses
 
-Regenerated 2026-10-29T154921Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
+Regenerated 2026-10-29T162123Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd845f7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -117,7 +117,7 @@ Regenerated 2026-10-29T154921Z. Best: 1.6340x [1.6094,1.6585] job `4e386647edd84
 | 2026-10-27T132752Z | attn-fast-math-epilogues | primary | output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T132814Z | combo-tail-onepass-push-fastepi | primary | combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T143409Z | sk-onepass-verify1-timing-fix | primary | stream-K ticket merge onepass twin at sliding verify B=1 (the gate's timing inputs) | done/neutral | neutral | 1.6219 | [1.598,1.652] | bfb0457c9ae84322 | check |  | proceed | 0/3 |
-| 2026-10-29T154210Z | fa3-metadata-fold-preattn-full-verify | primary | FA3 call (scheduler metadata folded into pre-attention, full verify) | queue | queued |  |  |  |  |  | required |  |
+| 2026-10-29T154210Z | fa3-metadata-fold-preattn-full-verify | primary | FA3 call (scheduler metadata folded into pre-attention, full verify) | done/neutral | neutral | 1.6336 | [1.609,1.666] | 6d1082a6c0dd4f80 | check |  | proceed | 2/5 |
 
 ## Held
 
