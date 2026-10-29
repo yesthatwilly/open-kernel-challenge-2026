@@ -57,12 +57,12 @@ evidence: >
   hot half 134.5 us at T=256 vs ~39 us floor
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T190531Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T190532Z
 base_sha: 9a165fa3daa30898af37b9dcd47adf0056de57e3
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -81,6 +81,14 @@ attempt_file: 2026-10-29T194525Z-check-hothalf-a3-exactn-ring-wh.md
 prepared_at: 2026-10-29T194525Z
 job: 44f303647100481b
 dispatched_at: 2026-10-29T194534Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.6794311010494494
+speedup_ci: [1.6542396345337076, 1.704622567565191]
+harvested_at: 2026-10-29T195415Z
+best_at_harvest: 1.6903955680487197
+promotion: null
+mechanism: null
 ---
 
 # hothalf-a3-exactn-ring-wh
@@ -217,3 +225,35 @@ The [hh-wh] summary is the last thing printed: 1,381 B, including 207 B of step 
 - Whole layer under the real ea4x cold half and the W6-M fork: wh/m x0.977-0.980 at T=128 (-8.1 us) and x0.965-0.967 at T=256 (-15.6 us), forked or serial alike.
 - On these H100 layer cuts the headline arithmetic (3.335e-4 D256 + 4.652e-4 D128, before any H200 scaling) gives about +0.9%. That is below hh2's +1.31% stand-in estimate: the real cold half absorbs part of the cut, most at T=128, as the review predicted.
 - Attribution at the pair: on these draws the ring+nx stack beats a3 alone by ~2-3 points at T=128 and by ~8 points at T=256. a3nx beats a3 at T=256 (.82 vs .88), but at T=128 it is worse than a3 (.87-.90 vs .86): nx's code-size tax shows where padding is small.
+
+## Result
+
+- job `44f303647100481b` (check), status done, passed True, tests 13/13
+- speedup 1.6794x, 95% CI [1.6542, 1.7046], score 13469.02530616763 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.6903955680487197, "ci": [1.665039634527989, 1.7157515015694504], "job": "7cc034f917274439"}; base result: muse_decode_layer/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_decode_layer/hypotheses/done/neutral/hothalf-a3-exactn-ring-wh.result.json`, `muse_decode_layer/hypotheses/done/neutral/hothalf-a3-exactn-ring-wh.patch`; branch `hyp/muse_decode_layer/hothalf-a3-exactn-ring-wh`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 89.12 | 90.15 | 0.9829 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 92.37 | 95.38 | 0.9825 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 161.13 | 169.45 | 0.9769 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 254.26 | 252.68 | 0.9817 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 195.91 | 190.11 | 1.0086 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 369.92 | 359.3 | 0.9984 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 139.13 | 141.02 | 0.988 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 159.32 | 158.55 | 0.9826 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 321.11 | 317.34 | 0.9988 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 460.19 | 454.51 | 0.9891 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 427.74 | 403.15 | 1.0163 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 700.39 | 665.52 | 1.0115 | flat |
+
+no shape moved outside noise. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: hothalf-a3-exactn-ring-wh`) that adds a further change in the same area is the only way to learn more.
+
