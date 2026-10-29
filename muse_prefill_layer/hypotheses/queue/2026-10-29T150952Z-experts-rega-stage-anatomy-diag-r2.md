@@ -112,8 +112,12 @@ instrument: >
   serial|overlapped|ingest-bound|mixed|INVALID' per class; '[rega-anat] OFF / SKIPPED' lines when
   a deadline or an edit assertion stops it
 user_requested: true
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-29T151524Z
+review_companions: null
+review_best: 1.5007957663757285
+review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
 ---
 
 # experts-rega-stage-anatomy-diag-r2
@@ -138,3 +142,28 @@ Built on master (submission.py blob c63801e7, board 1.5008: fast-silu w13 and w2
 ## Risk
 
 Ships master: the headline is noise. Prepare budget (estimate): master's prepare should end ~140-150 s with the LO phase skipped (the w2st run ended at 182.6 s with LO, LO ~40 s); one nvcc build ~32-42 s (fsilu build 32.2 s) + ~25 s of timing fits under the 205 s / 255 s deadlines; a late prepare prints SKIPPED instead of risking the 300 s limit. Mode 2's sink must keep the dequant live and MODE as a runtime int may shift register allocation: the attrs line and the mode-0 vs master fidelity check (INVALID outside 0.97-1.03x) guard both. Checks left today: prefill 20.
+
+## Adversarial review
+
+Reviewed 2026-10-29T151524Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** Proceed with no companions. One run gives a readable answer: the timed path is master's c63801e7, mode 0 is checked against master's launch, and the deadlines leave about 50 s of slack before the build cutoff. Three things to fix before building: mode 2's add-based sink inflates t2; mode 4 drops the epilogue, so t1 + t2 - t4 counts the epilogue twice; and OVERLAPPED does not justify refuting the K-pair TLP claim.
+
+### Justification
+A. The mechanism question is well posed and matches master's code (consume_item, submission.py:2747: dq_stage, then 8 wgmma, commit, wgmma_wait<0>, release; serial inside each warpgroup). KS is right: w13 64, w2 32. Mode 0 against master's launch at 0.97-1.03x, plus the attrs/spill check, is a proper in-run control. The prior is accurate. PREPARE BUDGET is realistic: LO-skipped master ended w2st at 149.7 s (7db6fa1a) and 155.4 s (b2941ea); fsilu builds took 32-33 s; anat timing about 15-20 s, ending around 200-235 s, under the 255 s step deadline and 300 s. WEAKEST LINKS: (1) g = (t0 - max(t1,t2))/t0 does NOT bound TLP levers: t1 is the MMA path as master schedules it (wgmma_wait<0> per stage + full-barrier wait), not the tensor-core floor; LESSONS:180 shows a ~9-10% TLP gain with this same serial structure. Print each GEMM's wgmma math floor next to t1 and t4; refute K-pair only if t1 is also within ~10% of max(math floor, t4). (2) Mode 2's sink folds 32 a0 registers into acc with real adds, which can add 10-25% to t2; use asm volatile("" :: "r"(a0[r][k])) per register instead. (3) Mode 4 skips the epilogue while t1 and t2 keep it, so t1 + t2 - t4 double-counts the epilogue; keep mode 3's zero-pack epilogue (with stores) in mode 4, or add mode 5 = producer + zero epilogue and use t5 in the serial formula; keep t4 as the pure ingest floor. (4) The runtime MODE branch near wgmma may make ptxas serialize the wgmma pipeline (C7510/C7512, CLAIMS:68); branch on MODE once per item outside the k-loop, grep the build log for C7510/C7512 and print it on the attrs line. Smaller: mode 1's constant A should not be all zeros; print the per-class N-bucket histogram with the STAGE line; the decision's 2.5% sum should use the all-row rega share (~40%), not sliding-only (48-53%).
+
+### Confounders on the current kernel
+- experts-rega-w13-fast-silu-epilogue (CLAIMS:51): mode 0 matches master only while rega_fsilu_ok[cls] is ON; compare mode 0 with state['rega_fsilu_ext'] directly and print master's dispatch separately.
+- w2st arm a (CLAIMS:54, 56): master's w2 is picked by rega_w2st_ok, not rega_fsilu_ok; the builder must use rega_w2st_ok for w2.
+- combo-b / REGA_LO_SKIP (CLAIMS:46, 56): low class always on master's rega_kernel. No confound.
+- align2 two-phase (CLAIMS:42) and norm-gather (CLAIMS:46): tables and xs come from master's own pipeline. No confound.
+
+### Interference and A/B needs
+No companion is warranted. The timed path is byte-identical master; the result is the internal per-mode times with in-run controls (mode 0 vs master's launch, attrs/spill, two routings x two L2 modes). The only follow-up is one re-run if every class is INVALID or SKIPPED.
+
+### Open questions
+- The r1 file 2026-10-26T224009Z-experts-rega-stage-anatomy-diag.md is still queued (hold) and stale; retire or supersede it.
+- Log tail: ~6.2 KB left for the anat summary; print MODEL and VERDICT last and repeat the 3 VERDICT lines after the w2st echo.
+- INGEST-BOUND branch: mc2 cut issued bytes 24-39% yet ran 1.31-1.81x slower, suggesting a cluster-sync or multicast cost; an ingest-bound verdict should re-mint a multicast design addressing that cost.
+- Is the anat nvcc build bounded by a timeout in _rega_build? A build hang past ~95 s after starting near 205 s would exceed 300 s.
+
