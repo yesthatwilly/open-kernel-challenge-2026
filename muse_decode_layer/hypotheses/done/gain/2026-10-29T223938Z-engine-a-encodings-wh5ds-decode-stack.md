@@ -51,12 +51,12 @@ evidence: >
   board 7cc034f9 anatomy: expert block 57 us (S d1/v1), 98 us (S d16/d32), 253 us (S v16/v32) =
   48-68% of the rows
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T224707Z
 review_companions: null
 review_best: 1.6903955680487197
 review_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T224707Z
 base_sha: 7c345f539f26d261c6ced014d2cf6d7f85a06d22
 base_blob: 315119e26cb18e755adf23c3336af2c15c72aafc
@@ -75,6 +75,14 @@ attempt_file: 2026-10-29T230114Z-check-engine-a-encodings-wh5ds-decode-stack.md
 prepared_at: 2026-10-29T230114Z
 job: 824b60fac87c4ff4
 dispatched_at: 2026-10-29T230127Z
+outcome: gain
+verdict_detail: gain
+speedup: 1.7197083799532127
+speedup_ci: [1.6939127542539145, 1.7462656308644948]
+harvested_at: 2026-10-29T231035Z
+best_at_harvest: 1.6903955680487197
+promotion: pending
+mechanism: null
 ---
 
 # engine-a-encodings-wh5ds-decode-stack
@@ -173,3 +181,35 @@ No companion is warranted. Each sub-change has an in-run control. E is raced per
 - [x] Every CUDA string is byte-identical to master except the new E/wh module texts, checked by AST string-constant compare.
 
 okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <wt>/muse_decode_layer/submission.py --problem muse_decode_layer`): `OK with warnings`, 0 errors, 197 host-sync warnings (all "outside kernel_fn's call graph; fine in prepare()"), and 8 dtype warnings (uint8 repack buffers, pre-existing). py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `824b60fac87c4ff4` (check), status done, passed True, tests 13/13
+- speedup 1.7197x, 95% CI [1.6939, 1.7463], score 13153.567351119973 µs vs SGLang 22620.3 µs
+- best at harvest: {"speedup": 1.6903955680487197, "ci": [1.665039634527989, 1.7157515015694504], "job": "7cc034f917274439"}; base result: muse_decode_layer/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_decode_layer/hypotheses/done/gain/engine-a-encodings-wh5ds-decode-stack.result.json`, `muse_decode_layer/hypotheses/done/gain/engine-a-encodings-wh5ds-decode-stack.patch`; branch `hyp/muse_decode_layer/engine-a-encodings-wh5ds-decode-stack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=decode_1 page=1 repeats=60 | 46 | 89.12 | 87.71 | 1.0058 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=decode_1 page=1 repeats=60 | 16 | 92.37 | 95.27 | 0.9732 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=decode_16 page=1 spread=agentic | 46 | 161.13 | 160.77 | 1.0059 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=decode_16 page=1 spread=agentic | 16 | 254.26 | 248.63 | 0.9956 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=decode_32 page=1 spread=agentic | 46 | 195.91 | 188.02 | 1.0204 | flat |
+| batch=32 ctx=80000 dist=soft layer=full load=decode_32 page=1 spread=agentic | 16 | 369.92 | 360.09 | 1.0102 | flat |
+| batch=1 ctx=80000 dist=soft layer=sliding load=verify_1 page=1 q_len=8 | 46 | 139.13 | 138.99 | 1.0234 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=verify_1 page=1 q_len=8 | 16 | 159.32 | 154.47 | 1.0093 | flat |
+| batch=16 ctx=80000 dist=soft layer=sliding load=verify_16 page=1 q_len=8 spread=agentic | 46 | 321.11 | 306.28 | 1.022 | flat |
+| batch=16 ctx=80000 dist=soft layer=full load=verify_16 page=1 q_len=8 spread=agentic | 16 | 460.19 | 442.18 | 1.0136 | flat |
+| batch=32 ctx=80000 dist=soft layer=sliding load=verify_32 page=1 q_len=8 spread=agentic | 46 | 427.74 | 402.57 | 1.0572 | gained |
+| batch=32 ctx=80000 dist=soft layer=full load=verify_32 page=1 q_len=8 spread=agentic | 16 | 700.39 | 682.61 | 1.04 | gained |
+
+gained on sliding verify_32; full verify_32. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+

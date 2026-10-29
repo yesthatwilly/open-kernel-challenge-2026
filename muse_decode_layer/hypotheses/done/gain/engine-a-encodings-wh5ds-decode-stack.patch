@@ -1,0 +1,1610 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 315119e2..4f529d7b 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -8212,6 +8212,14 @@ def _sfk_gate(state, device, t_prepare0):
+ 
+ def prepare(weights):
+     t_prepare0 = time.perf_counter()
++    whj = _wh_start(t_prepare0)
++    try:
++        return _prepare_main(weights, t_prepare0, whj)
++    finally:
++        _wh_join(whj, restore=True)
++
++
++def _prepare_main(weights, t_prepare0, whj):
+     device = weights["qkv_gate"].device
+     router = weights["router"]
+     hi = router.to(torch.bfloat16)
+@@ -8269,6 +8277,7 @@ def prepare(weights):
+         for line in _ead_setup(weights, state, device, t_prepare0):
+             print(line, flush=True)
+             paths += [line] if ("PATH CHOSEN" in line or "worst ratio" in line or " kernel v4 " in line) else []
++    eaej = _eae_start(t_prepare0) if CAMPAIGN_EAE else None
+     if CAMPAIGN_DENSE_SWAPAB:
+         for line in _dsa_setup(state, device, t_prepare0):
+             print(line, flush=True)
+@@ -8296,9 +8305,6 @@ def prepare(weights):
+             paths.append(line)
+     if CAMPAIGN_W6P_PERHEAD:
+         paths += _w6p_setup(weights, state, device, t_prepare0)
+-    hcg = []
+-    if CAMPAIGN_HOTCOLD and CAMPAIGN_T128 and CAMPAIGN_HCG:
+-        paths, hcg = _hcg_confirm(state, device, t_prepare0, paths)
+     if CAMPAIGN_ENGINE_A_DL and EAD_ANATOMY:
+         for name, stage in [("engineA", _ead_anatomy)] + ([("hotcold", _hc_anatomy)] if CAMPAIGN_HOTCOLD else []):
+             for line in stage(state, device):
+@@ -8306,10 +8312,12 @@ def prepare(weights):
+                 paths.append(line)
+             torch.cuda.synchronize()
+             print(f"[campaign] anatomy {name}: synced", flush=True)
++    whl = _wh_phase(state, device, t_prepare0, whj)
+     if CAMPAIGN_SFK:
+         paths += _sfk_gate(state, device, t_prepare0)
++    eal = _eae_phase(state, weights, device, t_prepare0, eaej) if eaej is not None else []
+     print("[campaign] ===== FINAL PATHS =====", flush=True)
+-    for line in paths + hcg:
++    for line in paths:
+         print(line[:200], flush=True)
+     for line in _CB_BASIS_LINE + ([_ead_inputs_line()] if CAMPAIGN_ENGINE_A_DL else []):
+         print(line[:600], flush=True)
+@@ -8321,6 +8329,9 @@ def prepare(weights):
+             print(f"{SFK_TAG} end {_rt_fork_line(state['side_stream'])}", flush=True)
+         except Exception as e:
+             print(f"{SFK_TAG} end fork line raised {type(e).__name__}", flush=True)
++    for line in whl + [ln for ln in EA4X_LINES if " route (board" in ln or " cold half (layer" in ln][-2:] + eal:
++        print(line[:330], flush=True)
++    print(f"[campaign] prepare at {time.perf_counter() - t_prepare0:.1f} s", flush=True)
+     return state
+ 
+ 
+@@ -11525,7 +11536,6 @@ CAMPAIGN_EA6 = True
+ CAMPAIGN_EA6F = True
+ EA6_TAG = "[ea6]"
+ EA6_W1 = {2: 0.475, 3: 0.43, 4: 0.085, 5: 0.01}
+-EA6_FLOOR = {1: 0.95, 2: 0.97, 3: 0.97, 4: 0.97, 5: 0.95}
+ EA6F_ARMS = {"v6pe": 7, "v6pe2": 23, "v6p": 3, "v6e": 4}
+ EA6F_MARGIN = 1.01
+ EA6F_FLOOR = 0.99
+@@ -12224,10 +12234,6 @@ def _ea6_judge(per, specs, arms, margin=None, tight=None):
+     return res
+ 
+ 
+-def _ea6_slopes(t):
+-    return t[1] - t[0], t[2] - t[1], t[3] - t[2], (-1.5 * t[0] - 0.5 * t[1] + 0.5 * t[2] + 1.5 * t[3]) / 5.0
+-
+-
+ CAMPAIGN_EA4X = True
+ EA4X_TAG = "[ea4x]"
+ EA4X_START_S = 190.0
+@@ -13005,6 +13011,8 @@ def _ead_master(xn, lids, tw, state):
+ 
+ 
+ def _ead_core(engine):
++    if engine in _EAE_CORES:
++        return _EAE_CORES[engine]
+     if engine in _EAD6_FCORES:
+         return _EAD6_FCORES[engine]
+     if engine in _EA4X_CORES:
+@@ -13482,8 +13490,11 @@ EAD6F_S = 116.0
+ EAD6_V6_SWITCH = 0.005
+ 
+ 
+-def _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, scratch=None, fast=0):
++def _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, scratch=None, fast=0,
++                       enc=(0, 0)):
+     ext = ea["ext6"]
++    k1 = (ea["ext6e"], ea[f"w13e{enc[0]}"]) if enc[0] else (ext, ea["w13r"])
++    k2 = (ea["ext6e"], ea[f"w2e{enc[1]}"]) if enc[1] else (ext, ea["w2r"])
+     tokens, hidden = x.shape
+     if scratch is None:
+         h = torch.empty((32, tokens, ea["inter"]), device=x.device, dtype=torch.bfloat16)
+@@ -13499,12 +13510,12 @@ def _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trac
+         tw32 = topk_weights.to(torch.float32).contiguous()
+     if trace is not None:
+         trace("before ea6_w13")
+-    ext.ea6_w13(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["err"], nodbg, tokens, start, count, grid, minb,
+-                (4 if pdl13 else 0) | (8 if fast & 1 else 0))
++    k1[0].ea6_w13(x, topk_ids, k1[1], ea["gs13"], h, local_ids, ea["err"], nodbg, tokens, start, count, grid, minb,
++                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if enc[0] == 4 else 0))
+     if trace is not None:
+         trace("after ea6_w13 / before ea6_w2")
+-    ext.ea6_w2(h, topk_ids, ea["w2r"], ea["gs2"], y, ea["err"], nodbg, tokens, start, count, g2, minb,
+-               1 | (2 if ea["ea6_cores"] else 0) | (8 if fast & 2 else 0))
++    k2[0].ea6_w2(h, topk_ids, k2[1], ea["gs2"], y, ea["err"], nodbg, tokens, start, count, g2, minb,
++                 1 | (2 if ea["ea6_cores"] else 0) | (8 if fast & 2 else 0) | (4096 if enc[1] == 4 else 0))
+     if trace is not None:
+         trace("after ea6_w2 / before post-expert norm")
+     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
+@@ -13659,55 +13670,6 @@ def _ead6_canary(weights, state, device, farms=()):
+                   f"fp32 {worst:.3g}, master worst {m_worst:.3g}; repeat runs bitwise equal"), fbad, feq
+ 
+ 
+-def _ead6_block(state, device, inc):
+-    ea = state["ea"]
+-    norm = state["post_expert_norm_w"]
+-    gen = torch.Generator().manual_seed(EAD6_SEED + 1)
+-    keep, per = [], {}
+-    for n in range(1, 6):
+-        xn, lids, tw = inp = _ead6_inputs(n, gen, device)
+-        keep.append(inp)
+-        if inc:
+-            fn_inc = _ead_core(inc)
+-            f_inc = lambda fn=fn_inc, xn=xn, lids=lids, tw=tw: fn(ea, xn, lids, tw, 0, LOCAL_EXPERTS, norm)
+-        else:
+-            f_inc = _ead_master(xn, lids, tw, state)
+-        graphs = {"inc": _rt_graph(f_inc)[0],
+-                  "v6": _rt_graph(lambda xn=xn, lids=lids, tw=tw: _ead6_forward_core(
+-                      ea, xn, lids, tw, 0, LOCAL_EXPERTS, norm))[0]}
+-        per[n] = _rt_time(graphs, device)
+-        torch.cuda.synchronize()
+-        del graphs
+-    ok, floors, fmin, fwhere, rat, wr, tight = True, True, float("inf"), "", [], [], []
+-    for ri in range(RT_ROUNDS):
+-        st = {nm: [_rt_stats(per[n][ri][nm]) for n in range(1, 6)] for nm in ("inc", "v6")}
+-        med = {nm: [v[0] for v in st[nm]] for nm in ("inc", "v6")}
+-        r = [med["inc"][i] / max(med["v6"][i], 1e-3) for i in range(5)]
+-        rat.append(r)
+-        wr.append(sum(EA6_W1.get(i + 1, 0.0) * r[i] for i in range(5)) / sum(EA6_W1.values()))
+-        tight.append(all(st["v6"][i][1] <= RT_IQR_FACTOR * max(st["inc"][i][1], RT_IQR_FLOOR_US) for i in range(5)))
+-        f_ok = True
+-        for i in range(5):
+-            if r[i] - EA6_FLOOR[i + 1] < fmin:
+-                fmin, fwhere = r[i] - EA6_FLOOR[i + 1], f"n{i + 1}"
+-            f_ok = f_ok and r[i] >= EA6_FLOOR[i + 1]
+-        floors = floors and f_ok
+-        ok = ok and f_ok and (wr[-1] >= RT_MARGIN or (wr[-1] >= RT_MARGIN_TIGHT_IQR and tight[-1]))
+-        _ea6_say(f"{EAD6_TAG} T=1 block us n1..n5 r{ri + 1}: inc({inc or 'master'}) " +
+-                 "/".join(f"{v:.1f}" for v in med["inc"]) + " | v6 " + "/".join(f"{v:.1f}" for v in med["v6"]) +
+-                 "; per extra expert (2>3/3>4/4>5/OLS2-5): inc " +
+-                 "/".join(f"{v:.2f}" for v in _ea6_slopes(med["inc"][1:5])) + " | v6 " +
+-                 "/".join(f"{v:.2f}" for v in _ea6_slopes(med["v6"][1:5])))
+-    _ea6_say(f"{EAD6_TAG} T=1 block inc/v6 n1..n5: " + " ; ".join(
+-        f"r{ri + 1} " + "/".join(f"{v:.3f}" for v in r) for ri, r in enumerate(rat)) +
+-        " | wr (judge mix n2..5) " + "/".join(f"{v:.3f}{'t' if t else ''}" for v, t in zip(wr, tight)) +
+-        f" (>= {RT_MARGIN}, {RT_MARGIN_TIGHT_IQR}t) | floor margin {fmin:+.3f}@{fwhere}"
+-        f"{'' if floors else ' MISS'} -> {'Q' if ok else '-'}")
+-    torch.cuda.synchronize()
+-    del keep
+-    return ok, wr
+-
+-
+ def _ead6_copy_check(state, device, arm="v6"):
+     other = _ead_copy_tree(state)
+     gen = torch.Generator(device=device)
+@@ -13856,11 +13818,6 @@ def _ead6_stage(weights, state, device, t_prepare0):
+         farms_ok = tuple(a for a in farms if a not in fbad)[:2]
+         if not ok:
+             raise _Ead6Off("canary FAIL")
+-        if late(EAD6_START_S):
+-            raise _Ead6Off("block race skipped: deadline")
+-        blk_ok, blk_wr = _ead6_block(state, device, inc)
+-        if not blk_ok:
+-            raise _Ead6Off("lost the block race (wr " + "/".join(f"{v:.3f}" for v in blk_wr) + " or a floor)")
+         if late(EAD6_GATE_S):
+             raise _Ead6Off("whole-layer guard skipped: deadline")
+ 
+@@ -13973,7 +13930,8 @@ EAD4X_KEEP = 1.0
+ EAD4X_SWITCH = 0.01
+ EAD4X_NEAR = 0.005
+ EAD4X_MORE = 2
+-EAD4X_BOARD = {8: "s", 16: "d", 32: "s", 128: "s", 256: "s"}
++EAD4X_BOARD = {8: "s", 16: "s", 32: "s", 128: "s", 256: "s"}
++EAD4X_PIN = {16: "v4cxs"}
+ 
+ 
+ def _ead4x_rq(per, arm, pooled=False):
+@@ -14168,6 +14126,11 @@ def _ead4x_stage(weights, state, device, t_prepare0):
+             if not arms:
+                 race[cls] = f"T{cls} inc {inc or 'master'}" + (" twin FAIL" if inc in ("v4", "v4c") else "")
+                 continue
++            if EAD4X_PIN.get(cls) in arms:
++                rinfo[cls] = {"order": ["s"], "view": {"s": (1.0, 0.0)}, "mode": "PIN", "inc": inc,
++                              "ak": {"s": EAD4X_PIN[cls]}}
++                race[cls] = f"T{cls} PIN {EAD4X_PIN[cls]}"
++                continue
+             if late(EAD4X_GATE_S):
+                 race[cls] = f"T{cls} deadline"
+                 continue
+@@ -14237,6 +14200,8 @@ def _ead4x_stage(weights, state, device, t_prepare0):
+                     ea["x_picks"].append(cls)
+                     break
+             route[cls] = f"{'>'.join(ri['order']) or 'none'} {' '.join(tried)} {ri['mode']}".replace("  ", " ")
++            if ri["mode"] == "PIN":
++                route[cls] = f"s PIN {ri['ak']['s']} {text}"
+         _ead4x_say(f"{EAD4X_TAG} route (board " + "/".join(EAD4X_BOARD.get(c, "s") for c in (8, 16, 32)) + "): " +
+                    ", ".join(f"{c}:{route[c] if c in route else 'inc ' + str(on.get(c))}" for c in (8, 16, 32))
+                    + f"; at {time.perf_counter() - t_prepare0:.1f} s")
+@@ -15748,9 +15713,9 @@ void wg_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
+ """
+ 
+ 
+-def _wg_wgmma_src():
++def _wg_wgmma_src(nbs=WG_BUCKETS):
+     out = []
+-    for nb in WG_BUCKETS:
++    for nb in nbs:
+         na = nb // 2
+         d = ", ".join(f"%{i}" for i in range(na))
+         lines = [
+@@ -15935,6 +15900,589 @@ def _wg_attach_scratch(state, ext, device, hidden, inter):
+     state["wg_grid"] = torch.cuda.get_device_properties(device).multi_processor_count
+ _WG_MASTER_REVERT = None
+ 
++WH_TAG = "[hh-wh]"
++WH_ARMS = (("wh5ds", 14),)
++WH_ROUTE, WH_GATE = 0.97, 1.00
++WH_SCALE = (0x08, 0x7E)
++WH_REC = 4608
++WH_PERM_CHUNK = 16384
++WH_DL = 240.0
++WH_REBUILD_S = 100.0
++WH_REFILLS = 8
++WH_SEED = 20261190
++WH_MAGIC = 0x57474D4D
++WH_COUNTS = (129, 113, 97, 81, 65, 49, 33, 17, 140, 100, 70, 40, 24, 56, 88, 120)
++WH_ENC4 = (8, 9, 10, 1, 2, 7, 12, 13, 14, 11, 0, 3, 20, 21, 22, 15, 24, 25, 26, 17, 18, 23, 28, 29, 30, 27, 16, 19, 4, 5,
++           6, 31)
++
++_WH_CPP = r"""
++#include <torch/extension.h>
++#include <vector>
++std::vector<int64_t> wh_init();
++void wh_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank, torch::Tensor gs, torch::Tensor sorted_ids,
++             torch::Tensor block_experts, torch::Tensor n_padded, int64_t num_routes, int64_t n_tiles, int64_t K,
++             torch::Tensor out, int64_t grid, torch::Tensor err, int64_t pdl, int64_t v);
++"""
++
++_WH_DQ = r"""__device__ __forceinline__ uint32_t hh_rt16(int n) {
++  uint32_t z;
++  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
++  return 16u << z;
++}
++__device__ __forceinline__ uint32_t hh_rt78(int n) {
++  uint32_t z;
++  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
++  return ((1u << 28) << z) ^ 0x68007800u;
++}
++__device__ __forceinline__ uint32_t hh_lo_of(uint32_t a) { return ((a & 0x3FFFFu) >> 4) | (1u << 16); }
++__device__ __forceinline__ uint64_t hh_mkd(uint32_t lo) {
++  uint64_t d;
++  asm("mov.b64 %0, {%1, %2};\n" : "=l"(d) : "r"(lo), "r"(0x40000040u));
++  return d;
++}
++template <int J0>
++__device__ __forceinline__ uint32_t hh_scale_pair(uint32_t w, uint32_t m16) {
++  uint32_t t, d;
++  asm("prmt.b32 %0, %1, 0, %2;\n" : "=r"(t) : "r"(w), "n"((4 << 12) | ((J0 + 1) << 8) | (4 << 4) | J0));
++  asm("mad.lo.u32 %0, %1, %2, %3;\n" : "=r"(d) : "r"(t), "r"(m16), "r"(0x77807780u));
++  return d;
++}
++template <int H>
++__device__ __forceinline__ uint32_t hh_mul_h(uint32_t a, uint32_t s) {
++  uint32_t d;
++  if constexpr (H == 0)
++    asm("{\n\t.reg .b16 l, h;\n\t.reg .b32 t;\n\tmov.b32 {l, h}, %2;\n\tmov.b32 t, {l, l};\n\t"
++        "fma.rn.bf16x2 %0, %1, t, %3;\n\t}\n" : "=r"(d) : "r"(a), "r"(s), "r"(0x80008000u));
++  else
++    asm("{\n\t.reg .b16 l, h;\n\t.reg .b32 t;\n\tmov.b32 {l, h}, %2;\n\tmov.b32 t, {h, h};\n\t"
++        "fma.rn.bf16x2 %0, %1, t, %3;\n\t}\n" : "=r"(d) : "r"(a), "r"(s), "r"(0x80008000u));
++  return d;
++}
++template <int I>
++__device__ __forceinline__ uint32_t hh_ext_prop(uint32_t q) {
++  if constexpr (I == 0) {
++    return q & 0x81C081C0u;
++  } else if constexpr (I == 1) {
++    return (q << 3) & 0x81C081C0u;
++  } else if constexpr (I == 2) {
++    return (q << 6) & 0x81C081C0u;
++  } else {
++    return ((q >> 3) & 0x01800180u) | ((q >> 7) & 0x00400040u) | ((q << 1) & 0x80008000u);
++  }
++}
++template <int V, int K>
++__device__ __forceinline__ void hh_dq_step(uint32_t qk, uint32_t sw, uint32_t m, uint32_t (&a)[4]) {
++  if constexpr ((V & 8) != 0) {
++    const uint32_t ws = (K & 1) ? __byte_perm(sw, sw, 0x2103) : sw;
++    uint32_t S;
++    asm("lop3.b32 %0, %1, %2, %3, 0xEA;\n" : "=r"(S) : "r"(ws), "n"(0x07F007F0), "r"(m));
++    constexpr uint32_t M = 0x81C081C0u;
++    a[0] = hh_mul_h<0>(qk & M, S);
++    a[1] = hh_mul_h<1>((qk << 6) & M, S);
++    a[2] = hh_mul_h<0>(__funnelshift_l(qk, qk, 10) & M, S);
++    a[3] = hh_mul_h<1>(((qk << 4) & 0x81808180u) | ((qk >> 4) & 0x00400040u), S);
++  } else {
++    const uint32_t S = hh_scale_pair<2 * (K & 1)>(sw, m);
++    a[0] = hh_mul_h<0>(hh_ext_prop<0>(qk), S);
++    a[1] = hh_mul_h<1>(hh_ext_prop<1>(qk), S);
++    a[2] = hh_mul_h<0>(hh_ext_prop<2>(qk), S);
++    a[3] = hh_mul_h<1>(hh_ext_prop<3>(qk), S);
++  }
++}
++template <int V>
++__device__ __forceinline__ void hh_dq_rec(const uint8_t* rp, int cw, int lane, uint32_t m, uint32_t (*a)[4]) {
++  const uint4 q = *reinterpret_cast<const uint4*>(rp + cw * 512 + lane * 16);
++  const uint2 sc = *reinterpret_cast<const uint2*>(rp + REC_CODES + cw * 64 + (lane >> 2) * 8);
++  hh_dq_step<V, 0>(q.x, sc.x, m, a[0]);
++  hh_dq_step<V, 1>(q.y, sc.x, m, a[1]);
++  hh_dq_step<V, 2>(q.z, sc.y, m, a[2]);
++  hh_dq_step<V, 3>(q.w, sc.y, m, a[3]);
++}
++__device__ __forceinline__ void dq_stage_a3(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4], uint32_t m16) {
++  hh_dq_rec<1>(st, cw, lane, m16, a);
++  hh_dq_rec<1>(st + REC, cw, lane, m16, a + 4);
++}
++
++"""
++
++_WH_RING = r"""  if constexpr ((V & 4) != 0 && NB >= 48) {
++  const uint32_t hh_m16 = (V & 8) != 0 ? hh_rt78(KS) : hh_rt16(KS);
++  const int hh_g = lane >> 2;
++  uint32_t A0[4], A1[4], A2[4], A3[4];
++  int hh_sp = -1;
++  for (int kb = 0; kb < KS; ++kb) {
++    const int s = n % STAGES;
++    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++    const uint8_t* st = smem + s * STAGE_BYTES;
++    const uint4 q0 = *reinterpret_cast<const uint4*>(st + cw * 512 + lane * 16);
++    const uint2 c0 = *reinterpret_cast<const uint2*>(st + REC_CODES + cw * 64 + hh_g * 8);
++    const uint4 q1 = *reinterpret_cast<const uint4*>(st + REC + cw * 512 + lane * 16);
++    const uint2 c1 = *reinterpret_cast<const uint2*>(st + REC + REC_CODES + cw * 64 + hh_g * 8);
++    const uint64_t d0 = make_desc(smem_u32(st + WST)), d1 = make_desc(smem_u32(st + WST + SLAB_HALF));
++    const uint32_t l0 = hh_lo_of(smem_u32(st + WST)), l1 = l0 + (SLAB_HALF >> 4);
++#define HH_K16(QW_, SW_, K_, AB_, AO_, D_, L_)                                                                  \
++    hh_dq_step<V, K_>(QW_, SW_, hh_m16, AB_);                                                                  \
++    fence_acc<NA>(acc);                                                                                        \
++    wgmma_fence();                                                                                             \
++    Wg<NB>::mma(acc, AB_, (V & 8) != 0 ? hh_mkd((L_) + 2u * (K_)) : (D_) + static_cast<uint64_t>(2 * (K_)));    \
++    wgmma_commit();                                                                                            \
++    wgmma_wait<2>();                                                                                           \
++    asm volatile("" : "+r"(AO_[0]), "+r"(AO_[1]), "+r"(AO_[2]), "+r"(AO_[3]) :: "memory");
++    HH_K16(q0.x, c0.x, 0, A0, A1, d0, l0)
++    HH_K16(q0.y, c0.x, 1, A1, A2, d0, l0)
++    if (hh_sp >= 0 && lane == 0) mbar_arrive(empty0 + 8 * hh_sp);
++    HH_K16(q0.z, c0.y, 2, A2, A3, d0, l0)
++    HH_K16(q0.w, c0.y, 3, A3, A0, d0, l0)
++    HH_K16(q1.x, c1.x, 0, A0, A1, d1, l1)
++    HH_K16(q1.y, c1.x, 1, A1, A2, d1, l1)
++    HH_K16(q1.z, c1.y, 2, A2, A3, d1, l1)
++    HH_K16(q1.w, c1.y, 3, A3, A0, d1, l1)
++#undef HH_K16
++    hh_sp = s;
++    ++n;
++  }
++  wgmma_wait<0>();
++  fence_acc<NA>(acc);
++  if (hh_sp >= 0 && lane == 0) mbar_arrive(empty0 + 8 * hh_sp);
++  } else if constexpr ((V & 8) != 0) {
++  uint32_t a0[8][4];
++  const uint32_t hh_m16 = hh_rt78(KS);
++  for (int kb = 0; kb < KS; ++kb) {
++    const int s = n % STAGES;
++    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
++    const uint8_t* st = smem + s * STAGE_BYTES;
++    const uint32_t hh_lo = hh_lo_of(smem_u32(st + WST));
++    hh_dq_rec<V>(st, cw, lane, hh_m16, a0);
++    fence_acc<NA>(acc);
++    wgmma_fence();
++#pragma unroll
++    for (int k = 0; k < 4; ++k) Wg<NB>::mma(acc, a0[k], hh_mkd(hh_lo + static_cast<uint32_t>(k * 2)));
++    wgmma_commit();
++    hh_dq_rec<V>(st + REC, cw, lane, hh_m16, a0 + 4);
++    wgmma_fence();
++#pragma unroll
++    for (int k = 0; k < 4; ++k) Wg<NB>::mma(acc, a0[4 + k], hh_mkd(hh_lo + static_cast<uint32_t>((SLAB_HALF >> 4) + k * 2)));
++    wgmma_commit();
++    wgmma_wait<0>();
++    fence_acc<NA>(acc);
++    if (lane == 0) mbar_arrive(empty0 + 8 * s);
++    ++n;
++  }
++  wgmma_wait<0>();
++  fence_acc<NA>(acc);
++  } else {
++  uint32_t a0[8][4];
++  const uint32_t hh_m16 = hh_rt16(KS);
++  for (int kb = 0; kb < KS; ++kb) {"""
++
++_WH_NX_SWITCH = """      if constexpr ((V & 2) != 0) {
++        switch (m.nbk) {
++          case 1: WG_CONSUME(16); break;
++          case 2: WG_CONSUME(32); break;
++          case 3: WG_CONSUME(48); break;
++          case 4: WG_CONSUME(64); break;
++          case 5: WG_CONSUME(80); break;
++          case 6: WG_CONSUME(96); break;
++          case 7: WG_CONSUME(112); break;
++          default: WG_CONSUME(128); break;
++        }
++      } else
++      switch (m.bucket) {"""
++
++_WH_EDITS = (
++    ("// wgmma_wait<0> right after the commit, BEFORE the next", _WH_DQ + "// wgmma_wait<0> right after the commit, BEFORE the next"),
++    ("template <int NB, bool G>\n__device__", "template <int NB, bool G, int V>\n__device__"),
++    ("  uint32_t a0[8][4];\n  for (int kb = 0; kb < KS; ++kb) {", _WH_RING),
++    ("    dq_stage(st, cw, lane, a0);\n",
++     "    if constexpr ((V & 1) != 0) dq_stage_a3(st, cw, lane, a0, hh_m16); else dq_stage(st, cw, lane, a0);\n"),
++    ("  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc\n  fence_acc<NA>(acc);\n",
++     "  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc\n  fence_acc<NA>(acc);\n  }\n"),
++    ("template <bool G>\n__global__", "template <bool G, int V>\n__global__"),
++    ("        const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[m.bucket]);\n"
++     "        const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;\n",
++     "        const int mi = (V & 2) != 0 ? m.nbk - 1 : (1 << m.bucket) - 1;\n"
++     "        const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[mi]);\n"
++     "        const uint32_t tx = WST + 2 * (16 * (mi + 1)) * 128;\n"),
++    ("consume_item<NB_, G>(", "consume_item<NB_, G, V>("),
++    ("      switch (m.bucket) {", _WH_NX_SWITCH),
++    ("template <bool G>\nvoid info_one", "template <bool G, int V>\nvoid info_one"),
++    ("reinterpret_cast<const void*>(wg_kernel<G>)", "reinterpret_cast<const void*>(wg_kernel<G, V>)"),
++    ("  r.push_back(G ? 1 : 0);", "  r.push_back((G ? 1 : 0) + 2 * V);"),
++    ("std::vector<int64_t> wg_init() {", "std::vector<int64_t> wh_init() {"),
++    ("  info_one<true>(r);\n  info_one<false>(r);",
++     "  info_one<true, 0>(r);\n  info_one<false, 0>(r);\n  info_one<true, 1>(r);\n  info_one<false, 1>(r);\n"
++     "  info_one<true, 7>(r);\n  info_one<false, 7>(r);\n  info_one<true, 14>(r);\n  info_one<false, 14>(r);"),
++    ("void wg_gemm(int64_t which,", "void wh_gemm(int64_t which,"),
++    ("             int64_t pdl) {\n  TORCH_CHECK(which == 0 || which == 1, \"wg_gemm: which\");",
++     "             int64_t pdl, int64_t v) {\n  TORCH_CHECK((which == 0 || which == 1) && (v == 0 || v == 1 || v == 7 || "
++     "v == 14), \"wh_gemm: which / v\");"),
++    ("    for (int b = 0; b < 4; ++b) {\n      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 << b)};",
++     "    for (int b = 0; b < 8; ++b) {\n      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 * (b + 1))};"),
++    ("#define WG_LAUNCH(G_)", "#define WG_LAUNCH(G_, V_)"),
++    ("wg_kernel<G_><<<", "wg_kernel<G_, V_><<<"),
++    ("&cfg, wg_kernel<G_>, mp,", "&cfg, wg_kernel<G_, V_>, mp,"),
++    ("  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);",
++     "#define WH_LV(G_) switch (v) { case 1: WG_LAUNCH(G_, 1); break; case 7: WG_LAUNCH(G_, 7); break; "
++     "case 14: WG_LAUNCH(G_, 14); break; default: WG_LAUNCH(G_, 0); }\n"
++     "  if (which == 0) { WH_LV(true) } else { WH_LV(false) }\n#undef WH_LV"),
++)
++_WH_MAPS = ("struct __align__(64) Maps { CUtensorMap m[4]; };", "struct __align__(64) Maps { CUtensorMap m[8]; };")
++
++
++
++def _wh_src():
++    head, body = _WG_SRC_HEAD, _WG_SRC_BODY
++    for old, new in (_WH_MAPS,) + _WH_EDITS:
++        part = head if old == _WH_MAPS[0] else body
++        if part.count(old) != 1:
++            raise RuntimeError(f"edit target not unique: {old[:60]!r}")
++        if old == _WH_MAPS[0]:
++            head = head.replace(old, new)
++        else:
++            body = body.replace(old, new)
++    return _WH_CPP, head + _wg_wgmma_src((16, 32, 48, 64, 80, 96, 112, 128)) + body
++
++
++def _wh_build_bg(name, cpp, src, res):
++    import re
++    t0 = time.perf_counter()
++    try:
++        os.setpriority(os.PRIO_PROCESS, 0, min(19, os.getpriority(os.PRIO_PROCESS, 0) + 10))
++    except Exception:
++        pass
++    try:
++        from torch.utils.cpp_extension import load_inline
++        for probe in (True, False):
++            try:
++                res["ext"] = load_inline(name=name + ("_p" if probe else ""), cpp_sources=cpp, cuda_sources=src,
++                                         functions=["wh_init", "wh_gemm"], verbose=False,
++                                         extra_cuda_cflags=list(WG_CUDA_CFLAGS) + (["-Xptxas", "-Werror"] if probe else []))
++                res["probe"] = probe
++                break
++            except Exception as e:
++                text = str(e)
++                res["err"] = text[-300:]
++                res["c75"] = sorted(set(re.findall(r"C75\d\d", text))) or res.get("c75")
++                if res.get("c75") or not probe or time.perf_counter() - t0 > WH_REBUILD_S:
++                    break
++    except BaseException as e:
++        res["ext"], res["err"] = None, f"{type(e).__name__}: {str(e)[-300:]}"
++    finally:
++        res["secs"] = time.perf_counter() - t0
++
++
++def _wh_start(t0):
++    job = {"res": {}, "th": None, "env": None, "off": None, "wait": 0.0}
++    try:
++        import hashlib
++        import threading
++        cpp, src = _wh_src()
++        name = "muse_decode_wg_wh5_" + hashlib.sha256((cpp + src).encode()).hexdigest()[:10]
++        job["env"] = (os.environ.get("TORCH_CUDA_ARCH_LIST"),)
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        th = threading.Thread(target=_wh_build_bg, args=(name, cpp, src, job["res"]), name="hh-wh-nvcc", daemon=False)
++        job["t"] = time.perf_counter() - t0
++        th.start()
++        job["th"] = th
++    except Exception as e:
++        job["off"] = f"start {type(e).__name__}: {str(e)[:120]}"
++    return job
++
++
++def _wh_join(job, restore=False):
++    try:
++        th = job.get("th")
++        if th is not None:
++            tw = time.perf_counter()
++            th.join()
++            job["th"] = None
++            job["wait"] += time.perf_counter() - tw
++        if restore and job.get("env") is not None:
++            prev, job["env"] = job["env"][0], None
++            if prev is None:
++                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++            else:
++                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    except Exception as e:
++        job["off"] = f"join raised {e!r}"[:160]
++
++
++def _wh_pair(state, v, sh, bh, nh, routes, size_n, size_k, out, sc=None):
++    wb = state["wg_banks"][(0, LOCAL_EXPERTS)]
++    if v is None:
++        _wg_gemm(state, 0, wb["q13"], wb["gs13"], sh, bh, nh, routes, size_n // 64, size_k, state["wg_hs"])
++        _wg_gemm(state, 1, wb["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, out)
++        return
++    sc = state if sc is None else sc
++    b = state["whk_x5"] if v & 8 else (state["whk_bank"] if v & 1 else wb)
++    ext, grid, err = state["whk_ext"], state["wg_grid"], sc["whk_err"]
++    ext.wh_gemm(0, sc["wg_xs"], b["q13"], wb["gs13"], sh, bh, nh, routes, size_n // 64, size_k, sc["wg_hs"], grid,
++                err, 0, v)
++    ext.wh_gemm(1, sc["wg_hs"], b["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, out, grid, err,
++                1 if state.get("wg_pdl", False) else 0, v)
++
++
++def _wh_run(state, v, x, al, out, sc=None):
++    sc = state if sc is None else sc
++    sh, bh, nh = al
++    routes = x.shape[0] * TOP_K
++    out.fill_(HC_JUNK)
++    state["wg_ext"].wg_gather(x, sh, bh, nh, routes, LOCAL_EXPERTS, sc["wg_xs"])
++    _wh_pair(state, v, sh, bh, nh, routes, state["bank"]["size_n"], x.shape[1], out, sc)
++    return out
++
++
++def _wh_bitperm(w, d):
++    p = torch.zeros_like(w)
++    for s in range(32):
++        p |= ((w >> s) & 1) << d[s]
++    return p
++
++
++def _wh_pack(w):
++    f0, f1, f2, f3 = (((w >> (8 * i)) & 0xFF) - 8 for i in range(4))
++    return (f0 << 4) | (f1 << 20) | (f3 << 12) | ((f2 & 0xF) << 28) | (f2 >> 4)
++
++
++def _wh_unpack(p):
++    f2 = ((p >> 28) & 0xF) | ((p & 7) << 4)
++    return (((p >> 4) & 0x7F) + 8) | ((((p >> 20) & 0x7F) + 8) << 8) | ((f2 + 8) << 16) | ((((p >> 12) & 0x7F) + 8) << 24)
++
++
++def _wh_e4():
++    e4 = [0] * 32
++    for j, t in enumerate(WH_ENC4):
++        e4[t] = j
++    if sorted(e4) != list(range(32)):
++        raise RuntimeError("code map is not a bit permutation")
++    return e4
++
++
++def _wh_i32(w):
++    return (w - ((w >> 31) & 1) * (1 << 32)).to(torch.int32)
++
++
++def _wh_recode(wb, d, pack):
++    inv = [0] * 32
++    for s in range(32):
++        inv[d[s]] = s
++    out = {}
++    for key in ("q13", "q2"):
++        src = wb[key].view(-1, WH_REC)
++        dst = src.clone()
++        for i in range(0, src.shape[0], WH_PERM_CHUNK):
++            c = src[i:i + WH_PERM_CHUNK]
++            w = c[:, :4096].contiguous().view(torch.int32).long() & 0xFFFFFFFF
++            p = _wh_bitperm(w, d)
++            if not torch.equal(_wh_bitperm(p, inv), w):
++                raise RuntimeError(f"{key} chunk {i}: code map not lossless")
++            dst[i:i + WH_PERM_CHUNK, :4096] = _wh_i32(p).view(torch.uint8).view(-1, 4096)
++            if pack:
++                sw = c[:, 4096:].contiguous().view(torch.int32).long() & 0xFFFFFFFF
++                ps = _wh_pack(sw)
++                if not torch.equal(_wh_unpack(ps), sw):
++                    raise RuntimeError(f"{key} chunk {i}: scale packing not lossless")
++                dst[i:i + WH_PERM_CHUNK, 4096:] = _wh_i32(ps).view(torch.uint8).view(-1, 512)
++            w = p = c = None
++        if not pack and not torch.equal(dst[:, 4096:], src[:, 4096:]):
++            raise RuntimeError(f"{key}: scale bytes changed")
++        out[key] = dst.view(-1)
++    return out
++
++
++def _wh_inputs(state, device, gen, gcpu, cls, h, synth=None):
++    if synth is None:
++        data = _ead_cases(state, device, gen, cls)
++        ids = _cb_router_scores(_dl3_clone_data(data), state).topk(TOP_K, dim=-1).indices.to(torch.int32).contiguous()
++        ls = data["local_start"]
++    else:
++        ids = torch.arange(LOCAL_EXPERTS, LOCAL_EXPERTS + TOP_K).repeat(cls, 1)
++        for j, e in enumerate(range(synth, LOCAL_EXPERTS, 4)):
++            c = min(WH_COUNTS[(j + 2 * synth) % len(WH_COUNTS)], cls)
++            ids[torch.randperm(cls, generator=gcpu)[:c], j] = e
++        ids = ((ids + 96) % N_EXPERTS).to(torch.int32).to(device)
++        ls = torch.tensor([96], dtype=torch.int32, device=device)
++    tw = torch.full((cls, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device)
++    _, _, align = _hc_dispatch(ids, tw, ls, h)
++    return torch.randn((cls, D_EXPERT), generator=gen, device=device).to(torch.bfloat16), align[3:6]
++
++
++def _wh_exact(state, x, al, arms):
++    nh = int(al[2][0])
++    out = torch.empty((x.shape[0] * TOP_K, x.shape[1]), dtype=x.dtype, device=x.device)
++    ref = _wh_run(state, None, x, al, out).clone()
++    hs = state["wg_hs"][:nh].clone()
++    return {n for n, v in arms if not (torch.equal(_wh_run(state, v, x, al, out), ref)
++                                       and torch.equal(state["wg_hs"][:nh], hs))}
++
++
++def _wh_time(state, device, x, al, arms):
++    sh, bh, nh = al
++    routes, size_k = x.shape[0] * TOP_K, x.shape[1]
++    out = torch.empty((routes, size_k), dtype=x.dtype, device=x.device)
++    state["wg_ext"].wg_gather(x, sh, bh, nh, routes, LOCAL_EXPERTS, state["wg_xs"])
++    sz = state["bank"]["size_n"]
++    graphs = {n: _rt_graph(lambda v=v: _wh_pair(state, v, sh, bh, nh, routes, sz, size_k, out))[0]
++              for n, v in (("m", None),) + arms}
++    rounds = _rt_time(graphs, device)
++    del graphs
++    return [{n: _rt_stats(ts[n])[0] for n in ts if n != "__baseline_us__"} for ts in rounds]
++
++
++def _wh_replay(state, device, gen, gcpu, cls, h, v):
++    x0, al0 = _wh_inputs(state, device, gen, gcpu, cls, h)
++    x, al = x0.clone(), [t.clone() for t in al0]
++    sb = {"wg_xs": torch.zeros_like(state["wg_xs"]), "wg_hs": torch.zeros_like(state["wg_hs"]),
++          "whk_err": torch.zeros_like(state["whk_err"])}
++    outs = [torch.empty((cls * TOP_K, D_EXPERT), dtype=torch.bfloat16, device=device) for _ in range(2)]
++    gs = [_rt_graph(lambda o=o, s=s: _wh_run(state, v, x, al, o, s))[0] for o, s in zip(outs, (state, sb))]
++    ref_o = torch.empty_like(outs[0])
++    bad = 0
++    for k in range(WH_REFILLS):
++        x1, al1 = _wh_inputs(state, device, gen, gcpu, cls, h, None if k % 2 == 0 else (k // 2) % 4)
++        x.copy_(x1)
++        for t, s in zip(al, al1):
++            t.copy_(s)
++        ref = _wh_run(state, None, x, al, ref_o)
++        for g in (gs if k % 2 == 0 else gs[::-1]):
++            g.replay()
++        torch.cuda.synchronize()
++        bad += sum(0 if torch.equal(o, ref) else 1 for o in outs)
++    e = [int(t) for t in sb["whk_err"].tolist()]
++    del gs
++    return bad + (0 if e == [0, WH_MAGIC] else 100), 2 * WH_REFILLS
++
++
++def _wh_fmt(vals):
++    return "/".join(f"{v:.3f}".lstrip("0") for v in vals)
++
++
++def _wh_gate(state, device, cls, v):
++    whk = state["whk"]
++
++    def st(a, ser):
++        def f():
++            whk[cls], state["side_serial"] = a, ser
++        return f
++    try:
++        per = _ead_layer_gate(state, device, cls, {"ms": st(None, True), "mf": st(None, False), "as": st(v, True),
++                                                   "af": st(v, False)}, WH_SEED + 9 + cls)
++    finally:
++        whk[cls], state["side_serial"] = None, False
++    md = {k: [_rt_stats(ts[k])[0] for rounds in per.values() for ts in rounds] for k in ("ms", "mf", "as", "af")}
++    return [[a / max(b, 1e-3) for a, b in zip(md["a" + s], md["m" + s])] for s in "sf"]
++
++
++def _wh_phase(state, device, t0, job):
++    whk = state["whk"] = {c: None for c in HC_CLASSES}
++    out, t1, stp, pick = [], time.perf_counter(), ["join"], {}
++    n_in = {t: len(v) for t, v in _EAD_INPUTS.items()}
++    n, v = WH_ARMS[0]
++
++    def step(what):
++        if time.perf_counter() - t0 > WH_DL:
++            raise RuntimeError(f"deadline ({time.perf_counter() - t0:.0f} s)")
++        torch.cuda.synchronize()
++        stp[0] = what
++    try:
++        _wh_join(job)
++        res = job["res"]
++        out.append(f"{WH_TAG} BUILD {res.get('secs', 0):.0f}s bg from {job.get('t', 0):.1f}s, join waited "
++                   f"{job['wait']:.0f}s; ptxas -Werror {'clean' if res.get('probe') else 'NOT clean'}, C75xx "
++                   f"{res.get('c75') or 'none'}")
++        if job.get("off"):
++            raise RuntimeError(job["off"])
++        ext = res.get("ext")
++        if ext is None:
++            raise RuntimeError(f"build failed: {res.get('err', '')[-160:]}")
++        hc = state.get("hc") or {}
++        cls_on = [c for c in HC_CLASSES if hc.get("on", {}).get(c, 0) in HC_WG_HOT]
++        if not cls_on or "wg_banks" not in state:
++            raise RuntimeError("master's wgmma hot half is not routed")
++        step("wh_init")
++        rows = [int(x) for x in ext.wh_init()]
++        for i in range(0, len(rows), 10):
++            f, a_ok, regs, lb, ss, ds, occ, _, bv, _ = rows[i:i + 10]
++            if not (a_ok and occ >= 1 and ss + ds <= WG_SMEM_LIMIT and bv == 90 and lb == 0
++                    and regs * WG_THREADS >= 40 * 128 + 232 * 256):
++                raise RuntimeError(f"kernel attributes G{f & 1} V{f >> 1} r{regs}/l{lb}/occ{occ}")
++        wb = state["wg_banks"][(0, LOCAL_EXPERTS)]
++        step("scales")
++        sc = [wb[k].view(-1, WH_REC)[:, 4096:] for k in ("q13", "q2")]
++        nbad = sum(int(((s < WH_SCALE[0]) | (s > WH_SCALE[1])).sum()) for s in sc)
++        sc = None
++        if nbad:
++            raise RuntimeError(f"{nbad} scale bytes outside 0x08..0x7E")
++        state["whk_x5"] = _wh_recode(wb, _wh_e4(), True)
++        state["whk_ext"], state["whk_err"] = ext, torch.zeros((2,), dtype=torch.int32, device=device)
++        gen = torch.Generator(device=device).manual_seed(WH_SEED)
++        gcpu = torch.Generator().manual_seed(WH_SEED + 1)
++        for cls in cls_on:
++            h, why, nrep = hc["on"][cls], "", ""
++            try:
++                step(f"exact T={cls}")
++                ins = [_wh_inputs(state, device, gen, gcpu, cls, h) for _ in range(2)]
++                bad = set()
++                for x, al in ins + [_wh_inputs(state, device, gen, gcpu, cls, h, r) for r in range(4)]:
++                    bad |= _wh_exact(state, x, al, WH_ARMS)
++                torch.cuda.synchronize()
++                e = [int(x) for x in state["whk_err"].tolist()]
++                if e != [0, WH_MAGIC]:
++                    raise RuntimeError(f"err word {e}")
++                step(f"time T={cls}")
++                rnd = [r for x, al in ins for r in _wh_time(state, device, x, al, WH_ARMS)]
++                rat = [r[n] / max(r["m"], 1e-3) for r in rnd]
++                mu = {k: sum(r[k] for r in rnd) / len(rnd) for k in ("m", n)}
++                if bad:
++                    why = "not exact"
++                elif max(rat) > WH_ROUTE:
++                    why = f"{n}/m > {WH_ROUTE} in a round"
++                else:
++                    step(f"replay T={cls}")
++                    nb, nr = _wh_replay(state, device, gen, gcpu, cls, h, v)
++                    nrep = f"; replay {nr - nb}/{nr}"
++                    if nb:
++                        why = "replay"
++                    else:
++                        pick[cls] = n
++                out.append(f"{WH_TAG} ROUTE T={cls} {('pick ' + n) if cls in pick else 'OFF (' + why + ')'}: {n}/m "
++                           f"{_wh_fmt(rat)}; us m {mu['m']:.1f} {n} {mu[n]:.1f}; exact {'n' if bad else 'y'} 6 inputs{nrep}")
++            except Exception as e:
++                pick.pop(cls, None)
++                out.append(f"{WH_TAG} ROUTE T={cls} OFF at {stp[0]}: {type(e).__name__}: {str(e)[:120]}")
++    except Exception as e:
++        pick = {}
++        out.append(f"{WH_TAG} OFF at {stp[0]}: {type(e).__name__}: {str(e)[:160]}")
++    for cls in list(pick):
++        try:
++            step(f"gate T={cls}")
++            rs, rf = _wh_gate(state, device, cls, v)
++            ok = max(rs + rf) <= WH_GATE
++            gl = f"{n} s {_wh_fmt(rs)} f {_wh_fmt(rf)} {'PASS' if ok else 'VETO'}"
++        except Exception as e:
++            ok, gl = False, f"raised at {stp[0]}: {type(e).__name__}: {str(e)[:100]}"
++        if not ok:
++            pick.pop(cls)
++        out.append(f"{WH_TAG} GATE T={cls} layer/m: {gl}")
++    for t in list(_EAD_INPUTS):
++        if t in n_in:
++            del _EAD_INPUTS[t][n_in[t]:]
++        else:
++            del _EAD_INPUTS[t]
++    try:
++        torch.cuda.synchronize()
++    except Exception as e:
++        pick = {}
++        out.append(f"{WH_TAG} final sync raised {type(e).__name__}")
++    for c in whk:
++        whk[c] = v if c in pick else None
++    if not pick:
++        state.pop("whk_x5", None)
++    out.append(f"{WH_TAG} PATH CHOSEN " + ", ".join(
++        f"T={c} " + (f"{n} wg_kernel<G,{v}>" if whk[c] else "master wg_kernel<G>") for c in HC_CLASSES)
++        + f" ({time.perf_counter() - t1:.1f}s, prepare at {time.perf_counter() - t0:.1f}s); [ea-enc] races after this route")
++    return out
++
+ HC_TAG = "[hotcold]"
+ HC_CLASSES = (128, 256)
+ HC_CLASS_SPLIT = 192
+@@ -16158,7 +16706,6 @@ def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, pa
+     fork = bool(fork) and bsm_hot in HC_WG_HOT and part in ("all", "both")
+     if bsm_hot in HC_WG_HOT:
+         routes = num_tokens * TOP_K
+-        wb = state["wg_banks"][(0, LOCAL_EXPERTS)]
+         cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
+         if fill is not None:
+             cache3.fill_(fill)
+@@ -16168,8 +16715,8 @@ def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, pa
+                 fk["s"].wait_event(fk["e0"])
+             with torch.cuda.stream(fk["s"] if fork else None):
+                 state["wg_ext"].wg_gather(x, sh, bh, nh, routes, LOCAL_EXPERTS, state["wg_xs"])
+-                _wg_gemm(state, 0, wb["q13"], wb["gs13"], sh, bh, nh, routes, size_n // 64, size_k, state["wg_hs"])
+-                _wg_gemm(state, 1, wb["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, cache3)
++                _wh_pair(state, (state.get("whk") or {}).get(_hc_class(num_tokens)), sh, bh, nh, routes, size_n, size_k,
++                         cache3)
+                 if fork:
+                     fk["e1"].record()
+         classes = ()
+@@ -16204,14 +16751,10 @@ def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, pa
+         lid3 = torch.empty((num_tokens, TOP_K), device=x.device, dtype=torch.int32)
+         xarm = (state["hc"].get("cold_x") or {}).get(_hc_class(num_tokens))
+         if xarm:
+-            kx = ea["ext4x"]
+-            xb = EA4X_ARMS[xarm]
+             if fill is not None:
+                 h3.fill_(fill)
+-            kx.ea4x_w13(x, cold_ids, ea["w13r"], ea["gs13"], h3, lid3, ea["ws13x"], ea["tk13x"], ea["errx"], num_tokens,
+-                        0, LOCAL_EXPERTS, ea["grid"], ea["dq"], xb)
+-            kx.ea4x_w2(h3, cold_ids, ea["w2r"], ea["gs2"], cache3, ea["ws2x"], ea["tk2x"], ea["errx"], num_tokens, 0,
+-                       LOCAL_EXPERTS, ea["grid"], ea["dq"], ea["pdl"] | xb)
++            _eae_pair(ea, x, cold_ids, h3, lid3, cache3, num_tokens, 0, LOCAL_EXPERTS, EA4X_ARMS[xarm],
++                      (state["hc"].get("cold_e") or {}).get(_hc_class(num_tokens), 0))
+         else:
+             k13, k2 = (ext.ea4_w13, ext.ea4_w2) if state["hc"].get("cold") == "v4" else (ext.ea3_w13, ext.ea3_w2)
+             cb = state["hc"].get("cold_bits", {}).get(_hc_class(num_tokens), 0)
+@@ -16919,204 +17462,6 @@ def _hcx_cold(state, device, t_prepare0):
+ 
+ CAMPAIGN_HCF = False
+ HCF_CLS = 128
+-CAMPAIGN_HCG = True
+-HCG_TAG = "[w6g-hcgate]"
+-HCG_HS = (-16, -8)
+-HCG_DL = (255.0, 266.0)
+-HCG_PIN = -16
+-
+-
+-class _HcgMiss(Exception):
+-    pass
+-
+-
+-def _hcg_name(h):
+-    return f"H{h}" if h else "master"
+-
+-
+-def _hcg_errs(state):
+-    return tuple(tuple(int(v) for v in t.tolist()) for t in ((state.get("ea") or {}).get("err"), state.get("wg_err"))
+-                 if t is not None)
+-
+-
+-def _hcg_comb(state, device, say):
+-    if not hasattr((state.get("ea") or {}).get("ext"), "ea_combine"):
+-        say(f"{HCG_TAG} comb T=128: no ea_combine -> off")
+-        return False
+-    d = _t128_inputs(state, device, torch.Generator(device=device).manual_seed(20261142), HCF_CLS)
+-    print(f"{HCG_TAG} LAUNCH t128_comb_canary", flush=True)
+-    bad, txt = _t128_canary(state, d, HCF_CLS, ["comb"])
+-    torch.cuda.synchronize()
+-    print(f"{HCG_TAG} DONE   t128_comb_canary (synced)", flush=True)
+-    if bad:
+-        say(f"{HCG_TAG} comb T=128 canary {txt[0][:120]} -> off")
+-        return False
+-    inc, cell = _t128_ops(state, d, HCF_CLS, "comb")
+-    graphs = {"inc": _rt_graph(inc)[0], "comb": _rt_graph(cell)[0]}
+-    rounds = _rt_time(graphs, device)
+-    del graphs
+-    iso = [_rt_stats(r["inc"])[0] / max(_rt_stats(r["comb"])[0], 1e-3) for r in rounds]
+-    bar = _t128_bar("comb", HCF_CLS)
+-    ok = min(iso) >= bar
+-    say(f"{HCG_TAG} comb T=128 (master was routed): canary ok; isolated r1/r2 x{'/'.join(f'{v:.3f}' for v in iso)} "
+-        f"(bar {bar}) -> {'on' if ok else 'off'} under H")
+-    return ok
+-
+-
+-def _hcg_canary(state, device, hs):
+-    on, step = state["hc"]["on"], _rt_tracer(HCG_TAG, "t128_hcg_canary")
+-    data = _ead_cases(state, device, torch.Generator(device=device).manual_seed(20261143), HCF_CLS)
+-    h0, outs, e0 = on[HCF_CLS], {}, _hcg_errs(state)
+-    try:
+-        for h in [0] + hs:
+-            step(f"kernel_fn {_hcg_name(h)} eager")
+-            on[HCF_CLS] = h
+-            outs[h] = kernel_fn(_dl3_clone_data(data), state)
+-            torch.cuda.synchronize()
+-    finally:
+-        on[HCF_CLS] = h0
+-    step("done")
+-    e1, bad, nd = _hcg_errs(state), [], {}
+-    for h, o in outs.items():
+-        if not all(bool(torch.isfinite(t.float()).all()) for t in o[:2]):
+-            bad.append(f"{_hcg_name(h)} non-finite")
+-        nd[h] = int((o[2].sort(-1).values != outs[0][2].sort(-1).values).any(-1).sum())
+-    if e1 != e0:
+-        bad.append(f"err {e0}->{e1}")
+-    del outs, data
+-    return (bad[0] if bad else None), (f"{HCG_TAG} t128_hcg_canary: finite, err unchanged {'no' if bad else 'yes'}; "
+-                                       "id rows differing vs master " + ", ".join(f"H{h} {nd[h]}" for h in hs)
+-                                       + (f": FAIL ({bad[0]})" if bad else ""))
+-
+-
+-def _hcg_cells_check(state, device, t1):
+-    gen = torch.Generator(device=device).manual_seed(20261092 + HCF_CLS)
+-    on = state["hc"]["on"]
+-    keep, worst, h_keep = dict(t1), {}, on.get(HCF_CLS, 0)
+-    try:
+-        on[HCF_CLS] = 0
+-        for rep in range(2):
+-            data = _ead_cases(state, device, gen, HCF_CLS)
+-            s_in = data["stream"].clone()
+-            scores = _cb_router_scores(_dl3_clone_data(data), state)
+-            d_ref, d_got = _dl3_clone_data(data), _dl3_clone_data(data)
+-            t1.update({c: False for c in t1})
+-            ref = kernel_fn(d_ref, state)
+-            t1.update(keep)
+-            got = kernel_fn(d_got, state)
+-            torch.cuda.synchronize()
+-            ok, msg = _cb_cmp_layer(got, ref, d_got, d_ref, s_in, scores, int(data["local_start"][0]), worst)
+-            if not ok:
+-                return msg, f"{HCG_TAG} cells check T=128 master input {rep}: {msg} -> FAIL"
+-    finally:
+-        t1.update(keep)
+-        on[HCF_CLS] = h_keep
+-    return None, (f"{HCG_TAG} cells check T=128 master (cells on vs off, 2 inputs) ok: worst " +
+-                  ", ".join(f"{k} {v:.2g}" if isinstance(v, float) else f"{k} {v}" for k, v in worst.items()))
+-
+-
+-def _hcg_confirm(state, device, t_prepare0, paths):
+-    t0, hc, cls = time.perf_counter(), state.get("hc") or {}, HCF_CLS
+-    on = hc.get("on", {})
+-    h0, race = on.get(cls, 0), (hc.get("race") or {}).get(cls)
+-    t1 = (state.get("t128") or {}).get("on", {}).get(cls)
+-    comb0, out, res, worst, med = bool(t1 and t1.get("comb")), [], "", {}, {}
+-    h1, comb, cells, hs = h0, comb0, "", []
+-
+-    def say(line):
+-        print(line, flush=True)
+-        out.append(line)
+-    try:
+-        if race is None or t1 is None:
+-            raise _HcgMiss("no clean cells-off race at T=128" if race is None else "no W6-B state")
+-        if time.perf_counter() - t_prepare0 > HCG_DL[0]:
+-            raise _HcgMiss(f"start deadline ({time.perf_counter() - t_prepare0:.0f} s)")
+-        if h0:
+-            raise _HcgMiss(f"cells-off race routed {_hcg_name(h0)}: confirm only promotes (incumbent kept)")
+-        hs = [h for h in HCG_HS if h in race[0]] + ([h0] if h0 and h0 not in HCG_HS else [])
+-        if not hs:
+-            raise _HcgMiss("no clean H-16 / H-8")
+-        if not h0:
+-            comb = _hcg_comb(state, device, say)
+-        cells = "+".join([c for c in T128_CELLS if c != "comb" and t1.get(c)] + ["comb(H)"] * comb)
+-        if not cells:
+-            raise _HcgMiss("no W6-B cell under any candidate: the race already timed this configuration")
+-        t1["comb"] = comb
+-        print(f"{HCG_TAG} LAUNCH t128_hcg_canary ({cells}; {', '.join(_hcg_name(h) for h in [0] + hs)})", flush=True)
+-        problem, line = _hcg_canary(state, device, hs)
+-        print(f"{HCG_TAG} DONE   t128_hcg_canary (synced)", flush=True)
+-        say(line)
+-        if problem:
+-            raise _HcgMiss("canary FAIL")
+-        per, _ = _hc_layer_gate(state, device, cls, hs, 20261094 + cls)
+-        on[cls] = h0
+-        win, worst, glines = _rt_select(per, "master", [f"H{h}" for h in hs])
+-        for ln in glines:
+-            print(f"{HCG_TAG} confirm {ln}", flush=True)
+-        for h in [0] + hs:
+-            vals = [_rt_stats(r[_hcg_name(h)])[0] for rounds in per.values() for r in rounds]
+-            med[h] = sum(vals) / len(vals)
+-        h1 = HCG_PIN if HCG_PIN and HCG_PIN in hs else (int(win[1:]) if win else 0)
+-        w0 = race[1]
+-        say(f"{HCG_TAG} Q1 T=128 worst round vs master+cells: " + ", ".join(
+-            f"H{h} x{worst[f'H{h}']:.3f} (cells-off x{w0.get(f'H{h}', float('nan')):.3f})" for h in hs)
+-            + f" (margin {RT_MARGIN}/{RT_MARGIN_TIGHT_IQR}) -> {_hcg_name(h1)}" + (" PINNED" if HCG_PIN and h1 == HCG_PIN else ""))
+-        if h1 != h0:
+-            if time.perf_counter() - t_prepare0 > HCG_DL[1]:
+-                raise _HcgMiss(f"{_hcg_name(h1)} won; its checks skipped: deadline")
+-            t1["comb"] = comb if h1 else False
+-            if h1:
+-                problem, line = _hc_layer_check(state, device, cls, h1)
+-            else:
+-                problem, line = _hcg_cells_check(state, device, t1)
+-            say(line)
+-            if problem:
+-                raise _HcgMiss(f"{_hcg_name(h1)} won, then layer check FAIL")
+-            on[cls] = h1
+-            cok, line = _hc_copy_check(state, device, [cls], f"T=128 back to {_hcg_name(h0)}")
+-            say(line)
+-            if not cok:
+-                raise _HcgMiss(f"{_hcg_name(h1)} won, then copy check FAIL")
+-        else:
+-            t1["comb"] = comb0
+-    except Exception as e:
+-        res = str(e)[:90] if isinstance(e, _HcgMiss) else f"raised {type(e).__name__}: {str(e)[:70]}"
+-    if res:
+-        on[cls], h1 = h0, h0
+-        if t1 is not None:
+-            t1["comb"] = comb0
+-    try:
+-        torch.cuda.synchronize()
+-    except Exception as e:
+-        res = res or f"final sync raised {type(e).__name__}"
+-    why, times = hc.get("why") or {}, hc.get("times") or {}
+-    if med and not res:
+-        times[cls] = med
+-        why[cls] = "confirm with W6-B cells: no H wins every round (" + ", ".join(
+-            f"H{h} x{worst[f'H{h}']:.3f}" for h in hs) + ")"
+-    fin = _hcg_name(h1) + ("+comb" if h1 and t1 and t1.get("comb") else "")
+-    say(f"{HCG_TAG} Q1b promote at T=128: " + ("YES" if h1 and not h0 else "no") + f"; cells-off pick {_hcg_name(h0)} "
+-        + ("kept" if h1 == h0 else "REPLACED") + f" -> {fin}" + (f" ({res})" if res else ""))
+-    say(f"{HCG_TAG} Q2 v16s/v16f: " + (f"layer T=128 {fin} {med[h1]:.1f} us vs master+cells {med[0]:.1f} ({med[h1] - med[0]:+.1f})"
+-                                       if med and not res else "confirm did not decide") +
+-        "; judge vs 4a7a49d0 (hybrid) / f2aece51 (master)")
+-    say(f"{HCG_TAG} kill: no H >= {RT_MARGIN}/{RT_MARGIN_TIGHT_IQR} vs master+cells every round, or any canary/layer/copy "
+-        "miss -> the cells-off pick; expected: v16s/v16f -10..-20 us each when H routes where the race said master")
+-    stale = (f"{HC_TAG} PATH CHOSEN T={cls} ", f"{T128_TAG} PATH CHOSEN T={cls}:")
+-    kept = [ln for ln in paths if not ln.startswith(stale)]
+-    try:
+-        pl = [ln for ln in _hc_path_lines(state, why, times) if ln.startswith(stale[0])]
+-    except Exception as e:
+-        pl = [f"{stale[0]}: {'HOT/COLD ' if h1 else 'MASTER '}{_hcg_name(h1)} (line raised {type(e).__name__})"]
+-    cs = [c for c in T128_CELLS if t1 and t1.get(c)]
+-    pl += [ln for ln in paths if ln.startswith(stale[1])] if t1 is None or comb0 == bool(t1.get("comb")) else \
+-        [f"{stale[1]} " + (f"CELLS {'+'.join(cs)}" if cs else "INCUMBENT (no cell)") + f" (comb by {HCG_TAG})"]
+-    pl.append(f"{HCG_TAG} PATH CHOSEN T=128 (128..191): {fin} with W6-B cells "
+-              f"{'+'.join(c for c in cs if c != 'comb' or h1) or 'none'} (cells-off race {_hcg_name(h0)}"
+-              f"{'' if res else ', confirm decided'}); {time.perf_counter() - t0:.0f} s")
+-    for ln in pl:
+-        say(ln)
+-    return kept, [ln[:200] for ln in out]
+ CAMPAIGN_ENGINE_D = False
+ 
+ 
+@@ -20170,3 +20515,548 @@ def _w6p_setup(weights, state, device, t_prepare0):
+             f"{W6P_TAG} kill: attn < {W6P_ATTN_MARGIN} vs best Triton in any round, layer < {W6P_LAYER_MARGIN}, or a "
+             f"check miss -> BN64; port killed if judged d1s gains < 1.0 us vs its own SGLang time",
+             f"{W6P_TAG} expected: judged d1s -1.0..-2.5 us (attention side x1.10-1.25), every other row 0"]
++
++
++CAMPAIGN_EAE = True
++EAE_TAG = "[ea-enc]"
++EAE_JOIN_S = 220.0
++EAE_END_S = 240.0
++EAE_COPY_S = 248.0
++EAE_RACE_S = 60.0
++EAE_BAR = 0.98
++EAE_VETO = 1.0
++EAE_ROUNDS = 5
++EAE_REPS = 15
++EAE_SEED = 20261099
++EAE_T = (1, 8, 16, 32, 128, 256)
++EAE_T1 = ("33", "44", "30")
++EAE_CANARY = {128: (144, 176), 256: (200, 240)}
++EAE_PERM = (3, 4, 5, 10, 11, 9, 6, 7, 8, 12, 13, 14, 16, 17, 18, 15, 19, 20, 21, 26, 27, 25, 22, 23, 24, 28, 29, 30, 0,
++            1, 2, 31)
++_EAE_COMMON = r"""
++// ea-enc: A4b views of the recoded word (pair I's e2m1 bits on {6,7,8,15,22,23,24,31}); rtv(n, v) = v, opaque to ptxas
++template <int I>
++__device__ __forceinline__ uint32_t ext_a4b(uint32_t q) {
++  if constexpr (I == 0) return q & 0x81C081C0u;
++  else if constexpr (I == 1) return (q << 6) & 0x81C081C0u;
++  else if constexpr (I == 2) return __funnelshift_l(q, q, 10) & 0x81C081C0u;
++  else return ((q << 4) & 0x81808180u) | ((q >> 4) & 0x00400040u);
++}
++__device__ __forceinline__ uint32_t rtv(int n, uint32_t v) {
++  uint32_t z;
++  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
++  return v << z;
++}
++"""
++_EAE_CONSUME = r"""
++// ea-enc consume: A4b codes; DQ 3 dq2's paired scale decode, DQ 4 A5b words (rec + 4096 + (g * 4 + kq) * 16; odd steps
++// on rotl 8). NT 1: consume's B (XB 0 ldmatrix.x2 per step, XB 1 the X1 preload), NT 2: consume2's two n8 tiles.
++template <int DQ, int XB, int NT>
++__device__ __forceinline__ void consume_e(const uint8_t* rec, uint32_t xb, int lane, int n, float (&acc)[NT][2][4]) {
++  const int g = lane >> 2;
++  const uint32_t m16 = rt16(n);
++  const uint32_t m78 = rtv(n, 0x78007800u);
++#pragma unroll
++  for (int kq = 0; kq < 4; ++kq) {
++    const uint4 c0 = *reinterpret_cast<const uint4*>(rec + (kq * 32 + lane) * 16);
++    const uint4 c1 = *reinterpret_cast<const uint4*>(rec + ((4 + kq) * 32 + lane) * 16);
++    uint32_t sw[4];
++    if constexpr (DQ == 4) {
++      const uint4 p = *reinterpret_cast<const uint4*>(rec + 4096 + (g * 4 + kq) * 16);
++      sw[0] = p.x; sw[1] = p.y; sw[2] = p.z; sw[3] = p.w;
++    } else {
++      const uint2 s0 = *reinterpret_cast<const uint2*>(rec + 4096 + g * 32 + kq * 8);
++      const uint2 s1 = *reinterpret_cast<const uint2*>(rec + 4096 + (g + 8) * 32 + kq * 8);
++      sw[0] = s0.x; sw[1] = s0.y; sw[2] = s1.x; sw[3] = s1.y;
++    }
++    uint32_t bk[8][2];
++    if constexpr (XB == 1 && NT == 1) {
++#pragma unroll
++      for (int p = 0; p < 4; ++p)
++        ldsm_x4(xb + static_cast<uint32_t>((kq * 8 + 2 * p) * 32), bk[2 * p][0], bk[2 * p][1], bk[2 * p + 1][0],
++                bk[2 * p + 1][1]);
++    }
++    const uint32_t qg[4] = {c0.x, c0.y, c0.z, c0.w};
++    const uint32_t qu[4] = {c1.x, c1.y, c1.z, c1.w};
++#pragma unroll
++    for (int wd = 0; wd < 4; ++wd) {
++#pragma unroll
++      for (int bsel = 0; bsel < 2; ++bsel) {
++        const int j = wd * 2 + bsel;
++        uint32_t sg;
++        if constexpr (DQ == 4) {
++          const uint32_t w = (j & 1) ? __byte_perm(sw[j >> 1], sw[j >> 1], 0x2103u) : sw[j >> 1];
++          asm("lop3.b32 %0, %1, %2, %3, 0xEA;\n" : "=r"(sg) : "r"(w), "n"(0x07F007F0), "r"(m78));
++        } else {
++          sg = scale_pair_imad_rt(j < 4 ? sw[0] : sw[1], j < 4 ? sw[2] : sw[3], j & 3, m16);
++        }
++        uint32_t a[4];
++        if (bsel == 0) {
++          a[0] = mul_bf16x2_h<0>(ext_a4b<0>(qg[wd]), sg);
++          a[2] = mul_bf16x2_h<0>(ext_a4b<1>(qg[wd]), sg);
++          a[1] = mul_bf16x2_h<1>(ext_a4b<0>(qu[wd]), sg);
++          a[3] = mul_bf16x2_h<1>(ext_a4b<1>(qu[wd]), sg);
++        } else {
++          a[0] = mul_bf16x2_h<0>(ext_a4b<2>(qg[wd]), sg);
++          a[2] = mul_bf16x2_h<0>(ext_a4b<3>(qg[wd]), sg);
++          a[1] = mul_bf16x2_h<1>(ext_a4b<2>(qu[wd]), sg);
++          a[3] = mul_bf16x2_h<1>(ext_a4b<3>(qu[wd]), sg);
++        }
++        if constexpr (NT == 2) {
++          uint32_t b0, b1, b2, b3;
++          ldsm_x4(xb + static_cast<uint32_t>((kq * 8 + j) * 32), b0, b1, b2, b3);
++          mma16816(acc[0][bsel], a, b0, b1);
++          mma16816(acc[1][bsel], a, b2, b3);
++        } else if constexpr (XB == 1) {
++          mma16816(acc[0][bsel], a, bk[j][0], bk[j][1]);
++        } else {
++          uint32_t b0, b1;
++          ldsm_x2(xb + static_cast<uint32_t>((kq * 8 + j) * 32), b0, b1);
++          mma16816(acc[0][bsel], a, b0, b1);
++        }
++      }
++    }
++  }
++}
++
++"""
++_EAE_M16 = "  const uint32_t m16 = rt16(T);  // L4: run-time 16 (dq2 only; dead for DQ 1)\n"
++def _eae_rep(s, a, b, n=1):
++    if s.count(a) != n:
++        raise RuntimeError(f"ea-enc anchor x{s.count(a)}: {a[:60]!r}")
++    return s.replace(a, b)
++
++
++def _eae_dev(src):
++    src = _eae_rep(src, "}  // namespace ea\n", _EAE_COMMON + "}  // namespace ea\n")
++    a = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
++    src = _eae_rep(src, a, _EAE_CONSUME + a)
++    src = _eae_rep(src, _EAE_M16, _EAE_M16 + "  if constexpr (DQ >= 3) {\n    consume_e<DQ, XB, 1>(rec, xb, lane, T, "
++                   "reinterpret_cast<float (&)[1][2][4]>(acc));\n    return;\n  }\n")
++    a = _EAE_M16.replace("(T)", "(n)")
++    if a in src:
++        src = _eae_rep(src, a, a + "  if constexpr (DQ >= 3) {\n    eak::consume_e<DQ, 0, 2>(rec, xb, lane, n, acc);\n"
++                       "    return;\n  }\n")
++    return src
++
++
++def _eae_src4x():
++    src = _eae_dev(_ea4x_source())
++    for kn in ("w13", "w2"):
++        k = f"eak4x::ea4x_{kn}_kernel<"
++        for a, b in (("(r, {}2, false>)", "(r, {}3, false>)"), ("(r, {}2, true>)", "(r, {}4, false>)"),
++                     ("(&cfg, {}2, false>", "(&cfg, {}3, false>"), ("(&cfg, {}2, true>", "(&cfg, {}4, false>")):
++            src = _eae_rep(src, a.format(k), b.format(k))
++    return _eae_rep(src, "(pdl & 256) != 0\n      ?", "(pdl & 4096) != 0\n      ?", 2)
++
++
++def _eae_src6():
++    src = _eae_dev("#define EA6_FAST 1\n" + _ea6_source())
++    src = _eae_rep(src, "template <bool W13, int D, int MINB, bool FAST = false>\n",
++                   "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2>\n")
++    src = _eae_rep(src, "eak::consume<2, 1>(ring", "eak::consume<EQ, 1>(ring")
++    for w, d in (("true", "D13"), ("false", "D2")):
++        k = f"eak6::ea6_kernel<{w}, eak6::{d}, "
++        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>")
++        src = _eae_rep(src, f"    fn = &{k}2, true>;\n", "")
++        src = _eae_rep(src, f"(r, {k}2>, {w})", f"(r, {k}2, true, 3>, {w})")
++        src = _eae_rep(src, f"(r, {k}1>, {w})", f"(r, {k}2, true, 4>, {w})")
++        src = _eae_rep(src, f"  ea6_one_info(r, {k}2, true>, {w});\n", "")
++    return src
++
++
++
++
++def _eae_start(t0):
++    import hashlib
++    import threading
++    job = {"th": [], "res": {}, "err": [], "t": time.perf_counter() - t0}
++    for key, cpp, mk, fns in (("4x", _EA4X_CPP, _eae_src4x, _EA4X_FNS), ("6", _EA6_CPP, _eae_src6, _EA6_FNS)):
++        try:
++            src = mk()
++            name = f"okc_eaenc_{key}_" + hashlib.sha256((cpp + src).encode()).hexdigest()[:10]
++
++            def run(key=key, name=name, cpp=cpp, src=src, fns=fns):
++                try:
++                    job["res"][key] = _rt_build(EAE_TAG, name, cpp, src, fns)
++                except BaseException as e:
++                    job["res"][key] = (None, f"thread {type(e).__name__}: {str(e)[:100]}", 0.0)
++
++            th = threading.Thread(target=run, name=f"eaenc-{key}", daemon=True)
++            th.start()
++            job["th"].append(th)
++        except Exception as e:
++            job["err"].append(f"{key} source {type(e).__name__}: {str(e)[:100]}")
++    return job
++
++
++def _eae_recode(wr, a5b):
++    wr = wr.view(-1)
++    nrec = wr.numel() // 4608
++    o3 = torch.empty_like(wr)
++    o4 = torch.empty_like(wr) if a5b else None
++    for r0 in range(0, nrec, 8192):
++        n = min(nrec, r0 + 8192) - r0
++        raw = wr[r0 * 4608:(r0 + n) * 4608]
++        src = raw.view(torch.int32).view(n, 1152).to(torch.int64) & 0xFFFFFFFF
++        codes = src[:, :1024]
++        o = torch.zeros_like(codes)
++        for j, p in enumerate(EAE_PERM):
++            o |= ((codes >> p) & 1) << j
++        sws = [(o3, src[:, 1024:])]
++        if a5b:
++            b = raw.view(n, 4608)[:, 4096:].to(torch.int64) - 8
++            b = b.view(n, 2, 8, 4, 4, 2)
++            f0, f1, f2, f3 = b[:, 0, ..., 0], b[:, 1, ..., 0], b[:, 0, ..., 1], b[:, 1, ..., 1]
++            sws.append((o4, ((f0 << 4) | (f1 << 20) | (f3 << 12) | (((f2 << 28) | (f2 >> 4)) & 0xFFFFFFFF)).reshape(n, 128)))
++        for dst, sw in sws:
++            full = torch.cat([o, sw], 1)
++            full = torch.where(full >= 2 ** 31, full - 2 ** 32, full).to(torch.int32)
++            dst[r0 * 4608:(r0 + n) * 4608].view(torch.int32).copy_(full.reshape(-1))
++        del src, codes, o, sws, full
++    return o3, o4
++
++
++def _eae_pair(ea, x, ids, h, lid, y, T, start, count, bits, dq=0, g2=None):
++    kx, w13, w2 = (ea["exte"], ea[f"w13e{dq}"], ea[f"w2e{dq}"]) if dq else (ea["ext4x"], ea["w13r"], ea["w2r"])
++    b = bits | (4096 if dq == 4 else 0)
++    kx.ea4x_w13(x, ids, w13, ea["gs13"], h, lid, ea["ws13x"], ea["tk13x"], ea["errx"], T, start, count, ea["grid"],
++                ea["dq"], b)
++    kx.ea4x_w2(h, ids, w2, ea["gs2"], y, ea["ws2x"], ea["tk2x"], ea["errx"], T, start, count,
++               ea["grid"] if g2 is None else g2, ea["dq"], ea["pdl"] | b)
++
++
++def _eae_xcore(base, dq):
++    bits = EA4X_ARMS[base] | (4096 if dq == 4 else 0)
++
++    def core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, poison=False):
++        return _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13,
++                                 ("ea4x_w13", "ea4x_w2"), (f"w13e{dq}", f"w2e{dq}"), bits, "exte", "x", poison)
++    return core
++
++
++def _eae_t1core(base, e1, e2):
++    def core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, scratch=None):
++        return _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13, scratch,
++                                  EA6F_ARMS[base], (e1, e2))
++    return core
++
++
++_EAE_CORES = {**{f"{b}:e{d}": _eae_xcore(b, d) for b, v in EA4X_ARMS.items() if not v & 256 for d in (3, 4)},
++              **{f"{b}:e{a}": _eae_t1core(b, int(a[0]), int(a[1])) for b in EA6F_ARMS for a in EAE_T1}}
++
++
++def _eae_base(state, T):
++    ea, hc = state.get("ea") or {}, state.get("hc") or {}
++    if T in HC_CLASSES:
++        h, xa = (hc.get("on") or {}).get(T, 0), (hc.get("cold_x") or {}).get(T)
++        ok = h < 0 and xa in EA4X_ARMS and not EA4X_ARMS[xa] & 256
++        return ("cold", xa) if ok else (None, f"cold half H{h}/{xa}")
++    b = (ea.get("on") or {}).get(T)
++    if T == 1:
++        return ("t1", b) if EA6F_ARMS.get(b, 0) & 3 == 3 else (None, f"route {b} not FAST K1+K2")
++    return ("x", b) if b in EA4X_ARMS and not EA4X_ARMS[b] & 256 else (None, f"route {b} not a v4x s twin")
++
++
++def _eae_set(state, kind, T, base, arm):
++    if kind == "cold":
++        state["hc"].setdefault("cold_e", {})[T] = int(arm or 0)
++    else:
++        state["ea"]["on"][T] = f"{base}:e{arm}" if arm else base
++
++
++def _eae_zero(ea):
++    for k in ("tk13x", "tk2x", "errx", "err"):
++        if k in ea:
++            ea[k].zero_()
++
++
++def _eae_sums(ea):
++    return sum(int(ea[k].abs().sum()) for k in ("tk13x", "tk2x", "errx", "err") if k in ea)
++
++
++def _eae_draw(state, device, gens, T, kind, n=None):
++    if kind == "cold":
++        h = state["hc"]["on"][T]
++        return (*_hcx_inputs(state, device, gens[1], n or T, h), h)
++    return (*_ead_inputs("judge", T, gens[0], device), None, 0)
++
++
++def _eae_fn(state, kind, T, base, d, a, part="all", fill=None):
++    ea, (xn, lids, tw, al, h) = state["ea"], d
++    if kind == "cold":
++        def f():
++            _eae_set(state, kind, T, base, a)
++            try:
++                return _hc_experts(xn, lids, tw, al, state, h, fill=fill, part=part)
++            finally:
++                _eae_set(state, kind, T, base, None)
++        return f
++    core = _ead_core(f"{base}:e{a}" if a else base)
++    return lambda: core(ea, xn, lids, tw, 0, LOCAL_EXPERTS, state["post_expert_norm_w"], pdl13=ea["pdl13_t"].get(T, 0))
++
++
++def _eae_hy(state, kind, T, base, d, a):
++    ea, (xn, lids, tw, al, _) = state["ea"], d
++    nan, dev, n, hid = float("nan"), xn.device, xn.shape[0], xn.shape[1]
++    y = torch.full((n * TOP_K, hid), nan, dtype=torch.bfloat16, device=dev)
++    if kind == "t1":
++        h = torch.full((32, n, ea["inter"]), nan, dtype=torch.bfloat16, device=dev)
++        o = _ead6_forward_core(ea, xn, lids, tw, 0, LOCAL_EXPERTS, state["post_expert_norm_w"], None,
++                               ea["pdl13_t"].get(T, 0), (h, y), EA6F_ARMS[base], (int(a[0]), int(a[1])) if a else (0, 0))
++        return h, y, o
++    h = torch.full((n * TOP_K, ea["inter"]), nan, dtype=torch.bfloat16, device=dev)
++    lid = torch.empty((n, TOP_K), dtype=torch.int32, device=dev)
++    _eae_pair(ea, xn, al[6] if kind == "cold" else lids, h, lid, y, n, 0, LOCAL_EXPERTS, EA4X_ARMS[base], int(a or 0),
++              None if kind == "cold" else ea.get("g2_t", {}).get(n, ea["grid"]))
++    return h, y
++
++
++def _eae_exact(state, kind, T, base, d, arms, ex):
++    part, fill = ("cold", float("nan")) if kind == "cold" else ("all", None)
++    hy0 = _eae_hy(state, kind, T, base, d, None)
++    o0 = _eae_fn(state, kind, T, base, d, None, part, fill)().clone()
++    for a in arms:
++        o = _eae_fn(state, kind, T, base, d, a, part, fill)()
++        ex[a] = ex[a] and _eae_eq(o, o0) and all(_eae_eq(p, q) for p, q in zip(_eae_hy(state, kind, T, base, d, a), hy0))
++
++
++def _eae_class(state, device, T, kind, base, arms, gens):
++    ea = state["ea"]
++    ex, rat = {a: True for a in arms}, {a: [] for a in arms}
++    _eae_zero(ea)
++    for _ in range(2):
++        d = _eae_draw(state, device, gens, T, kind)
++        _eae_exact(state, kind, T, base, d, arms, ex)
++        graphs = {a: _rt_graph(_eae_fn(state, kind, T, base, d, a))[0] for a in (None, *arms)}
++        res = _rt_time(graphs, device, reps=EAE_REPS, rounds=EAE_ROUNDS)
++        del graphs
++        for r in res:
++            m = max(_rt_stats(r[None])[0], 1e-3)
++            for a in arms:
++                rat[a].append(_rt_stats(r[a])[0] / m)
++    data = _ead_cases(state, device, gens[1], T)
++    _eae_set(state, kind, T, base, None)
++    ref = kernel_fn(_dl3_clone_data(data), state)
++    nd = "" if all(torch.equal(p, q) for p, q in zip(kernel_fn(_dl3_clone_data(data), state), ref)) else " layer-nondet"
++    for a in arms:
++        _eae_set(state, kind, T, base, a)
++        try:
++            got = kernel_fn(_dl3_clone_data(data), state)
++        finally:
++            _eae_set(state, kind, T, base, None)
++        ex[a] = ex[a] and (bool(nd) or all(torch.equal(p, q) for p, q in zip(got, ref)))
++    torch.cuda.synchronize()
++    bad = _eae_sums(ea)
++    _eae_zero(ea)
++    return {a: v and not bad for a, v in ex.items()}, rat, bad, nd
++
++
++def _eae_veto(state, device, T, kind, base, a):
++    ss = state.get("side_serial", False)
++
++    def st(v, ser):
++        def f():
++            _eae_set(state, kind, T, base, v)
++            state["side_serial"] = ser
++        return f
++    md = ("s", "f") if kind == "cold" else ("f",)
++    try:
++        per = _ead_layer_gate(state, device, T, {k + m: st(v, m == "s") for m in md for k, v in (("m", None), ("e", a))},
++                              EAE_SEED + 9 + T)
++    finally:
++        _eae_set(state, kind, T, base, None)
++        state["side_serial"] = ss
++    return {m: [_rt_stats(ts["e" + m])[0] / max(_rt_stats(ts["m" + m])[0], 1e-3) for r in per.values() for ts in r]
++            for m in md}
++
++
++def _eae_canary(state, device, gens, T, base, a):
++    ea = state["ea"]
++    for n in EAE_CANARY.get(T, ()):
++        _eae_zero(ea)
++        ex = {a: True}
++        _eae_exact(state, "cold", T, base, _eae_draw(state, device, gens, T, "cold", n), [a], ex)
++        torch.cuda.synchronize()
++        if not ex[a] or _eae_sums(ea):
++            return f"canary T={n} FAIL"
++    _eae_zero(ea)
++    return ""
++
++
++def _eae_off(state):
++    ea, hc = state.get("ea") or {}, state.get("hc") or {}
++    for t, v in list((ea.get("on") or {}).items()):
++        if isinstance(v, str) and ":e" in v:
++            ea["on"][t] = v.split(":e")[0]
++    hc.pop("cold_e", None)
++    for k in ("exte", "ext6e", "w13e3", "w2e3", "w13e4", "w2e4"):
++        ea.pop(k, None)
++
++
++def _eae_phase(state, weights, device, t0, job):
++    L = []
++    n_in = {t: len(v) for t, v in _EAD_INPUTS.items()}
++    try:
++        _eae_run(state, weights, device, t0, job, L)
++    except Exception as e:
++        _eae_off(state)
++        L.append(f"{EAE_TAG} raised {type(e).__name__}: {str(e)[:150]} -> master everywhere")
++    for t in list(_EAD_INPUTS):
++        if t in n_in:
++            del _EAD_INPUTS[t][n_in[t]:]
++        else:
++            del _EAD_INPUTS[t]
++    try:
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++    except Exception as e:
++        L.append(f"{EAE_TAG} final sync raised {type(e).__name__}")
++    hc, wk = state.get("hc") or {}, state.get("whk") or {}
++    ce = hc.get("cold_e") or {}
++    return [f"{HC_TAG} PATH " + " | ".join(
++        f"T={c} H{(hc.get('on') or {}).get(c, 0)} cold {(hc.get('cold_x') or {}).get(c) or hc.get('cold', '-')}"
++        + (f"+{_eae_lab(str(ce[c]))}" if ce.get(c) else "") + f" hot {'wh5ds' if wk.get(c) else 'master wg'}"
++        for c in HC_CLASSES)] + L
++
++
++def _eae_run(state, weights, device, t0, job, L):
++    tw = time.perf_counter()
++    for th in job["th"]:
++        th.join(max(0.0, EAE_JOIN_S - (time.perf_counter() - t0)))
++    wait = time.perf_counter() - tw
++    res = {k: v for k, v in job["res"].items() if not any(t.name == f"eaenc-{k}" and t.is_alive() for t in job["th"])}
++    ext4, ext6 = (res.get("4x") or (None,))[0], (res.get("6") or (None,))[0]
++    bl = ", ".join(f"{k} " + (f"{res[k][2]:.0f}s" + ("" if res[k][0] is not None else f" FAIL {str(res[k][1])[:60]}")
++                              if k in res else f"not joined by {EAE_JOIN_S:.0f}s") for k in ("4x", "6"))
++    L.append(f"{EAE_TAG} build {bl}{'; ' + '; '.join(job['err']) if job['err'] else ''} (bg from {job['t']:.0f}s, after "
++             f"ea4x-dl), join wait {wait:.1f}s, phase at {time.perf_counter() - t0:.0f}s (after [hh-wh] routed)")
++    ea = state.get("ea")
++    if ea is None or ea.get("dq") != 2 or (ext4 is None and ext6 is None):
++        L.append(f"{EAE_TAG} PATH CHOSEN all T = master (no E module / Engine A dq {None if ea is None else ea.get('dq')})")
++        return
++    at, ok = [], {}
++    for key, ext, w, need in (("4x", ext4, 5, "ext4x"), ("6", ext6, 6, "ext6")):
++        if ext is None or ea.get(need) is None:
++            continue
++        rows = _eae_info(ext, w)
++        at.append(f"{key} " + " ".join(f"{n}{r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4 ", "K1e5 ", "K2e4 ", "K2e5 "), rows)))
++        for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
++            ok[(key, kk, dq)] = bool(rows[i][0]) and rows[i][3] >= 1
++    t = time.perf_counter()
++    lo, hi, bad = 255, 0, 0
++    for k in ("w13r", "w2r"):
++        s = ea[k].view(-1, 4608)[:, 4096:]
++        lo, hi = min(lo, int(s.min())), max(hi, int(s.max()))
++        bad += int(((s < 0x08) | (s > 0x7E)).sum())
++    e5 = bad == 0
++    for k in ("w13", "w2"):
++        ea[f"{k}e3"], o4 = _eae_recode(ea[f"{k}r"], e5)
++        if e5:
++            ea[f"{k}e4"] = o4
++    torch.cuda.synchronize()
++    mb = sum(ea[k].numel() for k in ("w13e3", "w2e3", "w13e4", "w2e4") if k in ea) / 1e6
++    ea["exte"], ea["ext6e"] = ext4, ext6
++    L.append(f"{EAE_TAG} regs/lmem/occ {'; '.join(at)}; recode {time.perf_counter() - t:.1f}s {mb:.0f}MB; scales "
++             f"0x{lo:02X}..0x{hi:02X}, {bad} outside 0x08..0x7E -> E5 {'eligible' if e5 else 'OFF'}")
++    gens = (torch.Generator().manual_seed(EAE_SEED), torch.Generator(device=device).manual_seed(EAE_SEED + 1))
++    tr, picks, why, txt = time.perf_counter(), {}, {}, []
++    dqs = ("3", "4") if e5 else ("3",)
++    for T in EAE_T:
++        kind, base = _eae_base(state, T)
++        if kind is None:
++            why[T] = base
++            continue
++        if time.perf_counter() - tr > EAE_RACE_S or time.perf_counter() - t0 > EAE_END_S:
++            why[T] = "race cap / deadline"
++            continue
++        if kind == "t1":
++            arms = [a for a in EAE_T1 if all(c == "0" or (c in dqs and ok.get(("6", k, int(c))))
++                                             for c, k in zip(a, ("K1", "K2")))]
++        else:
++            arms = [a for a in dqs if ok.get(("4x", "K1", int(a))) and ok.get(("4x", "K2", int(a)))]
++        if not arms:
++            why[T] = "no admitted E instance"
++            continue
++        ex, rat, nb, nd = _eae_class(state, device, T, kind, base, arms, gens)
++        good = [a for a in arms if ex[a] and rat[a] and max(rat[a]) <= EAE_BAR]
++        s = (f"T={T} {base}{nd}: iso " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
++             + (f" tk/err {nb}" if nb else ""))
++        if good:
++            a = min(good, key=lambda k: sorted(rat[k])[len(rat[k]) // 2])
++            v = _eae_veto(state, device, T, kind, base, a)
++            s += f" | layer {_eae_lab(a)} " + " ".join(f"{m} {_wh_fmt(r)}" for m, r in v.items())
++            if max(max(r) for r in v.values()) > EAE_VETO:
++                why[T] = f"layer VETO > {EAE_VETO}"
++            else:
++                why[T] = _eae_canary(state, device, gens, T, base, a) if kind == "cold" else ""
++                if not why[T]:
++                    picks[T] = (kind, base, a)
++        else:
++            ne = [a for a in arms if not ex[a]]
++            why[T] = (f"not exact {','.join(map(_eae_lab, ne))}" if len(ne) == len(arms) else
++                      f"iso E/m > {EAE_BAR} in a round")
++        txt.append(s)
++    for T, (kind, base, a) in picks.items():
++        _eae_set(state, kind, T, base, a)
++    used = {int(c) for _, _, a in picks.values() for c in a if c != "0"}
++    for d in (3, 4):
++        if d not in used:
++            ea.pop(f"w13e{d}", None)
++            ea.pop(f"w2e{d}", None)
++    if picks:
++        fails, cold = [], [T for T, p in picks.items() if p[0] == "cold"]
++        if time.perf_counter() - t0 > EAE_COPY_S:
++            fails.append("deadline")
++        else:
++            small = [T for T in picks if T not in cold]
++            if small:
++                other = _ead_copy_tree(state)
++                g = torch.Generator(device=device).manual_seed(EAE_SEED + 2)
++                try:
++                    for T in small:
++                        _ead_copy_one(state, other, device, g, T, fails)
++                finally:
++                    del other
++                    gc.collect()
++                    torch.cuda.empty_cache()
++            if cold and not fails:
++                cok, ln = _hc_copy_check(state, device, cold, "E off")
++                if not cok:
++                    fails.append(ln[-60:])
++            if _eae_sums(ea):
++                fails.append("tk/err")
++        _eae_zero(ea)
++        L.append(f"{EAE_TAG} state-copy check T {sorted(picks)}: " + (f"FAIL ({fails[0][:80]}) -> master" if fails else "PASS"))
++        if fails:
++            _eae_off(state)
++            why.update({T: "copy check FAIL" for T in picks})
++            picks = {}
++    if not picks:
++        _eae_off(state)
++    for ln in txt:
++        L.append(f"{EAE_TAG} {ln}")
++    L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
++        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
++        + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
++
++
++def _eae_eq(a, b):
++    if a.shape != b.shape:
++        return False
++    m = torch.isnan(a)
++    return bool(torch.equal(m, torch.isnan(b))) and bool(torch.equal(a[~m], b[~m]))
++
++
++def _eae_lab(a):
++    n = {"0": "m", "3": "E4", "4": "E5"}
++    return n[a] if len(a) == 1 else f"{n[a[0]]}/{n[a[1]]}"
++
++
++def _eae_rs(v):
++    return f"{sorted(v)[len(v) // 2]:.3f}[{min(v):.3f},{max(v):.3f}]" if v else "-"
++
++
++def _eae_info(ext, w):
++    v = [int(t) for t in (ext.ea4x_info() if w == 5 else ext.ea6_info())]
++    return [(v[w * i], v[w * i + 1], v[w * i + 2], v[w * i + w - 1]) for i in range(4)]
