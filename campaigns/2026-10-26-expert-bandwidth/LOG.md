@@ -2358,3 +2358,17 @@ with the operator's go-ahead.
   - Each lane runs 3 designers at max effort, then a judge at max; build/audit/fix at high only if the judge clears the value bar.
   - The H100 T=1 agent was re-tasked: Q3 T=16/32 anatomy, Q4 consume-rate microbench, Q5 a working sanitizer path. The fork/route agent is still running (cold-branch priority A/B).
   - Quota: moe 17 checks / 9 runs, decode 19 / 10.
+- 2026-10-29T0640Z **H100 Q3/Q4 for the t32 and t1rate judges** (research/h100-t32-1029.md, cf1e5cd7; correction in h100-t1-1029.md):
+  - **T=16/32 (judge routes v4xs/v4cxs forced):**
+    - ea4x w13 > w2 > combine on one stream with zero gaps; shares 65-66 / 31-32 / 2%.
+    - Rows fit a + b·k (k = distinct local experts): d16 24-27 + 9.3-9.5k us, d32 34-37 + 9.1-9.2k us.
+    - w2 is resident 24-35 us early, but streams only after w13 ends.
+    - ncu: w13 DRAM 74% / SM 42%, w2 65-69% / 37-39%.
+    - **The lever is per-SM tail imbalance [cyc]:** max/avg 1.08-1.09 (T=16) and 1.10-1.12 (T=32). Perfect balance is worth at most ~8 us on decode_16 and ~13 us on decode_32 judge rows (≈ +1.2% and +1.5% headline; together ~2.7% only if both are fully realised).
+    - Fusing the combine is worth at most ~3 us.
+  - **Correction on T=1:** the node's T=1 per-record rate sits at its HBM read peak (~3.1 TB/s), so the Q1/Q2 node KILLs are [hbm] readings. Q1 is still bounded at <= 2.5 us on the judge (below the 4 us bar). The judge's own R0 check (d5/d3 1.016) stands.
+  - **Q4 early read:**
+    - consume-only K1 runs 1.22 us/record/CTA on the node, ~1.13 us at judge clock, against the judge's measured 1.31-1.37: judge T=1 is mostly consume-limited, close to the HBM floor.
+    - **Dequant is the knob:** removing it gives x1.8; DQ1 is 26% slower.
+    - Doubling the consumer warps per SM gives +10-12% (K2).
+    - The replicates are pending.
