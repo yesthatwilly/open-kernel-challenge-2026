@@ -88,6 +88,7 @@ confirm_outcome: gain
 pooled_speedup: 1.2973637641537636
 runs: 2
 promotion_commit: 51c4c3d8c82de04fae14daffea5796394346b17f
+promotion_attempt: 2026-10-29T213649Z-submit-b12-batched-escape-m8-32-race.md
 ---
 
 # b12-batched-escape-m8-32-race
