@@ -160,6 +160,7 @@ best_at_harvest: 1.5007957663757285
 promotion: merged
 mechanism: flat
 promotion_commit: 1b14174f106138de92022ca58ff1e6e374acd4a5
+promotion_attempt: 2026-10-29T183515Z-submit-experts-rega-dq2-dequant-cost-diag.md
 ---
 
 # experts-rega-dq2-dequant-cost-diag
