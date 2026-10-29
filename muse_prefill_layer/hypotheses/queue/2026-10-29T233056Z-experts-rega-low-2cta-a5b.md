@@ -44,8 +44,12 @@ evidence: >
   CTAs/SM at 80 regs; ncu low w13 eligible warps/scheduler 0.73 -> 1.41, issue active 52 -> 63%,
   SM cycles -13%; prefill board 1.5721 (9f934846)
 user_requested: true
-review: required
+review: proceed
 status: queued
+review_at: 2026-10-29T233429Z
+review_companions: null
+review_best: 1.5721154841318719
+review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
 ---
 
 # experts-rega-low-2cta-a5b
@@ -70,3 +74,29 @@ Add a low-class-only arm to master's rega dq module: the H100-validated SC-2CTA 
 ## Risk
 
 Node->judge transfer for this tile family held within 0.01-0.02 (A3: node low 0.84-0.89 vs judge 0.854; A5b: node HBM-like low .961-.972 vs judge .943). Low class = turn_1 rows (sliding share 21.7%, full 11.7%), rega 48.6% of turn_1 sliding.
+
+## Adversarial review
+
+Reviewed 2026-10-29T233429Z by an adversarial subagent (model opus).
+
+**Verdict: proceed.** E: fresh (board 1.5721, blob 7569df17 unchanged). CLAIMS.md:55's reopen ('a different low-class kernel, not V64/V32') is met only in form. V64 died on the judge's skewed ~1350-route turn_1 load (guard 1.030-1.037, pinned 1.4776 vs 1.4897), and this arm keeps V64's N64 chunk cap. Proceed only if the gate adds master's REGA_LO guard routing and the build gate stays at need 233 s, which works if the ptxas probe compiles the new arm in place of A5b's.
+
+### Justification
+A: The mechanism is plausible and was measured on the same SM type. At rgx4 (290f097) low l2, 2 CTAs/SM doubles eligible warps per scheduler (0.73 -> 1.41), raises issue-active from 52% to 63% and cuts SM cycles 13%. The pair falls 6-11% vs A5b+D+SC: l2 0.896, hbm 0.938, random 0.887. The run was bit-exact with 0 spill, and the chb4s3 control isolates the +3-12% cost of the cap and ring. This fits the [lead] in CLAIMS.md:71 (super-serial stages, TLP levers reopen). Value is about 1.0-1.6% headline: turn_1 carries ~33% of the weight, rega is ~49% of turn_1 sliding, and the cut is ~8%. That is below the bar, but the user asked for it. WEAKEST LINK: the routing load. The node evidence and master's dq race both run at the low class's 'pop:1 711r' (judge log: 'RATIOS low pop:1 711r'), about the random load. Master's own constant REGA_LO_GUARD_ROUTES = 1350 says the judge's turn_1 has ~1314-1359 local routes, about 1.8x that. Under the N64 cap, every expert above 64 routes has its N128 chunk dequantized twice. That is exactly why SC-2CTA loses 13-24% at high (44 of 54 chunks are N128), and it is the same tile family as V64. V64 won on node (occ2 0.887) but lost on the guard routing (1.030-1.037) and lost when pinned on the judge (CLAIMS.md:55). The hypothesis's 0.01-0.02 transfer figure comes from A3/A5b, which change instruction cost. That figure says nothing about an occupancy and chunk-shape change whose cost scales with route skew. PRIOR: the prior field names A5b and K-pair but leaves out the direct ancestors: experts-rega-low-class-two-ctas-per-sm (FINDINGS:226, neutral 1.4173), combo-b-normgather-two-cta-low-regate (CLAIMS.md:46, 'never routes on the judge'), and lo-pin-v64-fsilu (CLAIMS.md:55, refuted). The difference is real: an A5b+D+SC k loop, setmaxnreg 32/104 and a 3-stage ring, against V64's older dequant. So this is not a hold, but the prior is incomplete. BUILD GATE: need = used + 1.3 x 40 x (INST + PROBE_INST)/4 + 25 <= 270. Today 12 + 4 gives need 233.1 (the judge log shows 'from 0.1s (est 160s)'; the actual build took 46.9 s). The new arm needs only BIG=false x G{w13,w2} = 2 instantiations. 14 + 4 gives need 259 (passes only while used <= 11 s). 14 + 6, with the probe also covering the new arm, gives 285 and fails. A new template parameter crossed with DQ 0/3/5 or BIG also gives 285+ and fails. The fix that keeps 233 s: point the 4-inst probe at the new arm's 2 instantiations plus nothing else. A5b's probe is already proven clean on the judge (regs 168, C7510 0, C7512 0), so INST 14 + PROBE 2 = 16 gives need 233. LOW ROUTE = turn_1 exactly: the TASK shapes are T 753 / 3012 / 16384, and low is 200 < T <= REGA_LOW_MAX 1024, so only turn_1 rows (sliding and full) route. The unmeasured 753-3012 crossover does not matter for the judge. EXACTNESS: in swap-AB the 64-row slab and N64 cap split the route (N) side only. Each output element keeps master's k order (same BK, records, A5b dequant, split commit), and wgmma's per-element fp32 accumulation does not depend on N. rgx4 showed bit-exact on all 70 EXACT lines including random. It must also match master's epilogue (fast-silu w13, w2st arm a early gs/sid loads, non-local zero store), and the gate must compare hs and y against master's routed dispatch, not just DQ0.
+
+### Confounders on the current kernel
+- experts-rega-a5b-desc-splitcommit (landed, the reference): the new arm reuses its k loop and the A4b/A5b repacked bank. The race must compare against the routed A5b MODE 0 (rega_dq_ok low = 5), not DQ0 or A3, or a 'win' is just A5b's own gain counted again.
+- experts-rega-w13-fast-silu-epilogue + w2 early gs/sid loads (arm a, CLAIMS.md:54): these are master's epilogues at low. If the 2-CTA arm drops either, exactness vs master fails, or a timing difference gets wrongly credited to occupancy. Port both, with the 104-register consumer budget checked (fast silu adds live regs in the w13 epilogue).
+- align-two-phase-all-t-rega + norm-gather (combo-a): these produce the block/chunk tables and the gathered slab. The '% 4' chunking roughly doubles the chunk count at low. The chunk-table capacity (err code 3 'block or chunk table overflow') must be checked at worst-case T=1024 (8192 routes + 32x15 padding), not just at the drawn routing.
+- combo-b rega-lo module (REGA_LO_SKIP): _experts_rega has 'dq = 0 if variant else ...'. With the LO phase skipped, variant is 0, so the new dq code reaches dispatch. If anything re-enables LO, the new arm is silently bypassed. Print the variant in the ROUTE line.
+
+### Interference and A/B needs
+No companion run is needed. The per-class in-prepare race against the routed A5b+D+SC (bit-exact on hs/y, replay, both L2 modes, pop and random) makes one check readable: either ROUTE low says the new arm, and the turn_1 rows carry the change, or it says A5b, and the check is master. High and ft cannot move, and turn_4/first_turn act as in-run controls. The confound that would make a gain or loss ambiguous is the routing load (711 vs ~1350 local routes). That belongs in the gate (a guard round), not in a second judge run. A revert of fast-silu/w2st or A5b tells us nothing here: they define the baseline the arm must match bit-exactly. Optional and outside this check: before spending the check, one H100 rgx4 rerun of arms 1 vs 2 at T=753 with the guard routing (_rega_pop_pick to ~1350 routes) would settle the V64 failure mode for free. That needs the user's go (Hopper lane closed 10-29 14:54Z).
+
+### Open questions
+- MUST (gate): add master's REGA_LO guard routing (_rega_pop_pick(counts, REGA_LO_GUARD_ROUTES=1350) at T=753) as a required round for the new arm, at <= 0.97 vs routed A5b (or at least <= 1.00, REGA_LO_GUARD_RATIO). Print its PAIR, chunk histogram (N16/32/64/128 counts) and local-route count. Without it the gate repeats V64's 711-route blind spot.
+- MUST (build gate): exactly 2 new instantiations (G w13/w2, BIG=false). Keep REGA_DQ_EST_4INST_S = 40 and LIMIT 270. Retarget the ptxas probe to the new arm's 2 instantiations (REGA_DQ_PROBE_INST 4 -> 2) so INST 14 + PROBE 2 = 16 -> need 233 s, unchanged. If the probe stays at A5b's 4, need is 259 s and passes only while the build starts before 11 s. Never 14 + 6 (285 s, OFF: budget).
+- MUST (prints, inside REGA_DQ_SUMMARY_MAX and the 16 KB tail): [rega-dq] attrs '14 inst ... A5b r168 l0 o1; S2 r80 l0 o2'. Probe line for the new arm: regs, spill, C7510/C7512 (RS2 hit C7512 at 104 regs; SC must show 0). SUMMARY with est/need/build seconds. RATIOS/PAIR low for the new arm vs DQ0, vs m and vs A5b (pop warm/cold, random, guard). ROUTE low naming the chosen arm with every gate term. Exactness counts (torch.equal hs and y vs master's routed path, replay). Chunk-table size vs capacity. rega_low_variant. If the summary exceeds 3000 chars, shorten the high/ft RATIOS lines rather than truncate the low lines.
+- Does the rgx4 synthetic bank's chunk histogram at low (pop 16/12/2/2) reflect the judge's turn_1? If the judge's route count is really ~1350, expect several N128 chunks, and the 0.896 will not hold.
+- Should the per-class code be a new rega_dq_ok value (e.g. 6) dispatched only for cls == 'low', with high/ft hard-pinned to 5 regardless of the race? That way a noisy high/ft race cannot route a 1.13-1.24x arm.
+
