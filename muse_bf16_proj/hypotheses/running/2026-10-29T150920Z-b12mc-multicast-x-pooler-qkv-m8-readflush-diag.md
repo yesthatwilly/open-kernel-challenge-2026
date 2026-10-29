@@ -127,11 +127,20 @@ instrument: >
   control
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T151743Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
+stage: claimed
+claimed_at: 2026-10-29T151743Z
+base_sha: c54503e25e6fe0056cea3feba5d4e4982d602c7d
+base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
+branch: hyp/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag
+worktree: .worktrees/muse_bf16_proj/b12mc-multicast-x-pooler-qkv-m8-readflush-diag
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # b12mc-multicast-x-pooler-qkv-m8-readflush-diag
