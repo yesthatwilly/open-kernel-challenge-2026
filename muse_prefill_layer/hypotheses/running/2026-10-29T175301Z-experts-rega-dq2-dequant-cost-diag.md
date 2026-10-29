@@ -132,7 +132,7 @@ review_at: 2026-10-29T175903Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T175904Z
 base_sha: 2f7dcbf03b7345f8e21d32c433510942d4a23926
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -149,6 +149,8 @@ submission_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
 lint_warnings: 121
 attempt_file: 2026-10-29T182805Z-check-experts-rega-dq2-dequant-cost-diag.md
 prepared_at: 2026-10-29T182805Z
+job: 835e1a443a604eb2
+dispatched_at: 2026-10-29T182813Z
 ---
 
 # experts-rega-dq2-dequant-cost-diag
