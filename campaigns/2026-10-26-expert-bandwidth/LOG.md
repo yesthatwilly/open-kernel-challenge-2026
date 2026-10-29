@@ -2511,3 +2511,10 @@ with the operator's go-ahead.
 - Forked (with a calibrated cold-half stand-in) decode headline: a3 +0.74%; ring R4 wait<2> +0.92%; exact-N +1.19%; **wh = A3 + exact N + ring for N>=48: x0.89-0.92 (T=256) / x0.95 (T=128), +1.31%** (~-24.6 us per T=256 row, -10.4 per T=128 row). Killed: w2 split-K (x0.975, inexact), dynamic item scheduling (fork x0.937 vs 0.896), ring at N32. moe: every variant ~-15.8 us forked (~+0.9%); its draws are mostly N32.
 - Left: at N<=64 every variant sits at 760-950 cycles/stage vs a 256-512 floor (the dequant issue/latency chain; rega2 lane's question).
 - Rule band 1.2-2.5% -> one decode judge check: minted muse_decode_layer hothalf-a3-exactn-ring-wh (user-requested, EV 0.72); adversary running. Kill/read: verify_32 sliding > ~416 us = A3-only level.
+
+## 2026-10-29 1911Z — H100 rega2 read: A5b+D+SC beats A3 by 5-8% (prefill)
+- research/h100-rega2-1029.md (takemyjob hopper/rgx2 771f8eb; GPU 5). All bit-exact (3 classes, 2 seeds, both banks, pop + random), 168 regs, 0 spill. Dequant SASS/k16: master 26, A3 18, A4b 15, A5b 14.5; instr/stage N32 A3 238 -> 198.
+- **A5b+D+SC pair vs A3: low L2 0.923-0.925 (vs master 0.79), low HBM 0.954-0.963, high 0.933-0.948, ft 0.936-0.945, low random 0.916.** A4b = new lossless 4-bit code encoding (9 ops/word vs 11); A5b = A4b + scales stored as packed 7-bit (b-8) fields (one LOP3/step, needs A3's [0x08,0x7E] precondition); D = wgmma descriptor once per stage; SC = split commit (dequant record 1 under record 0's wgmmas). Simpler port A4b+D+SC64 ~equal.
+- Losers: A4 (IMAD.HI shift) x1.03-1.11; A3+D alone ~0.97 low/flat high; A3+SC alone 1.02-1.06 low; register ring / deferred wait x1.04-1.12 at low (pf-rega-low-stream's reopen answered: stays refuted). SC wins only on the cheaper issue.
+- Next bound: low = dependency wait + per-stage wgmma wait, pure dequant ALU-pipe 68-71%; high = tensor 79% active (~20% from its floor).
+- Expected judge pair vs A3 ~0.93-0.96 low, ~0.94-0.95 high -> minting a prefill check tonight (16 checks left).
