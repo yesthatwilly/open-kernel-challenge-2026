@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T194717Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -26,6 +26,7 @@ Regenerated 2026-10-29T194717Z by `churn.py index`. Read this before writing a h
 ### node-only
 
 - [node-only] full-verify FA3 main loop is bound by memory parallelism per SM (one CTA/SM, ~24-32 KB in flight), not HBM or tensor: a paged gather of the same rows reaches 2.72/2.79 TB/s vs FA3 172/324 us against a 123/236 us ceiling (v16/v32), ~1.37-1.40x headroom; num_splits=1 is 3-21x slower on full verify (LOG:2043 does not hold there) | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: H100 fa3v ncu: DRAM 59.5/62.5%, issue 34%, tensor ~26%, L2 hit 6-8%, stalls long_scoreboard/barrier/wait; research/h100-fa3-1029.md | board: 1.634 | blob: 2eb03f76 | reopen: a mainloop-only stream-K paged-gather diag at >= 2.6 TB/s at v32 on the node, then a judge check (H200 ceiling untested) | 2026-10-29 h100
+- [node-only] custom full-verify paged-gather attention (wgmma FP8 QK from the swizzled cp.async ring, f16 PV; 3 stages x 2 CTAs/SM = 64 KB in flight; page indices a ring ahead; grid-barrier combine): e2e 0.82 (v32) / 0.83-0.84 (v16) of master's FA3 call on the H100, error 1.67e-3 vs fp32 (FA3 6.3e-3..3.9e-2), judge-metric 2.5-2.8e-2 vs 0.076-0.085 bounds; v1 loses (1.42, latency-bound combine) | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: H100 fa3gate (takemyjob hopper/fa3gate 4b2a169; research/h100-fa3gate-1029.md, GPU 6): mainloop 2.52-2.54 TB/s at v32 (0.90-0.91 of the 2.79 gather ceiling), 2.38-2.40 at v16; math-off 2.80/2.76 TB/s; math-only 233 us at v32 = the memory-ceiling rate, latency-bound (issue ~52%); mma.sync e4m3 is emulated on sm_90a; projected H200 e2e ~0.82-0.87 (untested) | board: 1.634 | blob: 2eb03f76 | reopen: FA3-style warp specialization (producer WG + 2 setmaxnreg consumers, QK/softmax overlap) making math ~1.3x faster than the ceiling rate, then a judge check routed at v16/v32 only | 2026-10-29 h100
 
 ### landed
 

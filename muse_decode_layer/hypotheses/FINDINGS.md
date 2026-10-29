@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -15,6 +15,7 @@ Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a h
 - [shelf] wg2 OCC2 B256 decode port (wg2-occ2-b256-decode-port), est ~0.4%; its Marlin premise is gone and wg2 is refuted above | rows: load=verify_32 | evidence: DECISIONS:432 | board: 1.6551 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.6551, best now 1.6904)
 - [shelf] v4xd-forkguard: decode side_stream fork on _rt_fork_stream at priority 0 (moe v4x256c guard) | rows: load=decode_* load=verify_* | evidence: check 3390f868d49d4ea3 1.663 (board 1.661), a tie; campaign/eb-v4xd-forkguard 91e09235; fork vs serial T=128 x1.020-1.023, T=256 x1.013-1.014; board-eq distinct bcap 0 | board: 1.661 | blob: 124f158f | reopen: ride on the next decode candidate (insurance against a capture-stream collision) | 2026-10-29 campaign (re-measure: measured on 1.6610, best now 1.6904)
 - [shelf] bulk12 in decode's dense GEMMs at T=8..32 (P + unpooler + qkv/o), est +2.8% if all three capture the 25% byte cut, P alone ~1.3% | rows: load=verify_1, load=decode_16, load=decode_32 | evidence: 7cc034f917274439 profile: P 22.0-26.9 us, _bf16_swapab 19.1-22.0 us, unpooler nvjet 18.6-19.5 us; bf16 judge m>=8: b12x qkv m=8 x0.769, b12r pooler m=8 x0.984 (campaign FINDINGS bulk12) | board: 1.6904 | blob: 315119e2 | reopen: a judged m>=8 bulk12 cell at <= 0.85x its raw incumbent (e.g. x multicast per cluster) | 2026-10-29 screen
+- [shelf] wh hot half (A3 + exact-N + R4 ring N>=48) in wg_kernel<G,7>, routed by isolated-pair race (hothalf-a3-exactn-ring-wh) | rows: load=verify_16, load=verify_32 | evidence: check 44f303647100481b 1.6794 (board 1.6904; flat): routed T=128/256, pair wh/m .898-.902 / .838-.842, layer fork .973-.976 / .960-.979, exact 16/16; profile verify_32 sliding hot pair 153.5 -> 122.8 us (x0.80), row 427.7 -> 403.2 us; verify_32 full 130.6 -> 124.7; branch hyp/muse_decode_layer/hothalf-a3-exactn-ring-wh | board: 1.6904 | blob: 315119e2 | reopen: ride as a bit-exact rider on the next decode candidate (with A5b+D+SC per hh3, ~+0.2%) | 2026-10-29 churn
 
 ### unresolved
 

@@ -1,8 +1,12 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T154921Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
+
+### lead
+
+- [lead] bulk12 m>=8 kernels (b12x / cp.async bridge / TMA-box uc1) with the end-of-kernel serial escape-x gather replaced by batched loads; plain mbarrier.arrive.shared::cluster instead of arrive.release.cluster (MEMBAR.ALL.GPU) in the TMA build | rows: layer=pooler load=verify_1, layer=pooler load=decode_16, layer=pooler load=decode_32, layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: H100 b12tma probe (takemyjob hopper/b12tma-1029 d95798e; research/h100-b12tma-1029.md, GPU 2): the serial escape gather costs ~10 us per 8 tokens (25-38% of the kernel); batched: bridge 29.2->21.7 us pooler m8, 44.0->27.4 m16, 22.9->17.6 qkv m8; uc1 TMA boxes 20.7 us pooler m8 vs node cuBLAS bf16 26.1; the 3x TMA stall was 4 x MEMBAR.ALL.GPU per chunk (61-74% of stall samples); mc/uc 0.97-1.02 (multicast adds nothing); projected judge pooler m8 ~0.89-0.94 of the incumbent (untested) | board: 1.2794 | blob: a36f3392 | reopen: judge diag/race of the batched-gather b12 kernels per m>=8 cell | 2026-10-29 h100
 
 ### shelf
 
@@ -343,4 +347,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 hold
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 hold
+- running: b12-batched-escape-m8-32-race [bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels] p1 running
 - 8 stale holds expired to `done/expired/` (not run)

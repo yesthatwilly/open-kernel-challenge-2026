@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T202413Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -17,6 +17,10 @@ Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a h
 - [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5721)
 - [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5721)
 
+### node-only
+
+- [node-only] prefill turn_1 non-expert buckets have no >=10% lever: dense bf16 GEMMs at cuBLAS's own ceiling (650-820 TF/s; Triton 0.53-0.86x); FA3 knobs 0.998-1.002x (ns=1 0.53x; sliding contiguous window 1.077x but 0.97x with its gather); f16x2/bf16x2 exp no faster than f32 (0.989x). Correction to CLAIMS:39 / LOG:1238: the 39 us kernel is qkv_gate, not o (o 19.5 us alone, 20.8 after a producer) | rows: load=turn_1 | evidence: H100 pf-t1 probe (takemyjob hopper/pf-t1-1029 5df5ba1; research/h100-pf-t1-1029.md): anatomy turn_1 sliding rega 48.6%, dense 32.5%, FA3 5.0%, norm 6.5%, glue 7.5%; full FA3 410 us 41%; ncu FA3 t1f exp unit 70% busy, pure-exp floor 266 vs 401 us, tensor ~32% | board: 1.5721 | blob: 7569df17 | reopen: full-layer FA3 with part of the exps on the FMA pipe (measured ~1.48x exp-throughput ceiling, ~2-3% headline; a rewrite; the last attempt lost x0.881) | 2026-10-29 h100
+
 ### landed
 
 - [landed] rega: the register-A swap-AB wgmma NVFP4 grouped GEMM (moe s4 port) for w13 + w2 at T<=4096, then at first_turn with N=128 | rows: load=turn_1, load=turn_4, load=first_turn | evidence: promotes 23c1d5fa (2910b2fb4b744865 1.3275), a1a5497d (07a069bc69ba42a8 1.4060) | board: 1.4060 | blob: c2e3e595 | reopen: - | 2026-10-25 churn
@@ -27,6 +31,7 @@ Regenerated 2026-10-29T195421Z by `churn.py index`. Read this before writing a h
 - [landed] rega w2 early gs / sid loads (arm a) routed at the low class (pop / random x0.975; rega-lo guard x0.966-0.968) | rows: load=turn_1 | evidence: 59eb665f162a4ac9 1.4986, confirm 8716d98c405f417d 1.4994, scored 99767cf374bb4688 1.4897 (LOG:1266-1285; FINDINGS:237 is this line); land 95af1c5f | board: 1.4897 | blob: 11a08b3f | reopen: - | 2026-10-27 campaign
 - [landed] final near-ties pinned: fa3c contig-varlen at turn_4 / turn_1, w2st arm a at high / ft, the never-routed LO phase skipped (~40 s shorter prepare); deterministic final-rerun bytes | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check 7db6fa1a 1.5055 (vs same-code checks 1.4986 / 1.4994), scored b2941ea23dc743a3 1.5008 (LOG:2039-2042, 2056-2070); land 350343bc | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-28 campaign
 - [landed] dq2 A3 dequant in the rega tile's dq_stage, routed per class by an in-prepare race (experts-rega-dq2-dequant-cost-diag) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check 835e1a443a604eb2 1.5556 (pair low x0.854, high x0.909, ft x0.922 vs master, A3 routed all classes, bit-exact); scored 27f0b9af04604842 1.5362 [1.513, 1.559]; H100 transfer held (research/h100-rega-1029.md) | board: 1.5362 | blob: d8ce4cbf | reopen: - | 2026-10-29 churn
+- [landed] A5b+D+SC rega dequant (A4b code re-encoding + 7-bit packed scales + per-stage descriptor + split commit) on A3, routed per class (experts-rega-a5b-desc-splitcommit) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check da80fdb9bed749a3 1.5792 (A5b/A3 pair low .943 high .936 ft .933, all classes routed, bit-exact); scored 9f93484606cd4f9e 1.5721 [1.549, 1.596]; H100 rgx2 (research/h100-rega2-1029.md) | board: 1.5721 | blob: 7569df17 | reopen: - | 2026-10-29 churn
 
 ### refuted
 
