@@ -452,3 +452,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-29T112311Z `muse_decode_layer` **v4xd-stack**: register-landing: 7cc034f917274439 1.6904x (submit) from okc status 7cc034f917274439, master d28b23d729 blob 315119e26c (was 1.660563388552061 31e9a69aac344675)
 - 2026-10-29T151514Z `muse_attention_decode` **full-verify1-wgmma-s7-grid-sm-two-level**: released 2026-10-29T151514Z: zombie claim (stage claimed since 2026-10-27T212857Z, no job in 24 h); re-review to run it
 - 2026-10-29T151514Z `muse_prefill_layer` **attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload**: released 2026-10-29T151514Z: zombie claim (stage claimed since 2026-10-25T212615Z, no job in 24 h); re-review to run it
+- 2026-10-29T155355Z `muse_moe_w4a16` **cmbf-combine-fused-w2-epilogue-t8-32**: accepted 989,807 B (> 988,500 soft budget, < 990,000 campaign line, < okc 1,000,000 cap): prepare-only diag that never lands
