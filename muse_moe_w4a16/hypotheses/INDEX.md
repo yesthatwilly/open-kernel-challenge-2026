@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-29T202413Z. Best: 1.9827x [1.9529,2.0124] job `54b70249868f468b` (check)
+Regenerated 2026-10-29T202811Z. Best: 1.9748x [1.9451,2.0044] job `a5318a1f98984a5f` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -94,7 +94,7 @@ Regenerated 2026-10-29T202413Z. Best: 1.9827x [1.9529,2.0124] job `54b70249868f4
 | 2026-10-25T211926Z | wg2-stream-k-tail-floor-g-over-r | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
 | 2026-10-29T151134Z | cmbf-combine-fused-w2-epilogue-t8-32 | primary | post-expert norm+combine | done/neutral | neutral | 1.9675 | [1.938,2.004] | a5aee75176174ce4 | check |  | proceed | 5/6 |
 | 2026-10-29T162119Z | cmbf-combine-fused-w2-epilogue-t8-32-cf | confirm→cmbf-combine-fused-w2-epilogue-t8-32 | post-expert norm+combine | queue | queued |  |  |  |  |  | proceed |  |
-| 2026-10-29T195507Z | hothalf-wh-a5b-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/gain | gain | 1.9827 | [1.953,2.012] | 54b70249868f468b | check | merged | proceed | 0/3 |
+| 2026-10-29T195507Z | hothalf-wh-a5b-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/gain | gain | 1.9827 | [1.953,2.012] | 54b70249868f468b | check | done | proceed | 0/3 |
 
 ## Held
 
