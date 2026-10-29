@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-29T231040Z. Best: 1.7197x [1.6939,1.7463] job `824b60fac87c4ff4` (check)
+Regenerated 2026-10-29T231956Z. Best: 1.7051x [1.6795,1.7307] job `e42339989d554019` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -89,7 +89,7 @@ Regenerated 2026-10-29T231040Z. Best: 1.7197x [1.6939,1.7463] job `824b60fac87c4
 | 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-29T190020Z | hothalf-a3-exactn-ring-wh | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6794 | [1.654,1.705] | 44f303647100481b | check |  | proceed | 0/4 |
 | 2026-10-29T202838Z | hothalf-wh5ds-moe-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6968 | [1.671,1.722] | 35cc220cd79e4668 | check |  | proceed | 0/3 |
-| 2026-10-29T223938Z | engine-a-encodings-wh5ds-decode-stack | primary | decode expert block: Engine A dequant (ea4x/v4x/ea6) at T=1..32 and the cold half, plus the wh5ds hot half | done/gain | gain | 1.7197 | [1.694,1.746] | 824b60fac87c4ff4 | check | merged | proceed | 0/4 |
+| 2026-10-29T223938Z | engine-a-encodings-wh5ds-decode-stack | primary | decode expert block: Engine A dequant (ea4x/v4x/ea6) at T=1..32 and the cold half, plus the wh5ds hot half | done/gain | gain | 1.7197 | [1.694,1.746] | 824b60fac87c4ff4 | check | done | proceed | 0/4 |
 
 ## Held
 
