@@ -2479,3 +2479,8 @@ with the operator's go-ahead.
 - research/h100-rega-1029.md (takemyjob hopper/rgx 1a17a00, GPUs 5-6, nothing left running). SASS dequant/k16 step: master 26, A1 22, A2 22, A3 18. **A3/master full-mode pair: low x0.857 (L2 bank) / x0.888 (HBM) / x0.835 (random routing); high x0.923 / x0.908**; bit-exact, 168 regs, no spill; A1 and A2 each ~half, additive.
 - Attribution: full-mode tensor-active 25.5% vs 49.0% MMA-only at low (same tensor busy cycles: the pipe idles while the dequant issues); math-throttle + dispatch only 8% of stalls at low (issue-serialized, not port contention); high shows real dispatch contention (~297k vs ~25k warp-cycles/SMSP). The judge anatomy's "super-serial" was a model artifact (t1+t2-t5 counted the ring twice; pure-dequant mode 6 gives t0 = 0.93 (t6+t1) at low). The ring is not the bound.
 - [lead] claim on prefill. The in-flight judge diag routes A3 per class at <= 0.97, so it is also a board candidate (expected judge low pair x0.86-0.89). 10-30 phase A: port A3 to the moe/decode hot half (H100 hot-half lane still running).
+
+## 2026-10-29 1829Z — user steer: H100 tests first for tokens; two more lanes
+- The user, ~18:29Z: "if you can have more h100 tests figured out, prioritize that with tokens.  the h100 tests appear very fruitful".
+- Lanes now (cap 3): hot half (moe/decode wg_kernel ncu + A3, GPUs 1/3/4); **rega2** (beyond A3: further instruction cuts, a dequant warpgroup with SS wgmma, re-test one overlap schedule under A3; GPU 5); **fa3v** (full-verify FA3 bound + legal knob sweep for attention and decode's full rows; GPU 6).
+- Judge: prefill dq2 diag 835e1a44 in flight.
