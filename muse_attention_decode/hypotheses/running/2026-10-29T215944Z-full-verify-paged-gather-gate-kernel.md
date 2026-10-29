@@ -50,11 +50,20 @@ evidence: >
   0.83-0.84); error vs fp32 1.67e-3 (FA3 6.3e-3..3.9e-2), judge metric 2.46-2.79e-2 vs bounds
   0.076-0.085; attention triage shares verify_16 full 12.4%, verify_32 full 13.2% (board 4e386647)
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-29T220405Z
 review_companions: null
 review_best: 1.6339575246416982
 review_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+stage: claimed
+claimed_at: 2026-10-29T220405Z
+base_sha: 91aa9ba6749c86329bf85d64ec022f8893a3af68
+base_blob: 2eb03f76ceefa9bf81e28616ced3b33be3a70443
+branch: hyp/muse_attention_decode/full-verify-paged-gather-gate-kernel
+worktree: .worktrees/muse_attention_decode/full-verify-paged-gather-gate-kernel
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # full-verify-paged-gather-gate-kernel
