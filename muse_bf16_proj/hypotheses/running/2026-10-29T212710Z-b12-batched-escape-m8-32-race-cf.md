@@ -35,3 +35,24 @@ Confirmation rerun of b12-batched-escape-m8-32-race: its implementation commit 8
 ## Why
 
 Queued by churn.py (harvest): `b12-batched-escape-m8-32-race` ran 1.2871x against best 1.2794x, above the best but inside the one-run margin (1.24%). Two pooled runs need 1.07%. No new idea is tested, so it skips the adversarial review; the user sanctioned confirm reruns on 2026-10-25.
+
+## Implementation notes
+
+No code change: `b12-batched-escape-m8-32-race` implementation commit `84995d9e32799d8c940b71c9d279bedaad12e6d1` plus one trailing comment, so okc times it again instead of returning the earlier job. Written by churn.py claim.
+
+## Rules check
+
+Each item was checked against `git -C .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race diff`.
+- [x] CUDA-graph capturable: kernel_fn adds only `_b12m_route` (cfg, shapes, dtype, contiguity, `data_ptr() % 16` and state flags) and `_b12m_forward` (`torch.empty` plus one extension launch whose host-side tensor-map encode is not a stream op). Every `.item()` and synchronize sits in prepare-only helpers (`_b12m_rows`, `_b12m_prepare`). The graph capture and replay were validated on the H100.
+- [x] Nothing derived from `data` is cached: the tensor map is a stack-local built on each call from that call's x, and `_B12M_SUM` and `_B12M_BUILD` hold only prepare text and build state.
+- [x] Weights: a lossless 12-bit codec (section (10)'s `_b12_encode`, host + device round trip bit-exact), with escapes holding the true bf16 bits. Accumulation is fp32, followed by one bf16 rounding.
+- [x] Activations stay BF16 (x is read as bf16, the output is bf16). The KV-cache / query item is n/a: this is not attention.
+- [x] Attention full window: n/a, not attention.
+- [x] No timing patches, harness frames or I/O, module edits, reference import, subprocesses or network: `load_inline` only (as in master), and the reference is imported only by the node driver outside the submission.
+- [x] All work happens inside the timed call: one kernel per m=8 call, with no output caching or replay.
+- [x] The first line `# okc: problem=muse_bf16_proj` is kept. py_compile is OK and __pycache__ was removed.
+
+okc_lint: `OK with warnings: .../muse_bf16_proj/submission.py`. All 58 warnings are host-sync/dtype items "outside kernel_fn's call graph; fine in prepare()". There are no errors.
+
+Copied from `b12-batched-escape-m8-32-race`, whose code this is; the only change is a comment.
+
