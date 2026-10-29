@@ -2522,3 +2522,8 @@ with the operator's go-ahead.
 ## 2026-10-29 1930Z — gpunode06 GPU 4 orphan killed (owner, relayed); lanes raised to 5-6
 - FYI relayed from the owner's openclaw session: the orphan decs fuzz on gpunode06 GPU 4 (pids 2789304/2789298, USER, started 10-28 ~23:11Z, `decs.py --sub decode-296c2f3a.py --mode fuzz --level san --seed 11`, cwd run-20261028-154716-1910024 already deleted, ppid 1) was killed with SIGTERM at ~19:20Z with the owner's approval, via bin/audit-run.sh. Both pids gone. GPU 4 is free.
 - The user, ~19:30Z: "feel free to use like 5 or 6 lanes" -> concurrent agents up to 6 for this window.
+
+## 2026-10-29 1945Z — two H100-derived checks in flight; nodejudge env set up on gpunode06
+- **prefill A5b+D+SC (da80fdb9):** DQ {0, A3, A5b} = 12 instantiations (A1/A2 retired), explicit <= 0.97 gate vs A3/DQ0/master; node (GPU 5): bit-exact, canary 0, descriptor 0/1800, 168 regs 0 spill, C7510/C7512 0; A5b/A3 low .961-.972 (A3 keeps low by 0.002 on the node's HBM-like bank), high .931-.958, ft .924-.949 (A5b routes).
+- **decode wh (44f30364):** module muse_decode_wg_wh, wg_kernel<G,7> routed (D0 control, a3 / a3nx attribution arms); 984,021 B; 8 instantiations 168 regs 0 spill, -Werror clean; prepare 131.9 s on the node. Node (GPU 1): isolated pair wh/master x0.874-0.884 (T=128), x0.805-0.809 (T=256); whole layer under the real cold half x0.977-0.980 (-8 us) / x0.965-0.967 (-16 us), fork or serial alike: ~+0.9% headline. Read the profile's wg_kernel<G,7> rows (verify_32 sliding hot pair 153.5 us on the board).
+- The decode build agent ran nodejudge `setup` on gpunode06 (863 s) and left it: **clean it at the window end** (with the runner stop and /tmp/USER-hopper removal).
