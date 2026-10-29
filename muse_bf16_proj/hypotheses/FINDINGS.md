@@ -1,29 +1,29 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T213652Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
 ### lead
 
-- [lead] bulk12 m>=8 kernels (b12x / cp.async bridge / TMA-box uc1) with the end-of-kernel serial escape-x gather replaced by batched loads; plain mbarrier.arrive.shared::cluster instead of arrive.release.cluster (MEMBAR.ALL.GPU) in the TMA build | rows: layer=pooler load=verify_1, layer=pooler load=decode_16, layer=pooler load=decode_32, layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: H100 b12tma probe (takemyjob hopper/b12tma-1029 d95798e; research/h100-b12tma-1029.md, GPU 2): the serial escape gather costs ~10 us per 8 tokens (25-38% of the kernel); batched: bridge 29.2->21.7 us pooler m8, 44.0->27.4 m16, 22.9->17.6 qkv m8; uc1 TMA boxes 20.7 us pooler m8 vs node cuBLAS bf16 26.1; the 3x TMA stall was 4 x MEMBAR.ALL.GPU per chunk (61-74% of stall samples); mc/uc 0.97-1.02 (multicast adds nothing); projected judge pooler m8 ~0.89-0.94 of the incumbent (untested) | board: 1.2794 | blob: a36f3392 | reopen: judge diag/race of the batched-gather b12 kernels per m>=8 cell | 2026-10-29 h100
+- [lead] bulk12 m>=8 kernels (b12x / cp.async bridge / TMA-box uc1) with the end-of-kernel serial escape-x gather replaced by batched loads; plain mbarrier.arrive.shared::cluster instead of arrive.release.cluster (MEMBAR.ALL.GPU) in the TMA build | rows: layer=pooler load=verify_1, layer=pooler load=decode_16, layer=pooler load=decode_32, layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: H100 b12tma probe (takemyjob hopper/b12tma-1029 d95798e; research/h100-b12tma-1029.md, GPU 2): the serial escape gather costs ~10 us per 8 tokens (25-38% of the kernel); batched: bridge 29.2->21.7 us pooler m8, 44.0->27.4 m16, 22.9->17.6 qkv m8; uc1 TMA boxes 20.7 us pooler m8 vs node cuBLAS bf16 26.1; the 3x TMA stall was 4 x MEMBAR.ALL.GPU per chunk (61-74% of stall samples); mc/uc 0.97-1.02 (multicast adds nothing); projected judge pooler m8 ~0.89-0.94 of the incumbent (untested) | board: 1.2794 | blob: a36f3392 | reopen: judge diag/race of the batched-gather b12 kernels per m>=8 cell | 2026-10-29 h100 (re-measure: measured on 1.2794, best now 1.2974)
 
 ### shelf
 
-- [shelf] b12r: resident x at m=2..8 (pooler m=8 judged x1.016, 19.07 -> 18.68 us) | rows: layer=pooler load=verify_1 | evidence: 6617f94d 1.2528 (DISTILL:180) | board: 1.2664 | blob: - | reopen: only inside a stack, alone among the m=8 cells, under a read-flush gate (worth < 0.1%) | 2026-10-26 campaign
-- [shelf] unpooler slice m=1 as a bulk12 row-owner cell (U12s) | rows: layer=unpooler load=decode_1 | evidence: a642424734f54365 1.2737: gated read x1.024 vs ouns, not routed (LOG:1147); its rows never ran on the judge | board: 1.2735 | blob: - | reopen: - | 2026-10-27 churn
-- [shelf] tile-contiguous weight repack for the swap-AB m<=32 GEMMs (+2.1-3.4% kernel under the read flush, 3.72 -> 3.86 TB/s), decode-portable | rows: load=decode_1, load=decode_16, load=decode_32, load=verify_1 | evidence: pc-diag-pattern bf87ac81 tiled / orig 0.966 / 0.979 / 0.978 at m = 8 / 16 / 32 (LOG:2004-2006) | board: 1.2740 | blob: - | reopen: - | 2026-10-28 campaign
-- [shelf] cuBLASLt config sweep at m=256 beyond the heuristic (lt-config-sweep-m256-beyond-heuristic), est ~0.5% (own Risk +0.4-0.7%) | rows: load=verify_32 | evidence: DECISIONS:412 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] pooler m=128/256 K-halves on a prepare-picked cuBLASLt batched plan (pooler-khalf-lt-batched-plan-m128-m256), est ~0.5% | rows: layer=pooler load=verify_16, layer=pooler load=verify_32 | evidence: DECISIONS:413 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] router hilo launch config per m from a read-flush sweep at m=65..256 (router-hilo-m128-m256-readflush-config-sweep), est ~0.2%; its predecessor tall-tile is refuted above | rows: layer=router load=verify_16, layer=router load=verify_32 | evidence: DECISIONS:414 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
-- [shelf] qkv_gate swap-AB m=8..32 runs 0.9-1.6 us above the o/pooler swap-AB latency+bandwidth fit (t = 2.3 us + bytes / 3.93 TB/s: qkv predicted 11.9 us vs 12.8 / 12.9 / 13.5 us at m=8 / 16 / 32); closing it is worth <= ~1.0% headline | rows: layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: board 3e3ffc5afc57433b row times (o d16 6.6 us / 16.8 MB, pooler d16 19.4 us / 67.1 MB) | board: 1.2794 | blob: a36f3392 | reopen: only inside a stack; swap-AB split-K/stage retunes are refuted (CLAIMS:57) | 2026-10-29 screen
+- [shelf] b12r: resident x at m=2..8 (pooler m=8 judged x1.016, 19.07 -> 18.68 us) | rows: layer=pooler load=verify_1 | evidence: 6617f94d 1.2528 (DISTILL:180) | board: 1.2664 | blob: - | reopen: only inside a stack, alone among the m=8 cells, under a read-flush gate (worth < 0.1%) | 2026-10-26 campaign (re-measure: measured on 1.2664, best now 1.2974)
+- [shelf] unpooler slice m=1 as a bulk12 row-owner cell (U12s) | rows: layer=unpooler load=decode_1 | evidence: a642424734f54365 1.2737: gated read x1.024 vs ouns, not routed (LOG:1147); its rows never ran on the judge | board: 1.2735 | blob: - | reopen: - | 2026-10-27 churn (re-measure: measured on 1.2735, best now 1.2974)
+- [shelf] tile-contiguous weight repack for the swap-AB m<=32 GEMMs (+2.1-3.4% kernel under the read flush, 3.72 -> 3.86 TB/s), decode-portable | rows: load=decode_1, load=decode_16, load=decode_32, load=verify_1 | evidence: pc-diag-pattern bf87ac81 tiled / orig 0.966 / 0.979 / 0.978 at m = 8 / 16 / 32 (LOG:2004-2006) | board: 1.2740 | blob: - | reopen: - | 2026-10-28 campaign (re-measure: measured on 1.2740, best now 1.2974)
+- [shelf] cuBLASLt config sweep at m=256 beyond the heuristic (lt-config-sweep-m256-beyond-heuristic), est ~0.5% (own Risk +0.4-0.7%) | rows: load=verify_32 | evidence: DECISIONS:412 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.2794, best now 1.2974)
+- [shelf] pooler m=128/256 K-halves on a prepare-picked cuBLASLt batched plan (pooler-khalf-lt-batched-plan-m128-m256), est ~0.5% | rows: layer=pooler load=verify_16, layer=pooler load=verify_32 | evidence: DECISIONS:413 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.2794, best now 1.2974)
+- [shelf] router hilo launch config per m from a read-flush sweep at m=65..256 (router-hilo-m128-m256-readflush-config-sweep), est ~0.2%; its predecessor tall-tile is refuted above | rows: layer=router load=verify_16, layer=router load=verify_32 | evidence: DECISIONS:414 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.2794, best now 1.2974)
+- [shelf] qkv_gate swap-AB m=8..32 runs 0.9-1.6 us above the o/pooler swap-AB latency+bandwidth fit (t = 2.3 us + bytes / 3.93 TB/s: qkv predicted 11.9 us vs 12.8 / 12.9 / 13.5 us at m=8 / 16 / 32); closing it is worth <= ~1.0% headline | rows: layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: board 3e3ffc5afc57433b row times (o d16 6.6 us / 16.8 MB, pooler d16 19.4 us / 67.1 MB) | board: 1.2794 | blob: a36f3392 | reopen: only inside a stack; swap-AB split-K/stage retunes are refuted (CLAIMS:57) | 2026-10-29 screen (re-measure: measured on 1.2794, best now 1.2974)
 
 ### unresolved
 
-- [unresolved] bf16 board level: the 1.2740 board is the top of a ~1.267-1.274 spread; per-row noise between identical bytes is 1-5% | rows: all | evidence: pc-pin-rpdl-all-khalf bcc4babe 1.2671, pc-diag-pattern bf87ac81 1.2692, pc-ouns-cl4 5ff48999 1.2713 (LOG:1987, 2002-2003) | board: 1.2740 | blob: - | reopen: pin flipping races only for determinism; judge single-row effects under ~3-5% on >= 2 runs | 2026-10-28 campaign
-- [unresolved] CW=4 b12 runner-ups for pooler / o (pc-b12-cw4-pooler-o), inside the board-routing spread | rows: layer=pooler load=decode_1, layer=o load=decode_1 | evidence: phase-C check 1.2786 vs the 1.274 board (LOG:2012-2013) | board: 1.2794 | blob: - | reopen: stack with the qkv m=128 plan and judge on >= 2 runs | 2026-10-28 campaign
-- [unresolved] cuBLASLt NN-layout plan for qkv_gate at m=128 (the untried half of lt-nn-layout-cells-o-m128-qkv-m128), at most ~0.35% headline | rows: layer=qkv_gate load=verify_16 | evidence: same review; the 62da2d9e plan already re-ranks qkv m=128 TN under the read flush | board: 1.2794 | blob: - | reopen: a prepare-only NN vs TN ranking under the read flush shows a >= 10% kernel cut | 2026-10-28 churn
-- [unresolved] bf16-shelf-stack: tile-contiguous repack + L/KL Lt plans + b12 CW=4 cells, each gated (routed: tile pooler 8/16/32, o_16, unpooler_32; L m=256 qkv_gate, pooler; KL pooler m128; b12 o) | rows: load=verify_1 load=verify_16 load=verify_32 | evidence: check f37f01e7884e46b1 1.2810 vs board 1.2794 (+0.1%, inside the 1.24% margin) | board: 1.2794 | blob: a36f3392 | reopen: only as part of a bigger bf16 stack; a second run would only pool noise | 2026-10-28 campaign
+- [unresolved] bf16 board level: the 1.2740 board is the top of a ~1.267-1.274 spread; per-row noise between identical bytes is 1-5% | rows: all | evidence: pc-pin-rpdl-all-khalf bcc4babe 1.2671, pc-diag-pattern bf87ac81 1.2692, pc-ouns-cl4 5ff48999 1.2713 (LOG:1987, 2002-2003) | board: 1.2740 | blob: - | reopen: pin flipping races only for determinism; judge single-row effects under ~3-5% on >= 2 runs | 2026-10-28 campaign (re-measure: measured on 1.2740, best now 1.2974)
+- [unresolved] CW=4 b12 runner-ups for pooler / o (pc-b12-cw4-pooler-o), inside the board-routing spread | rows: layer=pooler load=decode_1, layer=o load=decode_1 | evidence: phase-C check 1.2786 vs the 1.274 board (LOG:2012-2013) | board: 1.2794 | blob: - | reopen: stack with the qkv m=128 plan and judge on >= 2 runs | 2026-10-28 campaign (re-measure: measured on 1.2794, best now 1.2974)
+- [unresolved] cuBLASLt NN-layout plan for qkv_gate at m=128 (the untried half of lt-nn-layout-cells-o-m128-qkv-m128), at most ~0.35% headline | rows: layer=qkv_gate load=verify_16 | evidence: same review; the 62da2d9e plan already re-ranks qkv m=128 TN under the read flush | board: 1.2794 | blob: - | reopen: a prepare-only NN vs TN ranking under the read flush shows a >= 10% kernel cut | 2026-10-28 churn (re-measure: measured on 1.2794, best now 1.2974)
+- [unresolved] bf16-shelf-stack: tile-contiguous repack + L/KL Lt plans + b12 CW=4 cells, each gated (routed: tile pooler 8/16/32, o_16, unpooler_32; L m=256 qkv_gate, pooler; KL pooler m128; b12 o) | rows: load=verify_1 load=verify_16 load=verify_32 | evidence: check f37f01e7884e46b1 1.2810 vs board 1.2794 (+0.1%, inside the 1.24% margin) | board: 1.2794 | blob: a36f3392 | reopen: only as part of a bigger bf16 stack; a second run would only pool noise | 2026-10-28 campaign (re-measure: measured on 1.2794, best now 1.2974)
 
 ### landed
 
@@ -61,42 +61,42 @@ Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a h
 
 ## Current best
 
-1.2794x [1.2602,1.2986] from job `3e3ffc5afc57433b` (submit), master commit `62da2d9e80`, hypothesis phasec-pc-lt-qkv128-readflush
+1.2974x [1.2836,1.3111] from job `bced57b42b87444d` (check), master commit `51c4c3d8c8`, hypothesis b12-batched-escape-m8-32-race
 
 Where the time goes (per scored shape, top kernels):
 
-- layer=qkv_gate load=decode_1 m=1: yours 10.4µs vs SGLang 14.3µs (SoL 7.9µs) · void b12_kernel<16, 8192, 6, 2, 4>(unsigned char const*, ... 9.2µs 100.0%
-- layer=o load=decode_1 m=1: yours 5.7µs vs SGLang 6.7µs (SoL 3.5µs) · void b12_kernel<64, 1024, 8, 1, 8>(unsigned char const*, ... 4.1µs 100.0%
-- layer=pooler load=decode_1 m=1: yours 15.0µs vs SGLang 21.5µs (SoL 14.0µs) · void b12_kernel<32, 8192, 8, 1, 4>(unsigned char const*, ... 13.5µs 100.0%
-- layer=unpooler load=decode_1 m=1: yours 5.0µs vs SGLang 6.7µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.4µs 100.0%
-- layer=router load=decode_1 m=1: yours 5.1µs vs SGLang 10.5µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.6µs 100.0%
-- layer=qkv_gate load=decode_16 m=16: yours 12.9µs vs SGLang 14.1µs (SoL 7.9µs) · _bf16_swapab_kernel 10.2µs 100.0%
-- layer=o load=decode_16 m=16: yours 6.6µs vs SGLang 7.1µs (SoL 3.6µs) · _bf16_swapab_kernel 4.1µs 100.0%
-- layer=pooler load=decode_16 m=16: yours 19.4µs vs SGLang 21.3µs (SoL 14.1µs) · _bf16_swapab_kernel 20.6µs 100.0%
-- layer=unpooler load=decode_16 m=16: yours 18.6µs vs SGLang 18.6µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.1µs 100.0%
-- layer=router load=decode_16 m=16: yours 5.3µs vs SGLang 14.8µs (SoL 1.8µs) · _router_swapab_kernel 3.2µs 79.5%, _router_zero_pdl_kernel 0.8µs 20.5%
-- layer=qkv_gate load=decode_32 m=32: yours 13.5µs vs SGLang 14.2µs (SoL 8.0µs) · _bf16_swapab_kernel 11.6µs 100.0%
-- layer=o load=decode_32 m=32: yours 6.3µs vs SGLang 6.7µs (SoL 3.6µs) · _bf16_swapab_kernel 4.4µs 100.0%
-- layer=pooler load=decode_32 m=32: yours 19.9µs vs SGLang 21.9µs (SoL 14.1µs) · _bf16_swapab_kernel 20.1µs 100.0%
-- layer=unpooler load=decode_32 m=32: yours 18.3µs vs SGLang 18.6µs (SoL 14.1µs) · _bf16_swapab_kernel 18.3µs 100.0%
-- layer=router load=decode_32 m=32: yours 5.7µs vs SGLang 15.3µs (SoL 1.9µs) · _router_swapab_kernel 3.8µs 81.4%, _router_zero_pdl_kernel 0.9µs 18.6%
-- layer=qkv_gate load=verify_1 m=8: yours 12.8µs vs SGLang 14.5µs (SoL 7.9µs) · _bf16_swapab_kernel 9.8µs 100.0%
-- layer=o load=verify_1 m=8: yours 6.1µs vs SGLang 6.8µs (SoL 3.5µs) · _bf16_swapab_kernel 4.1µs 100.0%
-- layer=pooler load=verify_1 m=8: yours 19.0µs vs SGLang 21.4µs (SoL 14.0µs) · _bf16_swapab_kernel 19.0µs 100.0%
-- layer=unpooler load=verify_1 m=8: yours 5.2µs vs SGLang 7.0µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.6µs 100.0%
-- layer=router load=verify_1 m=8: yours 5.0µs vs SGLang 26.2µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.8µs 100.0%
-- layer=qkv_gate load=verify_16 m=128: yours 16.1µs vs SGLang 17.3µs (SoL 8.4µs) · nvjet_sm90_tst_40x64_64x16_4x2_h_bz_TNN 15.7µs 100.0%
-- layer=o load=verify_16 m=128: yours 7.2µs vs SGLang 7.3µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.4µs 100.0%
-- layer=pooler load=verify_16 m=128: yours 21.9µs vs SGLang 25.1µs (SoL 14.6µs) · nvjet_sm90_tss_128x64_64x8_1x2_h_bz_NNT 21.4µs 92.0%, _add2_cast_kernel 1.9µs 8.0%
-- layer=unpooler load=verify_16 m=128: yours 18.6µs vs SGLang 19.6µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 19.1µs 100.0%
-- layer=router load=verify_16 m=128: yours 7.0µs vs SGLang 16.2µs (SoL 2.2µs) · _router_hilo_kernel 5.2µs 86.1%, _router_zero_pdl_kernel 0.8µs 13.9%
-- layer=qkv_gate load=verify_32 m=256: yours 20.0µs vs SGLang 20.1µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 19.2µs 100.0%
-- layer=o load=verify_32 m=256: yours 9.4µs vs SGLang 9.5µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.1µs 100.0%
-- layer=pooler load=verify_32 m=256: yours 30.2µs vs SGLang 30.7µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 30.6µs 100.0%
-- layer=unpooler load=verify_32 m=256: yours 24.3µs vs SGLang 24.2µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 25.2µs 100.0%
-- layer=router load=verify_32 m=256: yours 9.6µs vs SGLang 17.7µs (SoL 2.7µs) · _router_hilo_kernel 6.9µs 89.3%, void at::native::vectorized_elementwise_kernel<4, at::nat... 0.8µs 10.7%
+- layer=qkv_gate load=decode_1 m=1: yours 10.6µs vs SGLang 14.5µs (SoL 7.9µs) · void b12_kernel<16, 8192, 6, 2, 4>(unsigned char const*, ... 9.2µs 100.0%
+- layer=o load=decode_1 m=1: yours 5.5µs vs SGLang 6.6µs (SoL 3.5µs) · void b12_kernel<64, 1024, 8, 1, 8>(unsigned char const*, ... 4.2µs 100.0%
+- layer=pooler load=decode_1 m=1: yours 15.0µs vs SGLang 21.8µs (SoL 14.0µs) · void b12_kernel<32, 8192, 8, 1, 8>(unsigned char const*, ... 13.9µs 100.0%
+- layer=unpooler load=decode_1 m=1: yours 5.0µs vs SGLang 7.0µs (SoL 1.7µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.5µs 100.0%
+- layer=router load=decode_1 m=1: yours 5.3µs vs SGLang 10.6µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 3.7µs 100.0%
+- layer=qkv_gate load=decode_16 m=16: yours 12.9µs vs SGLang 13.9µs (SoL 7.9µs) · _bf16_swapab_kernel 10.1µs 100.0%
+- layer=o load=decode_16 m=16: yours 6.3µs vs SGLang 7.0µs (SoL 3.6µs) · _bf16_swapab_kernel 4.3µs 100.0%
+- layer=pooler load=decode_16 m=16: yours 19.6µs vs SGLang 21.7µs (SoL 14.1µs) · _bf16_swapab_kernel 19.6µs 100.0%
+- layer=unpooler load=decode_16 m=16: yours 18.7µs vs SGLang 18.5µs (SoL 14.1µs) · nvjet_sm90_tst_64x16_64x16_2x1_v_bz_TNT 18.5µs 100.0%
+- layer=router load=decode_16 m=16: yours 5.3µs vs SGLang 14.7µs (SoL 1.8µs) · _router_swapab_kernel 3.3µs 79.8%, _router_zero_pdl_kernel 0.8µs 20.2%
+- layer=qkv_gate load=decode_32 m=32: yours 14.4µs vs SGLang 14.5µs (SoL 8.0µs) · _bf16_swapab_kernel 11.7µs 100.0%
+- layer=o load=decode_32 m=32: yours 6.7µs vs SGLang 6.9µs (SoL 3.6µs) · _bf16_swapab_kernel 4.6µs 100.0%
+- layer=pooler load=decode_32 m=32: yours 20.2µs vs SGLang 22.1µs (SoL 14.1µs) · _bf16_swapab_kernel 20.4µs 100.0%
+- layer=unpooler load=decode_32 m=32: yours 18.7µs vs SGLang 18.8µs (SoL 14.1µs) · _bf16_swapab_kernel 19.0µs 100.0%
+- layer=router load=decode_32 m=32: yours 5.9µs vs SGLang 15.4µs (SoL 1.9µs) · _router_swapab_kernel 3.8µs 82.2%, _router_zero_pdl_kernel 0.8µs 17.8%
+- layer=qkv_gate load=verify_1 m=8: yours 11.7µs vs SGLang 13.9µs (SoL 7.9µs) · void (anonymous namespace)::b12m_tma_kernel<16, 8192, 4, ... 11.5µs 100.0%
+- layer=o load=verify_1 m=8: yours 6.2µs vs SGLang 6.8µs (SoL 3.5µs) · _bf16_swapab_kernel 4.1µs 100.0%
+- layer=pooler load=verify_1 m=8: yours 16.0µs vs SGLang 21.7µs (SoL 14.0µs) · void (anonymous namespace)::b12m_tma_kernel<32, 8192, 6, ... 16.1µs 100.0%
+- layer=unpooler load=verify_1 m=8: yours 5.6µs vs SGLang 7.3µs (SoL 1.8µs) · void (anonymous namespace)::ouns_kernel<8, 64, 512, 8, 4>... 4.7µs 100.0%
+- layer=router load=verify_1 m=8: yours 5.3µs vs SGLang 26.3µs (SoL 1.8µs) · void (anonymous namespace)::router_kernel<8, 8>(__nv_bflo... 4.0µs 100.0%
+- layer=qkv_gate load=verify_16 m=128: yours 15.7µs vs SGLang 17.1µs (SoL 8.4µs) · nvjet_sm90_tst_40x64_64x16_4x2_h_bz_TNN 16.1µs 100.0%
+- layer=o load=verify_16 m=128: yours 7.4µs vs SGLang 7.3µs (SoL 4.0µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_TNT 5.4µs 100.0%
+- layer=pooler load=verify_16 m=128: yours 22.3µs vs SGLang 25.2µs (SoL 14.6µs) · nvjet_sm90_tss_128x64_64x8_1x2_h_bz_NNT 21.7µs 91.9%, _add2_cast_kernel 1.9µs 8.1%
+- layer=unpooler load=verify_16 m=128: yours 19.3µs vs SGLang 19.8µs (SoL 14.6µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 20.2µs 100.0%
+- layer=router load=verify_16 m=128: yours 7.6µs vs SGLang 16.5µs (SoL 2.2µs) · _router_hilo_kernel 5.2µs 85.8%, _router_zero_pdl_kernel 0.9µs 14.2%
+- layer=qkv_gate load=verify_32 m=256: yours 20.0µs vs SGLang 19.6µs (SoL 9.8µs) · nvjet_sm90_tst_96x64_64x10_2x4_h_bz_TNN 20.1µs 100.0%
+- layer=o load=verify_32 m=256: yours 9.7µs vs SGLang 9.4µs (SoL 4.5µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 8.3µs 100.0%
+- layer=pooler load=verify_32 m=256: yours 30.1µs vs SGLang 30.5µs (SoL 17.4µs) · nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT 30.0µs 100.0%
+- layer=unpooler load=verify_32 m=256: yours 24.2µs vs SGLang 24.0µs (SoL 17.4µs) · nvjet_sm90_tst_128x128_64x6_2x1_v_bz_TNT 25.6µs 100.0%
+- layer=router load=verify_32 m=256: yours 9.3µs vs SGLang 17.8µs (SoL 2.7µs) · _router_hilo_kernel 7.0µs 88.7%, _router_zero_pdl_kernel 0.9µs 11.3%
 
-Diagnosis of 2026-10-25T203424Z, written on board 1.2566 (today 1.2794): historical, re-diagnose before minting from it (`muse_bf16_proj/hypotheses/DIAGNOSIS.md`).
+Diagnosis of 2026-10-25T203424Z, written on board 1.2566 (today 1.2974): historical, re-diagnose before minting from it (`muse_bf16_proj/hypotheses/DIAGNOSIS.md`).
 
 ## By area
 
@@ -149,7 +149,8 @@ Diagnosis of 2026-10-25T203424Z, written on board 1.2566 (today 1.2794): histori
 - **bf16-shape-gated-triton-winners-combo** → neutral (unproven-vs-best), 1.1760x, mechanism flat 8/10 — gained on qkv_gate decode_1; o decode_1, decode_16; pooler decode_1, decode_16, verify_1; unpooler decode_1, verify_1; lost on router verify_1, verify_16. Built on master (dba4ffd: parity dispatch + 3-D split-K Triton router; router untouched). Combine, behind one shape gate in kernel_fn, the four individually-neu
 
 ### bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels
-- **b12-batched-escape-m8-32-race** → neutral (unproven-vs-best), 1.2871x, mechanism miss 2/10 — gained on unpooler decode_1; qkv_gate verify_1; pooler verify_1; router verify_32; lost on qkv_gate decode_32; o decode_32, verify_32; unpooler verify_1; router verify_1, verify_16. Add bulk12 kernels for the m=8/16/32 cells of pooler, qkv_gate (and o if it fits), each raced per cell in prepare against master's incumbent (swap-AB Triton / c
+- **b12-batched-escape-m8-32-race** → gain (gain-pooled), 1.2974x, mechanism miss 2/10 — gained on unpooler decode_1; qkv_gate verify_1; pooler verify_1; router verify_32; lost on qkv_gate decode_32; o decode_32, verify_32; unpooler verify_1; router verify_1, verify_16. Add bulk12 kernels for the m=8/16/32 cells of pooler, qkv_gate (and o if it fits), each raced per cell in prepare against master's incumbent (swap-AB Triton / c
+- **b12-batched-escape-m8-32-race-cf** → gain (gain), 1.3076x — gained on unpooler decode_1, decode_32; router decode_1, decode_16, decode_32, verify_1, verify_16; qkv_gate decode_32, verify_1; o decode_32. Confirmation rerun of b12-batched-escape-m8-32-race: its implementation commit 84995d9e32799d8c940b71c9d279bedaad12e6d1 unchanged except one trailing comment, r
 
 ### bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)
 - **b12mc-multicast-x-pooler-qkv-m8-readflush-diag** → neutral (within-ci), 1.2727x, mechanism flat 0/5 — gained on unpooler decode_1; router decode_1, verify_32; pooler verify_32; lost on qkv_gate decode_32, verify_1; o verify_1; unpooler verify_1; router verify_1. Prepare-only diagnostic. kernel_fn, every routing flag and every state key the timed path reads stay byte-identical to master (62da2d9e, blob a36f3392); the dia
@@ -350,5 +351,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 hold
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 hold
-- queue: b12-batched-escape-m8-32-race-cf [bf16 dense GEMM cells at m=8..32 (pooler, qkv_gate, o): bulk12 kernels] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

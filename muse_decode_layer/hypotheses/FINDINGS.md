@@ -1,6 +1,6 @@
 # muse_decode_layer findings
 
-Regenerated 2026-10-29T212714Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
+Regenerated 2026-10-29T213652Z by `churn.py index`. Read this before writing a hypothesis for muse_decode_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -186,6 +186,7 @@ Diagnosis of 2026-10-25T203237Z, written on board 1.3142 (today 1.6904): histori
 
 ### moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256
 - **hothalf-a3-exactn-ring-wh** → neutral (within-ci), 1.6794x — no shape moved outside noise. Port the H100-validated 'wh' stack into decode's wgmma hot half (wg_kernel<true>/<false> and its dq_stage, muse_decode_layer/submission.py ~:15330; moe twin mus
+- **hothalf-wh5ds-moe-port** → neutral (unproven-vs-best), 1.6968x — gained on sliding verify_16, verify_32; full verify_32. Port moe's landed wh5ds hot half back to decode: take the module from muse_moe_w4a16/submission.py on master (landed hothalf-wh-a5b-port, scored a5318a1f: arms 
 
 ### o GEMM + pooler GEMM (L2 warm-up overlapped with attention)
 - **l2-prefetch-o-pooler-during-sliding-attention** → regression (regression), 1.1670x, mechanism miss 0/3 — lost on sliding decode_16, decode_32, verify_1. On sliding layers at 2 <= tokens <= 32 (config gate: window != 0 and 2 <= tokens <= 32, i.e. sliding decode_16, decode_32 and verify_1), overlap an L2 warm-up o
@@ -307,5 +308,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: marlin-bsm8-t17-t32-w13-atomic-t1 [w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1)] p2 hold
 - queue: marlin-hot-cold-two-class-bsm-t128-t256 [w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256)] p2 hold
 - queue: wg2-occ2-b256-decode-port [w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate)] p4 hold
-- running: hothalf-wh5ds-moe-port [moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256] p1 running
 - 12 stale holds expired to `done/expired/` (not run)
