@@ -1,0 +1,632 @@
+{
+ "ok": true,
+ "promote": [],
+ "dispatch": [
+  {
+   "problem": "muse_moe_w4a16",
+   "picks": [
+    {
+     "slug": "cmbf-combine-fused-w2-epilogue-t8-32-cf",
+     "mode": "check",
+     "priority": 1,
+     "review": "proceed",
+     "kind": "confirm",
+     "controls_for": "cmbf-combine-fused-w2-epilogue-t8-32"
+    }
+   ]
+  }
+ ],
+ "wake_s": 824,
+ "needs_human": [],
+ "diagnose": [
+  "muse_attention_decode",
+  "muse_bf16_proj",
+  "muse_decode_layer",
+  "muse_moe_w4a16",
+  "muse_prefill_layer"
+ ],
+ "report": {
+  "preflight": {
+   "ok": true,
+   "branch": "master",
+   "whoami": "yesthatwilly",
+   "quotas": {
+    "muse_bf16_proj": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 1,
+      "left": 19
+     }
+    },
+    "muse_attention_decode": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 1,
+      "left": 19
+     }
+    },
+    "muse_moe_w4a16": {
+     "scored": {
+      "per_day": 10,
+      "used": 3,
+      "left": 7
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 9,
+      "left": 11
+     }
+    },
+    "muse_decode_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 1,
+      "left": 9
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 2,
+      "left": 18
+     }
+    },
+    "muse_prefill_layer": {
+     "scored": {
+      "per_day": 10,
+      "used": 0,
+      "left": 10
+     },
+     "checks": {
+      "per_day": 20,
+      "used": 2,
+      "left": 18
+     }
+    }
+   },
+   "tracks": null,
+   "hours_to_reset": 7.65,
+   "lock": ".claude/churn.lock",
+   "_exit": 0
+  },
+  "intake": {
+   "ok": true,
+   "added": [],
+   "skipped": [],
+   "_exit": 0
+  },
+  "recover": {
+   "ok": true,
+   "actions": [],
+   "needs_human": [],
+   "_exit": 0
+  },
+  "release-stale": {
+   "ok": true,
+   "dry_run": false,
+   "released": [],
+   "_exit": 1
+  },
+  "harvest": {
+   "ok": true,
+   "harvested": [
+    {
+     "problem": "muse_attention_decode",
+     "slug": "fa3-metadata-fold-preattn-full-verify",
+     "job": "6d1082a6c0dd4f80",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.633591937120466,
+     "ci": [
+      1.6090880580636588,
+      1.6664460987835275
+     ],
+     "md": "muse_attention_decode/hypotheses/done/neutral/2026-10-29T154210Z-fa3-metadata-fold-preattn-full-verify.md"
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "slug": "cmbf-combine-fused-w2-epilogue-t8-32",
+     "job": "a5aee75176174ce4",
+     "outcome": "neutral",
+     "detail": "unproven-vs-best",
+     "speedup": 1.9674503247838624,
+     "ci": [
+      1.9379385699121043,
+      2.0041685111626464
+     ],
+     "md": "muse_moe_w4a16/hypotheses/done/neutral/2026-10-29T151134Z-cmbf-combine-fused-w2-epilogue-t8-32.md"
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "slug": "experts-rega-low-kpair-four-consumer-wgs",
+     "job": "bbca0105449c4217",
+     "outcome": "neutral",
+     "detail": "within-ci",
+     "speedup": 1.4925744641635206,
+     "ci": [
+      1.4701858472010678,
+      1.5149630811259733
+     ],
+     "md": "muse_prefill_layer/hypotheses/done/neutral/2026-10-29T153927Z-experts-rega-low-kpair-four-consumer-wgs.md"
+    }
+   ],
+   "pending": [],
+   "_exit": 0
+  },
+  "harvest-promotions": {
+   "ok": true,
+   "promotions": [],
+   "_exit": 1
+  },
+  "promote": {
+   "ok": true,
+   "promote": [],
+   "skipped": [],
+   "_exit": 1
+  },
+  "reclassify": {
+   "ok": true,
+   "margin_1run_pct": 1.237,
+   "margin_2run_pct": 1.072,
+   "problems": [
+    {
+     "problem": "muse_attention_decode",
+     "best": 1.6339575246416982,
+     "flips": [
+      {
+       "slug": "paired-heads-launch-cleanup-ab-tune-batch-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2686,
+       "best_then": 1.1705932092473075
+      },
+      {
+       "slug": "sliding-fused-triton-decode1-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2931,
+       "best_then": 1.2686474414890054
+      },
+      {
+       "slug": "splitkv-full-line-gather-mapping",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.416,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "full-decode-splitkv-s2-streamk-ticket-inproc",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4171,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "full-decode1-streamk-s3-two-level-ticket",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4322,
+       "best_then": 1.3948738389144513
+      },
+      {
+       "slug": "sliding-verify-sk-pseudo-decode-s1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4705,
+       "best_then": 1.4321773019894537
+      },
+      {
+       "slug": "full-decode1-sk-pdl-from-preattn",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4571,
+       "best_then": 1.4321773019894537
+      },
+      {
+       "slug": "restack-sk-pseudo-b1-cluster-c16-c4",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.487,
+       "best_then": 1.444132502888963
+      },
+      {
+       "slug": "sliding-decode-sk-window-route",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4973,
+       "best_then": 1.444132502888963
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "best": 1.279360358306445,
+     "flips": [
+      {
+       "slug": "pooler-triton-splitk2-blockn64-semaphore",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1664,
+       "best_then": 1.1432568936693237
+      },
+      {
+       "slug": "bf16-shape-gated-triton-winners-combo",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.176,
+       "best_then": 1.1432568936693237
+      },
+      {
+       "slug": "bf16-m32-swapab-wgmma-triton",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1984,
+       "best_then": 1.1760470299345995
+      },
+      {
+       "slug": "bf16-restack-m16-swapab-router-swapab-m32",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2215,
+       "best_then": 1.1958517819004566
+      },
+      {
+       "slug": "restack-three-cell-wins-router-unpooler-cluster-m8-nn-m128",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2366,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "router-cuda-cluster-dsmem-splitk-rewrite",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1897,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "o-swapab-m32-splitk2-two-ctas-per-sm",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.186,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "qkv-swapab-m32-splitk8-stages3",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1963,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "unpooler-full-m16-swapab-route",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1885,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "pooler-unpooler-m128-nn-layout-gated",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1953,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "bf16-lossless-exp4-decode-only-throughput-probe",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.1904,
+       "best_then": 1.2215006063849365
+      },
+      {
+       "slug": "bf16-verify-deepgemm-bf16-gemm-nt-route",
+       "was": "regression/regression",
+       "now": "neutral/within-ci",
+       "speedup": 1.2027,
+       "best_then": 1.2215006063849365
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_decode_layer",
+     "best": 1.6903955680487197,
+     "flips": [
+      {
+       "slug": "expert-id-map-single-kernel",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0374,
+       "best_then": 1.020038644953596
+      },
+      {
+       "slug": "fa3-hdim128-head-pairing-batched",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0874,
+       "best_then": 1.0634521974439426
+      },
+      {
+       "slug": "full-decode-cuda-splitkv-port",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1862,
+       "best_then": 1.1664628806987323
+      },
+      {
+       "slug": "full-decode-splitkv-restack-on-pdl",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.268,
+       "best_then": 1.2521147631671776
+      },
+      {
+       "slug": "stack-align-par-sliding1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2444,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "stack-sidestream-sliding-batched",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2443,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "stack-align-par-sidestream-sliding1",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2495,
+       "best_then": 1.228328123558382
+      },
+      {
+       "slug": "w2-marlin-atomic-add-t1-port",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.2856,
+       "best_then": 1.2680313318618024
+      },
+      {
+       "slug": "dense-chain-s3-t1-q-sk2-o-route-unpool",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3018,
+       "best_then": 1.2725637226942819
+      },
+      {
+       "slug": "qkv-o-swapab16-t2-t16-no-fork",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3056,
+       "best_then": 1.2725637226942819
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "best": 1.952050927455536,
+     "flips": [
+      {
+       "slug": "w2-marlin-atomic-add-small-m",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3445,
+       "best_then": 1.3278240305297715
+      },
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-bucket-gate",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.3744,
+       "best_then": 1.3438953504561806
+      },
+      {
+       "slug": "cuda-nvfp4-wgmma-rega-b128-n32-deep-ring",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.369,
+       "best_then": 1.3438953504561806
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "best": 1.5007957663757285,
+     "flips": [
+      {
+       "slug": "experts-triton-w4a16-first-turn-blockt256",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.0229,
+       "best_then": 1.0038664293875537
+      },
+      {
+       "slug": "experts-triton-turn4-persistent-local-align-control-no-persi",
+       "was": "neutral/within-ci",
+       "now": "regression/regression",
+       "speedup": 1.0557,
+       "best_then": 1.074386115190733
+      },
+      {
+       "slug": "experts-turn4-ssdq-s1b-dataptr-symbol-fix",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1004,
+       "best_then": 1.074386115190733
+      },
+      {
+       "slug": "experts-turn4-ssdq-s2-tma-raw-weight-ring",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.1293,
+       "best_then": 1.1075501334948785
+      },
+      {
+       "slug": "align-two-phase-all-t-rega",
+       "was": "neutral/unproven-vs-best",
+       "now": "gain/gain",
+       "speedup": 1.4458,
+       "best_then": 1.4060131381907617
+      }
+     ],
+     "backlog": [],
+     "queued": []
+    }
+   ],
+   "_exit": 0
+  },
+  "budget": {
+   "ok": true,
+   "plans": [
+    {
+     "problem": "muse_attention_decode",
+     "checks_left": 19,
+     "scored_left": 10,
+     "hours_to_reset": 7.64,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 29,
+     "queue": 0,
+     "need": 29,
+     "pace": 5,
+     "N": 0,
+     "picks": [],
+     "shortfall": 29,
+     "reason": "queue empty: only leads clearing the value bar",
+     "wake_s": 824,
+     "gated": [],
+     "rereview": []
+    },
+    {
+     "problem": "muse_bf16_proj",
+     "checks_left": 19,
+     "scored_left": 10,
+     "hours_to_reset": 7.64,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 29,
+     "queue": 0,
+     "need": 29,
+     "pace": 5,
+     "N": 0,
+     "picks": [],
+     "shortfall": 29,
+     "reason": "queue empty: only leads clearing the value bar",
+     "wake_s": 824,
+     "gated": [],
+     "rereview": []
+    },
+    {
+     "problem": "muse_decode_layer",
+     "checks_left": 18,
+     "scored_left": 9,
+     "hours_to_reset": 7.64,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 27,
+     "queue": 0,
+     "need": 27,
+     "pace": 5,
+     "N": 0,
+     "picks": [],
+     "shortfall": 27,
+     "reason": "queue empty: only leads clearing the value bar",
+     "wake_s": 885,
+     "gated": [],
+     "rereview": []
+    },
+    {
+     "problem": "muse_moe_w4a16",
+     "checks_left": 11,
+     "scored_left": 7,
+     "hours_to_reset": 7.64,
+     "in_flight": 0,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 18,
+     "queue": 1,
+     "need": 18,
+     "pace": 3,
+     "N": 1,
+     "picks": [
+      {
+       "slug": "cmbf-combine-fused-w2-epilogue-t8-32-cf",
+       "mode": "check",
+       "priority": 1,
+       "review": "proceed",
+       "kind": "confirm",
+       "controls_for": "cmbf-combine-fused-w2-epilogue-t8-32"
+      }
+     ],
+     "shortfall": 17,
+     "reason": "queue has 1 eligible hypotheses",
+     "wake_s": 1328,
+     "gated": [],
+     "rereview": []
+    },
+    {
+     "problem": "muse_prefill_layer",
+     "checks_left": 18,
+     "scored_left": 10,
+     "hours_to_reset": 7.64,
+     "in_flight": 1,
+     "in_flight_checks": 0,
+     "gains_pending": 0,
+     "promotion_hold": 0,
+     "spendable": 28,
+     "queue": 0,
+     "need": 28,
+     "pace": 5,
+     "N": 0,
+     "picks": [],
+     "shortfall": 28,
+     "reason": "queue empty: only leads clearing the value bar",
+     "wake_s": 854,
+     "gated": [],
+     "rereview": []
+    }
+   ],
+   "wake_s": 824,
+   "dispatch_total": 1,
+   "_exit": 0
+  },
+  "index": {
+   "ok": true,
+   "changed": [
+    "muse_attention_decode/hypotheses/INDEX.md",
+    "muse_attention_decode/hypotheses/FINDINGS.md",
+    "muse_moe_w4a16/hypotheses/INDEX.md",
+    "muse_moe_w4a16/hypotheses/FINDINGS.md",
+    "muse_prefill_layer/hypotheses/INDEX.md",
+    "muse_prefill_layer/hypotheses/FINDINGS.md",
+    "hypotheses/INDEX.md"
+   ],
+   "_exit": 0
+  }
+ }
+}
