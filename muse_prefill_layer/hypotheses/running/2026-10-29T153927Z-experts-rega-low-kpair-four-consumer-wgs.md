@@ -138,7 +138,7 @@ base_sha: 06e1361569ec34702fbc0577933b82193553a264
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
 branch: hyp/muse_prefill_layer/experts-rega-low-kpair-four-consumer-wgs
 worktree: .worktrees/muse_prefill_layer/experts-rega-low-kpair-four-consumer-wgs
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T160456Z
@@ -147,6 +147,8 @@ submission_sha256: 5c841f07ac40040baa34f5e6b7946656af3ff84b428cbbf198d5ac49796e3
 norm_sha256: 55c405281c3d86276ddf04d7982bf320c21104aaad3308a0a92d65f9ad912963
 submission_blob: 509bf436f7d4acbf999d8007a67dde82c15712fc
 lint_warnings: 121
+attempt_file: 2026-10-29T160458Z-check-experts-rega-low-kpair-four-consumer-wgs.md
+prepared_at: 2026-10-29T160458Z
 ---
 
 # experts-rega-low-kpair-four-consumer-wgs
