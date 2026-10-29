@@ -60,7 +60,7 @@ base_sha: db626b766d6eb2e9ef1ad995ca86f6aac6305898
 base_blob: 691018b5844d1a985d98f59021313b0c1a3ef3b7
 branch: hyp/muse_moe_w4a16/hothalf-wh-a5b-port
 worktree: .worktrees/muse_moe_w4a16/hothalf-wh-a5b-port
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T202008Z
@@ -69,6 +69,8 @@ submission_sha256: 8c4b56a992bd04711d50092c01d617ff0f2530dedf594d4ec9dd17c79a63a
 norm_sha256: 1c704f3aef43f960f594a6296f8a2dd83b4863ae54b0cee53b5393ad84e0165c
 submission_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
 lint_warnings: 202
+attempt_file: 2026-10-29T202008Z-check-hothalf-wh-a5b-port.md
+prepared_at: 2026-10-29T202008Z
 ---
 
 # hothalf-wh-a5b-port
