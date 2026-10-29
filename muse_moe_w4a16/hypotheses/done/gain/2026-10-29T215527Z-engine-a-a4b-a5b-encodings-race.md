@@ -53,12 +53,12 @@ evidence: >
   (research/h100-ea-enc-1029.md)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T215954Z
 review_companions: null
 review_best: 1.974770471501011
 review_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T215954Z
 base_sha: 973f86b3744c4b9b1d60469442fad05d8fca5783
 base_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
@@ -77,6 +77,14 @@ attempt_file: 2026-10-29T221730Z-check-engine-a-a4b-a5b-encodings-race.md
 prepared_at: 2026-10-29T221730Z
 job: 702f1004b45f4bfa
 dispatched_at: 2026-10-29T221743Z
+outcome: gain
+verdict_detail: gain
+speedup: 2.0645771117791423
+speedup_ci: [2.033608455102455, 2.095545768455829]
+harvested_at: 2026-10-29T222812Z
+best_at_harvest: 1.974770471501011
+promotion: pending
+mechanism: null
 ---
 
 # engine-a-a4b-a5b-encodings-race
@@ -183,3 +191,29 @@ warn  host-sync    torch.cuda.synchronize()  (outside kernel_fn's call graph; fi
 OK with warnings: .worktrees/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race/muse_moe_w4a16/submission.py
 ```
 (rc 0; 205 lines vs master's 203; the only new warnings are the two prepare-side syncs above.)
+
+## Result
+
+- job `702f1004b45f4bfa` (check), status done, passed True, tests 5/5
+- speedup 2.0646x, 95% CI [2.0336, 2.0955], score 6513.924775815615 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 1.974770471501011, "ci": [1.945148914428496, 2.004392028573526], "job": "a5318a1f98984a5f"}; base result: muse_moe_w4a16/hypotheses/done/gain/hothalf-wh-a5b-port.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.result.json`, `muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.patch`; branch `hyp/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 27.65 | 27.82 | 1.0351 | gained |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 104.06 | 106.68 | 1.0386 | gained |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 140.41 | 132.24 | 1.0552 | gained |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 75.15 | 72.96 | 1.0472 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 230.0 | 226.67 | 1.0432 | gained |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 274.38 | 264.69 | 1.0287 | flat |
+
+gained on decode_1 decode_1; decode_16 decode_16; decode_32 decode_32; verify_1 verify_1; verify_16 verify_16. Expected hit: 0/4. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+
