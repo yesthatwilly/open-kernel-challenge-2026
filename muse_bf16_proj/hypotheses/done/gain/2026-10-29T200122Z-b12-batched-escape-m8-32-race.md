@@ -74,15 +74,19 @@ attempt_file: 2026-10-29T212210Z-check-b12-batched-escape-m8-32-race.md
 prepared_at: 2026-10-29T212210Z
 job: bced57b42b87444d
 dispatched_at: 2026-10-29T212219Z
-outcome: neutral
-verdict_detail: unproven-vs-best
-speedup: 1.2871382237194895
-speedup_ci: [1.2678311503636972, 1.3064452970752818]
+outcome: gain
+verdict_detail: gain-pooled
+speedup: 1.2973637641537636
+speedup_ci: [1.2836027160087515, 1.3111248122987758]
 harvested_at: 2026-10-29T212710Z
 best_at_harvest: 1.279360358306445
-promotion: null
+promotion: pending
 mechanism: miss
 confirm_queued: b12-batched-escape-m8-32-race-cf
+confirm_job: c0f8969e76cf4cb7
+confirm_outcome: gain
+pooled_speedup: 1.2973637641537636
+runs: 2
 ---
 
 # b12-batched-escape-m8-32-race

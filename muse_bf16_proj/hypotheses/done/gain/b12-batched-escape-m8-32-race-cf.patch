@@ -1,0 +1,10 @@
+diff --git a/muse_bf16_proj/submission.py b/muse_bf16_proj/submission.py
+index 5ef62a20..ededf822 100644
+--- a/muse_bf16_proj/submission.py
++++ b/muse_bf16_proj/submission.py
+@@ -5805,3 +5805,5 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
+         return _router_hilo_forward(x, hi, lo, zmode=zmode)
+     # Shape outside the kernel's preconditions (never for this problem's router): exact fp32 path.
+     return F.linear(x.float(), state["router"][: cfg["n"]])
++
++# churn confirm rerun of b12-batched-escape-m8-32-race (job bced57b42b87444d); code otherwise identical
