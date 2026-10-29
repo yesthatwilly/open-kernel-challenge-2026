@@ -14,7 +14,16 @@ controls_for: b12-batched-escape-m8-32-race
 confirm_of: b12-batched-escape-m8-32-race
 confirm_of_job: bced57b42b87444d
 review: proceed
-status: queued
+status: running
+stage: claimed
+claimed_at: 2026-10-29T212727Z
+base_sha: 84995d9e32799d8c940b71c9d279bedaad12e6d1
+base_blob: 5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab
+branch: hyp/muse_bf16_proj/b12-batched-escape-m8-32-race-cf
+worktree: .worktrees/muse_bf16_proj/b12-batched-escape-m8-32-race-cf
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # b12-batched-escape-m8-32-race-cf
