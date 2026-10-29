@@ -55,7 +55,7 @@ review_at: 2026-10-29T200826Z
 review_companions: null
 review_best: 1.279360358306445
 review_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T202329Z
 base_sha: 69eaf6972f9cd230611dddd4bb025a1dbf631d8a
 base_blob: a36f33927c06500cbba267d7e0be2235eb8cd716
@@ -72,6 +72,8 @@ submission_blob: 5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab
 lint_warnings: 58
 attempt_file: 2026-10-29T212210Z-check-b12-batched-escape-m8-32-race.md
 prepared_at: 2026-10-29T212210Z
+job: bced57b42b87444d
+dispatched_at: 2026-10-29T212219Z
 ---
 
 # b12-batched-escape-m8-32-race
