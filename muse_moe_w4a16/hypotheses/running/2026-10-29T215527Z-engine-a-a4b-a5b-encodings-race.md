@@ -64,7 +64,7 @@ base_sha: 973f86b3744c4b9b1d60469442fad05d8fca5783
 base_blob: 37ea90fc306c0ed8fb3d49094bf5f4acf6202307
 branch: hyp/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race
 worktree: .worktrees/muse_moe_w4a16/engine-a-a4b-a5b-encodings-race
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-29T221730Z
@@ -73,6 +73,8 @@ submission_sha256: 09b11a9d34b39697f9ed500d36a60435225866e74413186fcf5042ca67eb0
 norm_sha256: d022c3f90a477239ff2f409af770cbd18ffffdfbbe474d16151598703e185230
 submission_blob: c6e41c9acc6169ac8a532684437955b1d560835b
 lint_warnings: 204
+attempt_file: 2026-10-29T221730Z-check-engine-a-a4b-a5b-encodings-race.md
+prepared_at: 2026-10-29T221730Z
 ---
 
 # engine-a-a4b-a5b-encodings-race
