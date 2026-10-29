@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T194717Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -14,6 +14,7 @@ Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a h
 - [shelf] fast-math epilogues (o/L, rsqrt, sigmoid) in the routed attention kernels (attn-fast-math-epilogues), est ~0.2% | rows: layer=sliding load=decode_1, layer=sliding load=verify_1 | evidence: DECISIONS:440 | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] stack of onepass merge + PERHEAD push merge + fast-math epilogues (combo-tail-onepass-push-fastepi), est ~0.6% | rows: layer=sliding load=decode_1, layer=sliding load=verify_1, layer=full load=decode_16, layer=full load=decode_32 | evidence: DECISIONS:441; its onepass part is [unresolved] above, not Do-not-try | board: 1.6340 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] FA3 scheduler metadata folded into the pre-attention kernel (one META program), FA3 prepare node removed on full verify rows (fa3-metadata-fold-preattn-full-verify) | rows: layer=full load=verify_1, layer=full load=verify_16, layer=full load=verify_32 | evidence: check 6d1082a6c0dd4f80: metadata bitwise == library on 156-162 samples/row (caps 57/8/4 binding, stable tie), output/FA3/k_cache/v_cache torch.equal, all 3 rows routed; in-run race step 32.45->30.06 (1.085/1.074x), 160.98->158.66 (1.016/1.013x), 301.30->298.62 us (1.009x); judge rows verify_1 full 27.8 us (board 30.1), verify_16 full 161.4 (162.7), verify_32 full 299.8 (302.1); headline 1.6336 vs board 1.6340 (lucky-draw board; flat within the sliding-gate flips); ~+0.7% expected; branch hyp/muse_attention_decode/fa3-metadata-fold-preattn-full-verify | board: 1.6340 | blob: 2eb03f76 | reopen: stack with another attention row gain to >= 1.24% over the board (e.g. the [unresolved] onepass verify_1) | 2026-10-29 churn
+- [shelf] dense_q full-verify FA3 call (q reshaped [B,8,H,D], cu_seqlens_q dropped; bitwise-equal output), stacks with the metadata fold | rows: layer=full load=verify_1 | evidence: H100 fa3v probe (takemyjob hopper/fa3v c67d880; research/h100-fa3-1029.md): dense_q 1.03-1.04 at v1, 1.00 v16/v32; with precomputed metadata 1.05-1.06 / 1.006 / 1.007; 7 interleaved rounds, 2 seeds | board: 1.634 | blob: 2eb03f76 | reopen: stack with the fold (CLAIMS:82) and another row gain to >= 1.24% | 2026-10-29 h100
 
 ### unresolved
 
@@ -21,6 +22,10 @@ Regenerated 2026-10-29T162123Z by `churn.py index`. Read this before writing a h
 - [unresolved] one-pass ticket merge at sliding verify B=1 (sk-onepass-verify1-timing-fix; overrides its Do-not-try entry): routed x1.026 / x1.024 in-prepare (14.9 -> 14.6 us), but the judged row sits inside the board's own 12.66-13.90 us spread | rows: layer=sliding load=verify_1 | evidence: bfb0457c9ae84322 1.6219, scored aa9fc86078f543fb 1.6183 (DECISIONS:399-400; LOG:1303-1311); pins-onepass 4cfddb59 1.6265 vs a base level ~1.623 (LOG:2049-2052, 2081); FINDINGS:228 | board: 1.6340 | blob: 21166a14 | reopen: >= 3 runs per arm on pinned routes, or stacked with a measured verify_1 fixed-cost cut | 2026-10-28 campaign
 - [unresolved] swf stage 1 (one cluster launch per sliding-verify step): canary FAIL at B=2 lens 3/2100 C=4 (rel L2 4.91e-3 vs incumbent 5.80e-3, worst/mean row 6.8); all bands fell back | rows: load=verify_1 load=verify_16 load=verify_32 | evidence: check 109a387b34a3441a 1.624 (incumbent routes); attrs 124-125 regs, 0 B local; rungs 296ec797 chain+merge clean | board: 1.6340 | blob: 2eb03f76 | reopen: fix of the short-lens canary case (in progress for 00:00Z) | 2026-10-28 campaign
 - [unresolved] swf S1b: one cluster launch per sliding-verify step (C=16/8/4), canary rule fixed | rows: load=verify_1, load=verify_16, load=verify_32 | evidence: check 89add1cc5468453d 1.626 [1.602, 1.656] vs board 1.6340; level ~1.62, neutral | board: 1.6340 | blob: 2eb03f76 | reopen: the expert-block focus ends, or a per-row swf vs master read shows >= 2.5% headline | 2026-10-28 campaign
+
+### node-only
+
+- [node-only] full-verify FA3 main loop is bound by memory parallelism per SM (one CTA/SM, ~24-32 KB in flight), not HBM or tensor: a paged gather of the same rows reaches 2.72/2.79 TB/s vs FA3 172/324 us against a 123/236 us ceiling (v16/v32), ~1.37-1.40x headroom; num_splits=1 is 3-21x slower on full verify (LOG:2043 does not hold there) | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: H100 fa3v ncu: DRAM 59.5/62.5%, issue 34%, tensor ~26%, L2 hit 6-8%, stalls long_scoreboard/barrier/wait; research/h100-fa3-1029.md | board: 1.634 | blob: 2eb03f76 | reopen: a mainloop-only stream-K paged-gather diag at >= 2.6 TB/s at v32 on the node, then a judge check (H200 ceiling untested) | 2026-10-29 h100
 
 ### landed
 

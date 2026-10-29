@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-29T145755Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274439` (submit)
+Regenerated 2026-10-29T194717Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274439` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -87,6 +87,7 @@ Regenerated 2026-10-29T145755Z. Best: 1.6904x [1.6650,1.7158] job `7cc034f917274
 | 2026-10-25T212731Z | marlin-bsm8-t17-t32-w13-atomic-t1 | primary | w13 marlin + w2 marlin (call knobs: block_size_m 8 at 17 <= T <= 32; w13 use_atomic_add at T = 1) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T212731Z | marlin-hot-cold-two-class-bsm-t128-t256 | primary | w13 marlin + w2 marlin (block_size_m per expert class, 128 <= T <= 256) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-25T212731Z | wg2-occ2-b256-decode-port | primary | w13 marlin + silu-mul + w2 marlin (T = 256; T = 128 candidate) | queue | hold |  |  |  |  |  | required |  |
+| 2026-10-29T190020Z | hothalf-a3-exactn-ring-wh | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | running | running |  |  | 44f303647100481b | check |  | proceed |  |
 
 ## Held
 
