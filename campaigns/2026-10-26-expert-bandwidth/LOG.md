@@ -2653,5 +2653,5 @@ with the operator's go-ahead.
 - GPU 5: rega3 (next >= 5% pair cut on prefill's A5b+D+SC tile).
 - GPU 6: t1b (T=1 expert block with E4: new bounds; EPF re-measured).
 
-## 2026-10-29 2310Z — ea-enc2 read: E4XL/E5XL +2-4% consume-only (below the 5% rule) -> [shelf] rider
+## 2026-10-29 2306Z — ea-enc2 read: E4XL/E5XL +2-4% consume-only (below the 5% rule) -> [shelf] rider
 - GPU 3 runs went through without refusal (22:55Z allow rules work). Loop trim + ldmatrix.x4: SASS 617 -> 566 issued/record, consume-only +1.4-5.5% per class (only T256 w13 E5XL passes 5%); bit-exact. Rides as extra raced arms in the next Engine A candidate. GPU 3 free.
