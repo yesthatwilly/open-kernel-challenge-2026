@@ -1,0 +1,782 @@
+diff --git a/muse_prefill_layer/submission.py b/muse_prefill_layer/submission.py
+index c63801e7..d781fbcf 100644
+--- a/muse_prefill_layer/submission.py
++++ b/muse_prefill_layer/submission.py
+@@ -645,6 +645,12 @@ def prepare(weights):
+     # experts-rega-w2-early-loads-low-class: after fsilu (its module's w2 is arm a; no build of its own), the
+     # per-class w2-alone gate of master vs arm a. Never raises; any miss keeps master's w2.
+     w2st_lines = _rega_w2st_phase(state, weights, device, t_prepare0, fsilu_info)
++    torch.cuda.synchronize()
++    # experts-rega-stage-antiphase-ordered-issue: after w2st (its exactness and race compare against the w13 / w2
++    # launches master dispatches per both flag sets) and before fsilu_info is dropped (its calibrated pop alphas): the
++    # separate muse_prefill_rega_ap module (ordered wgmma issue), its canary, exactness, skew probe, gated race and
++    # replay check. Never raises; any miss keeps master's launches.
++    ap_lines = _rega_ap_phase(state, weights, device, t_prepare0, fsilu_info)
+     del fsilu_info
+     torch.cuda.synchronize()
+     # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
+@@ -659,6 +665,9 @@ def prepare(weights):
+     # (16 KB log tail).
+     for line in fsilu_lines:
+         print(line[:700], flush=True)
++    # The ap phase's compact summary (its PATH CHOSEN lines), before w2st's so those stay last.
++    for line in ap_lines:
++        print(line[:900], flush=True)
+     for line in w2st_lines:
+         print(line[:600], flush=True)
+     return state
+@@ -3569,6 +3578,12 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     # Shape + prepare-time values only; never on the rega_gemm_lo path (rega_low_variant != 0 takes precedence).
+     w2st = (not variant and fsilu_ext is not None
+             and bool(state.get("rega_w2st_ok", {}).get(_rega_class(num_tokens), False)))
++    # experts-rega-stage-antiphase-ordered-issue: a per-class prepare-time bool selects BOTH GEMMs of the separate
++    # muse_prefill_rega_ap module (the fsilu_w2a source + the ordered wgmma issue of the two consumer warpgroups).
++    # Precedence: rega_gemm_lo (variant) > ap > fsilu / w2st > master. Shape + prepare-time values only.
++    ap_ext = state.get("rega_ap_ext")
++    ap = (not variant and ap_ext is not None
++          and bool(state.get("rega_ap_ok", {}).get(_rega_class(num_tokens), False)))
+     topk_weights = topk_weights.to(torch.float32).contiguous()
+     if tracer:
+         tracer("before", "align")
+@@ -3593,6 +3608,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
+                                           n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
++    elif ap:
++        ap_ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
++                         D_EXPERT // 64, size_k, hs, grid, err)
+     elif fsilu:
+         fsilu_ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
+                             D_EXPERT // 64, size_k, hs, grid, err)
+@@ -3612,6 +3630,9 @@ def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False)
+     if variant:
+         state["rega_lo_ext"].rega_gemm_lo(1, variant, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts,
+                                           n_padded, num_slots, size_k // 128, D_EXPERT, y, grid_lo, err)
++    elif ap:
++        ap_ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
++                         size_k // 128, D_EXPERT, y, grid, err)
+     elif w2st:
+         fsilu_ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
+                             size_k // 128, D_EXPERT, y, grid, err)
+@@ -6770,6 +6791,721 @@ def _rega_w2st_phase(state, weights, device, t_start, info):
+     return lines
+ 
+ 
++# ---------------------------------------------------------------------------------------------------------------
++# experts-rega-stage-antiphase-ordered-issue (ap): master's rega w13 + w2 with the wgmma ISSUE of its two existing
++# consumer warpgroups ordered at stage granularity (FA3's warp-scheduler barrier): WG0 issues stage n, then WG1 issues
++# stage n, then WG0 stage n + 1, ... mbar_wait(full) and dq_stage stay outside any barrier, so in steady state one WG
++# dequantizes the next stage while the other WG's wgmma group runs. Master's 4-stage ring, 384 threads, 40 / 232
++# setmaxnreg split, items, chunking, buckets, producer and epilogue; wgmma_wait<0> every stage (variant A). A separate
++# module, muse_prefill_rega_ap, derived from _rega_fsilu_src() (the fsilu_w2a source master dispatches: fast-silu w13,
++# w2st arm a w2) by asserted (old, new) edits, each old occurring exactly once (else OFF: edit k); the source must
++# first have no 'bar.arrive' and no named_bar id other than 1. Master's rega_gemm / rega_init signatures, launch
++# markers, error words and four rega_kernel<G, BIG> instantiations (ft served too). Outputs are bit-identical by
++# construction (each WG's instruction sequence and accumulation order unchanged): the gate asserts torch.equal.
++# Built once with -Xptxas -Werror (a ptxas warning, e.g. C7510 / C7512 wgmma serialization, is the OFF answer).
++# In-run skew indicator: a prepare-only probe launch (error buffer >= 4 + 96 ints, err[0] = REGA_AP_PROBE_MAGIC; no
++# timed launch passes it) makes lane 0 of consumer warps 0 and 4 of CTA 0 accumulate clock64 at issue and at retire
++# per N bucket; printed as own-group latency and retire skew in units of the stage period (skew ~0: lockstep
++# fallback; ~0.3-0.6: anti-phase formed).
++# ---------------------------------------------------------------------------------------------------------------
++REGA_AP_TAG = "[rega-ap]"
++REGA_AP_EXT_NAME = "muse_prefill_rega_ap"
++REGA_AP_CLASSES = ("low", "high", "ft")      # fsilu's gate order: ft (the costliest) last
++REGA_AP_POP_RATIO = 0.97                     # pair ap / master's dispatched pair, pop routing, every round + L2 mode
++REGA_AP_RANDOM_RATIO = 1.00                  # same, random routing
++REGA_AP_GUARD_RATIO = 1.00                   # same, the skew guard (low: rega-lo's ~1350-route alpha; else 'skewed')
++REGA_AP_START_DEADLINE_S = REGA_FSILU_START_DEADLINE_S   # no nvcc build once prepare() has used this (200 s)
++REGA_AP_STEP_DEADLINE_S = REGA_FSILU_STEP_DEADLINE_S     # no class step after this (265 s)
++REGA_AP_CANARY = ((210, "one"), (300, "random"))          # small-class instantiations: CTAs with 0 and 1 items
++REGA_AP_FT_CANARY = (16384, "random")                    # first-turn instantiations, at the ft class's start
++REGA_AP_EXACT_KINDS = ("random", "skewed", "one")        # + the judge-like pop routing
++REGA_AP_MAX_REGS = 168                       # numRegs at launch (384 threads, 1 CTA/SM)
++REGA_AP_PROBE_MAGIC = 0x41505052             # C++ AP_PROBE_MAGIC: err[0] of a probe launch
++REGA_AP_PROBE_F = 6                          # C++ AP_PR_F: long longs per (probe warp, N bucket)
++REGA_AP_PROBE_INTS = 4 + 2 * 2 * len(REGA_BUCKETS) * REGA_AP_PROBE_F   # err[0..3] + 48 long longs at err + 4
++REGA_AP_STATE_KEYS = REGA_W2ST_STATE_KEYS + ("rega_ap_ext", "rega_ap_ok")
++REGA_AP_EDITS = (
++    # 0 (E1): the bar.arrive helper, the barrier ids, the probe layout and its accumulator
++    (r"""__device__ __forceinline__ void named_bar(int id, int count) {
++  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
++}
++""",
++     r"""__device__ __forceinline__ void named_bar(int id, int count) {
++  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
++}
++// rega-ap (experts-rega-stage-antiphase-ordered-issue): the two consumer warpgroups' wgmma ISSUE is ordered by two
++// named barriers (FA3's warp-scheduler barrier). bar 0 = __syncthreads, bar 1 = the epilogue (both consumer WGs);
++// AP_BAR_W0 = 2: WG0 may issue (WG1 arrives after committing a stage); AP_BAR_W1 = 3: WG1 may issue (WG0 arrives
++// after committing a stage). Count 256 = the 128 syncing + the 128 arriving threads of one phase.
++__device__ __forceinline__ void bar_arrive(int id, int count) {
++  asm volatile("bar.arrive %0, %1;\n" :: "r"(id), "r"(count) : "memory");
++}
++constexpr int AP_BAR_W0 = 2;
++constexpr int AP_BAR_W1 = 3;
++constexpr int AP_COUNT = 256;
++// Skew probe (prepare-time diagnostic launches only): ON in CTA 0 when err[0] == AP_PROBE_MAGIC at kernel start (a
++// timed launch's error word is 0..4). Shared accumulators per probe warp (consumer warps 0 / 4, lane 0) and N bucket,
++// AP_PR_F long longs: stages, sum(retire - issue), sum(issue - base), sum(retire - base), sum(retire - the previous
++// retire of the same item), periods; then the previous retire and the issue stamp per probe warp and the CTA's base
++// clock. Written to ((long long*)(err + 4))[0 .. 2 * AP_PR_W) after the item loop.
++constexpr int AP_PROBE_MAGIC = 0x41505052;
++constexpr int AP_PR_F = 6;
++constexpr int AP_PR_W = 4 * AP_PR_F;
++constexpr int AP_PR_PREV = 2 * AP_PR_W;
++constexpr int AP_PR_T0 = AP_PR_PREV + 2;
++constexpr int AP_PR_BASE = AP_PR_T0 + 2;
++constexpr int AP_PR_N = AP_PR_BASE + 1;
++template <int NB>
++__device__ __forceinline__ void ap_probe_acc(long long* aps, bool wg1, int kb, long long t1) {
++  constexpr int BI = NB == 16 ? 0 : (NB == 32 ? 1 : (NB == 64 ? 2 : 3));
++  const int w = wg1 ? 1 : 0;
++  long long* q = aps + w * AP_PR_W + BI * AP_PR_F;
++  const long long t0 = aps[AP_PR_T0 + w], base = aps[AP_PR_BASE];
++  q[0] += 1;
++  q[1] += t1 - t0;
++  q[2] += t0 - base;
++  q[3] += t1 - base;
++  if (kb > 0) {
++    q[4] += t1 - aps[AP_PR_PREV + w];
++    q[5] += 1;
++  }
++  aps[AP_PR_PREV + w] = t1;
++}
++"""),
++    # 1 (E2): consume_item's trailing parameters
++    (r"""int* err, bool& dead) {
++  constexpr int NA = NB / 2;""",
++     r"""int* err, bool& dead, bool wg1, bool& started, bool probe,
++                                             long long* aps) {
++  constexpr int NA = NB / 2;"""),
++    # 2 (E3a): the issue barrier, between fence_acc and wgmma_fence (dequant stays before it)
++    (r"""    const uint32_t slab = smem_u32(st + WST);
++    fence_acc<NA>(acc);
++    wgmma_fence();
++""",
++     r"""    const uint32_t slab = smem_u32(st + WST);
++    fence_acc<NA>(acc);
++    // rega-ap: wgmma ISSUE order WG0 n, WG1 n, WG0 n + 1, ...; mbar_wait(full) and dq_stage stay BEFORE (outside) the
++    // barrier. __syncwarp first: bar.sync is .aligned and mbar_wait's spin may have split the warp. WG0 holds the
++    // issue token at launch (its first stage of the launch syncs nothing: `started`, uniform over WG0). Unconditional
++    // on `dead`: a timed-out mbarrier still executes every AP op, so the barrier counts stay paired.
++    __syncwarp();
++    if (wg1) {
++      named_bar(AP_BAR_W1, AP_COUNT);
++    } else {
++      if (started) named_bar(AP_BAR_W0, AP_COUNT);
++      started = true;
++    }
++    if (probe) aps[AP_PR_T0 + (wg1 ? 1 : 0)] = clock64();  // probe warps only: issue stamp (one value per warp)
++    wgmma_fence();
++"""),
++    # 3 (E3b): the arrive between commit and wait<0> (FA3's warp_scheduler_barrier_arrive placement); probe retire
++    (r"""    wgmma_commit();
++    wgmma_wait<0>();  // group retired: a0[] may be rewritten and this stage released at once
++    fence_acc<NA>(acc);
++    if (lane == 0) mbar_arrive(empty0 + 8 * s);
++""",
++     r"""    wgmma_commit();
++    bar_arrive(wg1 ? AP_BAR_W0 : AP_BAR_W1, AP_COUNT);  // rega-ap: this WG's group of the stage is issued
++    wgmma_wait<0>();  // group retired: a0[] may be rewritten and this stage released at once
++    fence_acc<NA>(acc);
++    if (probe) {  // rega-ap skew probe: retire stamp, accumulated by lane 0 (outside the wgmma stage)
++      const long long t1 = clock64();
++      if (lane == 0) ap_probe_acc<NB>(aps, wg1, kb, t1);
++    }
++    if (lane == 0) mbar_arrive(empty0 + 8 * s);
++"""),
++    # 4: the probe's shared accumulators and flag
++    (r"""  __shared__ int s_bad;  // set when an expert owns two runs: the chunk groups would not be contiguous
++""",
++     r"""  __shared__ int s_bad;  // set when an expert owns two runs: the chunk groups would not be contiguous
++  __shared__ long long s_ap[AP_PR_N];  // rega-ap skew probe accumulators (CTA 0 of a probe launch only)
++  __shared__ int s_ap_on;              // rega-ap skew probe flag (read by the consumers after __syncthreads)
++"""),
++    # 5: the probe guard, read by thread 0 of CTA 0 before any error write of this thread
++    (r"""  int nb = __ldg(n_padded) / 16;
++  const int nb_wanted = nb;
++""",
++     r"""  // rega-ap skew probe guard: thread 0 of CTA 0 reads the error word BEFORE its own first error write (the overflow
++  // check below). Every other CTA and every launch whose err[0] is not the magic (all timed launches): off, no clock.
++  if (tid == 0) {
++    const int on = (blockIdx.x == 0 && *reinterpret_cast<volatile int*>(err) == AP_PROBE_MAGIC) ? 1 : 0;
++    s_ap_on = on;
++    if (on) {
++      for (int i = 0; i < AP_PR_N; ++i) s_ap[i] = 0;
++      s_ap[AP_PR_BASE] = clock64();
++    }
++  }
++  int nb = __ldg(n_padded) / 16;
++  const int nb_wanted = nb;
++"""),
++    # 6 (E4): the consumer's warpgroup id, issue token and probe flag
++    (r"""    const int ctid = tid - 128, cw = ctid >> 5;
++    int n = 0;
++""",
++     r"""    const int ctid = tid - 128, cw = ctid >> 5;
++    // rega-ap: wg1 is warp-uniform (consumer warps 4-7, weight rows 64-127); started (WG0 has issued >= 1 stage in
++    // this launch) is uniform over WG0: both WGs walk the same items, KS = K / BK stages each. probe: consumer warps
++    // 0 and 4 of CTA 0 of a probe launch.
++    const bool wg1 = cw >= 4;
++    bool started = false;
++    const bool probe = s_ap_on != 0 && (cw & 3) == 0;
++    int n = 0;
++"""),
++    # 7 (E4): consume_item's new arguments
++    (r"""                       out_ld, err, dead)
++      switch (m.bucket) {""",
++     r"""                       out_ld, err, dead, wg1, started, probe, s_ap)
++      switch (m.bucket) {"""),
++    # 8 (E4): WG0's final sync after the item loop; the probe's write-out
++    (r"""#undef WG_CONSUME
++    }
++  }
++#else""",
++     r"""#undef WG_CONSUME
++    }
++    // rega-ap: WG0's last sync absorbs WG1's arrive after its last stage. Over a launch of S consumed stages WG0 syncs
++    // AP_BAR_W0 (S - 1) + 1 = S times = WG1's arrives, and WG1 syncs AP_BAR_W1 S times = WG0's arrives; a CTA with no
++    // item (started false) does no AP op at all.
++    if (!wg1 && started) {
++      __syncwarp();
++      named_bar(AP_BAR_W0, AP_COUNT);
++    }
++    if (probe && lane == 0) {
++      long long* dst = reinterpret_cast<long long*>(err + 4) + (wg1 ? AP_PR_W : 0);
++      const long long* src = s_ap + (wg1 ? AP_PR_W : 0);
++      for (int i = 0; i < AP_PR_W; ++i) dst[i] = src[i];
++    }
++  }
++#else"""),
++)
++
++
++def _rega_ap_src():
++    """(CUDA source of muse_prefill_rega_ap, None), or (None, why): _rega_fsilu_src() (the fsilu_w2a source master
++    dispatches) with the REGA_AP_EDITS, each old occurring exactly once. First asserts the source has no 'bar.arrive'
++    and no named_bar id other than 1 (ids 2 / 3 are free). Master's strings are read, never edited."""
++    src = _rega_fsilu_src()
++    if src is None:
++        return None, "the fsilu / w2st source did not derive"
++    ids = set(re.findall(r"named_bar\((\w+),", src))
++    if "bar.arrive" in src or ids != {"1"}:
++        return None, f"precondition: 'bar.arrive' present {'bar.arrive' in src}, named_bar ids {sorted(ids)}"
++    for k, (old, new) in enumerate(REGA_AP_EDITS):
++        if src.count(old) != 1:
++            return None, f"edit {k}"
++        src = src.replace(old, new)
++    return src, None
++
++
++def _rega_ap_build(src):
++    """Compile muse_prefill_rega_ap ONCE (prepare only): (ext or None, error text, seconds). Master's flags +
++    -Xptxas -Werror and TORCH_CUDA_ARCH_LIST=9.0a around load_inline (restored after), as the kp probe build:
++    load_inline discards a good build's output, but a failed build's exception carries ptxas's (the only in-process
++    view of a C7510 / C7512 wgmma serialization warning)."""
++    t0 = time.perf_counter()
++    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
++    ext, err_text = None, ""
++    try:
++        from torch.utils.cpp_extension import load_inline
++        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
++        ext = load_inline(name=REGA_AP_EXT_NAME, cpp_sources=_REGA_CPP, cuda_sources=src,
++                          functions=["rega_init", "rega_gather", "rega_gemm"],
++                          extra_cuda_cflags=list(REGA_CUDA_CFLAGS) + ["-Xptxas", "-Werror"], verbose=False)
++    except Exception as e:
++        err_text, ext = str(e), None
++    finally:
++        if prev is None:
++            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
++        else:
++            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
++    return ext, err_text, time.perf_counter() - t0
++
++
++def _rega_ap_ptxas(text):
++    """Up to 4 unique lines of a failed build's text containing 'C75' or 'ptxas' (C75xx lines first)."""
++    seen = []
++    for line in (text or "").splitlines():
++        s = line.strip()
++        if ("C75" in s or "ptxas" in s) and s[:200] not in seen:
++            seen.append(s[:200])
++    seen.sort(key=lambda w: "C75" not in w)
++    return seen[:4]
++
++
++def _rega_ap_attrs(ext):
++    """Attributes of the four instantiations BEFORE any launch (rega_init sets each one's dynamic smem attribute):
++    launchable, numRegs <= REGA_AP_MAX_REGS and x 384 >= the 40 / 232 setmaxnreg pool, no local memory (any spill is
++    OFF), master's dynamic smem, static smem within master's bound, exactly 1 CTA/SM, an sm_90 image. Returns (all
++    four ok, compact text, short text for the PATH CHOSEN lines)."""
++    info = ext.rega_init()
++    ok, parts, short = len(info) == 40, [], []
++    for i in range(0, len(info), 10):
++        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, _ = info[i:i + 10]
++        g, big = bool(flag & 1), bool(flag & 2)
++        good = (bool(a_ok) and regs <= REGA_AP_MAX_REGS and regs * REGA_THREADS >= 40 * 128 + 232 * 256
++                and local_bytes == 0 and dyn_smem == REGA_SMEM[g] and static_smem <= REGA_STATIC_SMEM_BOUND
++                and static_smem + dyn_smem <= REGA_SMEM_LIMIT and occ == 1 and bin_v == 90)
++        ok = ok and good
++        parts.append(f"<{'w13' if g else 'w2'},{'ft' if big else 's1'}> r{regs} l{local_bytes} s{static_smem}+"
++                     f"{dyn_smem} o{occ} b{bin_v} rc{e1}{'' if good else ' BAD'}")
++        short.append(f"r{regs}l{local_bytes}")
++    return ok, "; ".join(parts), "attrs " + "/".join(short)
++
++
++def _rega_ap_dispatched(state, cls):
++    """The w13 and w2 launches master dispatches at this class (ap off): (w13 module, its name, w2 module, its name):
++    the fsilu module's w13 when rega_fsilu_ok[cls], its w2 (arm a) when rega_w2st_ok[cls], else master's."""
++    fext = state.get("rega_fsilu_ext")
++    f13 = fext is not None and bool(state.get("rega_fsilu_ok", {}).get(cls, False))
++    f2 = fext is not None and bool(state.get("rega_w2st_ok", {}).get(cls, False))
++    return (fext if f13 else state["rega_ext"], "fsilu" if f13 else "master",
++            fext if f2 else state["rega_ext"], "w2st a" if f2 else "master")
++
++
++def _rega_ap_trial(state, ap, cls):
++    """A shallow copy of state with ap ON for this class only."""
++    trial = dict(state)
++    trial["rega_ap_ext"] = ap
++    trial["rega_ap_ok"] = {c: c == cls for c in REGA_AP_CLASSES}
++    return trial
++
++
++def _rega_ap_canary(state, ap, device, tokens, kind, gen):
++    """prepare() only: one eager launch of each ap GEMM (w13: xs -> hs, w2: hs -> y) at this T on master's norm +
++    gather; a flushed print BEFORE each launch and synchronize + print AFTER it (named barriers have no timeout: a
++    hang names its launch). Error word 0, the launch's marker and finite output each. Returns None or why."""
++    err = state["rega_err"]
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    local = int((lids >= 0).sum())
++    tabs = xs = hs = y = None
++    try:
++        tabs, xs = _rega_fsilu_tables(state, x, lids, False, None)
++        x = tw = lids = None
++        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++        inst = "ft" if tabs[1].numel() > REGA_MAXBLK else "s1"
++        for which, name, src, dst in ((0, "w13", xs, hs), (1, "w2", hs, y)):
++            print(f"{REGA_AP_TAG} canary T={tokens} {kind} {local}r: launching {name} (<{name},{inst}>)", flush=True)
++            err.zero_()
++            t0 = time.perf_counter()
++            _rega_fsilu_gemm(state, ap, which, src, dst, tabs)
++            torch.cuda.synchronize()
++            word, m13, m2 = _rega_marks(err)
++            mark = m13 if which == 0 else m2
++            finite = bool(torch.isfinite(dst.float()).all())
++            print(f"{REGA_AP_TAG} canary T={tokens} {kind}: {name} done ({(time.perf_counter() - t0) * 1e6:.0f} us "
++                  f"eager), error word {word}, marker {mark:#x}, finite {finite}", flush=True)
++            if word != 0 or mark != REGA_MAGIC or not finite:
++                return (f"T={tokens} {kind} {name}: error word {word} ({REGA_ERR_TEXT.get(word, '?')}), marker "
++                        f"{mark:#x}, finite {finite}")
++        return None
++    finally:
++        x = tw = lids = tabs = xs = hs = y = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_ap_exact(state, ap, device, cls, tokens, kind, prenorm, gen):
++    """prepare() only, one routing, on the align and gather the judge path uses: master's dispatched pair (w13 xs ->
++    zeroed hs, w2 hs -> y prefilled with REGA_W2ST_SENTINEL) and the ap pair the same way; every launch error word 0
++    and its marker; ap hs and ap y torch.equal to master's (bit-identical by construction; sentinel rows included).
++    Returns (None or why, compact text)."""
++    ext13, n13, ext2, n2 = _rega_ap_dispatched(state, cls)
++    err = state["rega_err"]
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    local = int((lids >= 0).sum())
++    tabs = xs = None
++    hs, ys = {}, {}
++    try:
++        tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++        x = tw = lids = None
++        for lab, e13, e2 in (("m", ext13, ext2), ("ap", ap, ap)):
++            hs[lab] = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++            ys[lab] = torch.full((tabs[3], D_EXPERT), REGA_W2ST_SENTINEL, device=device, dtype=torch.bfloat16)
++            for which, ext, src, dst in ((0, e13, xs, hs[lab]), (1, e2, hs[lab], ys[lab])):
++                err.zero_()
++                _rega_fsilu_gemm(state, ext, which, src, dst, tabs)
++                torch.cuda.synchronize()
++                word, m13, m2 = _rega_marks(err)
++                mark = m13 if which == 0 else m2
++                if word != 0 or mark != REGA_MAGIC:
++                    return (f"{kind}: {lab} {'w13' if which == 0 else 'w2'} left error word {word} "
++                            f"({REGA_ERR_TEXT.get(word, '?')}) marker {mark:#x}"), ""
++        if not torch.equal(hs["ap"], hs["m"]):
++            return f"{kind}: ap hs not bit-identical to {n13} w13's ({int((hs['ap'] != hs['m']).sum())} elements)", ""
++        if not torch.equal(ys["ap"], ys["m"]):
++            return f"{kind}: ap y not bit-identical to {n2} w2's ({int((ys['ap'] != ys['m']).sum())} elements)", ""
++        return None, f"{kind} {local}r"
++    finally:
++        x = tw = lids = tabs = xs = None
++        hs.clear()
++        ys.clear()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_ap_probe_text(ll):
++    """48 probe long longs (C++ layout: [probe warp][N bucket][AP_PR_F]) -> per N bucket with stages in CTA 0: stages,
++    the stage period P (mean retire-to-retire within an item, cycles), each WG's own-group latency (issue stamp to
++    retire) in P, and the WG1 - WG0 issue and retire skews in P (skew ~0: lockstep; ~0.3-0.6: anti-phase). Returns
++    (full text, short text: the retire skew per bucket)."""
++    f, w = REGA_AP_PROBE_F, len(REGA_BUCKETS) * REGA_AP_PROBE_F
++    out, short = [], []
++    for b, nb in enumerate(REGA_BUCKETS):
++        q0, q1 = ll[b * f:(b + 1) * f], ll[w + b * f:w + (b + 1) * f]
++        s0, s1 = q0[0], q1[0]
++        if s0 <= 0 or s1 <= 0:
++            continue
++        per = [q[4] / q[5] for q in (q0, q1) if q[5] > 0]
++        p = sum(per) / len(per) if per else float("nan")
++        iss = (q1[2] / s1 - q0[2] / s0) / p
++        ret = (q1[3] / s1 - q0[3] / s0) / p
++        form = ("lockstep" if abs(ret) < 0.1 else ("anti-phase" if 0.25 <= abs(ret) <= 0.75 else "partial")) \
++            if p == p else "?"
++        out.append(f"N{nb} S{s0}{'' if s0 == s1 else f'/{s1}!'} P {p:.0f}c lat {q0[1] / s0 / p:.2f}/"
++                   f"{q1[1] / s1 / p:.2f}P iss {iss:+.2f} ret {ret:+.2f}P {form}")
++        short.append(f"N{nb} {ret:+.2f}")
++    return (" | ".join(out), " ".join(short)) if out else ("no stage in CTA 0", "none")
++
++
++def _rega_ap_probe(state, ap, device, cls, tokens, kind, prenorm, gen):
++    """prepare() only, one routing: the skew probe. One eager launch per ap GEMM (w13 xs -> hs, then w2 hs -> y) with
++    a phase-local error buffer of REGA_AP_PROBE_INTS ints whose err[0] is REGA_AP_PROBE_MAGIC (the guard: no timed
++    launch passes it); after each, synchronize and read: err[0] still the magic (no error word written), the launch's
++    marker, then the 48 accumulators. Returns (full text, short text)."""
++    bank, grid = state["rega_bank"], state["rega_grid"]
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    tabs = xs = hs = y = buf = None
++    parts, short = [], []
++    try:
++        tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++        x = tw = lids = None
++        sorted_ids, block_experts, n_padded, num_slots = tabs
++        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        y = torch.zeros((num_slots, D_EXPERT), device=device, dtype=torch.bfloat16)
++        buf = torch.zeros(REGA_AP_PROBE_INTS, dtype=torch.int32, device=device)
++        for which, name, src, dst, q, gs, nt in ((0, "w13", xs, hs, bank["q13"], bank["gs13"], D_EXPERT // 64),
++                                                  (1, "w2", hs, y, bank["q2"], bank["gs2"], D_EXPERT // 128)):
++            buf.zero_()
++            buf[0] = REGA_AP_PROBE_MAGIC
++            print(f"{REGA_AP_TAG} probe {cls} {kind}: launching {name}", flush=True)
++            ap.rega_gemm(which, src, q, gs, sorted_ids, block_experts, n_padded, num_slots, nt, D_EXPERT, dst, grid,
++                         buf)
++            torch.cuda.synchronize()
++            vals = buf.tolist()
++            word, mark = vals[0], vals[1 + which]
++            if word != REGA_AP_PROBE_MAGIC or mark != REGA_MAGIC:
++                parts.append(f"{name} probe left err[0] {word:#x} marker {mark:#x}")
++                short.append(f"{name} n/a")
++                continue
++            full, brief = _rega_ap_probe_text(buf[4:].clone().view(torch.int64).tolist())
++            parts.append(f"{name} {full}")
++            short.append(f"{name} {brief}")
++        return "; ".join(parts), "ret skew/P " + "; ".join(short)
++    finally:
++        x = tw = lids = tabs = xs = hs = y = buf = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_ap_time(state, ap, device, cls, tokens, kind, prenorm, gen, alone):
++    """prepare() only: one routing's tables and xs (the judge path's align + gather) and hs from master's dispatched
++    w13; one CUDA graph per pair ('pair:m' = master's dispatched w13 + w2, 'pair:ap' = the ap pair) and, when alone,
++    the w13-alone and w2-alone graphs of each ('w13:m', 'w13:ap', 'w2:m', 'w2:ap'; attribution only), plus an empty
++    graph, timed together by _rega_fsilu_bench (cold + warm, REGA_FSILU_ROUNDS x REGA_FSILU_ALTERNATIONS). Every
++    buffer and graph is local (both arms write the same bit-identical values). Returns ({mode: [per-round {name:
++    us}]}, local routes)."""
++    ext13, _, ext2, _ = _rega_ap_dispatched(state, cls)
++    err = state["rega_err"]
++    x, tw, lids = _rega_case(tokens, kind, gen, device)
++    local = int((lids >= 0).sum())
++    tabs = xs = hs = y = tiny = None
++    graphs, fns = {}, {}
++    try:
++        tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
++        x = tw = lids = None
++        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
++        y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
++        err.zero_()
++        _rega_fsilu_gemm(state, ext13, 0, xs, hs, tabs)  # the w2 input, as kernel_fn computes it
++
++        def pair(e13, e2):
++            _rega_fsilu_gemm(state, e13, 0, xs, hs, tabs)
++            _rega_fsilu_gemm(state, e2, 1, hs, y, tabs)
++
++        fns = {"pair:m": (lambda: pair(ext13, ext2)), "pair:ap": (lambda: pair(ap, ap))}
++        if alone:
++            fns.update({"w13:m": (lambda: _rega_fsilu_gemm(state, ext13, 0, xs, hs, tabs)),
++                        "w13:ap": (lambda: _rega_fsilu_gemm(state, ap, 0, xs, hs, tabs)),
++                        "w2:m": (lambda: _rega_fsilu_gemm(state, ext2, 1, hs, y, tabs)),
++                        "w2:ap": (lambda: _rega_fsilu_gemm(state, ap, 1, hs, y, tabs))})
++        graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
++        tiny = torch.zeros(16, dtype=torch.float32, device=device)
++        graphs["empty"] = _ssdq_graph_time(lambda t=tiny: t.zero_(), device)
++        res = _rega_fsilu_bench(graphs, device, ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
++        word = _rega_marks(err)[0]
++        if word != 0:
++            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
++        return res, local
++    finally:
++        graphs = fns = None
++        x = tw = lids = tabs = xs = hs = y = tiny = None
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
++
++def _rega_ap_ratio(rds, num, den):
++    """Per-round ratios num / den over a mode's rounds."""
++    return [rd[num] / max(rd[den], 1e-9) for rd in rds]
++
++
++REGA_AP_BARS = {"pop": REGA_AP_POP_RATIO, "random": REGA_AP_RANDOM_RATIO, "guard": REGA_AP_GUARD_RATIO}
++
++
++def _rega_ap_pass(kind, r):
++    """One timed routing ({mode: [per-round {name: us}]}): pair:ap / pair:m <= its bar in every round of both L2
++    modes."""
++    vals = [x for rds in r.values() for x in _rega_ap_ratio(rds, "pair:ap", "pair:m")]
++    return len(vals) == 2 * REGA_FSILU_ROUNDS and all(x <= REGA_AP_BARS[kind] for x in vals)
++
++
++def _rega_ap_gate(res):
++    """res: {routing: {mode: [per-round {name: us}]}} ('pop', 'random', 'guard'). ON only when pair:ap / pair:m <=
++    REGA_AP_POP_RATIO on pop and <= REGA_AP_RANDOM_RATIO / REGA_AP_GUARD_RATIO on random / guard, in every round of
++    both L2 modes (all three routings timed). Returns (ON, gate text, report: per routing the warm / cold max ratios,
++    and the w13-alone / w2-alone pop-warm mean ratios)."""
++    bars = REGA_AP_BARS
++    ok = all(k in res for k in bars)
++    parts, rep = [], []
++    for kind, r in res.items():
++        segs, mx = [], {}
++        for mode, rds in r.items():
++            v = _rega_ap_ratio(rds, "pair:ap", "pair:m")
++            mx[mode] = max(v, default=float("nan"))
++            n = max(len(rds), 1)
++            segs.append(f"{mode} {sum(rd['pair:m'] for rd in rds) / n:.1f}->{sum(rd['pair:ap'] for rd in rds) / n:.1f}"
++                        f" x{'/'.join(f'{x:.3f}' for x in v)}")
++        good = _rega_ap_pass(kind, r)
++        ok = ok and good
++        parts.append(f"{kind} <= {bars[kind]}: " + ", ".join(segs) + f" {'pass' if good else 'MISS'}")
++        rep.append(f"{kind} w/c x{mx.get('warm', float('nan')):.3f}/{mx.get('cold', float('nan')):.3f}")
++    pw = res.get("pop", {}).get("warm", [])
++    if pw and "w13:ap" in pw[0]:
++        a13 = sum(_rega_ap_ratio(pw, "w13:ap", "w13:m")) / len(pw)
++        a2 = sum(_rega_ap_ratio(pw, "w2:ap", "w2:m")) / len(pw)
++        rep.append(f"alone pop-warm w13 x{a13:.3f} w2 x{a2:.3f}")
++    return ok, "; ".join(parts) or "nothing timed", ("max " + ", ".join(rep)) if rep else ""
++
++
++def _rega_ap_class(state, ap, device, cls, weights, t_start, info):
++    """prepare() only: one class's checks and gate. 0. ft: the first-turn instantiations' canary; 1. the judge-like
++    pop routing (fsilu's calibrated alpha, else calibrated here on master's w13); 2. exactness on random, skewed, one
++    and that routing (_rega_ap_exact); 3. the skew probe on that routing; 4. the race on pop (with the alone graphs),
++    random and the guard (low: rega-lo's alpha nearest REGA_LO_GUARD_ROUTES; high / ft: 'skewed'), in that order,
++    stopping at the first routing that misses its bar (the gate cannot pass then); 5. when the gate
++    passes, the two-state replay check with ap ON. No step after REGA_AP_STEP_DEADLINE_S. Detail lines are printed.
++    Returns (on, why, report dict)."""
++    tokens = REGA_FSILU_TOKENS[cls]
++    tag = f"{REGA_AP_TAG} {cls} T={tokens}"
++    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
++    gen = torch.Generator(device=device).manual_seed(20261107)
++    _, n13, _, n2 = _rega_ap_dispatched(state, cls)
++    rep = {}
++
++    def late(step):
++        used = time.perf_counter() - t_start
++        if used > REGA_AP_STEP_DEADLINE_S:
++            return f"SKIPPED: {step} not started (prepare {used:.0f}s > {REGA_AP_STEP_DEADLINE_S:.0f}s)"
++        return None
++
++    # 0. the first-turn instantiations' canary
++    if cls == "ft":
++        why = late("ft canary")
++        if why:
++            return False, why, rep
++        why = _rega_ap_canary(state, ap, device, REGA_AP_FT_CANARY[0], REGA_AP_FT_CANARY[1], gen)
++        if why:
++            return False, f"canary: {why}", rep
++    # 1. the judge-like routing
++    alpha, src = info.get("alpha", {}).get(cls), "fsilu's"
++    if alpha is None:
++        why = late("alpha calibration")
++        if why:
++            return False, why, rep
++        alpha, src = _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen)[0], "calibrated here"
++    pop_kind = f"pop:{alpha:g}"
++    # 2. exactness
++    parts = []
++    for kind in REGA_AP_EXACT_KINDS + (pop_kind,):
++        why = late(f"exactness {kind}")
++        if why:
++            return False, why, rep
++        why, text = _rega_ap_exact(state, ap, device, cls, tokens, kind, prenorm, gen)
++        if why:
++            print(f"{tag} exact MISS: {why}"[:700], flush=True)
++            return False, f"exactness: {why}", rep
++        parts.append(text)
++    print(f"{tag} exact (hs + sentinel y torch.equal {n13} w13 / {n2} w2, word 0, markers; {pop_kind} = {src} "
++          f"judge-like alpha; prenorm {prenorm}): " + ", ".join(parts), flush=True)
++    # 3. the skew probe (diagnostic; never gates)
++    why = late("skew probe")
++    if why:
++        return False, why, rep
++    full, rep["probe"] = _rega_ap_probe(state, ap, device, cls, tokens, pop_kind, prenorm, gen)
++    print(f"{tag} SKEW {pop_kind} (CTA 0, consumer warps 0 / 4; skew ~0 lockstep, ~0.3-0.6 anti-phase): "
++          f"{full}"[:1200], flush=True)
++    # 4. the race: pop (with the alone graphs), random, then the guard
++    if cls == "low":
++        n_rnd, counts = _rega_pop_counts(tokens, device)
++        g_alpha, g_cnt = _rega_pop_pick(counts, REGA_LO_GUARD_ROUTES)
++        g_kind, g_note = f"pop:{g_alpha:g}", f" (~{REGA_LO_GUARD_ROUTES} routes, {g_cnt / max(n_rnd, 1.0):.2f}x uniform)"
++    else:
++        g_kind, g_note = "skewed", ""
++    res = {}
++    for kk, kind in (("pop", pop_kind), ("random", "random"), ("guard", g_kind)):
++        why = late(f"timing {kk} {kind}")
++        if why:
++            ok, text, rep["gate"] = _rega_ap_gate(res)
++            print(f"{tag} GATE (incomplete) {text}"[:900], flush=True)
++            return False, why, rep
++        res[kk], local = _rega_ap_time(state, ap, device, cls, tokens, kind, prenorm, gen, kk == "pop")
++        line = f"{tag} TIME {kk} {kind}{g_note if kk == 'guard' else ''} {local}r: " + "; ".join(
++            f"{mode} " + " ".join(f"{nm} {sum(rd[nm] for rd in rds) / max(len(rds), 1):.1f}" for nm in rds[0])
++            for mode, rds in res[kk].items() if rds) + " us"
++        print(line[:900], flush=True)
++        if not _rega_ap_pass(kk, res[kk]):  # the gate cannot pass: keep the deadline for the next class
++            break
++    ok, text, rep["gate"] = _rega_ap_gate(res)
++    print(f"{tag} GATE vs {n13} w13 / {n2} w2: {text}: {'pass' if ok else 'MISS'}"[:900], flush=True)
++    if not ok:
++        return False, "timing gate missed", rep
++    # 5. two-state replay check with ap ON for this class
++    why = late("replay check")
++    if why:
++        return False, why, rep
++    trial = _rega_ap_trial(state, ap, cls)
++    cache = {}
++    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FSILU_REPLAY_PLAN[cls],
++                                   keys=REGA_AP_STATE_KEYS)
++    cache.clear()
++    torch.cuda.empty_cache()
++    if why:
++        return False, f"two-state replay check failed: {why}", rep
++    print(f"{tag} two-state replay check (ap ON): {line}"[:700], flush=True)
++    return True, "", rep
++
++
++def _rega_ap_phase(state, weights, device, t_start, info):
++    """prepare() only, after _rega_w2st_phase (it reads both per-class flag sets) and before fsilu_info is dropped
++    (its calibrated alphas). Derives, audits and builds muse_prefill_rega_ap ONCE with -Xptxas -Werror (only when
++    prepare() has used < REGA_AP_START_DEADLINE_S; a failure prints up to 4 ptxas / C75 lines and stays OFF: no second
++    build), checks the four instantiations' attributes before any launch, runs the small-class canary, then per
++    routed class (state['rega_ok']; low only when rega_low_variant == 0) _rega_ap_class. Sets state['rega_ap_ext']
++    (the module, or None when every class is OFF) and state['rega_ap_ok'][cls] (plain bools). Never raises; every miss
++    keeps master's launches. Returns the compact summary lines (PATH CHOSEN last)."""
++    t0 = time.perf_counter()
++    state["rega_ap_ext"] = None
++    state["rega_ap_ok"] = {c: False for c in REGA_AP_CLASSES}
++    summary, verdict, reps, off, secs = [], {}, {}, None, {}
++    ap, attr_short = None, "attrs n/a"
++    v = int(state.get("rega_low_variant", 0))
++
++    def say(text, n=700):
++        summary.append(text[:n])
++        print(summary[-1], flush=True)
++
++    try:
++        routed = [c for c in REGA_AP_CLASSES if state.get("rega_ok", {}).get(c, False) and not (c == "low" and v)]
++        used = time.perf_counter() - t_start
++        if not routed:
++            off = f"no class on master's rega_kernel (rega_ok {state.get('rega_ok')}, rega_low_variant {v})"
++        elif used > REGA_AP_START_DEADLINE_S:
++            off = (f"SKIPPED: prepare already used {used:.0f}s > {REGA_AP_START_DEADLINE_S:.0f}s before the nvcc "
++                   f"build")
++        elif not _rega_lo_identity()[0]:
++            off = "master's v2 rega source does not hash to master's (the ap module derives from it)"
++        else:
++            src, why = _rega_ap_src()
++            bad = [why] if src is None else _rega_fsilu_audit(src)
++            if bad:
++                off = bad[0] if src is None else f"source audit failed: {bad[:3]}"
++            else:
++                print(f"{REGA_AP_TAG} derived source sha256 "
++                      f"{hashlib.sha256((_REGA_CPP + src).encode()).hexdigest()[:16]} ({len(src)} chars; fsilu_w2a + "
++                      f"{len(REGA_AP_EDITS)} ap edits); audit ok; prepare at {used:.1f}s; building with -Xptxas "
++                      f"-Werror", flush=True)
++                ap, etext, secs["build"] = _rega_ap_build(src)
++                if ap is None:
++                    lines = _rega_ap_ptxas(etext)
++                    for line in lines:
++                        say(f"{REGA_AP_TAG} ptxas: {line}", 300)
++                    off = ("-Werror build failed" + (" (ptxas lines above; no second build)" if lines
++                                                     else f": {etext[-240:]!r}"))
++                else:
++                    say(f"{REGA_AP_TAG} -Werror build passed in {secs['build']:.1f}s: no ptxas warning (no C7510 / "
++                        f"C7512 wgmma serialization from bar.arrive inside the wgmma stage)")
++                    attrs_ok, attr_text, attr_short = _rega_ap_attrs(ap)
++                    say(f"{REGA_AP_TAG} attrs {attr_text} (need r <= {REGA_AP_MAX_REGS} and the 40 / 232 pool, "
++                        f"local 0, master's dyn smem, 1 CTA/SM)")
++                    if not attrs_ok:
++                        off = "attribute / register-pool / spill check failed: nothing launched"
++                    else:
++                        tc = time.perf_counter()
++                        gen = torch.Generator(device=device).manual_seed(20261108)
++                        for tokens, kind in REGA_AP_CANARY:
++                            why = _rega_ap_canary(state, ap, device, tokens, kind, gen)
++                            if why:
++                                off = f"canary failed: {why}"
++                                break
++                        secs["canary"] = time.perf_counter() - tc
++                        stop = None
++                        for cls in routed if off is None else ():
++                            tc = time.perf_counter()
++                            used = tc - t_start
++                            if stop:
++                                verdict[cls] = (False, stop)
++                            elif used > REGA_AP_STEP_DEADLINE_S:
++                                verdict[cls] = (False, f"SKIPPED: prepare {used:.0f}s > "
++                                                       f"{REGA_AP_STEP_DEADLINE_S:.0f}s before the class")
++                            else:
++                                reps[cls] = {}
++                                try:
++                                    on, why, reps[cls] = _rega_ap_class(state, ap, device, cls, weights, t_start,
++                                                                        info)
++                                except Exception as e:  # stop here: anything after a fault would be unreliable
++                                    on, why = False, f"raised {e!r}"[:300]
++                                    stop = f"an earlier class raised ({why[:80]})"
++                                state["rega_ap_ok"][cls] = bool(on)
++                                verdict[cls] = (bool(on), why)
++                            state["rega_err"].zero_()
++                            secs[cls] = time.perf_counter() - tc
++    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
++        off = f"ap phase raised {e!r}"[:400]
++        state["rega_ap_ok"] = {c: False for c in REGA_AP_CLASSES}
++    finally:
++        state["rega_ap_ext"] = ap if any(state["rega_ap_ok"].values()) else None
++        ap = None
++        try:
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
++        except Exception as e:  # only after a device fault
++            off = (off or "") + f"; final synchronize raised {e!r}"[:200]
++    if off:
++        say(f"{REGA_AP_TAG} OFF: {off}")
++    say(f"{REGA_AP_TAG} phase {time.perf_counter() - t0:.1f}s (" + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
++        + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s")
++    fok, wok = state.get("rega_fsilu_ok", {}), state.get("rega_w2st_ok", {})
++    for cls in REGA_AP_CLASSES:
++        on, why = verdict.get(cls, (False, off or "class not on rega"))
++        rep = reps.get(cls, {})
++        say(f"{REGA_AP_TAG} PATH CHOSEN {cls}: {'ap' if on else 'master'}" + ("" if on else f" ({why[:140]})")
++            + (f"; {rep['gate']}" if rep.get("gate") else "") + (f"; {rep['probe']}" if rep.get("probe") else "")
++            + f"; {attr_short}; fsilu {'ON' if fok.get(cls, False) else 'OFF'} w2st "
++            f"{'ON' if wok.get(cls, False) else 'OFF'}" + (f"; rega_low_variant {v}" if cls == "low" else ""), 600)
++    return summary
++
++
+ def kernel_fn(data, state):
+     cfg = data["config"]
+     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]

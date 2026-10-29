@@ -1,0 +1,84 @@
+T=753 SKEW pop:1 (CTA 0, consumer warps 0 / 4; skew ~0 lockstep, ~0.3-0.6 anti-phase): w13 N16 S320 P 1244c lat 0.25/0.29P iss +0.15 ret +0.19P partial | N32 S64 P 1284c lat 0.26/0.31P iss +0.15 ret +0.20P partial | N64 S64 P 1372c lat 0.30/0.36P iss +0.13 ret +0.19P partial | N128 S64 P 1589c lat 0.39/0.40P iss +0.46 ret +0.47P anti-phase; w2 N16 S160 P 1220c lat 0.27/0.31P iss +0.17 ret +0.20P partial | N32 S32 P 1265c lat 0.28/0.33P iss +0.15 ret +0.20P partial | N64 S32 P 1386c lat 0.32/0.40P iss +0.11 ret +0.18P partial | N128 S32 P 1630c lat 0.43/0.41P iss +0.46 ret +0.44P anti-phase
+[rega-ap] low T=753 TIME pop pop:1 718r: cold pair:m 444.5 pair:ap 514.9 w13:m 293.0 w13:ap 340.9 w2:m 150.5 w2:ap 173.0; warm pair:m 438.2 pair:ap 509.9 w13:m 289.1 w13:ap 337.0 w2:m 147.0 w2:ap 170.3 us
+[rega-ap] low T=753 GATE vs fsilu w13 / w2st a w2: pop <= 0.97: cold 444.5->514.9 x1.159/1.158, warm 438.2->509.9 x1.163/1.164 MISS: MISS
+[rega-ap] high T=3012 exact (hs + sentinel y torch.equal fsilu w13 / w2st a w2, word 0, markers; pop:2 = fsilu's judge-like alpha; prenorm True): random 3038r, skewed 13576r, one 3012r, pop:2 5208r
+[rega-ap] probe high pop:2: launching w13
+[rega-ap] probe high pop:2: launching w2
+[rega-ap] high T=3012 SKEW pop:2 (CTA 0, consumer warps 0 / 4; skew ~0 lockstep, ~0.3-0.6 anti-phase): w13 N64 S64 P 1369c lat 0.30/0.35P iss +0.13 ret +0.19P partial | N128 S800 P 1591c lat 0.39/0.40P iss +0.46 ret +0.46P anti-phase; w2 N64 S64 P 1381c lat 0.32/0.39P iss +0.11 ret +0.18P partial | N128 S384 P 1630c lat 0.43/0.41P iss +0.46 ret +0.44P anti-phase
+[rega-ap] high T=3012 TIME pop pop:2 5080r: cold pair:m 1072.2 pair:ap 1160.0 w13:m 712.8 w13:ap 763.2 w2:m 356.4 w2:ap 392.8; warm pair:m 1124.4 pair:ap 1228.3 w13:m 748.9 w13:ap 809.7 w2:m 370.6 w2:ap 415.7 us
+[rega-ap] high T=3012 GATE vs fsilu w13 / w2st a w2: pop <= 0.97: cold 1072.2->1160.0 x1.066/1.096, warm 1124.4->1228.3 x1.095/1.090 MISS: MISS
+[rega-ap] canary T=16384 random 16315r: launching w13 (<w13,ft>)
+[rega-ap] canary T=16384 random: w13 done (7681 us eager), error word 0, marker 0x57474d4d, finite True
+[rega-ap] canary T=16384 random 16315r: launching w2 (<w2,ft>)
+[rega-ap] canary T=16384 random: w2 done (5564 us eager), error word 0, marker 0x57474d4d, finite True
+[rega-ap] ft T=16384 exact (hs + sentinel y torch.equal fsilu w13 / w2st a w2, word 0, markers; pop:2.2 = fsilu's judge-like alpha; prenorm True): random 16437r, skewed 73758r, one 16384r, pop:2.2 30364r
+[rega-ap] probe ft pop:2.2: launching w13
+[rega-ap] probe ft pop:2.2: launching w2
+[rega-ap] ft T=16384 SKEW pop:2.2 (CTA 0, consumer warps 0 / 4; skew ~0 lockstep, ~0.3-0.6 anti-phase): w13 N32 S32 P 1300c lat 0.25/0.30P iss +0.15 ret +0.20P partial | N64 S32 P 1394c lat 0.29/0.35P iss +0.13 ret +0.18P partial | N128 S3872 P 1609c lat 0.39/0.40P iss +0.46 ret +0.47P anti-phase; w2 N64 S32 P 1368c lat 0.31/0.39P iss +0.11 ret +0.19P partial | N128 S1952 P 1635c lat 0.43/0.42P iss +0.46 ret +0.45P anti-phase
+[rega-ap] ft T=16384 TIME pop pop:2.2 30087r: cold pair:m 5694.3 pair:ap 6278.8 w13:m 3766.8 w13:ap 4183.1 w2:m 1919.3 w2:ap 2088.8; warm pair:m 5672.1 pair:ap 6281.1 w13:m 3742.1 w13:ap 4171.0 w2:m 1920.7 w2:ap 2090.7 us
+[rega-ap] ft T=16384 GATE vs fsilu w13 / w2st a w2: pop <= 0.97: cold 5694.3->6278.8 x1.104/1.102, warm 5672.1->6281.1 x1.105/1.109 MISS: MISS
+[rega-ap] phase 41.3s (build 36.9s, canary 0.8s, low 0.3s, high 0.6s, ft 2.9s); prepare total 217.1s of 300s
+[rega-ap] PATH CHOSEN low: master (timing gate missed); max pop w/c x1.164/1.159, alone pop-warm w13 x1.166 w2 x1.158; ret skew/P w13 N16 +0.19 N32 +0.20 N64 +0.19 N128 +0.47; w2 N16 +0.20 N32 +0.20 N64 +0.18 N128 +0.44; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON; rega_low_variant 0
+[rega-ap] PATH CHOSEN high: master (timing gate missed); max pop w/c x1.095/1.096, alone pop-warm w13 x1.081 w2 x1.122; ret skew/P w13 N64 +0.19 N128 +0.46; w2 N64 +0.18 N128 +0.44; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON
+[rega-ap] PATH CHOSEN ft: master (timing gate missed); max pop w/c x1.109/1.104, alone pop-warm w13 x1.115 w2 x1.089; ret skew/P w13 N32 +0.20 N64 +0.18 N128 +0.47; w2 N64 +0.19 N128 +0.45; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON
+[align2] GATE bsm 16 low T=753 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 17.6 us; chunk 512 9.0 us; chunk 1024 21.8 us; chunk chosen 512 ratio 0.510 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 high T=3012 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 68.7 us; chunk 512 9.0 us; chunk 1024 21.5 us; chunk chosen 512 ratio 0.130 (ON at <= 0.98), fill dist: ON
+[align2] GATE bsm 16 ft T=16384 cold-L2 graph medians over 15 alternations (empty-graph baseline subtracted): master 392.3 us; chunk 512 26.9 us; chunk 1024 22.9 us; chunk chosen 1024 ratio 0.058 (ON at <= 0.98), fill dist: ON
+[align2] PATH CHOSEN: bsm:class 16:ft: two-phase chunk 1024, fill dist; bsm:class 16:high: two-phase chunk 512, fill dist; bsm:class 16:low: two-phase chunk 512, fill dist (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep master's align)
+[fa3 contig] GATE first_turn b1 L16384 ctx65536: paged 8019.5 us, contig-varlen 7620.0 us, contig-batched n/a us (gather alone 16.6 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx32768: paged 4469.5 us, contig-varlen 4247.0 us, contig-batched n/a us (gather alone 12.6 us; bar 0.98 x paged, best/paged 0.950) -> B
+[fa3 contig] GATE first_turn b1 L16384 ctx0: paged 900.2 us, contig-varlen 861.7 us, contig-batched n/a us (gather alone 8.5 us; bar 0.98 x paged, best/paged 0.957) -> B
+[fa3 contig] GATE turn_4 b4 L753 ctx80000: paged 1629.8 us, contig-varlen 1588.5 us, contig-batched n/a us (gather alone 49.2 us; bar 0.97 x paged, best/paged 0.975) -> B [PINNED B; bar alone -> A]
+[fa3 contig] GATE turn_1 b1 L753 ctx80000: paged 426.0 us, contig-varlen 419.7 us, contig-batched n/a us (gather alone 16.7 us; bar 0.97 x paged, best/paged 0.985) -> B [PINNED B; bar alone -> A]
+[fa3 contig] PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes run master's paged FA3): first_turn b1 L16384 ctx65536: B; first_turn b1 L16384 ctx32768: B; first_turn b1 L16384 ctx0: B; turn_4 b4 L753 ctx80000: B [PINNED]; turn_1 b1 L753 ctx80000: B [PINNED]; setup 1.0s, prepare total 124.9s
+[rega-lo] OFF low-class candidates: LO PINNED OFF (phasec lo-skip-phase): no LO build / checks / gate; master's low class, as every logged board-era LO gate kept
+[rega-lo] phase took 0.0s; prepare total 125.5s; combination A's flags (echo for the log tail): rega_ok {'low': True, 'high': True, 'ft': True}, norm_gather_ok {'low': True, 'high': True, 'ft': True}, ssdq_ok True
+[rega-lo] PATH CHOSEN low: master (variant 0, grid 132; T in (200, 1024] where low-class rega is ON; every other T as combination A)
+[rega-fsilu] attrs <w13,s1> r168 l0 s14336+187392 o1 b90 rc0; <w2a,s1> r168 l0 s14336+203776 o1 b90 rc0; <w13,ft> r168 l0 s9216+187392 o1 b90 rc0; <w2a,ft> r168 l0 s9216+203776 o1 b90 rc0
+[rega-fsilu] hg sweep fast/acc (hu 1) -100:-0/-0 -88.7:-0/-2.67e-37 -87:-1.43e-36/-1.43e-36 -20:-4.12e-08/-4.12e-08 0:0/0 20:20/20 100:100/100; worst fast rel vs fp64 1.1e-07 (normal range); pass
+[rega-fsilu] ceiling (silu_mul -> hg*hu): skipped (a second nvcc build, ~40 s; build took 38s)
+[rega-fsilu] low T=753 judge-like pop:1: master w13 warm 313.5 us, 762r = 1.03x uniform; band 255-293 OUT (nearest); probes 2.2:361 1.5:320 1.2:318 1:314; prenorm True
+[rega-fsilu] low T=753 accuracy: random 747r hs rel 2.5e-06 max|d| 6.2e-02 ndiff 14; out err f/m 5.679e-04/5.669e-04 x1.002; skewed 3378r hs rel 3.7e-06 max|d| 3.1e-02 ndiff 69; out err f/m 6.537e-04/6.549e-04 x0.998; pop:1 775r hs rel 1.4e-06 max|d| 1.6e-02 ndiff 18; out err f/m 5.697e-04/5.730e-04 x0.994
+[rega-fsilu] low T=753 TIME pop:1 759r: cold w13 318.8->300.7 x0.942/0.945 pair 472.6->453.9 x0.960/0.961 (w2~154); warm w13 315.5->297.0 x0.942/0.941 pair 468.0->450.1 x0.963/0.961 (w2~153)
+[rega-fsilu] low T=753 TIME random 792r: cold w13 304.5->279.3 x0.918/0.917 pair 454.8->429.8 x0.945/0.945 (w2~150); warm w13 300.0->275.3 x0.918/0.917 pair 449.7->425.8 x0.947/0.947 (w2~150)
+[rega-fsilu] low T=753 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:1+random: pass; hg sweep True; rega_low_variant 0
+[rega-fsilu] high T=3012 judge-like pop:2: master w13 warm 752.4 us, 5140r = 1.71x uniform; band 707-763 in; probes 2.2:819 1.5:647 1.8:675 2:752; prenorm True
+[rega-fsilu] high T=3012 accuracy: random 3006r hs rel 9.6e-06 max|d| 5.0e-01 ndiff 85; out err f/m 5.688e-04/5.701e-04 x0.998; skewed 13580r hs rel 4.8e-06 max|d| 1.2e-01 ndiff 290; out err f/m 6.535e-04/6.538e-04 x1.000; pop:2 5216r hs rel 1.2e-06 max|d| 3.1e-02 ndiff 118; out err f/m 5.777e-04/5.777e-04 x1.000
+[rega-fsilu] high T=3012 TIME pop:2 5148r: cold w13 785.4->736.2 x0.942/0.933 pair 1163.5->1115.2 x0.963/0.954 (w2~378); warm w13 834.5->780.4 x0.933/0.937 pair 1237.7->1179.5 x0.955/0.951 (w2~403)
+[rega-fsilu] high T=3012 TIME random 3154r: cold w13 526.7->482.9 x0.917/0.917 pair 774.6->731.1 x0.943/0.945 (w2~248); warm w13 540.4->495.3 x0.918/0.915 pair 798.4->751.9 x0.941/0.942 (w2~258)
+[rega-fsilu] high T=3012 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:2+random: pass; hg sweep True
+[rega-fsilu] ft T=16384 judge-like pop:2.2: master w13 warm 3614.4 us, 30179r = 1.85x uniform; band 3400-3850 in; probes 2.2:3614; prenorm True
+[rega-fsilu] ft T=16384 accuracy: random 16247r hs rel 2.7e-06 max|d| 1.2e-01 ndiff 473; out err f/m 5.568e-04/5.575e-04 x0.999; skewed 73867r hs rel 3.3e-06 max|d| 1.2e-01 ndiff 1789; out err f/m 6.448e-04/6.457e-04 x0.999; pop:2.2 30299r hs rel 5.6e-06 max|d| 5.0e-01 ndiff 809; out err f/m 5.960e-04/5.970e-04 x0.998
+[rega-fsilu] ft T=16384 TIME pop:2.2 30627r: cold w13 4024.5->3734.4 x0.931/0.925 pair 5928.6->5624.6 x0.948/0.949 (w2~1904); warm w13 4178.1->3775.9 x0.886/0.922 pair 6123.7->5786.8 x0.958/0.932 (w2~1946)
+[rega-fsilu] ft T=16384 TIME random 16585r: cold w13 2194.4->2024.4 x0.924/0.921 pair 3224.9->3055.9 x0.949/0.946 (w2~1031); warm w13 2254.3->2075.6 x0.921/0.920 pair 3312.9->3142.8 x0.949/0.949 (w2~1059)
+[rega-fsilu] ft T=16384 GATE w13 f/m <= 0.99 and pair <= 1.0 every round, cold+warm, pop:2.2+random: pass; hg sweep True
+[rega-fsilu] phase 46.5s (build 38.0s, low 0.8s, high 1.4s, ft 6.2s); prepare total 172.0s of 300s; rega_ok {'low': True, 'high': True, 'ft': True}
+[rega-fsilu] PATH CHOSEN low: fsilu=ON; rega_low_variant 0
+[rega-fsilu] PATH CHOSEN high: fsilu=ON
+[rega-fsilu] PATH CHOSEN ft: fsilu=ON
+[rega-fsilu] PATH CHOSEN: rega_fsilu_ok {'low': True, 'high': True, 'ft': True} (ON = w13 silu_mul __fdividef/__expf; OFF = master's w13)
+[rega-ap] -Werror build passed in 36.9s: no ptxas warning (no C7510 / C7512 wgmma serialization from bar.arrive inside the wgmma stage)
+[rega-ap] attrs <w13,s1> r168 l0 s14336+187392 o1 b90 rc0; <w2,s1> r168 l0 s14336+203776 o1 b90 rc0; <w13,ft> r168 l0 s10240+187392 o1 b90 rc0; <w2,ft> r168 l0 s10240+203776 o1 b90 rc0 (need r <= 168 and the 40 / 232 pool, local 0, master's dyn smem, 1 CTA/SM)
+[rega-ap] phase 41.3s (build 36.9s, canary 0.8s, low 0.3s, high 0.6s, ft 2.9s); prepare total 217.1s of 300s
+[rega-ap] PATH CHOSEN low: master (timing gate missed); max pop w/c x1.164/1.159, alone pop-warm w13 x1.166 w2 x1.158; ret skew/P w13 N16 +0.19 N32 +0.20 N64 +0.19 N128 +0.47; w2 N16 +0.20 N32 +0.20 N64 +0.18 N128 +0.44; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON; rega_low_variant 0
+[rega-ap] PATH CHOSEN high: master (timing gate missed); max pop w/c x1.095/1.096, alone pop-warm w13 x1.081 w2 x1.122; ret skew/P w13 N64 +0.19 N128 +0.46; w2 N64 +0.18 N128 +0.44; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON
+[rega-ap] PATH CHOSEN ft: master (timing gate missed); max pop w/c x1.109/1.104, alone pop-warm w13 x1.115 w2 x1.089; ret skew/P w13 N32 +0.20 N64 +0.18 N128 +0.47; w2 N64 +0.19 N128 +0.45; attrs r168l0/r168l0/r168l0/r168l0; fsilu ON w2st ON
+[rega-w2st] no build of its own: arm a is muse_prefill_rega_fsilu_w2a's w2 (4 rega_kernel instantiations, arm b and its 2 SB instantiations dropped: that build 38.0s); w2a attrs s1 ok ft ok
+[rega-w2st] low T=753 exact (y torch.equal master's, word 0, w2 marker; pop:1 = fsilu's judge-like alpha; prenorm True): random 709r, skewed 3376r, one 753r, pop:1 744r; a passes
+[rega-w2st] low T=753 TIME pop:1 758r: cold m 156.0 a 152.2 x0.973/0.978; warm m 151.9 a 148.7 x0.977/0.980
+[rega-w2st] low T=753 TIME random 735r: cold m 146.3 a 142.4 x0.971/0.976; warm m 142.7 a 138.2 x0.968/0.969
+[rega-w2st] low T=753 TIME guard pop:2.2 1387r (rega-lo's alpha for ~1350 routes, calibrated 1356 = 1.83x uniform): cold m 191.1 a 184.6 x0.966/0.966; warm m 189.2 a 182.2 x0.962/0.964
+[rega-w2st] low T=753 GATE a/master <= 0.99 every round, cold+warm, pop:1+random: gm x0.974 max x0.980 pass; guard pop:2.2 <= 1.0 every round, cold+warm: max x0.966 pass
+[rega-w2st] high T=3012 exact (y torch.equal master's, word 0, w2 marker; pop:2 = fsilu's judge-like alpha; prenorm True): random 2935r, skewed 13609r, one 3012r, pop:2 5142r; a passes
+[rega-w2st] high T=3012 TIME pop:2 5149r: cold m 381.6 a 379.9 x0.995/0.996; warm m 384.1 a 382.4 x0.996/0.995
+[rega-w2st] high T=3012 TIME random 3011r: cold m 247.2 a 243.1 x0.983/0.983; warm m 238.9 a 234.0 x0.978/0.980
+[rega-w2st] high T=3012 GATE a/master <= 0.99 every round, cold+warm, pop:2+random: gm x0.988 max x0.996 MISS [PINNED a; timing alone MISS]
+[rega-w2st] ft T=16384 exact (y torch.equal master's, word 0, w2 marker; pop:2.2 = fsilu's judge-like alpha; prenorm True): random 16197r, skewed 73563r, one 16384r, pop:2.2 30197r; a passes
+[rega-w2st] ft T=16384 TIME pop:2.2 30255r: cold m 1829.8 a 1827.3 x0.999/0.999; warm m 1928.5 a 1927.4 x0.999/1.000
+[rega-w2st] ft T=16384 TIME random 16608r: cold m 1034.0 a 1032.3 x0.999/0.998; warm m 1073.6 a 1071.3 x0.998/0.998
+[rega-w2st] ft T=16384 GATE a/master <= 0.99 every round, cold+warm, pop:2.2+random: gm x0.999 max x1.000 MISS [PINNED a; timing alone MISS]
+[rega-w2st] phase 3.8s (low 0.4s, high 0.5s, ft 2.9s); prepare total 175.8s of 300s
+[rega-w2st] PATH CHOSEN low: w2st a (early gs/sid loads); which 1 ok True rega_low_variant 0; fsilu=ON
+[rega-w2st] PATH CHOSEN high: w2st a (early gs/sid loads) [PINNED]; which 1 ok True; fsilu=ON
+[rega-w2st] PATH CHOSEN ft: w2st a (early gs/sid loads) [PINNED]; which 1 ok True; fsilu=ON
+[rega-w2st] PATH CHOSEN: rega_w2st_ok {'low': True, 'high': True, 'ft': True} (True = arm a, the early gs/sid loads, from muse_prefill_rega_fsilu_w2a; False = master's w2)

@@ -128,12 +128,12 @@ evidence: >
   T=753 and x1.087-1.133 at high T=3012 (pop/random, cold/warm), stagger 0 vs 1 within 0.003
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T162053Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T162054Z
 base_sha: cab523d330d2015479dc4d0f602a30a1722974e0
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -152,6 +152,14 @@ attempt_file: 2026-10-29T163541Z-check-experts-rega-stage-antiphase-ordered-issu
 prepared_at: 2026-10-29T163541Z
 job: 17d3fdf1a6594d33
 dispatched_at: 2026-10-29T163553Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.4856927366571726
+speedup_ci: [1.463407345607315, 1.50797812770703]
+harvested_at: 2026-10-29T175944Z
+best_at_harvest: 1.5007957663757285
+promotion: null
+mechanism: miss
 ---
 
 # experts-rega-stage-antiphase-ordered-issue
@@ -289,3 +297,31 @@ OK with warnings: .worktrees/muse_prefill_layer/experts-rega-stage-antiphase-ord
 ```
 
 `python3 -I -m py_compile` passes; the `__pycache__` it left in the worktree was deleted.
+
+## Result
+
+- job `17d3fdf1a6594d33` (check), status done, passed True, tests 5/5
+- speedup 1.4857x, 95% CI [1.4634, 1.5080], score 260756.40705605366 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5007957663757285, "ci": [1.4782838298800927, 1.5233077028713644], "job": "b2941ea23dc743a3"}; base result: muse_prefill_layer/hypotheses/BEST.result.json
+- **outcome: neutral** (within-ci); mechanism: miss (0/8 predicted rows past ±2%)
+- files: `muse_prefill_layer/hypotheses/done/neutral/experts-rega-stage-antiphase-ordered-issue.result.json`, `muse_prefill_layer/hypotheses/done/neutral/experts-rega-stage-antiphase-ordered-issue.patch`; branch `hyp/muse_prefill_layer/experts-rega-stage-antiphase-ordered-issue`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 700.96 | 676.92 | 0.975 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1083.73 | 1057.7 | 0.9778 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 2088.45 | 2028.47 | 1.0024 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3614.44 | 3547.6 | 0.9953 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11011.98 | 11645.02 | 1.0077 | flat |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10865.92 | 10724.49 | 0.9943 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14763.78 | 14750.62 | 1.0024 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 18546.94 | 18025.36 | 0.9809 | flat |
+
+no shape moved outside noise. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: experts-rega-stage-antiphase-ordered-issue`) that adds a further change in the same area is the only way to learn more.
+
