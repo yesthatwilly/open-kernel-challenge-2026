@@ -132,7 +132,7 @@ review_at: 2026-10-29T175903Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: claimed
+stage: implemented
 claimed_at: 2026-10-29T175904Z
 base_sha: 2f7dcbf03b7345f8e21d32c433510942d4a23926
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -141,6 +141,12 @@ worktree: .worktrees/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag
 mode: null
 restack_of: null
 stale_base: null
+implemented_at: 2026-10-29T182804Z
+impl_commit: 21127beb9e921d0e9aad874e268d9c6a711da7cb
+submission_sha256: 56570c0030c551c01cef091abdab18e4d17b06699ef19ca8f2c98253688568cf
+norm_sha256: 368cef334baba077650e0fcd582c4bc5f4cce300e1ceec415c25389e2ab0d562
+submission_blob: d8ce4cbf6e2e54cb8294363e025022d9284a0762
+lint_warnings: 121
 ---
 
 # experts-rega-dq2-dequant-cost-diag
@@ -195,3 +201,67 @@ No companion. The diagnostic controls itself: master, DQ0 (master's dequant text
 - Log tail: anat r2's low-class TIME lines fell outside the 16 KB tail (cb22e610.log starts mid-ft). The <= 3 KB summary printed at once must itself carry the decision numbers per class: per-arm MODE 0/2/5 ratios vs DQ0 and vs master (warm pop, plus cold pop), the PAIR ratio, ROUTE, VERDICT, attrs and SCALES counts. Do not rely on the per-routing TIME lines surviving.
 - Cheap exhaustiveness check, optional: a one-warp canary that runs dq_stage DQ0 vs each arm over every byte value in each nibble-pair position and every scale byte 0x08-0x7E, compared bitwise, like moe's dq_exact (0 / 121,856, LOG:677). This makes 'exact by construction' a proof rather than coverage over the routings that happen to be sampled.
 
+
+## Implementation notes
+
+**Mechanism:** a prepare-time diagnostic of the rega dequant's instruction cost: a separate muse_prefill_rega_dq module (built in a background thread from prepare()'s start) times moe's exact dq2 / L3 dequant arms (A1 scale-L3, A2 ext_prop on a permuted bank copy, A3 both) against an in-module DQ0 control in MODE 0 / 2 / 5 on the w13 + w2 rega GEMMs of the low / high / ft classes, with a gated per-class route of the best exact arm.
+
+Implemented 2026-10-29T1826Z in the worktree's `muse_prefill_layer/submission.py` (+1264 lines, 0 deletions; 447,531 B, cap 1,000,000). Base master c63801e7.
+
+What changed, where:
+- `prepare()` is now a thin wrapper: `_rega_dq_start(t0)` first, then master's body (renamed `_prepare_master`, unchanged except two inserts), with `_rega_dq_join` in a `finally`, so no build thread outlives prepare() even if master's setup raises. After `_rega_w2st_phase` and before `del fsilu_info`: `dq_lines = _rega_dq_phase(...)`; its summary lines are echoed after the w2st block (last lines of prepare).
+- `_experts_rega`: one prepare-time int per class, `state['rega_dq_ok'][cls]` (1/2/3), selects `rega_dq_ext.rega_gemm(..., mode=0, dq)` for BOTH GEMMs (A2 / A3 read `state['rega_dq_bank']`, the permuted code copy; global scales are master's). Precedence: rega_lo variant, then dq, then fsilu / w2st, then master. When nothing routes the three dq keys are absent and the launches are master's.
+- New block before `kernel_fn` (`REGA_DQ_*`, `_REGA_DQ_*`, `_rega_dq_*`): 18 asserted (old, new) edits on `_rega_fsilu_src()` (each old exactly once, else `[rega-dq] OFF: edit`) + one cpp-declaration edit: `rega_kernel<G, BIG, DQ>` / `consume_item<NB, G, DQ>` with a runtime `mode`, 16 instantiations (`rega_init` returns 16 rows, flag = G + 2 BIG + 4 DQ), `rega_gemm(..., mode, dq)`, and an exactness-canary kernel `rega_dq_exact`. DQ 0 calls master's `dq_stage` verbatim. A1 = master's code extraction, `dq_scale_pair<KK>` (one-source `prmt` of rega's interleaved scale word -> [b_g, 0, b_g8, 0], then `mad.lo.u32 t, m16, 0x77807780` with moe's `rt16` so the add stays an IMAD) and `dq_mul_h<H>` (moe's `mul_bf16x2_h` spelling: `mov.b32 {l,l}` / `{h,h}` into `fma.rn.bf16x2`). A2 = moe's `ext_prop<I>` on the permuted word (pair i = `ext_prop<i>`, i even row g / sg, i odd row g+8 / sg8, per the review), master's f16 scale path. A3 = both. The comment rejecting the register-prmt and smem LUTs is in `_REGA_DQ_HELPERS`.
+- MODE 0 = master's k loop with the arm's dequant. MODE 2 = no MMA: ring waits / releases as master's, the arm's dequant every stage, the registers kept live by anat r2's predicated-store sink (`dq_sink`: a setp and 8 `@p st.shared.v4` on the dead flag; no adds). MODE 5 = pure dequant issue: the producer is skipped (`tid == 0 && mode != 5`), no ring waits, no MMA, no epilogue; KS dequants per item of the stage buffers (kb % STAGES) into the sink.
+- Phase `_rega_dq_phase`: join; `[rega-dq] attrs` (16 rows; local bytes > 0 = spill -> that arm OFF for that class; DQ0 bad -> class skipped); `[rega-dq] SCALES` (bank scale bytes < 0x08 / == 0 / > 0x7E for q13, q2; any outside -> A1, A3 OFF); the eager canary (announced, synchronized, printed); the permuted bank (`_rega_dq_perm_bank`, every 8192-record chunk checked lossless by the inverse, scale bytes asserted unchanged); then per class (low / high / ft with rega_ok, low only at rega_low_variant 0; deadlines 255 s, ft 240 s): EXACT on random / skewed / one / pop (fsilu's calibrated alpha) - hs (MODE 0 w13 on xs) and y (MODE 0 w2 on master's hs, sentinel-prefilled) torch.equal vs DQ0 (arm gate) and vs master's dispatched launches (route gate), max|diff| when not equal; the first step announces every launch (MODE 0, 2, 5 of every DQ) with a synchronize. TIME on pop and random through `_rega_fsilu_bench` (2 rounds x 11 alternations, cold + warm, empty graph subtracted), interleaved in three sets: w13 alone and w2 alone (master's dispatched 'm' + DQ x MODE 0/2/5) and the w13 + w2 pair ('m' + DQ MODE 0).
+- VERDICT (per class, warm pop): INVALID if DQ0 MODE 0 / master is outside 0.97-1.03 on either GEMM (that class only). Otherwise the best arm by pair / DQ0; pair cut = 1 - max(arm/DQ0, arm/master). >= 8% LEAD, 3-8% SHELF; < 3%: REFUTED if MODE 5 cut >= 25%, CLOSE if < 12%, else FLAT-SHELF. The MODE 5 cut ((w13 + w2) MODE 5 vs DQ0's) is the attribution ('issue-count' >= 12%, else 'contention relief') and the wg hot-half port call (YES >= 25%).
+- ROUTE: an arm passes when it is equal to master's dispatched launches on all four self-check routings and its pair MODE 0 is <= 0.97 x master AND <= 0.97 x DQ0 in every round, L2 mode and routing (8 values each). The lowest warm-pop pair/DQ0 among the passing arms then runs master's `_rega_replay_check` (`REGA_FSILU_REPLAY_PLAN[cls]`, keys `REGA_DQ_STATE_KEYS` = w2st keys + `rega_dq_ext` / `rega_dq_ok` / `rega_dq_bank`, so the permuted bank is copied with the state). It must start before REGA_COPY_DEADLINE_S, else ROUTE prints `print-only`.
+- Summary (<= 3000 chars, capped): SUMMARY (build s, bg start, est, join wait, per-step s, prepare total, rega_dq_ok), OFF, attrs, SCALES + canary counts, a key line, then per class RATIOS (warm pop: master us, DQ0 MODE 0/2/5 us, fidelity, each arm's MODE 0/2/5 vs DQ0 [MODE 0 vs master]; cold pop: fidelity + the same ratios), PAIR (pop warm, pop cold, random warm: vs DQ0 / vs master), ROUTE, VERDICT. It is printed at the phase end and echoed as the very last prepare() lines. On synthetic timings it measures 2,958 chars (scratch `test_report.py` / `.out`).
+
+Review MUST-fix items applied:
+1. Budget: option (b). `_rega_dq_start` runs first in prepare(). It derives and audits the source, gates predictively (t + 1.3 x est + 25 s <= 270 s, est = 40 s x 16/4 = 160 s; at t ~ 0 the gate value is ~233 s; otherwise `[rega-dq] OFF: budget (...)`), then starts a non-daemon `threading.Thread` running `load_inline` with master's REGA_CUDA_CFLAGS. `_rega_dq_phase` joins it, and so does prepare()'s finally. Build seconds, bg start, join wait and the prepare total are printed. Arch-list safety: the MAIN thread sets TORCH_CUDA_ARCH_LIST=9.0a before starting the thread (after checking that `_get_cuda_arch_flags()` accepts it; if not, no build) and restores it only after the join. Master's builds in between see prev = 9.0a and restore 9.0a, so no thread ever pops the variable under another thread's build.
+2. `dq_mul_h<H>` is moe's `mul_bf16x2_h` spelling, not `__byte_perm`.
+3. Scale bytes are interleaved per k16 step: a one-source prmt of one word (selector 0x4040 | (2KK+1) << 8 | 2KK; sc.x for k < 2, sc.y for k >= 2), with moe's IMAD (rt16) form.
+4. The decision is keyed on the pair MODE 0 against BOTH DQ0 and master. MODE 5 only attributes it and decides the port; 'MODE 5 cut < 12% with pair cut >= 3%' prints as 'contention relief'.
+5. Route gate: arm/master <= 0.97 AND arm/DQ0 <= 0.97 in every round, L2 mode and routing. Only state flags are read on the timed path, and the permuted bank is in the replay-check key set.
+6. An arm that is not equal is OFF for that arm and class only, with its max|diff| printed. DQ0 fidelity outside 0.97-1.03 makes that class INVALID only.
+7. The <= 3 KB summary is printed at the END (echoed last) and carries per class the per-arm MODE 0/2/5 ratios vs DQ0 plus MODE 0 vs master (warm pop with absolute us, cold pop), PAIR, ROUTE and VERDICT, with attrs (regs / local / occupancy) and SCALES counts.
+8. Done (optional): the exhaustive canary covers all 256 values of each of the 4 code-word bytes (so every code at every nibble position) x scale bytes 0x08-0x7E, 121,856 cases x 2 k16 positions x 4 fragments, every arm compared bitwise with master's per-k body. It also checks the Python permutation, because pwords comes from the same `_rega_dq_perm_words` that builds the bank. If DQ0 returns all-zero fragments, every arm is OFF.
+
+Deviations from the spec, and why:
+- The filled prompt `hypotheses/prompts/filled/implement-muse_prefill_layer-experts-rega-dq2-dequant-cost-diag.md` contained the pre-flight AUDIT template, not the implement prompt. I followed `.claude/skills/churnsubs/IMPLEMENT_PROMPT.md`, `BUILD_BRIEF_CUDA.md` and the caller's message instead.
+- MODE 2 keeps its registers live with anat r2's zero-ALU sink, not "one dependent add". 32 adds per stage would themselves add to the instruction count being measured, and the spec asks to reuse anat r2's mode plumbing.
+- MODE 5 turns the producer off. If the consumers skip the ring while the producer runs, its empty-barrier wait times out (error word 1, ~34 ms stall). MODE 5 also rotates through the 4 stage buffers (kb % STAGES) instead of stage 0 alone (the same instruction count; nothing for the compiler to CSE).
+- Exactness compares arms with DQ0, which gates the arm. Routing additionally requires both GEMMs to be equal to master's DISPATCHED launches. The module derives from the fsilu_w2a source, so a route is possible only in classes where fsilu and w2st are ON. This holds for every class on the current board, and routing can never change the silu form.
+- In the summary, "vs master" is given for MODE 0 only, because MODE 2 / 5 have no master counterpart. DQ0's absolute MODE 0/2/5 us are printed, so any arm-vs-master ratio can be derived.
+- The build thread raises its own nice value by 10 (`os.setpriority(PRIO_PROCESS, 0, ...)` inside the thread: a per-thread attribute on Linux, inherited by the ninja / nvcc children). Under CPU contention, master's own builds (ssdq 5-37 s, rega v2 ~40-80 s before its 150 s ft-start deadline, fsilu ~128 s) keep priority. This is not in the spec; I added it because master's ft deadline is the one master behaviour the overlap could break.
+- The est uses a constant 40 s per 4 instantiations (fsilu 39.3 s, anat 39.8 s in cb22e610), because fsilu's own build seconds are not known when prepare() starts.
+
+Evidence (scratch `/tmp/claude-1000/-home-user-git-musespark/c24a6e21-451f-44bd-9a25-cf12944ffdc0/scratchpad/build-pf-dq2/`):
+- `emulate_dq.py` / `emulate_dq.out`: a numpy proof that the A1 scale pair equals master's bf16x2_bcast(e4m3 x 2^119) bits for every (byte_g, byte_g8) in [0x08, 0x7E]^2 at both KK (28,322 cases), and that 270 out-of-range non-NaN bytes differ (so the SCALES gate is needed). It also proves `ext_prop<i>(perm(q))` == master's extraction i for every 16-bit half value (exhaustive) + 2^20 random words, and that unperm(perm(q)) == q.
+- `mock/`: master's fsilu source and the derived dq source both pass `g++ -std=c++20 -fsyntax-only` against stub CUDA/torch headers (asm discarded, launches rewritten, all 16 instantiations reached through rega_init and the dispatch). Two mutation tests (`mut1.cpp`, `mut2.cpp`) confirm the mock catches template-body errors.
+- `test_report.py` / `test_report.out` exercise the verdict, the route gate and the summary on synthetic timings: LEAD / SHELF / INVALID, a NOT-eq-master arm blocked from the route, and the summary at 2,958 chars.
+- Master's `_rega_audit_cpp` and the templated-accessor scan on the derived source return no findings.
+
+- Cross-check against the H100 lane (takemyjob hopper/rgx 1a17a00, `prototypes/hopper-probe/probes/rgx/rgx_dev.cuh` `rgx_scale_pair` / `dq_stage_x`, `rgx.cu` `permute_bank`; write-up `campaigns/2026-10-26-expert-bandwidth/research/h100-rega-1029.md`: arms bit-exact on gpunode06, SASS dequant per k16 master 26 / A1 22 / A2 22 / A3 18, A3 pair x0.84-0.89 low, x0.91-0.92 high). My selectors are the same (KK 0 -> 0x4140, KK 1 -> 0x4342; rgx K2 = 0 / 2 gives the same values), and so are the per-word permutation formula (nibble 4((3-p)+4h) -> lut index 2, code words 0..1023 of each 1152-word record, scale words copied), the k -> (sc.x / sc.y, KK) mapping, and the `o[i] = mul_h<i&1>(ext_prop<i>(q), sp)` assignment. A3 is in the build: option (b) keeps all four DQ values, so no budget trimming drops it.
+
+Risks:
+- The 16-instantiation build time is the main unknown (est 160 s; anat's 4 inst x 6 modes built as fast as fsilu's 4). A build still running at the phase is waited out, because load_inline cannot be interrupted.
+- CPU contention with master's builds is mitigated by nice +10, not eliminated.
+- An illegal-instruction fault in a new kernel would poison the context for the whole run. The canary and the announced eager launches name the kernel, but the run would be lost.
+- A2 / A3 hold a ~1.2 GB permuted bank copy (x3 during the replay check).
+
+## Rules check
+
+Checked against `git -C .worktrees/muse_prefill_layer/experts-rega-dq2-dequant-cost-diag diff` (7 hunks: import, prepare wrapper, the dq phase call + echo, three in `_experts_rega`, the new block before `kernel_fn`).
+- [x] CUDA-graph capturable: the timed path changes only in `_experts_rega`, which reads plain prepare-time ints / module / bank refs from `state` (`rega_dq_ok`, `rega_dq_ext`, `rega_dq_bank`) keyed by `_rega_class(num_tokens)` (a shape). No `.item()` / `.cpu()` / synchronize / print, and no allocation or branch on input values. The dq `rega_gemm` host code is master's (tensor maps encoded per call on the host). Every sync / print in the new code is in prepare-only functions.
+- [x] Nothing derived from `data` is cached across calls: the state holds only the prepare-built module, the per-class ints and the permuted copy of the WEIGHT bank. The phase's synthetic routings and buffers are local and dropped.
+- [x] Weights: the permuted bank is a lossless retiling of the NVFP4 code bytes made in prepare() (each 32-bit word's nibbles move position; every chunk is checked by the exact inverse, scale bytes are asserted unchanged). Codes stay NVFP4 bits and scales E4M3 bits in global memory, dequantized in-kernel. A1 / A3 produce the same bf16 values (canary + torch.equal gate; the SCALES precondition is checked once).
+- [x] Activations BF16 as master (xs / hs / y bf16, fp32 accumulate, same epilogue); the KV cache and queries are untouched: n/a for attention.
+- [x] n/a (attention untouched): every key is still attended (fa3 / fa3c paths unchanged).
+- [x] No timing patches, harness frames / I/O / secrets, module edits, reference import, subprocess or network. The background build is a `threading.Thread` (not a process) that calls `load_inline` (nvcc via torch, as master's builds do), and it is joined before prepare() returns. `os.setpriority` only lowers that thread's own CPU priority.
+- [x] All work happens inside the timed call; no output caching or replay. Routing only selects which exact kernel the timed call launches.
+- [x] First line `# okc: problem=muse_prefill_layer` kept; size 447,531 B (cap 1,000,000).
+- [x] No triton.autotune, no recompiling per call (one build in prepare).
+
+okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_prefill_layer/submission.py --problem muse_prefill_layer`). Exit 0, `OK with warnings`: 121 warnings (master: 112). 116 are `host-sync ... (outside kernel_fn's call graph; fine in prepare())`; the 9 new ones are the dq phase's prepare-time synchronizes. The 5 `dtype` warnings are all master's lines (L3490, L3491, L3796, L4346, L8077: uint8 byte buffers). Full output: scratch `lint.out`. `python3 -I -m py_compile` passes, and `__pycache__` was removed from the worktree.
