@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -11,6 +11,7 @@ Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a h
 - [shelf] front fusion + routing fusion + PDL chain re-gate stack (front-routing-pdl-launch-diet-stack), est ~1%; its parent never landed | rows: all | evidence: DECISIONS:422 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen
+- [shelf] rega low class K-pair: four consumer warpgroups split each stage's two 64-k records over one 128-route slab (experts-rega-low-kpair-four-consumer-wgs), est ~2.1% headline if the occ2 TLP effect (~10%) transfers without V64's chunk split; stack-only | rows: load=turn_1 | evidence: LESSONS:180 (V64 occ2 0.887 vs occ1 0.984, 73b40cd1); b2941ea23dc743a3 profile 0 (rega 249.9 + 127.4 us of 701) | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 screen
 
 ### landed
 
@@ -301,6 +302,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 
 ## Queue and in flight
 
+- queue: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 hold
 - queue: fa3-num-splits-cap-gated-turn [FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate)] p3 hold
 - queue: experts-rega-low-2cta-fullslab-mc2 [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): 2 CTAs/SM with the full 128-route slab, slab multicast across a 2-CTA cluster] p4 hold
 - queue: experts-rega-mc2-bm256-stack-high-ft [w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft): 256-row wide tile x 2-CTA slab multicast, stacked] p3 hold
@@ -318,5 +320,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: experts-rega-epilogue-wg-local-bulk-store [w13 + w2 expert GEMMs (rega consumer epilogue: barriers and store path, both GEMMs)] p2 hold
 - queue: experts-rega-epilogue-overlap-next-stage [w13 + w2 expert GEMMs (rega consumer schedule across item boundaries: epilogue under the next item's first wgmma)] p3 hold
 - queue: experts-rega-w2-epilogue-prefetch-bulk-store-cf [w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores)] p1 hold
-- running: attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload [FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload)] p2 running
+- queue: experts-rega-stage-anatomy-diag-r2 [w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes)] p1 queued
 - 22 stale holds expired to `done/expired/` (not run)

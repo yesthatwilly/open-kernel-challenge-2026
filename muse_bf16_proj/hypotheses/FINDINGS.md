@@ -1,6 +1,6 @@
 # muse_bf16_proj findings
 
-Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
+Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_bf16_proj.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -12,6 +12,7 @@ Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a h
 - [shelf] cuBLASLt config sweep at m=256 beyond the heuristic (lt-config-sweep-m256-beyond-heuristic), est ~0.5% (own Risk +0.4-0.7%) | rows: load=verify_32 | evidence: DECISIONS:412 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] pooler m=128/256 K-halves on a prepare-picked cuBLASLt batched plan (pooler-khalf-lt-batched-plan-m128-m256), est ~0.5% | rows: layer=pooler load=verify_16, layer=pooler load=verify_32 | evidence: DECISIONS:413 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
 - [shelf] router hilo launch config per m from a read-flush sweep at m=65..256 (router-hilo-m128-m256-readflush-config-sweep), est ~0.2%; its predecessor tall-tile is refuted above | rows: layer=router load=verify_16, layer=router load=verify_32 | evidence: DECISIONS:414 | board: 1.2794 | blob: - | reopen: - | 2026-10-28 screen
+- [shelf] qkv_gate swap-AB m=8..32 runs 0.9-1.6 us above the o/pooler swap-AB latency+bandwidth fit (t = 2.3 us + bytes / 3.93 TB/s: qkv predicted 11.9 us vs 12.8 / 12.9 / 13.5 us at m=8 / 16 / 32); closing it is worth <= ~1.0% headline | rows: layer=qkv_gate load=verify_1, layer=qkv_gate load=decode_16, layer=qkv_gate load=decode_32 | evidence: board 3e3ffc5afc57433b row times (o d16 6.6 us / 16.8 MB, pooler d16 19.4 us / 67.1 MB) | board: 1.2794 | blob: a36f3392 | reopen: only inside a stack; swap-AB split-K/stage retunes are refuted (CLAIMS:57) | 2026-10-29 screen
 
 ### unresolved
 
@@ -337,4 +338,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: khalf-gate-three-rounds-pooled-control-gate-stats-pooled-iqr [pooler m=128 khalf (b2) cell gate (_khalf_prepare gate only)] p1 hold
 - queue: pooler-khalf-lt-batched-plan-m128-m256 [pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan)] p2 hold
 - queue: router-hilo-m128-m256-readflush-config-sweep [router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep)] p3 hold
+- queue: b12mc-multicast-x-pooler-qkv-m8-readflush-diag [bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster)] p1 queued
 - 8 stale holds expired to `done/expired/` (not run)

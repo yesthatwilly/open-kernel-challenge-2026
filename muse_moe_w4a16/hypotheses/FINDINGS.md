@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-29T151518Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -15,6 +15,8 @@ Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a h
 - [shelf] EPF: one persistent fused T=1 kernel (w13+w2 records dealt round-robin through one D=3 ring, in-kernel counters, combine finalized on CTA G-1) | rows: load=decode_1 | evidence: t1rate panel wf_d7b88f3e-5dc (10-29): red-teamed +1.6% (+1.2..2.0) at p 0.45, EV ~0.7%; the per-record rate sits 13-20% above both the consume floor (~1.13 us judge clock) and the ring floor (1.113-1.121 us), so any T=1 consume design is capped at ~2.1-4 us; warps x1.00 in judge production; v6pe2 two-wave K2 rider ~1.5 us (+0.9%) | board: 1.950 | blob: a90ff05c | reopen: stacked with another decode_1 gain to >= 2.5%, or H100 Q-D shows consume at 1 CTA/SM without the co-residency register cap well under 1.1 us/record | 2026-10-29 campaign
 - [shelf] EPLF: stream-K fix-up with fixed roles in the v4x twins (head partial published at CTA start, tail owner finishes from registers with a prefetched partner partial, no end-of-CTA ticket round) | rows: load=decode_16 load=decode_32 load=verify_1 load=verify_16 | evidence: t32p oracle check d2261ab81adf4de8: L* 3.08 us/kernel (iso K1 3.66 K2 3.98, prod 3.08), H 1.39/1.57, E 2.08/2.54 -> MID+Hflag; the full lever is ~+2.6% after 0.85 transfer, red-teamed p ~0.4 | board: 1.950 | blob: a90ff05c | reopen: stacked with another gain to >= 2.5% (e.g. the v6pe2 T=1 rider) | 2026-10-29 campaign
 - [shelf] T=16/32 per-SM tail: a stable late-CTA set not explained by work (static stream-K split); tail rebalancing v4xm (static SM map) / v4xq (dynamic pool) / per-slot split | rows: load=decode_* load=verify_1 load=verify_16 | evidence: t32r check 0069fec443e14507 MID [SLOT POS]: the late set is the co-resident slot (P_split 0.99, P_young 1.00: warp-scheduler age priority), per-SM rates not stable across draws (X_D +0.06); ceiling H(Dbal) 3.07% but static cv 0.08%, dynamic 0.08%, slot rider 0.79% (x0.8 < 1.25); 1 CTA/SM slower (R132 0.943/0.897) | board: 1.952 | blob: 691018b5 | reopen: a mechanism that changes intra-SM CTA priority or fuses the two co-resident CTAs' work (not a rebalance) | 2026-10-29 campaign
+- [shelf] stack3: EPF + slot rider + combine fusion on stack2 | rows: load=decode_1 load=decode_16 load=decode_32 load=verify_1 | evidence: EPF +1.6% was sized on 1.950 before v6pe2, which then took ~2 of the 2-4 us T=1 headroom (8418677e: decode_1 29.3 -> 27.3 us), so EPF on master is 0-2 us (<= 1.3%, mid 0.6%); slot rider 0.79% ceiling (0069fec4, x0.8); combine 2.6-2.9 us path at T16/32 (h100-t32-1029) <= ~1.5% over 4 rows, mid 0.75%; stack mid ~2.0%, hyp.py dry-run EV 0.6% | board: 1.9521 | blob: 691018b5 | reopen: a measured judge gain on any one arm that lifts the stack mid to >= 2.5% (e.g. combine fusion reading >= 2 us per row on a check) | 2026-10-29 screen
+- [shelf] combine fused into the v4x w2 epilogue at T=8..32 | rows: load=decode_16 load=decode_32 load=verify_1 | evidence: combine 2.6-2.9 us of the critical path at T16/32, shares w13 65-66 / w2 31-32 / combine 2% (research/h100-t32-1029.md Q3); <= ~0.8% headline over decode_16+32, <= ~1.5% if verify_1/16 capture in full | board: 1.9521 | blob: 691018b5 | reopen: stacked with another gain to >= 2.5% | 2026-10-29 screen
 
 ### unresolved
 
@@ -247,4 +249,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: wg2-pingpong-consumers-occ2-b256 [w13 marlin + silu-mul + w2 marlin] p2 hold
 - queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 hold
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 hold
+- queue: cmbf-combine-fused-w2-epilogue-t8-32 [post-expert norm+combine] p1 queued
 - 21 stale holds expired to `done/expired/` (not run)

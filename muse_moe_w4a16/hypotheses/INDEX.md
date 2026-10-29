@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-29T145755Z. Best: 1.9521x [1.9228,1.9813] job `8418677e467d4fb7` (submit)
+Regenerated 2026-10-29T151518Z. Best: 1.9521x [1.9228,1.9813] job `8418677e467d4fb7` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -92,6 +92,7 @@ Regenerated 2026-10-29T145755Z. Best: 1.9521x [1.9228,1.9813] job `8418677e467d4
 | 2026-10-25T211843Z | wg2-pingpong-consumers-occ2-b256 | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T211909Z | wg2-w13-occ2-nmax128-stg2-hot | primary | w13 marlin + silu-mul | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-25T211926Z | wg2-stream-k-tail-floor-g-over-r | primary | w13 marlin + silu-mul + w2 marlin | queue | hold |  |  |  |  |  | hold |  |
+| 2026-10-29T151134Z | cmbf-combine-fused-w2-epilogue-t8-32 | primary | post-expert norm+combine | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

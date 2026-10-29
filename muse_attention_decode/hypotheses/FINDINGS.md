@@ -1,6 +1,6 @@
 # muse_attention_decode findings
 
-Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
+Regenerated 2026-10-29T151517Z by `churn.py index`. Read this before writing a hypothesis for muse_attention_decode.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -51,6 +51,9 @@ Regenerated 2026-10-29T145755Z by `churn.py index`. Read this before writing a h
 - [refuted] full verify s7: wgmma split-combine kernel replacing FA3 at B=16/32 | rows: layer=full load=verify_16, layer=full load=verify_32 | evidence: review hold DECISIONS:405-406; bounded by s6's DIAG, the no-ticket kernel would be ~179 / 367 us vs FA3 main 148.6 / 285.9 us (LOG:1919-1920) | board: 1.6340 | blob: - | reopen: an isolated DIAG beats FA3's main loop at B=16 and B=32 first | 2026-10-28 churn
 - [refuted] pre-attention folded into the PSEUDO verify-1 kernel (sliding-verify1-pseudo-fused-preattn-rope, muse_sv1_fused_v1) | rows: layer=sliding load=verify_1 | evidence: job 7284659f6c4d4035 1.6191 vs 1.6340 (66e589b9): its own gate read FUSED p8 16.4 us vs pre-attn + PSEUDO 15.3 us (x0.934; best FUSED grid sm 15.8 us), never routed (archive/sliding-verify1-pseudo-fused-preattn-rope/7284659f6c4d4035.log); the verify_1 sliding row 13.4 vs board 13.9 us is the incumbent inside the 12.66-13.90 spread (LOG:2051-2052); full decode_32 190.6 vs 177.9 us and verify_32 sliding 27.8 us are gate draws | board: 1.6340 | blob: 7e7938b3 | reopen: - | 2026-10-28 churn
 - [refuted] sized out: a rewrite of the full-decode split-KV attention at B=16/32 (attn-full-splitkv) | rows: layer=full load=decode_16, layer=full load=decode_32 | evidence: those rows run at 1.1-1.3x their floor on the scoring formula (LOG:2201; hyp.py triage after 4b45b873); lever dropped LOG:2159-2160 | board: 1.6340 | blob: - | reopen: a measured floor gap above 1.5x on those rows | 2026-10-28 campaign
+- [refuted] fvs: full verify B=1 on the sliding window kernel at window 0 + per-row combine (attn-fixed design 2 / swf stage 4) | rows: layer=full load=verify_1 | evidence: diag-sw-chain-cost 664a6da6321a45c9 log:106: kernel alone at 80008 keys 24.6 us grid 132 / 22.3 us grid 264 vs FA3 step 32.4 and FA3 main 14.7 us; combine alone 43.6 us; PDL pair + pre-attn 66.5 us; its own rule (> 17 us: drop fvs) | board: 1.6340 | blob: 2eb03f76 | reopen: - | 2026-10-29 screen
+- [refuted] full verify B=1 on the stream-K decode kernel with token groups (full-verify1-sk-two-level-token-group, FULLV TG 1/2/4/8) | rows: layer=full load=verify_1 | evidence: job 7d23e8776c194344 log:80-96: best FULLV TG=2 grid 2xSM 51.0 us vs FA3 32.7 us raw (0.641x), TG=8 65.8 us, TG=1 70.4 us; never routed; LESSONS:126 | board: 1.4920 | blob: 2eb03f76 | reopen: - | 2026-10-29 screen
+- [refuted] swf S1b: one cluster launch per sliding-verify step, per-row read | rows: layer=sliding load=verify_1, layer=sliding load=verify_16, layer=sliding load=verify_32 | evidence: check 89add1cc5468453d log:53-67: B=1 rounds 1.004-1.027x vs incumbent 14.6 us, B=2..16 quick 0.997x, B=17..32 quick 0.989x, no band routed; lens-0 swf step 10.8-11.4 us gross (null 2.2) bounds B=1 at >= ~11 us | board: 1.6340 | blob: 2eb03f76 | reopen: a prepare A/B shows the swf lens-0 step below ~7 us | 2026-10-29 screen
 
 ### superseded
 
@@ -335,6 +338,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: sliding-decode-sk-s3-fused-preattn-rope [sliding-layer attention (decode, stream-K windowed kernel, pre-attention fold)] p2 hold
 - queue: preattention-tiled-every-verify-block [pre-attention norm+rope] p2 hold
 - queue: sliding-verify-fa3-num-splits-band-gate [FA3 call (sliding verify split count)] p2 hold
+- queue: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 hold
 - queue: sk-full-line-gather [full-layer attention (decode 1<B<=64, stream-K kernel K/V gather mapping)] p1 hold
 - queue: sliding-verify-wgmma-window-s2-split-combine [sliding-layer attention (verify B=2..32, wgmma window kernel merge)] p1 hold
 - queue: c320-combine-onepass [full decode_1 split-KV combine (c320 chain)] p2 hold
@@ -350,5 +354,4 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: sliding-decode1-ph-push-merge [sliding-layer attention (batch-1 decode, PERHEAD cluster DSMEM merge: push instead of pull)] p1 hold
 - queue: attn-fast-math-epilogues [output norm-gate (CUDA epilogue math: o/L, RMSNorm reciprocal sqrt, sigmoid) in the routed attention kernels] p3 hold
 - queue: combo-tail-onepass-push-fastepi [combination (stream-K ticket merge onepass + PERHEAD push merge + fast-math epilogues: the serialized merge/epilogue tails)] p2 hold
-- running: full-verify1-wgmma-s7-grid-sm-two-level [full-layer attention (batch-1 verify, wgmma stream-K kernel, two-level ticket)] p2 running
 - 17 stale holds expired to `done/expired/` (not run)

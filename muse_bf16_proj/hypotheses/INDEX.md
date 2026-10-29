@@ -1,6 +1,6 @@
 # muse_bf16_proj hypotheses
 
-Regenerated 2026-10-28T171704Z. Best: 1.2794x [1.2602,1.2986] job `3e3ffc5afc57433b` (submit)
+Regenerated 2026-10-29T151518Z. Best: 1.2794x [1.2602,1.2986] job `3e3ffc5afc57433b` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -93,6 +93,7 @@ Regenerated 2026-10-28T171704Z. Best: 1.2794x [1.2602,1.2986] job `3e3ffc5afc574
 | 2026-10-27T132845Z | pooler-khalf-lt-batched-plan-m128-m256 | primary | pooler GEMM (m=128/256, K-halves batched GEMM on a prepare-picked cuBLASLt plan) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T132918Z | router-hilo-m128-m256-readflush-config-sweep | primary | router GEMM (m=65..256, hilo launch config chosen per m by a read-flush sweep) | queue | hold |  |  |  |  |  | required |  |
 | 2026-10-27T143409Z | router-pdl-plus-khalf-pooled-iqr-gate | primary | router m=9..256 PDL (restack) + pooler m=128 khalf gate rule | done/neutral | neutral | 1.2723 | [1.253,1.291] | 023f4260e86e423e | check |  | proceed | 4/6 |
+| 2026-10-29T150920Z | b12mc-multicast-x-pooler-qkv-m8-readflush-diag | primary | bulk12 row-owner kernel at m>=8 (x delivery: TMA multicast per 4-CTA cluster) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 

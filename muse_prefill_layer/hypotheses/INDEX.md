@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-28T171704Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
+Regenerated 2026-10-29T151518Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc743a3` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -74,8 +74,8 @@ Regenerated 2026-10-28T171704Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-25T152138Z | experts-rega-pingpong-consumers-all-t | primary | w13 + w2 expert GEMMs (rega_kernel consumer schedule: two-warpgroup ping-pong), every rega class | done/neutral | neutral | 1.4478 | [1.426,1.470] | 5fbaec9a075543d4 | submit |  | proceed | 1/3 |
 | 2026-10-25T152138Z | experts-rega-producer-scale-expand-all-t | primary | w13 + w2 expert GEMMs (rega_kernel dequant: E4M3 scale expansion moved to idle producer warps), every rega class | done/neutral | neutral | 1.4538 | [1.432,1.476] | 6be2a8d3cf7d489f | submit |  | proceed | 1/3 |
 | 2026-10-25T152138Z | experts-rega-s4-bm256-wide-tile-high-ft | rewrite | w13 + w2 expert GEMMs at 1024 < T <= 16384 (rega high + ft classes): 256-weight-row CTA tile with in-warpgroup dequant/MMA overlap | done/neutral | neutral | 1.4758 | [1.454,1.498] | a6f6063051f14750 | check |  | proceed | 3/3 |
+| 2026-10-25T152235Z | attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload) | queue | hold |  |  |  | check |  | proceed |  |
 | 2026-10-25T152235Z | fa3-num-splits-cap-gated-turn | primary | FA3 call (num_splits cap on the paged path at q_len <= 4096, per-class timing gate) | queue | hold |  |  |  |  |  | hold |  |
-| 2026-10-25T152235Z | attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload | rewrite | FA3 call on full-attention layers at page_size 1 (CUDA sm_90a FP8 wgmma flash attention, stage 2: warp-specialized producer, 128-key tiles, intra-WG overlap + ping-pong, gated exp offload) | running | running |  |  |  | check |  | proceed |  |
 | 2026-10-25T152235Z | fa3-full-contiguous-kv-triton-gather-gated | primary | FA3 call on full-attention layers (KV source: contiguous TMA copy of the paged page-size-1 rows, per-class timing gate) | done/neutral | neutral | 1.4587 | [1.437,1.481] | 1cc92a43b8be40f8 | submit | done | proceed | 5/6 |
 | 2026-10-25T152449Z | pre-expert-norm-fused-rega-gather | primary | pre-expert norm (MuseSpark1xRMSNorm) fused into the rega row gather | done/neutral | neutral | 1.4600 | [1.438,1.482] | edf68fa3131c4bf8 | submit |  | proceed | 2/3 |
 | 2026-10-25T152519Z | qkv-gate-columns-side-stream-under-attention | primary | qkv GEMM (output-gate columns split onto the side stream, overlapping qk_norm + cache store + FA3) | done/neutral | neutral | 1.4512 | [1.429,1.473] | b8b8536c4ed74d78 | submit |  | proceed | 1/4 |
@@ -108,9 +108,11 @@ Regenerated 2026-10-28T171704Z. Best: 1.5008x [1.4783,1.5233] job `b2941ea23dc74
 | 2026-10-27T140020Z | experts-rega-w2-epilogue-prefetch-bulk-store-cf | confirm→experts-rega-w2-epilogue-prefetch-bulk-store | w13 + w2 expert GEMMs (rega w2 consumer epilogue: loads and stores) | queue | hold |  |  |  |  |  | proceed |  |
 | 2026-10-27T140120Z | experts-rega-w2-early-loads-low-class | primary | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4986 | [1.476,1.521] | 59eb665f162a4ac9 | check |  | proceed | 2/3 |
 | 2026-10-27T141744Z | experts-rega-w2-early-loads-low-class-cf | confirm→experts-rega-w2-early-loads-low-class | rega w2 epilogue (early gs/sid loads, arm a) routed at the LOW class | done/neutral | neutral | 1.4994 | [1.477,1.522] | 8716d98c405f417d | check |  | proceed |  |
+| 2026-10-29T150952Z | experts-rega-stage-anatomy-diag-r2 | primary | w13 + w2 expert GEMMs (prepare-only diagnostic: where a rega stage goes) | queue | queued |  |  |  |  |  | required |  |
 
 ## Held
 
+- attn-full-prefill-wgmma-s2-warpspec-pingpong-expoffload: released 2026-10-29T151514Z: zombie claim (stage claimed since 2026-10-25T212615Z, no job in 24 h); re-review to run it
 - fa3-num-splits-cap-gated-turn: adversarial review: Hold this as a scored submit; the cause is the budget, not the idea. The mechanism is plausible and rules-clean, but the best case is about +0.2% on a headline 
 - experts-rega-low-2cta-fullslab-mc2: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 never landed (1.31-1.81x slower); DISTILL 3.1 retire; REGA_LO_SKIP on master
 - experts-rega-mc2-bm256-stack-high-ft: screen 2026-10-28 1520Z (value bar, vs master): STALE: mc2 and bm256 both slower; DISTILL retire
