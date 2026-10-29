@@ -133,7 +133,7 @@ review_at: 2026-10-29T162053Z
 review_companions: null
 review_best: 1.5007957663757285
 review_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-29T162054Z
 base_sha: cab523d330d2015479dc4d0f602a30a1722974e0
 base_blob: c63801e7a1dcfdb7cbdd0d38bc9b295407be7489
@@ -150,6 +150,8 @@ submission_blob: d781fbcf52a3b1f0f9b0a13e268add1be0e308c2
 lint_warnings: 123
 attempt_file: 2026-10-29T163541Z-check-experts-rega-stage-antiphase-ordered-issue.md
 prepared_at: 2026-10-29T163541Z
+job: 17d3fdf1a6594d33
+dispatched_at: 2026-10-29T163553Z
 ---
 
 # experts-rega-stage-antiphase-ordered-issue
