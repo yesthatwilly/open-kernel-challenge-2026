@@ -2630,3 +2630,7 @@ with the operator's go-ahead.
 ## 2026-10-29 2233Z — **moe 2.020 LANDED** (scored 24f183ff [1.990, 2.050]; +2.29% over 1.9748); attention r2 18499109 dispatched
 - moe tonight: 1.952 -> 1.975 (wh5ds) -> **2.020** (Engine A A4b/A5b encodings); rank 333. [landed] claim; BEST.json 24f183ff.
 - attention r2 (gate kernel with -std=c++20, 3000-char build-error capture, wg_pv setp in register form; edited by the main thread) dispatched **18499109**.
+
+## 2026-10-29 2239Z — user steer: keep the H100 running >= 14 h; stay on the expert block
+- The user: "yes, keep h100 running at least for the next 14 hours.  stay focused on expert block, because this is where all the gains are, right?" Answer recorded: mostly yes (decode anatomy: expert block 48-68% of sliding rows, x1.24 at 1.3x floor vs attention x1.064, dense x1.033; tonight's landings prefill/moe all expert-block); the exception is full-verify attention (~29% of full verify rows), whose gate-kernel r2 check is already in flight.
+- Overnight: expert-block H100 lanes (agents build CPU-side, the main thread launches GPU runs, since subagent node runs are refused by the policy) + phase A at 00:00Z = decode port of the moe Engine A encodings (+ wh5ds rider + T=16 pin).
