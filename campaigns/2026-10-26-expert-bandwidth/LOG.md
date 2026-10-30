@@ -152,7 +152,7 @@ append-only, newest last.
 - updated: 2026-10-30T0248Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** GPUs 1 and 4 idle; **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
+- **In flight:** GPU 4 idle; **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
