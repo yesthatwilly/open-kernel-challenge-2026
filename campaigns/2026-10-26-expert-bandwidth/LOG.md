@@ -2731,3 +2731,6 @@ with the operator's go-ahead.
 ## 2026-10-30 0052Z — **moe XL check 73156455: 2.0667 (+1.55% over 2.0352)**; scored 922ddf4c
 - XL routed at T=16 (E4XL 0.951), T=32 (E5XL 0.943), T=128 (E5XL 0.938), T=256 (E4XL 0.965; cold iso 0.948); T=8 E4 0.966; T=1 master (worst 0.990). XL/E 0.976-0.997 per class: the node's +2-5% consume-only surfaced as ~1-2.5% per class on the H200 (the node itself read 0.995-0.997, HBM-walled). churn promoted; master = checked bytes 091c05b8; scored **922ddf4c** dispatched.
 - Decode XL (held 10-30 0006Z) gets a stronger case: moe's T=256 E4XL 0.965 would clear decode's T=256 bar (decode's E4 read .977-.983). Size (6 KB headroom) still needs a Python trim.
+
+## 2026-10-30 0058Z — **moe 2.075 LANDED** (scored 922ddf4c [2.044, 2.113]; XL arms); rank 305
+- moe since 10-29 morning: 1.952 -> 1.975 (wh5ds) -> 2.020 (E4/E5) -> 2.035 (UAF fix) -> **2.075** (XL). Decode XL port building.
