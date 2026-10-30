@@ -1891,7 +1891,7 @@ def _align_par_setup(state, device):
         state["align_par_ok"] = False
     print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}",
           flush=True)
-def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, b12p=None, rx=None):
+def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, b12p=None, rx=None, fs=None):
     ext = _DL_EXT
     tokens = ffn_input.shape[0]
     dev = ffn_input.device
@@ -1899,10 +1899,21 @@ def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, b12
     x = ffn_input.contiguous()
     ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
     logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
+    lg = None
+    if rx is not None and fs is not None:
+        m = torch.cuda.current_stream()
+        fs.wait_stream(m)
+        with torch.cuda.stream(fs):
+            lg = _dc0_lin(*rx)
     if not (_b12p_p(x, ei, logits, b12p)):
         ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl_v)
-    if rx is not None:
-        logits = F.linear(*rx)
+    if lg is not None:
+        m.wait_stream(fs)
+        if not torch.cuda.is_current_stream_capturing():
+            lg.record_stream(m)
+        logits = lg
+    elif rx is not None:
+        logits = _dc0_lin(*rx)
     new_r = (tokens == 1 and dl.get("r_new", False)) or bool(r_t)
     xn, routed = _dl_route(ei, logits, local_start, dl, pdl_v if new_r else 0, 0 if new_r else 2, align=align)
     return xn, routed, (ei, logits)
@@ -7706,6 +7717,75 @@ def _sfk_gate(state, device, t_prepare0):
         else:
             del _EAD_INPUTS[t]
     return out
+DC0F_TAG = "[dc0b-fork]"
+DC0K = {1: (16, 4, 256), 8: (16, 8, 64)}
+@triton.jit
+def _dc0_r32_kernel(x_ptr, w_ptr, p_ptr, M, K: tl.constexpr, N: tl.constexpr, MP: tl.constexpr, KS: tl.constexpr,
+                    BN: tl.constexpr, BK: tl.constexpr):
+    pn = tl.program_id(0)
+    pk = tl.program_id(1)
+    rn = pn * BN + tl.arange(0, BN)
+    rm = tl.arange(0, MP)
+    acc = tl.zeros((MP, BN, BK), dtype=tl.float32)
+    for k0 in range(pk * KS, pk * KS + KS, BK):
+        rk = k0 + tl.arange(0, BK)
+        w = tl.load(w_ptr + rn[:, None] * K + rk[None, :])
+        x = tl.load(x_ptr + rm[:, None] * K + rk[None, :], mask=rm[:, None] < M, other=0.0)
+        acc += x[:, None, :] * w[None, :, :]
+    tl.store(p_ptr + pk * M * N + rm[:, None] * N + rn[None, :], tl.sum(acc, axis=2), mask=rm[:, None] < M)
+def _dc0_lin(x, w, k=None):
+    if k is None:
+        return F.linear(x, w)
+    sp, bn, bk = k
+    m = x.shape[0]
+    p = torch.empty((sp, m, N_EXPERTS), dtype=torch.float32, device=x.device)
+    _dc0_r32_kernel[(N_EXPERTS // bn, sp)](x, w, p, m, K=HIDDEN, N=N_EXPERTS, MP=triton.next_power_of_2(m),
+                                           KS=HIDDEN // sp, BN=bn, BK=bk, num_warps=4)
+    return p.sum(0)
+DC0F_T = (1, 8)
+def _dc0f_gate(state, device, t_prepare0):
+    state["dc0f"], state["dc0k"], out = {}, {}, []
+    if state.get("dl") is None:
+        return [f"{DC0F_TAG} no dense chain: serial F.linear FP32 router"]
+    arms = {"serial": (False, None), "fork": (True, None)}
+    for t in DC0F_T:
+        if time.perf_counter() - t_prepare0 > 260.0:
+            out.append(f"{DC0F_TAG} T={t}: skipped (deadline), serial F.linear")
+            continue
+        try:
+            gen = torch.Generator(device=device)
+            gen.manual_seed(20261200 + t)
+            x = torch.randn((t, HIDDEN), generator=gen, device=device)
+            ref = F.linear(x, state["router"])
+            r = _dc0_lin(x, state["router"], DC0K[t])
+            torch.cuda.synchronize()
+            err = float((r - ref).abs().max())
+            ok32 = bool(torch.isfinite(r).all()) and err <= 1e-5 and torch.equal(r, _dc0_lin(x, state["router"], DC0K[t]))
+            a = dict(arms)
+            if ok32:
+                a.update({"r32": (False, DC0K[t]), "r32fork": (True, DC0K[t])})
+            d = _ead_cases(state, device, gen, t)
+            o = {}
+            for n, (f, k) in a.items():
+                state["dc0f"][t], state["dc0k"][t] = f, k
+                o[n] = kernel_fn(_dl3_clone_data(d), state)
+            torch.cuda.synchronize()
+            ex = {n: all(torch.equal(u, v) for u, v in zip(o[n], o["serial" if a[n][1] is None else "r32"])) for n in a}
+            cands = [n for n in a if n != "serial" and ex[n]]
+            def setter(n):
+                def f():
+                    state["dc0f"][t], state["dc0k"][t] = a[n]
+                return f
+            per = _ead_layer_gate(state, device, t, {n: setter(n) for n in ["serial"] + cands}, 20261210 + t)
+            win, worst, _ = _rt_select(per, "serial", cands, margin=1.01, tight=1.01)
+            state["dc0f"][t], state["dc0k"][t] = a[win or "serial"]
+            out.append(f"{DC0F_TAG} PATH CHOSEN T={t}: {(win or 'serial').upper()} FP32 router (r32 max|r32-F.linear| "
+                       f"{err:.1e} ok {ok32}; " + ", ".join(f"serial/{c} x{worst.get(c, 0):.3f}" for c in cands) + ")")
+        except Exception as e:
+            state["dc0f"][t], state["dc0k"][t] = False, None
+            out.append(f"{DC0F_TAG} T={t}: raised {type(e).__name__}: {str(e)[:80]}; serial F.linear")
+        torch.cuda.synchronize()
+    return out
 def prepare(weights):
     t_prepare0 = time.perf_counter()
     whj = _wh_start(t_prepare0)
@@ -7803,6 +7883,7 @@ def _prepare_main(weights, t_prepare0, whj):
     if CAMPAIGN_SFK:
         paths += _sfk_gate(state, device, t_prepare0)
     eal = _eae_phase(state, weights, device, t_prepare0, eaej) if eaej is not None else []
+    paths += _dc0f_gate(state, device, t_prepare0)
     print("[campaign] ===== FINAL PATHS =====", flush=True)
     for line in paths:
         print(line[:200], flush=True)
@@ -8085,7 +8166,8 @@ def kernel_fn(data, state):
         ea_t = ea is not None and tokens <= ea["max_t"] and ea["on"].get(tokens, False)
         xn, (topk_weights, topk_ids, local_ids, align), _ = _dl_forward(
             ffn_input, data["local_start"], dl, r_t=r_t, align=not (ea_t and dl.get("r_noalign", False)),
-            b12p=state.get("b12p"), rx=None if split_router else (router_input, state["router"]))
+            b12p=state.get("b12p"), rx=None if split_router else (router_input, state["router"], state.get("dc0k", {}).get(tokens)),
+            fs=_rt_fork_pick(state["side_stream"]) if state.get("dc0f", {}).get(tokens) else None)
         if ea_t:
             expert_output = _ead_core(ea["on"][tokens])(ea, xn, local_ids, topk_weights, 0, LOCAL_EXPERTS,
                                                          state["post_expert_norm_w"],
