@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-30T005856Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-30T012202Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -61,6 +61,7 @@ Regenerated 2026-10-30T005856Z by `churn.py index`. Read this before writing a h
 - [landed] hot half wh5ds at T=256 (A3 + A5b codes/scales + per-stage descriptor + split commit, wh exact-N/ring) in wg_kernel<G,14>, routed by isolated-pair race + fork no-loss gate (hothalf-wh-a5b-port) | rows: load=verify_32 | evidence: check 54b70249868f468b 1.9827 (verify_32 291.1 -> 274.4 us; pair m 115.1 -> wh5ds 92.8 us; forked kfn .887-.953); scored a5318a1f98984a5f 1.9748 [1.945, 2.004]; H100 hh2/hh3 | board: 1.9748 | blob: 37ea90fc | reopen: - | 2026-10-29 churn
 - [landed] Engine A dq2 with lossless A4b code re-encoding (E4) / + A5b packed scales (E5), raced per T class (engine-a-a4b-a5b-encodings-race) | rows: load=decode_1, load=decode_8, load=decode_16, load=decode_32, load=verify_16, load=verify_32 | evidence: check 702f1004b45f4bfa 2.0646 (per class E/m: T1 E4/E4 0.967, T8 0.960, T16 0.953, T32 0.951, T128 E5 0.955, T256 E4 0.974; exact); scored 24f183ff300949f2 2.0201 [1.990, 2.050]; H100 consume-only 4-10% (research/h100-ea-enc-1029.md) | board: 2.0201 | blob: c6e41c9a | reopen: - | 2026-10-29 churn
 - [landed] [ea-enc] cold-iso keep-alive fix: prepare-only use-after-free removed; same routes as 24f183ff (eae-cold-iso-keepalive-fix) | rows: load=verify_32 | evidence: job 575820c989c8412b (okc status 575820c989c8412b), master f2b510f593 | board: 2.0352 | blob: d80df5ec | reopen: - | 2026-10-30 campaign
+- [landed] Engine A XL arms (E4XL/E5XL: ldmatrix.x4 B preload + trimmed record loop on E4/E5), raced per class in the [ea-enc] race (engine-a-xl-arms-t256-postnorm-stack; post-norm swap dropped) | rows: load=decode_16, load=decode_32, load=verify_16, load=verify_32 | evidence: check 73156455c9f242f6 2.0667 (XL routed T=16 E4XL 0.951, T=32 E5XL 0.943, T=128 E5XL 0.938, T=256 E4XL 0.965; XL/E 0.976-0.991); scored 922ddf4c5b4847f2 2.0753 [2.044, 2.113] | board: 2.0753 | blob: 5220385a | reopen: - | 2026-10-30 churn
 
 ### refuted
 
