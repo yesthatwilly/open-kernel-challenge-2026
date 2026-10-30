@@ -11380,7 +11380,6 @@ void ea_combine(torch::Tensor y, torch::Tensor ids, torch::Tensor tw, torch::Ten
 }
 // ---- end include rewrite/lib/cuda/ea_combine.cuh ----
 """
-EA_BUILD_V5 = False
 EA_PREFER_WITHIN = 0.0
 
 
@@ -11398,12 +11397,8 @@ def _ea2_build_ext(tag, name, t_prepare0=None, start_deadline_s=None):
     base = ["ea_info", "ea_w13", "ea_w2", "ea_w13_pf", "ea2_info", "ea2_w13", "ea2_w2", "ea_combine",
             "ea_combine_info", "ea3_info", "ea3_w13", "ea3_w2"]
     occs, lines = {}, []
-    f4, f5 = ["ea4_info", "ea4_w13", "ea4_w2"], ["ea5_info", "ea5_w13", "ea5_w2"]
-    tries = ((("v4", "v5"), _EA2_CPP + _EA4_CPP + _EA5_CPP, _EA2_SRC, base + f4 + f5, name),
-             (("v4",), _EA2_CPP + _EA4_CPP, _ea2_src_without(("ea5",)), base + f4, name + "_nov5"),
-             ((), _EA2_CPP, _ea2_src_without(("ea5", "ea4")), base, name + "_nov4"))
-    if not EA_BUILD_V5:
-        tries = tries[1:]
+    tries = ((("v4",), _EA2_CPP + _EA4_CPP, _ea2_src_without(("ea5",)), base + ["ea4_info", "ea4_w13", "ea4_w2"],
+              name + "_nov5"), ((), _EA2_CPP, _ea2_src_without(("ea5", "ea4")), base, name + "_nov4"))
     ext, err_text, dt, have = None, "", 0.0, ()
     for i, (engines, cpp, src, fns, nm) in enumerate(tries):
         if i and t_prepare0 is not None and time.perf_counter() - t_prepare0 > start_deadline_s:
@@ -11421,8 +11416,6 @@ def _ea2_build_ext(tag, name, t_prepare0=None, start_deadline_s=None):
     if "v4" in have:
         infos.append(("v4", list(ext.ea4_info())))
         infos.append(("v4c", infos[-1][1]))
-    if "v5" in have:
-        infos.append(("v5", list(ext.ea5_info())))
     for eng, info in infos:
         for i, nm in enumerate(("w13/dq1", "w13/dq2", "w2/dq1", "w2/dq2")):
             ok_, regs, spill, smem, occ = info[5 * i:5 * i + 5]
@@ -20939,7 +20932,8 @@ def _eae_class(state, device, T, kind, base, arms, gens):
     for _ in range(2):
         d = _eae_draw(state, device, gens, T, kind)
         _eae_exact(state, kind, T, base, d, arms, ex)
-        graphs = {a: _rt_graph(_eae_fn(state, kind, T, base, d, a))[0] for a in (None, *arms)}
+        pt = ("all", "cold")[T == 256]  # T=256: the cold half alone (serial hot half halves E/m)
+        graphs = {a: _rt_graph(_eae_fn(state, kind, T, base, d, a, pt))[0] for a in (None, *arms)}
         res = _rt_time(graphs, device, reps=EAE_REPS, rounds=EAE_ROUNDS)
         del graphs
         for r in res:
@@ -21092,7 +21086,7 @@ def _eae_run(state, weights, device, t0, job, L):
             continue
         ex, rat, nb, nd = _eae_class(state, device, T, kind, base, arms, gens)
         good = [a for a in arms if ex[a] and rat[a] and max(rat[a]) <= EAE_BAR]
-        s = (f"T={T} {base}{nd}: iso " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
+        s = (f"T={T} {base}{nd}: {'cold ' * (T == 256)}iso " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
              + (f" tk/err {nb}" if nb else ""))
         if good:
             med = lambda k: sorted(rat[k])[len(rat[k]) // 2]
