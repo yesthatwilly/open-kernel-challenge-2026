@@ -69,6 +69,7 @@ harvested_at: 2026-10-30T000044Z
 best_at_harvest: 2.020119462295186
 promotion: null
 mechanism: null
+confirm_queued: eae-cold-iso-keepalive-fix-cf
 ---
 
 # eae-cold-iso-keepalive-fix
