@@ -56,7 +56,7 @@ base_sha: 7feca0ccdd2513dfd07fd00241f638b1889fb77c
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
 branch: hyp/muse_prefill_layer/rega-s2-low-rs2-high-stack
 worktree: .worktrees/muse_prefill_layer/rega-s2-low-rs2-high-stack
-mode: null
+mode: check
 restack_of: experts-rega-low-2cta-a5b
 stale_base: null
 implemented_at: 2026-10-30T003721Z
@@ -65,6 +65,8 @@ submission_sha256: 9c897701e302273f999b636879ec54f8b0abc079e0562a4567d7465057b9f
 norm_sha256: e440fe0bd1803855232ef79d6b5d09a6cca1f056fce344b9a53cc8d5749e16a9
 submission_blob: 32261c5ec0f77dc39d8534fbe2a2cf911409e466
 lint_warnings: 125
+attempt_file: 2026-10-30T003722Z-check-rega-s2-low-rs2-high-stack.md
+prepared_at: 2026-10-30T003722Z
 ---
 
 # rega-s2-low-rs2-high-stack
