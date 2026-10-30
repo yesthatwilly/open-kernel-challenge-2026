@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0324Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0326Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** **"stop making new things. run whatevers running. finish it out" (10-30 0311Z): no new lanes or checks; harvest the five running lanes only.** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), ufs done (null 0322Z), hhcc done (null 0318Z), d128 done (T=128 fork rider +0.3-0.9%, not built); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7).
+- **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), ufs done (null 0322Z), hhcc done (null 0318Z), d128 done (T=128 fork rider +0.3-0.9%, not built); dxl done (campaign/dxl 6ee687fd check-ready, not dispatched); xlres held as a moe rider (027e33b7).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2839,3 +2839,9 @@ with the operator's go-ahead.
 - Anatomy (judge draw e9c076e5, floors at 4.37 TB/s): hot 73.1 us vs floor 25.9 (6.6 of the gap is fixed launch cost); cold 144.2 vs 110.1; the block 219.7 vs 136.1 runs fully serial. W6-F killed the T=128 fork on 10-27 (layer x1.003, with the old wg/v3 halves). Its setter was later trimmed as dead Python, so `state["hc"]["fk"]` is always None.
 - Re-enabled on the node, bit-exact on 18 draws: block fork/serial .907-.928 normal, .927-.967 consume-only; layer verify16 sliding x1.049/1.063, full x1.024/1.048. Est +0.3-0.6% headline (ceiling 0.94%). H-16 is still the best split, under the fork too. -> [shelf] decode CLAIMS. research/h100-d128-1030.md (25f76803); 260k tokens.
 - Not built, per the 0311Z steer. GPU 6 stays idle.
+
+## 2026-10-30 0326Z — dxl: t1xl ported to decode (campaign/dxl 6ee687fd, check-ready, ~+0.1-0.14%); ms_align qualifies but doesn't fit; cp already there; GPU 3 done
+- T=1 XL twins in decode's [ea-enc], reusing decode's own consume_lt (-3.3 KB); other modules' CUDA text is byte-identical. Node consume-only E4->E4XL -4.6..-5.4%, -1.9..-2.3% at the n mix; bit-exact; nodejudge 13/13 (prepare 121 s); forced routes 53/64/55 exact. Est judge worst round ~0.977 < 0.98, ~+0.1-0.14% headline. 999,930 B after removing 2,882 B of grep-proven dead Python.
+- ms_align on decode: bit-identical (112 cases × 3); layer T=256 0.985-0.986 (~-6.7 us), T=128 ~0.993; est +0.2-0.35%. It needs ~7.4 KB that only live code can free (anatomy diagnostics ~4.1 KB, blank lines ~1.6 KB): the user's call. cp: decode's comb cell already is ea_combine.
+- **Conflict to note:** dxl's dead-code removal took out the `hc["fk"]` fork plumbing and `HCF_CLS`, which d128's T=128 fork rider (+0.3-0.9%) would revive. Any later decode stack must re-add that code on top of dxl.
+- -> [shelf] decode CLAIMS (t1xl-port, ms_align). Not dispatched, per the 0311Z steer. 383k tokens.
