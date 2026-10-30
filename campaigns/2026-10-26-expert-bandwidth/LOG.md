@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0144Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0154Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0133Z:** moe **2.075** (305), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** H100 lanes **m256** (GPU 1: moe T=256 anatomy vs floor -> top structural lever), **xlncu** (GPU 3: XL cold-path stall mix -> next issue cut; hhxl null 0136Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
+- **In flight:** H100 lanes **mstack** (GPU 1: moe rider stack on campaign/t1xl -> a check; m256 null 0154Z), **xlncu** (GPU 3: XL cold-path stall mix -> next issue cut; hhxl null 0136Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
 - **Next:** decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2751,3 +2751,9 @@ with the operator's go-ahead.
 - ea6's FAST consumer already had ldmatrix.x4, so the port is the trimmed record loop only. Fc consume-only 1.173-1.194 -> 1.114-1.119 us/record/SM (-4.9..-6.3%); bit-exact in 4/4 runs; regs 71 -> 72.
 - The fixed per-launch cost does not move: at the judge's n mix the cut is -2.3..-2.8% consume-only, and n1 is flat. To route, an arm must also beat the 0.98 worst-round bar, which E4 missed at T=1 (0.990). -> [shelf] moe CLAIMS: ride on the next moe carrier. nodejudge t1xl-val passed 5/5 (prepare 128 s); moe 964,802 B. research/h100-t1xl-1030.md (61f2716d); 264k tokens.
 - triage 0144Z: moe's biggest row is verify 32 (bs 256): 269.7 us vs SoL 108.9 (x2.5), x1.113 headline at the practical floor. It is followed by decode 1 (27.4 vs 11.4) and verify 16 (221 vs 101). GPU 1 goes to **m256**: the moe T=256 per-kernel anatomy against its floor, then a node test of the top structural lever.
+
+## 2026-10-30 0154Z — m256 null: no T=256 (bs 256) structural lever reaches 3%; GPU 1 -> mstack
+- The row's 160.8 us above SoL, from the anatomy of 922ddf4c: cold fixed cost 27.4 us (fills, build_maps, fix-ups, w13->w2 hand-off); hot half's serial dequant then wgmma ~30 us (its known fixes, hothalf4/O3/D3/es1a, all lost); `_hm_align` 7.5 us over its floor; combine 2.6 us; ~64 us unreachable (SoL counts 0.75 of 24.4 distinct experts, nominal vs achievable HBM, heavier timed draws). Two streams save only 5.2 us.
+- Persistent cold schedule (UFS) est 0.96-1.50% headline; all levers stacked 1.6-2.6%. -> [shelf] moe CLAIMS. research/h100-m256-1030.md (4a798f98); 201k tokens; no node run.
+- Local /tmp (1 GB tmpfs) hit 0 MB free mid-lane. Removed this session's own stale scratchpad build dirs and SASS dumps (6-14 h old, lanes committed, nothing open): 90% -> 24% used.
+- **mstack** (GPU 1): build the moe riders into one check on top of campaign/t1xl: t1xl + a faster `_hm_align` (serial at every row's head) + cp combine (only if rules-clean) + optionally the hhxl N-gated trim. Each piece is node-tested, then the whole stack goes through nodejudge.
