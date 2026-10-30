@@ -1,17 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "14ea7be493204308",
- "check_job": "bced57b42b87444d",
+ "job": "83cf0c487f4a45bf",
+ "check_job": "8c915678ba4f4b1b",
  "mode": "submit",
- "speedup": 1.2838658375255416,
+ "speedup": 1.3104646445859827,
  "ci": [
-  1.2646078499626585,
-  1.3031238250884247
+  1.2908076749171928,
+  1.3301216142547723
  ],
- "score_us": 3762.698452441605,
- "commit": "51c4c3d8c82de04fae14daffea5796394346b17f",
- "submission_blob": "5ef62a2078f6922e02a5c5c4e9aa9c7a1b3e31ab",
- "slug": "b12-batched-escape-m8-32-race",
- "result": "muse_bf16_proj/hypotheses/done/gain/b12-batched-escape-m8-32-race.result.json",
- "updated_at": "2026-10-29T214206Z"
+ "score_us": 3686.326082857583,
+ "commit": "3e577458e03a00e4981c544b7055cbca2fdf4808",
+ "submission_blob": "18150a308974cc179ce4a84aa2bf03cde2e7364b",
+ "slug": "ladder-bf1-sk2-fragment-regstream-m8-32",
+ "master_slug": "ladder-bf1-sk2-fragment-regstream-m8-32",
+ "master_job": "83cf0c487f4a45bf",
+ "result": "muse_bf16_proj/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-30T051140Z",
+ "note": "registered by churn.py register-landing from okc status 83cf0c487f4a45bf"
 }
