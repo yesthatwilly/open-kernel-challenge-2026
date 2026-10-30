@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/running/2026-10-29T235440Z-eae-cold-iso-keepalive-fix.md` (branch `hyp/muse_moe_w4a16/eae-cold-iso-keepalive-fix`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `575820c989c8412b` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `f2b510f5` (sha256 986a2bad, the check 582bb334's bytes)
 
 ## Goal
