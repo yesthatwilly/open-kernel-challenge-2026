@@ -1,0 +1,360 @@
+diff --git a/muse_decode_layer/submission.py b/muse_decode_layer/submission.py
+index 4f529d7b..58cec976 100644
+--- a/muse_decode_layer/submission.py
++++ b/muse_decode_layer/submission.py
+@@ -12236,16 +12236,6 @@ def _ea6_judge(per, specs, arms, margin=None, tight=None):
+ 
+ CAMPAIGN_EA4X = True
+ EA4X_TAG = "[ea4x]"
+-EA4X_START_S = 190.0
+-EA4X_GATE_S = 200.0
+-EA4X_COPY_S = 205.0
+-EA4X_PROBE_S = 210.0
+-EA4X_MARGIN = 1.01
+-EA4X_TIGHT = 1.005
+-EA4X_FLOOR = 0.99
+-EA4X_SEED = 20261029
+-EA4X_CLASSES = {8: tuple(range(2, 9)), 16: tuple(range(9, 17)), 32: tuple(range(17, 33)), 128: (128,)}
+-EA4X_CANARY_T = (2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 128)
+ EA4X_ARMS = {"v4xs": 0, "v4xd": 256, "v4cxs": EA4C_CW << 4, "v4cxd": (EA4C_CW << 4) | 256}
+ EA4X_BASE = {"v4xs": "v4", "v4xd": "v4", "v4cxs": "v4c", "v4cxd": "v4c"}
+ EA_PDL_BITS.update(EA4X_ARMS)
+@@ -12949,12 +12939,6 @@ def _ea4x_canary_one(ea, core, x, ids, tw, start, count, norm_w, out_inc):
+     return ""
+ 
+ 
+-def _ea4x_passes(ids, start, count):
+-    loc = ids.long().flatten() - start
+-    cnt = torch.bincount(loc[(loc >= 0) & (loc < count)].cpu(), minlength=count)
+-    return int(((cnt + 15) // 16).sum())
+-
+-
+ import gc
+ 
+ EAD_TAG = "[engineA-dl]"
+@@ -16491,7 +16475,6 @@ HC_MAX_TOKENS = 256
+ HC_HOT_ROWS = 16
+ HC_COLD_BSM = 16
+ HC_HOT_BSMS = (32, 48, 64, -16, -8, -32, -48)
+-HC_WG_H = -16
+ HC_WG_HOT = {-16: 16, -8: 8}
+ HC_WG_BUILD_DEADLINE_S = 150.0
+ HC_COLD_SLOTS = (HC_HOT_ROWS + HC_COLD_BSM - 1) // HC_COLD_BSM * HC_COLD_BSM
+@@ -17460,9 +17443,7 @@ def _hcx_cold(state, device, t_prepare0):
+             f"; {time.perf_counter() - t0:.1f} s, prepare at {time.perf_counter() - t_prepare0:.1f} s")
+ 
+ 
+-CAMPAIGN_HCF = False
+ HCF_CLS = 128
+-CAMPAIGN_ENGINE_D = False
+ 
+ 
+ def _edd_dense(layer, x, edd):
+@@ -20533,6 +20514,9 @@ EAE_T1 = ("33", "44", "30")
+ EAE_CANARY = {128: (144, 176), 256: (200, 240)}
+ EAE_PERM = (3, 4, 5, 10, 11, 9, 6, 7, 8, 12, 13, 14, 16, 17, 18, 15, 19, 20, 21, 26, 27, 25, 22, 23, 24, 28, 29, 30, 0,
+             1, 2, 31)
++EAE_XL = 16384
++EAE_XL_TIE = 0.995
++EAE_ARMS = {3: (3, 0), 4: (4, 0), 5: (3, 1), 6: (4, 1)}  # E4 E5 E4XL E5XL: (bank, XL)
+ _EAE_COMMON = r"""
+ // ea-enc: A4b views of the recoded word (pair I's e2m1 bits on {6,7,8,15,22,23,24,31}); rtv(n, v) = v, opaque to ptxas
+ template <int I>
+@@ -20621,6 +20605,109 @@ __device__ __forceinline__ void consume_e(const uint8_t* rec, uint32_t xb, int l
+ 
+ """
+ _EAE_M16 = "  const uint32_t m16 = rt16(T);  // L4: run-time 16 (dq2 only; dead for DQ 1)\n"
++_EAE_LT = r"""
++__device__ __forceinline__ uint4 lds128(uint32_t a) {
++  uint4 v;
++  asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4];\n" : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "r"(a));
++  return v;
++}
++__device__ __forceinline__ uint2 lds64(uint32_t a) {
++  uint2 v;
++  asm volatile("ld.shared.v2.u32 {%0, %1}, [%2];\n" : "=r"(v.x), "=r"(v.y) : "r"(a));
++  return v;
++}
++__device__ __forceinline__ void imad_step(uint32_t& a, uint32_t s, uint32_t k) {
++  asm("mad.lo.u32 %0, %1, %2, %0;\n" : "+r"(a) : "r"(s), "r"(k));
++}
++"""
++_EAE_LT_LOOP = r"""  if constexpr (DQ >= 3 && !DEFER) {
++    static_assert(D == 2, "ea-enc XL: ring depth 2");
++    constexpr int PU = NK * NS;
++    const uint32_t r0 = smem_u32(ring + half * STAGE_W + wq * REC);
++    const uint32_t xs0 = smem_u32(xs) + static_cast<uint32_t>(((lane >> 3) & 1) * 16 + (lane >> 4) * 32);
++    uint32_t recl = r0 + static_cast<uint32_t>(lane * 16);
++    uint32_t recs = r0 + static_cast<uint32_t>(4096 + g * (DQ == 4 ? 64 : 32));
++    uint32_t fb = full0;
++    uint32_t sl = 0u, ph = 0u, sg = 1u;
++    int vend = 0, nr = 1;
++    uint32_t xb = 0u, m16 = 16u, m78 = 0x78007800u;
++    auto setpass = [&](int q) {
++      const int v = q / PU;
++      vend = (v + 1) * PU;
++      nr = m.v_n[v];
++      const int xr = (lane & 7) < nr ? (lane & 7) : nr - 1;
++      xb = xs0 + static_cast<uint32_t>(xr * XROW) + (sl ? static_cast<uint32_t>(XS) : 0u);
++      m16 = rt16(nr);
++      m78 = rtv(nr, 0x78007800u);
++    };
++    int qs = b;
++    int cnt0 = NK - (b & (NK - 1));
++    if (cnt0 > e - b) cnt0 = e - b;
++    int cnt = cnt0;
++    setpass(qs);
++    for (;;) {
++      if (!mbar_try(fb, ph)) mbar_wait(fb, ph, err, dead);
++      if (nr > 8)
++        eak3::consume2<DQ>(ring + sl * STAGE2 + half * STAGE_W + wq * REC, smem_u32(xs) + sl * XS, lane, nr, acc);
++      else
++        eak::consume_lt<DQ, 1, 1>(recl, recs, xb, m16, m78, reinterpret_cast<float (&)[1][2][4]>(acc));
++      __syncwarp();
++      if (lane == 0) mbar_arrive(fb + 8u * D);
++      ph ^= sl;
++      sl ^= 1u;
++      eak::imad_step(recl, sg, static_cast<uint32_t>(STAGE2));
++      eak::imad_step(recs, sg, static_cast<uint32_t>(STAGE2));
++      eak::imad_step(xb, sg, static_cast<uint32_t>(XS));
++      eak::imad_step(fb, sg, 8u);
++      sg = 0u - sg;
++      if (--cnt != 0) continue;
++      {
++        const int q = qs + cnt0 - 1;
++        const int sgrp = q / NK;
++        const int v = sgrp / NS;
++        const bool two = nr > 8;
++        float c[2][4];
++#pragma unroll
++        for (int t = 0; t < 2; ++t)
++#pragma unroll
++          for (int k = 0; k < 4; ++k) {
++            c[t][k] = acc[t][0][k] + acc[t][1][k];
++            acc[t][0][k] = 0.f;
++            acc[t][1][k] = 0.f;
++          }
++        const int si = sgrp - v * NS;
++        const int g0 = sgrp * NK;
++        if (!(g0 >= b && g0 + NK <= e)) {
++          const int slot_mine = (sgrp == b / NK) ? 0 : 1;
++          float4* mine = reinterpret_cast<float4*>(ws + (static_cast<size_t>(blockIdx.x) * 2 + slot_mine) * PART);
++          mine[warp * 32 + lane] = make_float4(c[0][0], c[0][1], c[0][2], c[0][3]);
++          if (two) mine[NCW * 32 + warp * 32 + lane] = make_float4(c[1][0], c[1][1], c[1][2], c[1][3]);
++          bar_consumers();
++          const int c_first = owner_of(g0), c_last = owner_of(g0 + NK - 1);
++          if (threadIdx.x == 0) {
++            fence_acq_rel_gpu();
++            const int old = atomicAdd(&tickets[sgrp], 1);
++            const int f = (old == c_last - c_first) ? 1 : 0;
++            if (f) fence_acq_rel_gpu();
++            m.flag = f;
++          }
++          bar_consumers();
++          if (m.flag == 0) goto lt_next;
++          finish(c, ws, sgrp, c_first, c_last, weighted, weighted && begin_of(c_first) < g0, uW, uG, warp, lane, two);
++          if (threadIdx.x == 0) tickets[sgrp] = 0;
++        }
++        epi<W13>(c, m, v, si, half, wq, g, cq, s_gs[m.v_e[v]], out);
++      }
++    lt_next:
++      qs += cnt0;
++      if (qs >= e) break;
++      cnt0 = e - qs < NK ? e - qs : NK;
++      cnt = cnt0;
++      if (qs >= vend) setpass(qs);
++    }
++    return;
++  }
++"""
+ def _eae_rep(s, a, b, n=1):
+     if s.count(a) != n:
+         raise RuntimeError(f"ea-enc anchor x{s.count(a)}: {a[:60]!r}")
+@@ -20650,6 +20737,25 @@ def _eae_src4x():
+     return _eae_rep(src, "(pdl & 256) != 0\n      ?", "(pdl & 4096) != 0\n      ?", 2)
+ 
+ 
++def _eae_src4xl():
++    s = _EAE_CONSUME[_EAE_CONSUME.index("template"):]
++    for a, b in (("consume_e(const uint8_t* rec, uint32_t xb, int lane, int n,",
++                  "consume_lt(uint32_t recl, uint32_t recs, uint32_t xb, uint32_t m16, uint32_t m78,"),
++                 ("  const int g = lane >> 2;\n  const uint32_t m16 = rt16(n);\n  const uint32_t m78 = rtv(n, 0x78007800u);\n", ""),
++                 ("rec + (kq * 32 + lane) * 16", "recl + kq * 512"), ("rec + ((4 + kq) * 32 + lane) * 16", "recl + (4 + kq) * 512"),
++                 ("rec + 4096 + (g * 4 + kq) * 16", "recs + kq * 16"), ("rec + 4096 + g * 32 + kq * 8", "recs + kq * 8"),
++                 ("rec + 4096 + (g + 8) * 32 + kq * 8", "recs + 256 + kq * 8")):
++        s = _eae_rep(s, a, b)
++    s = s.replace("*reinterpret_cast<const uint4*>(rec", "lds128(rec").replace("*reinterpret_cast<const uint2*>(rec", "lds64(rec")
++    src = _eae_src4x()
++    a = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
++    src = _eae_rep(src, a, _EAE_LT + s + a)
++    i = src.index("  for (int q = b, i = 0; q < e; ++q, ++i) {\n", src.index("namespace eak4x {"))
++    src = src[:i] + _EAE_LT_LOOP + src[i:]
++    a = "  cudaLaunchConfig_t cfg = ea4x_cfg(grid, pdl, attr);\n"
++    return _eae_rep(src, a, a + f'  TORCH_CHECK(pdl & {EAE_XL}, "ea4x XL bit");\n', 2)
++
++
+ def _eae_src6():
+     src = _eae_dev("#define EA6_FAST 1\n" + _ea6_source())
+     src = _eae_rep(src, "template <bool W13, int D, int MINB, bool FAST = false>\n",
+@@ -20671,7 +20777,8 @@ def _eae_start(t0):
+     import hashlib
+     import threading
+     job = {"th": [], "res": {}, "err": [], "t": time.perf_counter() - t0}
+-    for key, cpp, mk, fns in (("4x", _EA4X_CPP, _eae_src4x, _EA4X_FNS), ("6", _EA6_CPP, _eae_src6, _EA6_FNS)):
++    for key, cpp, mk, fns in (("4x", _EA4X_CPP, _eae_src4x, _EA4X_FNS), ("6", _EA6_CPP, _eae_src6, _EA6_FNS),
++                              ("4xl", _EA4X_CPP, _eae_src4xl, _EA4X_FNS)):
+         try:
+             src = mk()
+             name = f"okc_eaenc_{key}_" + hashlib.sha256((cpp + src).encode()).hexdigest()[:10]
+@@ -20718,8 +20825,10 @@ def _eae_recode(wr, a5b):
+ 
+ 
+ def _eae_pair(ea, x, ids, h, lid, y, T, start, count, bits, dq=0, g2=None):
+-    kx, w13, w2 = (ea["exte"], ea[f"w13e{dq}"], ea[f"w2e{dq}"]) if dq else (ea["ext4x"], ea["w13r"], ea["w2r"])
+-    b = bits | (4096 if dq == 4 else 0)
++    bq, xl = EAE_ARMS.get(dq, (0, 0))
++    kx, w13, w2 = ((ea["extexl" if xl else "exte"], ea[f"w13e{bq}"], ea[f"w2e{bq}"]) if bq
++                   else (ea["ext4x"], ea["w13r"], ea["w2r"]))
++    b = bits | (4096 if bq == 4 else 0) | (EAE_XL if xl else 0)
+     kx.ea4x_w13(x, ids, w13, ea["gs13"], h, lid, ea["ws13x"], ea["tk13x"], ea["errx"], T, start, count, ea["grid"],
+                 ea["dq"], b)
+     kx.ea4x_w2(h, ids, w2, ea["gs2"], y, ea["ws2x"], ea["tk2x"], ea["errx"], T, start, count,
+@@ -20727,11 +20836,13 @@ def _eae_pair(ea, x, ids, h, lid, y, T, start, count, bits, dq=0, g2=None):
+ 
+ 
+ def _eae_xcore(base, dq):
+-    bits = EA4X_ARMS[base] | (4096 if dq == 4 else 0)
++    bq, xl = EAE_ARMS[dq]
++    bits = EA4X_ARMS[base] | (4096 if bq == 4 else 0) | (EAE_XL if xl else 0)
+ 
+     def core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, poison=False):
+         return _ea3_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace, pdl13,
+-                                 ("ea4x_w13", "ea4x_w2"), (f"w13e{dq}", f"w2e{dq}"), bits, "exte", "x", poison)
++                                 ("ea4x_w13", "ea4x_w2"), (f"w13e{bq}", f"w2e{bq}"), bits, "extexl" if xl else "exte",
++                                 "x", poison)
+     return core
+ 
+ 
+@@ -20742,7 +20853,7 @@ def _eae_t1core(base, e1, e2):
+     return core
+ 
+ 
+-_EAE_CORES = {**{f"{b}:e{d}": _eae_xcore(b, d) for b, v in EA4X_ARMS.items() if not v & 256 for d in (3, 4)},
++_EAE_CORES = {**{f"{b}:e{d}": _eae_xcore(b, d) for b, v in EA4X_ARMS.items() if not v & 256 for d in EAE_ARMS},
+               **{f"{b}:e{a}": _eae_t1core(b, int(a[0]), int(a[1])) for b in EA6F_ARMS for a in EAE_T1}}
+ 
+ 
+@@ -20890,7 +21001,7 @@ def _eae_off(state):
+         if isinstance(v, str) and ":e" in v:
+             ea["on"][t] = v.split(":e")[0]
+     hc.pop("cold_e", None)
+-    for k in ("exte", "ext6e", "w13e3", "w2e3", "w13e4", "w2e4"):
++    for k in ("exte", "ext6e", "extexl", "w13e3", "w2e3", "w13e4", "w2e4"):
+         ea.pop(k, None)
+ 
+ 
+@@ -20926,9 +21037,9 @@ def _eae_run(state, weights, device, t0, job, L):
+         th.join(max(0.0, EAE_JOIN_S - (time.perf_counter() - t0)))
+     wait = time.perf_counter() - tw
+     res = {k: v for k, v in job["res"].items() if not any(t.name == f"eaenc-{k}" and t.is_alive() for t in job["th"])}
+-    ext4, ext6 = (res.get("4x") or (None,))[0], (res.get("6") or (None,))[0]
++    ext4, ext6, ext4xl = ((res.get(k) or (None,))[0] for k in ("4x", "6", "4xl"))
+     bl = ", ".join(f"{k} " + (f"{res[k][2]:.0f}s" + ("" if res[k][0] is not None else f" FAIL {str(res[k][1])[:60]}")
+-                              if k in res else f"not joined by {EAE_JOIN_S:.0f}s") for k in ("4x", "6"))
++                              if k in res else f"not joined by {EAE_JOIN_S:.0f}s") for k in ("4x", "4xl", "6"))
+     L.append(f"{EAE_TAG} build {bl}{'; ' + '; '.join(job['err']) if job['err'] else ''} (bg from {job['t']:.0f}s, after "
+              f"ea4x-dl), join wait {wait:.1f}s, phase at {time.perf_counter() - t0:.0f}s (after [hh-wh] routed)")
+     ea = state.get("ea")
+@@ -20936,13 +21047,13 @@ def _eae_run(state, weights, device, t0, job, L):
+         L.append(f"{EAE_TAG} PATH CHOSEN all T = master (no E module / Engine A dq {None if ea is None else ea.get('dq')})")
+         return
+     at, ok = [], {}
+-    for key, ext, w, need in (("4x", ext4, 5, "ext4x"), ("6", ext6, 6, "ext6")):
++    for key, ext, w, need in (("4x", ext4, 5, "ext4x"), ("4xl", ext4xl, 5, "ext4x"), ("6", ext6, 6, "ext6")):
+         if ext is None or ea.get(need) is None:
+             continue
+         rows = _eae_info(ext, w)
+         at.append(f"{key} " + " ".join(f"{n}{r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4 ", "K1e5 ", "K2e4 ", "K2e5 "), rows)))
+         for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
+-            ok[(key, kk, dq)] = bool(rows[i][0]) and rows[i][3] >= 1
++            ok[(key, kk, dq)] = bool(rows[i][0]) and (rows[i][2] == 0 and rows[i][3] >= 2 if key == "4xl" else rows[i][3] >= 1)
+     t = time.perf_counter()
+     lo, hi, bad = 255, 0, 0
+     for k in ("w13r", "w2r"):
+@@ -20956,7 +21067,7 @@ def _eae_run(state, weights, device, t0, job, L):
+             ea[f"{k}e4"] = o4
+     torch.cuda.synchronize()
+     mb = sum(ea[k].numel() for k in ("w13e3", "w2e3", "w13e4", "w2e4") if k in ea) / 1e6
+-    ea["exte"], ea["ext6e"] = ext4, ext6
++    ea["exte"], ea["ext6e"], ea["extexl"] = ext4, ext6, ext4xl
+     L.append(f"{EAE_TAG} regs/lmem/occ {'; '.join(at)}; recode {time.perf_counter() - t:.1f}s {mb:.0f}MB; scales "
+              f"0x{lo:02X}..0x{hi:02X}, {bad} outside 0x08..0x7E -> E5 {'eligible' if e5 else 'OFF'}")
+     gens = (torch.Generator().manual_seed(EAE_SEED), torch.Generator(device=device).manual_seed(EAE_SEED + 1))
+@@ -20974,7 +21085,8 @@ def _eae_run(state, weights, device, t0, job, L):
+             arms = [a for a in EAE_T1 if all(c == "0" or (c in dqs and ok.get(("6", k, int(c))))
+                                              for c, k in zip(a, ("K1", "K2")))]
+         else:
+-            arms = [a for a in dqs if ok.get(("4x", "K1", int(a))) and ok.get(("4x", "K2", int(a)))]
++            arms = [str(int(a) + 2 * j) for j, k in enumerate(("4x", "4xl")) for a in dqs
++                    if ok.get((k, "K1", int(a))) and ok.get((k, "K2", int(a)))]
+         if not arms:
+             why[T] = "no admitted E instance"
+             continue
+@@ -20983,15 +21095,24 @@ def _eae_run(state, weights, device, t0, job, L):
+         s = (f"T={T} {base}{nd}: iso " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
+              + (f" tk/err {nb}" if nb else ""))
+         if good:
+-            a = min(good, key=lambda k: sorted(rat[k])[len(rat[k]) // 2])
+-            v = _eae_veto(state, device, T, kind, base, a)
+-            s += f" | layer {_eae_lab(a)} " + " ".join(f"{m} {_wh_fmt(r)}" for m, r in v.items())
+-            if max(max(r) for r in v.values()) > EAE_VETO:
+-                why[T] = f"layer VETO > {EAE_VETO}"
+-            else:
++            med = lambda k: sorted(rat[k])[len(rat[k]) // 2]
++            ge = [a for a in good if a not in "56"]
++            a0 = a = min(ge or good, key=med)
++            for x in [x for x in good if x in "56" and ge]:  # ties keep the E arm
++                rat[x + "e"] = [p / max(q, 1e-6) for p, q in zip(rat[x], rat[a0])]
++                s += f" | {_eae_lab(x)}/{_eae_lab(a0)} {_eae_rs(rat[x + 'e'])}"
++                if med(x + "e") < EAE_XL_TIE and (a == a0 or med(x) < med(a)):
++                    a = x
++            for a in dict.fromkeys((a, a0)):
++                v = _eae_veto(state, device, T, kind, base, a)
++                s += f" | layer {_eae_lab(a)} " + " ".join(f"{m} {_wh_fmt(r)}" for m, r in v.items())
++                if max(max(r) for r in v.values()) > EAE_VETO:
++                    why[T] = f"layer VETO > {EAE_VETO}"
++                    continue
+                 why[T] = _eae_canary(state, device, gens, T, base, a) if kind == "cold" else ""
+                 if not why[T]:
+                     picks[T] = (kind, base, a)
++                    break
+         else:
+             ne = [a for a in arms if not ex[a]]
+             why[T] = (f"not exact {','.join(map(_eae_lab, ne))}" if len(ne) == len(arms) else
+@@ -20999,7 +21120,7 @@ def _eae_run(state, weights, device, t0, job, L):
+         txt.append(s)
+     for T, (kind, base, a) in picks.items():
+         _eae_set(state, kind, T, base, a)
+-    used = {int(c) for _, _, a in picks.values() for c in a if c != "0"}
++    used = {EAE_ARMS[int(c)][0] for _, _, a in picks.values() for c in a if c != "0"}
+     for d in (3, 4):
+         if d not in used:
+             ea.pop(f"w13e{d}", None)
+@@ -21037,7 +21158,7 @@ def _eae_run(state, weights, device, t0, job, L):
+     for ln in txt:
+         L.append(f"{EAE_TAG} {ln}")
+     L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
+-        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
++        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") + " (no XL arm: ea6)" * (T == 1) for T in EAE_T)
+         + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
+ 
+ 
+@@ -21049,7 +21170,7 @@ def _eae_eq(a, b):
+ 
+ 
+ def _eae_lab(a):
+-    n = {"0": "m", "3": "E4", "4": "E5"}
++    n = {"0": "m", "3": "E4", "4": "E5", "5": "E4XL", "6": "E5XL"}
+     return n[a] if len(a) == 1 else f"{n[a[0]]}/{n[a[1]]}"
+ 
+ 
