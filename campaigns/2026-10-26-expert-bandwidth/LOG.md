@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0242Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0241Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0240Z:** moe **2.0793** (315), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** decode scored **7c7524a6** (t256xl check 1.7285); GPUs 1 and 4 idle; **xlres** (GPU 3: consume2 XL trim + barrier-free run-end exchange, campaign/xlres; xlncu null 0211Z).
+- **In flight:** decode scored **7c7524a6** (t256xl check 1.7285); GPUs 1 and 4 idle; xlres rebasing onto moe master (C rider ~+0.2%, N null).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2794,3 +2794,7 @@ with the operator's go-ahead.
 - The scored run re-raced to the same picks except T=1, which chose E5XL/E5 this time: [mstack] T=256 alcp 0.9735 [0.9787]; [ea-enc] T=8/16/32 E4XL, T=128 E5XL, T=256 E4XL.
 - It read 1.7% under its check (2.1159). Decode XL did the same tonight (check 1.7468, scored 1.7196). moe XL went the other way (check 2.0667, scored 2.075). These two drops are ~5 sd of the 0.35% run sd, so judge drift tonight looks wider than SIGMA_RUN assumes. Treat a single check's +2% as roughly +0.3-2%.
 - Master = campaign/mstack bytes (sha256 6b99a278). register-landing wrote BEST.json, a [landed] CLAIMS line and a DECISIONS line. The rank fell 305 -> 315 while the board rose: other teams are moving.
+
+## 2026-10-30 0241Z — xlres: C (consume2 trim) +1.1-1.3% consume-only on E5 only (~+0.2% headline); N (barrier-free run-end) null
+- C: E5XC/E5XL 1.011-1.013 at T16..T256, even at T16 where the two-tile path is rare, so the gain is mostly codegen. E4XC ~1.00. Bit-exact in 3/3 replicates; regs 89-93 vs XL's 92-94; lmem 0; occ 2. N: consume-only 0.999-1.005, normal T256 w2 slower; the wait moves to the next full barrier -> [refuted]. C -> [shelf] rider.
+- campaign/xlres cbbad2ac: a C-only '4xr' module raced vs XL per T, falling back to XL; N is compiled out. nodejudge 5/5 (prepare 129 s), and a forced run routed XR exact. It merges cleanly with mstack/master; it is now being rebased onto master c5e2d8d4 for revalidation. 287k tokens.
