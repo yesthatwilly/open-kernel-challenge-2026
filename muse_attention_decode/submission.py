@@ -9494,6 +9494,14 @@ __device__ __forceinline__ float ex2(float x) {
   asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
   return y;
 }
+__device__ __forceinline__ uint2 lds2(uint32_t a) {
+  uint2 v;
+  asm volatile("ld.shared.v2.u32 {%0, %1}, [%2];\n" : "=r"(v.x), "=r"(v.y) : "r"(a) : "memory");
+  return v;
+}
+__device__ __forceinline__ void sts1(uint32_t a, uint32_t v) {
+  asm volatile("st.shared.u32 [%0], %1;\n" ::"r"(a), "r"(v) : "memory");
+}
 __device__ __forceinline__ int cta_of(int x, int T, int G) {  // largest i with floor(i T / G) <= x
   return (int)(((int64_t)(x + 1) * G + T - 1) / T) - 1;
 }
@@ -9668,6 +9676,10 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
            ok ? (const void*)(pt + (int64_t)(e >> 26) * W + key0) : (const void*)pt, ok ? 16 : 0);
     }
   };
+  uint32_t cpd = ring_u + doff0;
+  const uint8_t* kbp = kbase;
+  const uint8_t* vbp = vbase;
+  static_assert(((32 * ROW) >> 4) % 8 == 0, "rows kl0 and kl0 + 32 share the swizzle phase");
   auto issue_data = [&](int x) {
     if (MODE == 3) return;
     const uint32_t st = ring_u + (x % NS) * STAGE;
@@ -9675,10 +9687,13 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
     const int lim = (tinfo[x - t0] >> 16) & 1023;
     const bool ok0 = kl0 < lim, ok1 = kl0 + 32 < lim;
     const uint32_t p0 = ok0 ? (uint32_t)ix[kl0] : 0u, p1 = ok1 ? (uint32_t)ix[kl0 + 32] : 0u;
-    cp16(st + doff0, kbase + (size_t)p0 * ROW, ok0 ? 16 : 0);
-    cp16(st + doff0 + KV_STAGE, vbase + (size_t)p0 * ROW, ok0 ? 16 : 0);
-    cp16(st + doff1, kbase + (size_t)p1 * ROW, ok1 ? 16 : 0);
-    cp16(st + doff1 + KV_STAGE, vbase + (size_t)p1 * ROW, ok1 ? 16 : 0);
+    // AT7e: cpd (= ring_u + doff0; doff1 = doff0 + 32 rows) and kbp / vbp are loop-invariant registers pinned by the
+    // main loop, so each copy's addresses are one multiply-add from the page index instead of a per-tile rebuild
+    const uint32_t d0 = cpd + (st - ring_u);
+    cp16(d0, kbp + (size_t)p0 * ROW, ok0 ? 16 : 0);
+    cp16(d0 + KV_STAGE, vbp + (size_t)p0 * ROW, ok0 ? 16 : 0);
+    cp16(d0 + 32 * ROW, kbp + (size_t)p1 * ROW, ok1 ? 16 : 0);
+    cp16(d0 + 32 * ROW + KV_STAGE, vbp + (size_t)p1 * ROW, ok1 ? 16 : 0);
   };
 
   for (int y = t0; y < t0 + NS && y < t1; ++y) issue_idx(y);
@@ -9747,8 +9762,15 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
   const uint32_t tsrc0 = KV_STAGE + (16 * tc + 2 * tq) * ROW + (tdg & 1) * 8;
   const uint32_t tch = (uint32_t)(4 * h + (tdg >> 1));
   const uint32_t tdst = h * VT_HEAD + tdg * VT_SBO + tc * VT_LBO + 4 * tq;
+  // AT7e: the transposer's shared addresses, loop-invariant and pinned: keys +0 / +8 rows at vta, +1 / +9 at vtb
+  uint32_t vta = ring_u + tsrc0 + ((tch ^ (uint32_t)((2 * tq) & 7)) << 4);
+  uint32_t vtb = ring_u + tsrc0 + ROW + ((tch ^ (uint32_t)((2 * tq + 1) & 7)) << 4);
+  uint32_t vtd = smem_u32(vbuf) + tdst;
 
   for (int i = t0; i < t1; ++i) {
+    // keep the loop-invariant addresses in registers: no per-tile rematerialization from tid
+    // (FP8-PV kernel only: the f16-PV kernel sits at the 128-register cap and would spill)
+    if constexpr (PV8) asm volatile("" : "+r"(cpd), "+l"(kbp), "+l"(vbp), "+r"(vta), "+r"(vtb), "+r"(vtd));
     cp_wait<NS - 2>();
     if (FN & 1) fence_async();
     __syncthreads();
@@ -9782,24 +9804,23 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
       wg_commit();
       const uint32_t vbo = (uint32_t)(i & 1) * (PV8 ? 2 * VT_HEAD : 2 * TILE * 128);
       if constexpr (PV8) {
-        const uint8_t* vsrc = ring + slot * STAGE + tsrc0;
-        uint2 w[4];
-#pragma unroll
-        for (int r = 0; r < 4; ++r) {  // key 16c + 2q + (r & 1) + 8 (r >> 1); its swizzle phase is (2q + (r & 1)) & 7
-          const int kk = (r & 1) + 8 * (r >> 1);
-          w[r] = *reinterpret_cast<const uint2*>(vsrc + kk * ROW + ((tch ^ (uint32_t)((2 * tq + (r & 1)) & 7)) << 4));
-        }
-        uint8_t* vt = vbuf + vbo + tdst;
+        const uint32_t so = slot * STAGE;
+        uint2 w[4];  // keys 16c + 2q + {0, 1, 8, 9}: swizzle phases (2q) & 7, (2q + 1) & 7, then the same two
+        w[0] = lds2(vta + so);
+        w[1] = lds2(vtb + so);
+        w[2] = lds2(vta + so + 8 * ROW);
+        w[3] = lds2(vtb + so + 8 * ROW);
+        const uint32_t vt = vtd + vbo;
 #pragma unroll
         for (int hf = 0; hf < 2; ++hf) {
           const uint32_t a0 = hf ? w[0].y : w[0].x, a1 = hf ? w[1].y : w[1].x;
           const uint32_t a2 = hf ? w[2].y : w[2].x, a3 = hf ? w[3].y : w[3].x;
           const uint32_t t0 = __byte_perm(a0, a1, 0x5140), t1 = __byte_perm(a0, a1, 0x7362);
           const uint32_t t2 = __byte_perm(a2, a3, 0x5140), t3 = __byte_perm(a2, a3, 0x7362);
-          *reinterpret_cast<uint32_t*>(vt + (4 * hf + 0) * 16) = __byte_perm(t0, t2, 0x5410);
-          *reinterpret_cast<uint32_t*>(vt + (4 * hf + 1) * 16) = __byte_perm(t0, t2, 0x7632);
-          *reinterpret_cast<uint32_t*>(vt + (4 * hf + 2) * 16) = __byte_perm(t1, t3, 0x5410);
-          *reinterpret_cast<uint32_t*>(vt + (4 * hf + 3) * 16) = __byte_perm(t1, t3, 0x7632);
+          sts1(vt + (4 * hf + 0) * 16, __byte_perm(t0, t2, 0x5410));
+          sts1(vt + (4 * hf + 1) * 16, __byte_perm(t0, t2, 0x7632));
+          sts1(vt + (4 * hf + 2) * 16, __byte_perm(t1, t3, 0x5410));
+          sts1(vt + (4 * hf + 3) * 16, __byte_perm(t1, t3, 0x7632));
         }
       } else {
         const uint8_t* vsrc = ring + slot * STAGE + vsrc_off;
