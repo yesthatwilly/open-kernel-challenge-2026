@@ -76,8 +76,9 @@ speedup: 2.0666647252878665
 speedup_ci: [2.0356647544085487, 2.0976646961671843]
 harvested_at: 2026-10-30T005157Z
 best_at_harvest: 2.035180868162415
-promotion: pending
+promotion: merged
 mechanism: null
+promotion_commit: 59f2a35c11b32b20096964c3d804cbc8bddcaaae
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack

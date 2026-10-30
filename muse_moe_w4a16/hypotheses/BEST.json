@@ -1,20 +1,17 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "575820c989c8412b",
- "check_job": null,
- "mode": "submit",
- "speedup": 2.035180868162415,
+ "job": "73156455c9f242f6",
+ "check_job": "73156455c9f242f6",
+ "mode": "check",
+ "speedup": 2.0666647252878665,
  "ci": [
-  2.0046531551399784,
-  2.065708581184851
+  2.0356647544085487,
+  2.0976646961671843
  ],
- "score_us": 6608.012197040151,
- "commit": "f2b510f593c8804ba80679a6f04f7048a209560d",
- "submission_blob": "d80df5ecc71315466253dae86b28e4f6dfc41642",
- "slug": "landing-575820c9",
- "master_slug": "landing-575820c9",
- "master_job": "575820c989c8412b",
- "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T000737Z",
- "note": "registered by churn.py register-landing from okc status 575820c989c8412b"
+ "score_us": 6507.344822526427,
+ "commit": "59f2a35c11b32b20096964c3d804cbc8bddcaaae",
+ "submission_blob": "5220385a87251699b3c366632c532841f8a389f0",
+ "slug": "engine-a-xl-arms-t256-postnorm-stack",
+ "result": "muse_moe_w4a16/hypotheses/done/gain/engine-a-xl-arms-t256-postnorm-stack.result.json",
+ "updated_at": "2026-10-30T005158Z"
 }
