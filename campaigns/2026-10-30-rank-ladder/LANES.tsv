@@ -1,5 +1,5 @@
 lane	rung	worktree	branch	gpu	status	next_action	updated_utc
-moe	MO3-S2 (N32 dequant-once twin)	.worktrees/rl-mo3s2	rl/mo3s2	1	building	register gate, then nodejudge A/B >=3 reps	2026-10-30T14:50Z
+moe	MO3-FEED (in-situ feed+consume microbench of the wide stage)	~/git/.takemyjob-wt/mo3	hopper/ladder-mo3s2	1,6	h100	MO3 S2 refuted (+80 us); bench feed variants (quarter buffers, K2 2-D TMA box, 2nd producer); rebuild only if wide <= 1.1x 16-route stage	2026-10-30T16:20Z
 attn-sliding	AT8F (cut pre-main-loop chain: seq_lens->page-index + hoisted q/positions) on all sliding rows	.worktrees/rl-vt-d16s	rl/vt-d16s	3	building	D16S-NCU: >55% of stall samples before the main loop; size AT8F across d1s/d16s/v1s/v16s, build if >= 1.5 us summed judge-weighted	2026-10-30T15:35Z
 attn-D	D-ATTN (side-by-side per-kernel driver)	~/git/.takemyjob-wt/rl-dattn	hopper/rl-dattn	4	building	first 4 rows, then all 12; name causes	2026-10-30T14:50Z
 bf16	BF2R (12-bit ring, early slot release: load stage then release, decode+MMA from registers)	.worktrees/rl-bf2r	rl/bf2r	5	building	screen: weights-only within 0.5 us of 17.8 us, then A/B; H200 pred -10% on pooler/unpooler m16/m32	2026-10-30T16:10Z
