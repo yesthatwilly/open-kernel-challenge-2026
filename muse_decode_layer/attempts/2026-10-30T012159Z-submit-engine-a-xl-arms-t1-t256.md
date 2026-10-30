@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_decode_layer/hypotheses/done/gain/2026-10-30T000244Z-engine-a-xl-arms-t1-t256.md` (branch `hyp/muse_decode_layer/engine-a-xl-arms-t1-t256`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `beaed2ad8eb541bf` (`okc status <job>`)
 - **File:** `muse_decode_layer/submission.py` at git `38f04af8`
 
 ## Goal
