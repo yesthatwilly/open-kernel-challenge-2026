@@ -51,7 +51,7 @@ base_sha: f03b88bbe6e9b548215edbe8af217b4a5c7b20da
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
 branch: hyp/muse_moe_w4a16/t128-hybrid-eacombine-judge-race
 worktree: .worktrees/muse_moe_w4a16/t128-hybrid-eacombine-judge-race
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-30T001930Z
@@ -60,6 +60,8 @@ submission_sha256: 7ffbac9947d86d1f5527b42a33e41c6a952dea97788beebd04beef69b7131
 norm_sha256: 6eb1945c7c6131a5c1194f79928736ce470463e777f5b714e205a2047277dd49
 submission_blob: c49445a86f76dd17f8321c0f4b88d79ff7adfde2
 lint_warnings: 212
+attempt_file: 2026-10-30T001931Z-check-t128-hybrid-eacombine-judge-race.md
+prepared_at: 2026-10-30T001931Z
 ---
 
 # t128-hybrid-eacombine-judge-race
