@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0248Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0300Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** GPU 4 idle; **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
+- **In flight:** **ufs** (GPU 4: persistent cold-schedule prototype), **hhcc** (GPU 5: hot-half concurrent dequant), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2806,3 +2806,12 @@ with the operator's go-ahead.
 ## 2026-10-30 0248Z — **decode 1.7225 LANDED** (scored 7c7524a6 [1.697, 1.748]; t256xl cold-iso gate); rank 409
 - Scored PATH: T=1 E5/E5 (the ea6 arm routed this time, no XL), T=8/16/32 E4XL, T=128 E5, T=256 E4XL. The check (1.7285) had T=1 master and T=128 E5XL. The race picks drift between runs at the edges.
 - Master = campaign/t256xl bytes (sha256 8e7b3ebf); register-landing wrote BEST.json, a [landed] CLAIMS line and DECISIONS. dxl builds on that same base.
+
+## 2026-10-30 0300Z — openclaw idle nudge (owner-approved): GPUs 1/3/4/5/6 at 0% at 02:29Z and 02:59Z; five lanes now
+- The nudge: GPUs 4/5/6 had no lane, and the lanes on 1/3 were still in analysis or porting. The owner wants every eligible GPU busy on expert-block work; the 5-hour token window is at 11%.
+- ufsrung (GPU 1) and dxl (GPU 3) were told to start their GPU runs now and analyze while they execute.
+- New lanes, each told to have a first GPU run within ~15 min:
+  - **ufs** (GPU 4): the stage-1 prototype of the persistent T=256 cold schedule (fused K1/K2 with per-expert readiness counters, one build_map, one fix-up), built in parallel with the ufsrung measurement; >= 8 us judge-scaled -> stage-2 plan.
+  - **hhcc** (GPU 5): a new hot-half form running dequant concurrently with wgmma (m256 reopen 1: >= x1.4 on the hothalf4 kstep rungs).
+  - **d128** (GPU 6): decode T=128 expert anatomy (hot 73 us at 1.55 TB/s, cold 144 us at 3.34 TB/s, serial?) -> a >= 2% lever, built if it is a gate or route change.
+- Lesson: a lane that spends 20+ min reading before its first run leaves its GPU idle. Briefs now ask for a baseline run first.
