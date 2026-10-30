@@ -2853,3 +2853,9 @@ with the operator's go-ahead.
     - moe: xlres C (campaign/xlres 027e33b7, ~+0.2%);
     - decode: t1xl port (campaign/dxl 6ee687fd, ~+0.1%), T=128 fork (+0.3-0.9%, not built; its plumbing was removed in dxl), ms_align (+0.2-0.35%, needs ~7.4 KB of live code).
   - The gpunode06 cleanup (nodejudge env, venvs, /tmp/USER-hopper) is still pending for the window-end reminder or the user's go.
+
+## 2026-10-30 0444Z — owner's answers (relayed via openclaw): three exceptions to the 0311Z stop steer
+- (1) "yes" to the dxl decode check: **faaf3c63** dispatched from campaign/dxl (attempt b0dd3e5f/210c8390). Before dispatch I reviewed dxl's removals by hand: signature trims and constant-folds only. `_rt_time` keeps its empty-graph baseline and read flush, and `ea_combine` keeps pdl 1. No master caller passed a removed argument.
+- (2) ms_align on decode: "leave that alone for now ... a cleanup round". Submitted code must be clean; for H100 work, "go with what gives good signal back".
+- (3) T=128 fork: "if theres a finding that shows its worth turning on, and thats informed knowledge, then follow it." d128's node finding qualifies, so **dfork** (GPU 6) re-adds the fork plumbing on top of campaign/dxl. It is raced with a layer gate (≤ 0.99 every round, exact, copy check, serial fallback), and room comes from clean Python tidying only.
+- Everything else stays stopped.
