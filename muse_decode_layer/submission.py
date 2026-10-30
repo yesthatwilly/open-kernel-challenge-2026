@@ -1939,7 +1939,7 @@ def _align_par_setup(state, device):
           flush=True)
 
 
-def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, edd=None, b12p=None):
+def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, b12p=None):
     ext = _DL_EXT
     tokens = ffn_input.shape[0]
     dev = ffn_input.device
@@ -1947,7 +1947,7 @@ def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, edd
     x = ffn_input.contiguous()
     ei = torch.empty((tokens, D_EXPERT), dtype=torch.bfloat16, device=dev)
     logits = torch.empty((tokens, N_EXPERTS), dtype=torch.float32, device=dev)
-    if not (_b12p_p(x, ei, logits, b12p) or _edd_p(x, ei, logits, edd)):
+    if not (_b12p_p(x, ei, logits, b12p)):
         ext.dl_pooler_router(x, dl["w_pr"], ei, logits, dl["ws"], dl["cnt_p"], pdl_v)
     new_r = (tokens == 1 and dl.get("r_new", False)) or bool(r_t)
     xn, routed = _dl_route(ei, logits, local_start, dl, pdl_v if new_r else 0, 0 if new_r else 2, align=align)
@@ -2420,9 +2420,6 @@ def _sliding_fused_kernel(
 
 
 def _sliding_forward(data, qkv, state):
-    hook = state.get("w6p_slide_hook")
-    if hook is not None:
-        return hook(data, qkv, state)
     cfg = data["config"]
     if state.get("w6p_ph", False) and _w6p_shape(cfg):
         return _w6p_ph_attn(data, qkv, state)
@@ -3798,7 +3795,7 @@ def _say(msg: str) -> None:
     print(msg, flush=True)
 
 
-def _build_sk(name="muse_decode_sk_s3", cpp=None, cuda=None, extra=()):
+def _build_sk(name="muse_decode_sk_s3", extra=()):
     global _SK_ARCH_FLAGS
     t0 = time.perf_counter()
     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
@@ -3815,8 +3812,8 @@ def _build_sk(name="muse_decode_sk_s3", cpp=None, cuda=None, extra=()):
              f"<4,true,true>")
         ext = load_inline(
             name=name,
-            cpp_sources=_SK_CPP if cpp is None else cpp,
-            cuda_sources=_SK_CUDA if cuda is None else cuda,
+            cpp_sources=_SK_CPP,
+            cuda_sources=_SK_CUDA,
             functions=["sk_attn", "sk_attrs"],
             extra_cuda_cflags=["-O3", "-std=c++20", "-lineinfo"] + list(extra),
             verbose=False,
@@ -4514,7 +4511,7 @@ def _skf_state_check(state, device) -> "str | None":
     return None
 
 
-def _skf_setup(weights, state, device, t_prepare0) -> list:
+def _skf_setup(state, device, t_prepare0) -> list:
     lines = [_SKF_BUILD_LINE]
     t0 = time.perf_counter()
     decisions = {cls: "half-line incumbent (not reached)" for cls in SKF_CLASSES}
@@ -5152,7 +5149,7 @@ def _dl3_layer_checks(state, device, a, b, u, t8=False):
         return f"raised {type(e).__name__}: {str(e)[:300]}"
 
 
-def _dl3_attrs_line(state):
+def _dl3_attrs_line():
     names = ("Q (NF=1)", "O (NF=1)", "R new", "unpool (NF=1)", "P (NF=1)")
     for which, name in enumerate(names):
         a = list(_DL_EXT.dl3_attrs(which))
@@ -5175,7 +5172,7 @@ def _dl3_setup_bc(state, device):
     dl["r_new"] = False
     state["dl3"] = d3
     try:
-        _dl3_attrs_line(state)
+        _dl3_attrs_line()
     except Exception as e:
         reason = f"attribute query failed: {e!r}"
         _say3(reason)
@@ -7874,7 +7871,7 @@ def _skw_plant(data, q8, mode):
     kc[torch.tensor(rows, dtype=torch.long, device=kc.device)] = q0.to(FP8).view(torch.uint8)
 
 
-def _skw_kernel_case(state, device, band, gen, tag, batch, length, lens, kv_scale, cands, plant=None):
+def _skw_kernel_case(state, device, gen, tag, batch, length, lens, kv_scale, cands, plant=None):
     skw, sms = state["skw"], _sm_count(device)
     data = _cb_data(state, device, gen, SKW_WINDOW, batch, length, lens, kv_scale)
     tokens = data["config"]["tokens"]
@@ -7907,7 +7904,7 @@ def _skw_kernel_case(state, device, band, gen, tag, batch, length, lens, kv_scal
     return verdicts
 
 
-def _skw_kernel_suite(state, device, band, t_prepare0):
+def _skw_kernel_suite(state, device, band):
     cands = SKW_CANDS[band]
     gen = torch.Generator(device=device)
     gen.manual_seed(20261051 + (7 if band == "v1" else 0))
@@ -7921,7 +7918,7 @@ def _skw_kernel_suite(state, device, band, t_prepare0):
             problems.append(f"{tag}: skipped: deadline (case deadline {CB_CASE_DEADLINE:.0f}s passed)")
             del alive[:]
             return
-        for cand, why in _skw_kernel_case(state, device, band, gen, tag, batch, length, lens, kvs, todo, plant).items():
+        for cand, why in _skw_kernel_case(state, device, gen, tag, batch, length, lens, kvs, todo, plant).items():
             if why is not None:
                 problems.append(why)
                 if cand in alive:
@@ -8079,7 +8076,7 @@ def _skw_band_phase(state, device, rec, band, t_prepare0):
     _skw_attrs_print()
     res = _SKW_RES.get(band)
     if res is None:
-        alive, problems = _skw_kernel_suite(state, device, band, t_prepare0)
+        alive, problems = _skw_kernel_suite(state, device, band)
         _skw_say(f"{band} kernel-level gates: {len(alive)}/{len(SKW_CANDS[band])} candidates passed"
                  + (f"; problems: {'; '.join(problems[:3])}" if problems else ""))
         if not _cb_clean(state, {"_dirty": None}, f"SKW {band} kernel suite"):
@@ -8287,24 +8284,24 @@ def _prepare_main(weights, t_prepare0, whj):
             print(line, flush=True)
             paths += [line] if "PATH CHOSEN" in line else []
     if CAMPAIGN_B12P:
-        for line in _b12p_setup(weights, state, device, t_prepare0):
+        for line in _b12p_setup(state, device, t_prepare0):
             print(line, flush=True)
             paths.append(line)
     if CAMPAIGN_SKFULL:
-        for line in _skf_setup(weights, state, device, t_prepare0):
+        for line in _skf_setup(state, device, t_prepare0):
             print(line, flush=True)
             if not line.startswith(SKF_TAG + "   "):
                 paths.append(line)
     if CAMPAIGN_C320:
-        for line in _c320d_setup(weights, state, device, t_prepare0):
+        for line in _c320d_setup(state, device, t_prepare0):
             print(line, flush=True)
             paths.append(line)
     if CAMPAIGN_T128:
-        for line in _t128_setup(weights, state, device, t_prepare0):
+        for line in _t128_setup(state, device, t_prepare0):
             print(line, flush=True)
             paths.append(line)
     if CAMPAIGN_W6P_PERHEAD:
-        paths += _w6p_setup(weights, state, device, t_prepare0)
+        paths += _w6p_setup(state, device, t_prepare0)
     if CAMPAIGN_ENGINE_A_DL and EAD_ANATOMY:
         for name, stage in [("engineA", _ead_anatomy)] + ([("hotcold", _hc_anatomy)] if CAMPAIGN_HOTCOLD else []):
             for line in stage(state, device):
@@ -8619,7 +8616,7 @@ def kernel_fn(data, state):
         ea_t = ea is not None and tokens <= ea["max_t"] and ea["on"].get(tokens, False)
         xn, (topk_weights, topk_ids, local_ids, align), _ = _dl_forward(
             ffn_input, data["local_start"], dl, r_t=r_t, align=not (ea_t and dl.get("r_noalign", False)),
-            edd=state.get("edd"), b12p=state.get("b12p"))
+            b12p=state.get("b12p"))
         if ea_t:
             expert_output = _ead_core(ea["on"][tokens])(ea, xn, local_ids, topk_weights, 0, LOCAL_EXPERTS,
                                                          state["post_expert_norm_w"],
@@ -8692,10 +8689,6 @@ def _rt_read_flush(device):
     return torch.sum(_rt_flush_buf(device))
 
 
-def _rt_write_flush(device):
-    _rt_flush_buf(device).zero_()
-
-
 def _rt_graph(fn, warm=2):
     s = torch.cuda.Stream()
     s.wait_stream(torch.cuda.current_stream())
@@ -8711,12 +8704,11 @@ def _rt_graph(fn, warm=2):
     return g, out
 
 
-RT_FORK_PRIO = 0
 RT_FORK_DRAWS = 8
 _RT_FORK = {}
 
 
-def _rt_fork_stream(device, prio=RT_FORK_PRIO):
+def _rt_fork_stream(device, prio=0):
     avoid = {torch.cuda.current_stream(device).cuda_stream}
     cap = getattr(torch.cuda.graph, "default_capture_stream", None)
     if cap is not None:
@@ -8791,11 +8783,9 @@ def _rt_empty_graph(device):
     return _RT_EMPTY[key][0]
 
 
-def _rt_time(graphs, device, reps=RT_REPS, rounds=RT_ROUNDS, flush="read", baseline=True):
-    names = list(graphs)
+def _rt_time(graphs, device, reps=RT_REPS, rounds=RT_ROUNDS):
     gs = dict(graphs)
-    if baseline:
-        gs["__empty__"] = _rt_empty_graph(device)
+    gs["__empty__"] = _rt_empty_graph(device)
     order0 = list(gs)
     for _ in range(2):
         for n in order0:
@@ -8810,26 +8800,21 @@ def _rt_time(graphs, device, reps=RT_REPS, rounds=RT_ROUNDS, flush="read", basel
             if (rep + r) % 2:
                 order = order[::-1]
             for n in order:
-                if flush == "read":
-                    _rt_read_flush(device)
-                elif flush == "write":
-                    _rt_write_flush(device)
+                _rt_read_flush(device)
                 s_, e_ = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
                 s_.record()
                 gs[n].replay()
                 e_.record()
                 e_.synchronize()
                 ts[n].append(s_.elapsed_time(e_) * 1000.0)
-        if baseline:
-            b = _rt_stats(ts.pop("__empty__"))[0]
-            ts = {n: [v - b for v in vs] for n, vs in ts.items()}
-            ts["__baseline_us__"] = [b]
+        b = _rt_stats(ts.pop("__empty__"))[0]
+        ts = {n: [v - b for v in vs] for n, vs in ts.items()}
+        ts["__baseline_us__"] = [b]
         out.append(ts)
     return out
 
 
-def _rt_select(rounds_by_routing, incumbent, candidates, margin=RT_MARGIN, tight=RT_MARGIN_TIGHT_IQR,
-               prefer_within=0.0):
+def _rt_select(rounds_by_routing, incumbent, candidates, margin=RT_MARGIN, tight=RT_MARGIN_TIGHT_IQR):
     worst = {c: float("inf") for c in candidates}
     ok = {c: True for c in candidates}
     lines = []
@@ -8850,8 +8835,6 @@ def _rt_select(rounds_by_routing, incumbent, candidates, margin=RT_MARGIN, tight
             lines.append(f"{rlabel} round {ri + 1} (graph baseline {base:.2f} us subtracted): " + " | ".join(parts))
     good = [c for c in candidates if ok[c]]
     win = max(good, key=lambda c: worst[c]) if good else None
-    if win is not None and prefer_within > 0:
-        win = next(c for c in candidates if c in good and worst[c] >= worst[win] * (1.0 - prefer_within))
     return win, worst, lines
 
 
@@ -8891,10 +8874,10 @@ def _rt_tracer(tag, label):
     return _step
 
 
-def _rt_build(tag, name, cpp, cuda, functions, arch="9.0a", extra=()):
+def _rt_build(tag, name, cpp, cuda, functions):
     t0 = time.perf_counter()
     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
-    flags = ["-O3", "-std=c++20", "-lineinfo"] + list(extra)
+    arch, flags = "9.0a", ["-O3", "-std=c++20", "-lineinfo"]
     ext, err = None, ""
     try:
         from torch.utils.cpp_extension import load_inline
@@ -8992,13 +8975,8 @@ def _ea_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=
     y = torch.empty((tokens * TOP_K, hidden), device=x.device, dtype=torch.bfloat16)
     if trace is not None:
         trace("before ea_w13")
-    pf = ea.get("pf_t", {}).get(tokens, 0)
-    if pf:
-        ext.ea_w13_pf(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["ws13"], ea["tk13"], ea["err"], tokens,
-                      start, count, ea["grid"], ea["dq"], pdl13, ea["w2r"], pf)
-    else:
-        ext.ea_w13(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["ws13"], ea["tk13"], ea["err"], tokens,
-                   start, count, ea["grid"], ea["dq"], pdl13)
+    ext.ea_w13(x, topk_ids, ea["w13r"], ea["gs13"], h, local_ids, ea["ws13"], ea["tk13"], ea["err"], tokens, start,
+               count, ea["grid"], ea["dq"], pdl13)
     if trace is not None:
         trace("after ea_w13 / before ea_w2")
     ext.ea_w2(h, topk_ids, ea["w2r"], ea["gs2"], y, ea["ws2"], ea["tk2"], ea["err"], tokens, start, count,
@@ -9131,15 +9109,6 @@ void ea3_w13(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor wr, torch::T
              torch::Tensor local_ids, torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T,
              int64_t start, int64_t count, int64_t grid, int64_t dq, int64_t pdl);
 void ea3_w2(torch::Tensor h, torch::Tensor topk_ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor y,
-            torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T, int64_t start, int64_t count,
-            int64_t grid, int64_t dq, int64_t pdl);
-"""
-_EA5_CPP = r"""
-std::vector<int64_t> ea5_info();
-void ea5_w13(torch::Tensor x, torch::Tensor topk_ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor h,
-             torch::Tensor local_ids, torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T,
-             int64_t start, int64_t count, int64_t grid, int64_t dq, int64_t pdl);
-void ea5_w2(torch::Tensor h, torch::Tensor topk_ids, torch::Tensor wr, torch::Tensor gs, torch::Tensor y,
             torch::Tensor ws, torch::Tensor tickets, torch::Tensor err, int64_t T, int64_t start, int64_t count,
             int64_t grid, int64_t dq, int64_t pdl);
 """
@@ -11380,7 +11349,6 @@ void ea_combine(torch::Tensor y, torch::Tensor ids, torch::Tensor tw, torch::Ten
 }
 // ---- end include rewrite/lib/cuda/ea_combine.cuh ----
 """
-EA_PREFER_WITHIN = 0.0
 
 
 def _ea2_src_without(names):
@@ -12162,7 +12130,7 @@ def _ea6_source():
     return inc + common + kern + _EA6_SRC_BODY
 
 
-def _ea6_build_start(t_prepare):
+def _ea6_build_start():
     import hashlib
     import threading
     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
@@ -12835,7 +12803,7 @@ def _ea4x_source():
     return "".join(out) + _EA4X_SRC_BODY
 
 
-def _ea4x_build_start(t_prepare):
+def _ea4x_build_start():
     import hashlib
     import threading
     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
@@ -13088,7 +13056,7 @@ def _ead_gate(state, device, ok, t_prepare0):
         setters.update({e: setter(e) for e in cands})
         per = _ead_layer_gate(state, device, cls, setters, 20261031 + cls)
         on[cls] = False
-        win, worst, glines = _rt_select(per, "master", cands, prefer_within=EA_PREFER_WITHIN)
+        win, worst, glines = _rt_select(per, "master", cands)
         pin = EAD_PIN.get(cls)
         if pin and pin in cands:
             win = pin
@@ -13238,7 +13206,7 @@ def _ead_big(weights, state, device, t_prepare0):
         setters.update({e: setter(e) for e in cands})
         per = _ead_layer_gate(state, device, tokens, setters, 20261045 + tokens)
         ea["on"][tokens] = False
-        win, wr, glines = _rt_select(per, "master", cands, prefer_within=EA_PREFER_WITHIN)
+        win, wr, glines = _rt_select(per, "master", cands)
         for ln in glines:
             print(f"{EAD_TAG} big gate {ln}", flush=True)
         line = f"{EAD_TAG} big gate T={tokens} (whole layer): worst ratio " + ", ".join(f"{c} {wr[c]:.3f}" for c in cands)
@@ -13470,8 +13438,9 @@ EAD6_V6_SWITCH = 0.005
 def _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace=None, pdl13=0, scratch=None, fast=0,
                        enc=(0, 0)):
     ext = ea["ext6"]
-    k1 = (ea["ext6e"], ea[f"w13e{enc[0]}"]) if enc[0] else (ext, ea["w13r"])
-    k2 = (ea["ext6e"], ea[f"w2e{enc[1]}"]) if enc[1] else (ext, ea["w2r"])
+    (q1, l1), (q2, l2) = EAE_ARMS.get(enc[0], (0, 0)), EAE_ARMS.get(enc[1], (0, 0))
+    k1 = (ea["ext6e"], ea[f"w13e{q1}"]) if q1 else (ext, ea["w13r"])
+    k2 = (ea["ext6e"], ea[f"w2e{q2}"]) if q2 else (ext, ea["w2r"])
     tokens, hidden = x.shape
     if scratch is None:
         h = torch.empty((32, tokens, ea["inter"]), device=x.device, dtype=torch.bfloat16)
@@ -13488,11 +13457,11 @@ def _ead6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trac
     if trace is not None:
         trace("before ea6_w13")
     k1[0].ea6_w13(x, topk_ids, k1[1], ea["gs13"], h, local_ids, ea["err"], nodbg, tokens, start, count, grid, minb,
-                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if enc[0] == 4 else 0))
+                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if q1 == 4 else 0) | (1024 if l1 else 0))
     if trace is not None:
         trace("after ea6_w13 / before ea6_w2")
     k2[0].ea6_w2(h, topk_ids, k2[1], ea["gs2"], y, ea["err"], nodbg, tokens, start, count, g2, minb,
-                 1 | (2 if ea["ea6_cores"] else 0) | (8 if fast & 2 else 0) | (4096 if enc[1] == 4 else 0))
+                 1 | (2 if ea["ea6_cores"] else 0) | (8 if fast & 2 else 0) | (4096 if q2 == 4 else 0) | (1024 if l2 else 0))
     if trace is not None:
         trace("after ea6_w2 / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
@@ -14054,7 +14023,7 @@ def _ead4x_copy_check(state, device, tokens):
     return not fails, (f"copy PASS({n})" if not fails else f"copy FAIL({fails[0][:60]})")
 
 
-def _ead4x_stage(weights, state, device, t_prepare0):
+def _ead4x_stage(state, device, t_prepare0):
     ea = state["ea"]
     on = ea["on"]
     prev = dict(on)
@@ -14215,10 +14184,10 @@ def _ead_setup(weights, state, device, t_prepare0):
                 or tuple(weights["w2"].shape) != (LOCAL_EXPERTS, D_EXPERT, D_EXPERT // 2)):
             raise RuntimeError(f"unsupported expert shapes {tuple(weights['w13'].shape)} / {tuple(weights['w2'].shape)}")
         if CAMPAIGN_EA6:
-            _ea6_build_start(t_prepare0)
+            _ea6_build_start()
         if CAMPAIGN_EA4X:
             try:
-                _ea4x_build_start(t_prepare0)
+                _ea4x_build_start()
             except Exception as e:
                 _EA4X_BUILD["result"] = (None, f"build start raised {type(e).__name__}: {str(e)[:120]}", 0.0)
         ext, err_text, dt, occs, ilines = _ea2_build_ext(EAD_TAG, EAD_EXT_NAME, t_prepare0, EAD_START_DEADLINE_S)
@@ -14310,7 +14279,7 @@ def _ead_setup(weights, state, device, t_prepare0):
         if CAMPAIGN_EA6:
             lines.extend(_ead6_stage(weights, state, device, t_prepare0))
         if CAMPAIGN_EA4X:
-            lines.extend(_ead4x_stage(weights, state, device, t_prepare0))
+            lines.extend(_ead4x_stage(state, device, t_prepare0))
         if any(state["ea"]["on"].values()):
             lines.append(_ead_sweep(state, device))
             if time.perf_counter() - t_prepare0 > EAD_COPY_DEADLINE_S:
@@ -14576,9 +14545,6 @@ def _dsa_forward(layer, x, w, dsa):
 
 
 def _dsa_gemm(layer, x, w, state):
-    out = _edd_dense(layer, x, state.get("edd"))
-    if out is not None:
-        return out
     dsa = state.get("dsa")
     if dsa is not None and dsa["on"][layer].get(x.shape[0], False) and _dsa_route_ok(layer, x, w, dsa):
         return _dsa_forward(layer, x, w, dsa)
@@ -15860,11 +15826,10 @@ def _wg_bank(weights, start, count):
 
 
 def _wg_gemm(state, which, wq, wgs, sorted_ids, block_experts, n_padded, routes, n_tiles, k, out):
-    pdl = 1 if (which == 1 and state.get("wg_pdl", False)) else 0
     args = (which, state["wg_xs"] if which == 0 else state["wg_hs"], wq, wgs, sorted_ids, block_experts, n_padded,
             routes, n_tiles, k, out, state["wg_grid"], state["wg_err"])
     if state.get("wg_ext_pdl", False):
-        state["wg_ext"].wg_gemm(*args, pdl)
+        state["wg_ext"].wg_gemm(*args, 0)
     else:
         state["wg_ext"].wg_gemm(*args)
 
@@ -16195,8 +16160,7 @@ def _wh_pair(state, v, sh, bh, nh, routes, size_n, size_k, out, sc=None):
     ext, grid, err = state["whk_ext"], state["wg_grid"], sc["whk_err"]
     ext.wh_gemm(0, sc["wg_xs"], b["q13"], wb["gs13"], sh, bh, nh, routes, size_n // 64, size_k, sc["wg_hs"], grid,
                 err, 0, v)
-    ext.wh_gemm(1, sc["wg_hs"], b["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, out, grid, err,
-                1 if state.get("wg_pdl", False) else 0, v)
+    ext.wh_gemm(1, sc["wg_hs"], b["q2"], wb["gs2"], sh, bh, nh, routes, size_k // 128, size_n, out, grid, err, 0, v)
 
 
 def _wh_run(state, v, x, al, out, sc=None):
@@ -16658,14 +16622,13 @@ def _hcw_build(weights, state, device, t_prepare0):
     _wg_attach_scratch(state, ext, device, weights["w2"].shape[1], D_EXPERT)
     state["wg_banks"] = {(0, LOCAL_EXPERTS): _wg_bank(weights, 0, LOCAL_EXPERTS)}
     state["wg_ext_pdl"] = True
-    state["wg_pdl"] = False
     torch.cuda.synchronize()
     print(f"{HC_TAG} wgmma path ready for the hybrid's hot half: build + retile {time.perf_counter() - t0:.1f} s",
           flush=True)
     return None
 
 
-def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, part="all", fork=None):
+def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, part="all"):
     bank = state["bank"]
     num_tokens, size_k = x.shape
     size_n = bank["size_n"]
@@ -16677,24 +16640,15 @@ def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, pa
     else:
         sc, bc, nc, sh, bh, nh = align
         classes = ((sc, bc, nc, HC_COLD_BSM), (sh, bh, nh, bsm_hot))
-    fk = state["hc"].get("fk") or {}
-    fork = (fk.get("on") and _hc_class(num_tokens) == HCF_CLS) if fork is None else fork
-    fork = bool(fork) and bsm_hot in HC_WG_HOT and part in ("all", "both")
     if bsm_hot in HC_WG_HOT:
         routes = num_tokens * TOP_K
         cache3 = torch.empty((routes, size_k), device=x.device, dtype=x.dtype)
         if fill is not None:
             cache3.fill_(fill)
         if part != "cold":
-            if fork:
-                fk["e0"].record()
-                fk["s"].wait_event(fk["e0"])
-            with torch.cuda.stream(fk["s"] if fork else None):
-                state["wg_ext"].wg_gather(x, sh, bh, nh, routes, LOCAL_EXPERTS, state["wg_xs"])
-                _wh_pair(state, (state.get("whk") or {}).get(_hc_class(num_tokens)), sh, bh, nh, routes, size_n, size_k,
-                         cache3)
-                if fork:
-                    fk["e1"].record()
+            state["wg_ext"].wg_gather(x, sh, bh, nh, routes, LOCAL_EXPERTS, state["wg_xs"])
+            _wh_pair(state, (state.get("whk") or {}).get(_hc_class(num_tokens)), sh, bh, nh, routes, size_n, size_k,
+                     cache3)
         classes = ()
     cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
     if classes:
@@ -16738,17 +16692,15 @@ def _hc_experts(x, local_ids, topk_weights, align, state, bsm_hot, fill=None, pa
                 LOCAL_EXPERTS, ea["grid"], ea["dq"], cb)
             k2(h3, cold_ids, ea["w2r"], ea["gs2"], cache3, ea["ws2"], ea["tk2"], ea["err"], num_tokens, 0,
                LOCAL_EXPERTS, ea["grid"], ea["dq"], ea["pdl"] | cb)
-    if fork:
-        torch.cuda.current_stream().wait_event(fk["e1"])
     if part != "all":
         return cache3
-    return _hc_tail(cache3, local_ids, topk_weights, state, 0 if fork else 1)
+    return _hc_tail(cache3, local_ids, topk_weights, state)
 
 
-def _hc_tail(cache3, local_ids, tw, state, pdl=1):
+def _hc_tail(cache3, local_ids, tw, state):
     t = local_ids.shape[0]
     if _t128_flags(state, t).get("comb"):
-        return _t128_comb(cache3, local_ids, tw, state, pdl)
+        return _t128_comb(cache3, local_ids, tw, state)
     return fused_post_expert_norm_weighted_sum(
         cache3.view(t, TOP_K, -1), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
         slot_expert_ids=local_ids)
@@ -17436,17 +17388,6 @@ def _hcx_cold(state, device, t_prepare0):
             f"; {time.perf_counter() - t0:.1f} s, prepare at {time.perf_counter() - t_prepare0:.1f} s")
 
 
-HCF_CLS = 128
-
-
-def _edd_dense(layer, x, edd):
-    return None
-
-
-def _edd_p(x, ei, logits, edd):
-    return False
-
-
 CAMPAIGN_T128 = True
 T128_TAG = "[w6b-t128diet]"
 T128_TS = (128, 256)
@@ -17538,9 +17479,9 @@ def _t128_side(x, router_input, ls, tokens, hc_bsm, state, f):
     return topk_weights, topk_ids, local_ids, tw, align
 
 
-def _t128_comb(y, lid, tw, state, pdl=1):
+def _t128_comb(y, lid, tw, state):
     out = torch.empty((lid.shape[0], D_EXPERT), device=y.device, dtype=torch.bfloat16)
-    state["ea"]["ext"].ea_combine(y, lid, tw, state["post_expert_norm_w"], out, POST_NORM_EPS, pdl)
+    state["ea"]["ext"].ea_combine(y, lid, tw, state["post_expert_norm_w"], out, POST_NORM_EPS, 1)
     return out
 
 
@@ -17692,7 +17633,7 @@ def _t128_layer(state, device, t, cells, seed):
         ", ".join(f"{k} {v:.2g}" for k, v in worst.items())
 
 
-def _t128_setup(weights, state, device, t_prepare0):
+def _t128_setup(state, device, t_prepare0):
     t0 = time.perf_counter()
     out, why = [], {t: "off" for t in T128_TS}
 
@@ -18572,7 +18513,6 @@ def _b12p_layer_check(state, device):
     b12p = state["b12p"]
     master = dict(state)
     master["b12p"] = None
-    master["edd"] = None
     master["dsa"] = None
     gen = torch.Generator(device=device)
     gen.manual_seed(20261084)
@@ -18658,7 +18598,7 @@ def _b12p_profile_check(state, device):
     return ok, f"{B12P_TAG} profiler T=1: b12p_kernel x{nb}, dl_pooler_router_kernel x{ni} -> {'ok' if ok else 'FAIL'}"
 
 
-def _b12p_setup(weights, state, device, t_prepare0):
+def _b12p_setup(state, device, t_prepare0):
     t0 = time.perf_counter()
     notes = []
     why = "off"
@@ -19997,7 +19937,7 @@ def _c320d_profile_check(state, device):
                 f"{'ok' if ok else 'FAIL'}")
 
 
-def _c320d_setup(weights, state, device, t_prepare0):
+def _c320d_setup(state, device, t_prepare0):
     t0 = time.perf_counter()
     state["c320d"] = {"on": False, "trig": 0}
     notes = {}
@@ -20390,7 +20330,7 @@ def _w6p_clean(state) -> int:
     return left
 
 
-def _w6p_setup(weights, state, device, t_prepare0):
+def _w6p_setup(state, device, t_prepare0):
     t0 = time.perf_counter()
     state["w6p_ph"] = False
     lines, why, gx, safe = [], None, None, False
@@ -20503,7 +20443,7 @@ EAE_ROUNDS = 5
 EAE_REPS = 15
 EAE_SEED = 20261099
 EAE_T = (1, 8, 16, 32, 128, 256)
-EAE_T1 = ("33", "44", "30")
+EAE_T1 = ("33", "44", "30", "53", "55", "64", "66")
 EAE_CANARY = {128: (144, 176), 256: (200, 240)}
 EAE_PERM = (3, 4, 5, 10, 11, 9, 6, 7, 8, 12, 13, 14, 16, 17, 18, 15, 19, 20, 21, 26, 27, 25, 22, 23, 24, 28, 29, 30, 0,
             1, 2, 31)
@@ -20701,6 +20641,48 @@ _EAE_LT_LOOP = r"""  if constexpr (DQ >= 3 && !DEFER) {
     return;
   }
 """
+_EAE_T1XL = r"""    if constexpr (LT != 0) {
+      const int g = lane >> 2;
+      const int xr = (lane & 7) < T ? (lane & 7) : T - 1;
+      const uint32_t xb = xs + static_cast<uint32_t>(xr * eak::XROW + ((lane >> 3) & 1) * 16 + (lane >> 4) * 32);
+      const uint32_t m16 = rt16(T), m78 = rtv(T, 0x78007800u);
+      const uint32_t rb = smem_u32(ring) + static_cast<uint32_t>(warp * eak::REC);
+      uint32_t recl = rb + static_cast<uint32_t>(lane * 16);
+      uint32_t recs = rb + static_cast<uint32_t>(4096 + g * (EQ == 4 ? 64 : 32));
+      uint32_t fb = full0, ph = 0u, sl = 0u;
+      uint32_t pa = smem_u32(P) + static_cast<uint32_t>((warp * 32 + lane) * 16);
+      uint32_t pb = pfull0, pq = 1u, ps = 1u;
+      mbar_wait(full0, 0u, err, dead);
+      if (W13) griddep_launch();
+      for (int cnt = r;;) {
+        if (!mbar_try(fb, ph)) mbar_wait(fb, ph, err, dead);
+        float acc[1][2][4] = {};
+        eak::consume_lt<EQ, 1, 1>(recl, recs, xb, m16, m78, acc);
+        __syncwarp();
+        if (lane == 0) mbar_arrive(fb + 8u * D);
+        const float4 cv = make_float4(acc[0][0][0] + acc[0][1][0], acc[0][0][1] + acc[0][1][1],
+                                      acc[0][0][2] + acc[0][1][2], acc[0][0][3] + acc[0][1][3]);
+        if (!mbar_try(pb + 16u, pq)) mbar_wait(pb + 16u, pq, err, dead);
+        asm volatile("st.shared.v4.f32 [%0], {%1, %2, %3, %4};\n" :: "r"(pa), "f"(cv.x), "f"(cv.y), "f"(cv.z), "f"(cv.w)
+                     : "memory");
+        __syncwarp();
+        if (lane == 0) mbar_arrive(pb);
+        const uint32_t wrap = sl == static_cast<uint32_t>(D - 1) ? 1u : 0u;
+        const uint32_t st = wrap ? 0u - static_cast<uint32_t>(D - 1) : 1u;
+        ph ^= wrap;
+        sl = wrap ? 0u : sl + 1u;
+        eak::imad_step(recl, st, static_cast<uint32_t>(RECB));
+        eak::imad_step(recs, st, static_cast<uint32_t>(RECB));
+        eak::imad_step(fb, st, 8u);
+        pq ^= ps >> 31;
+        eak::imad_step(pa, ps, 4096u);
+        eak::imad_step(pb, ps, 8u);
+        ps = 0u - ps;
+        if (--cnt == 0) break;
+      }
+      return;
+    }
+"""
 def _eae_rep(s, a, b, n=1):
     if s.count(a) != n:
         raise RuntimeError(f"ea-enc anchor x{s.count(a)}: {a[:60]!r}")
@@ -20730,7 +20712,7 @@ def _eae_src4x():
     return _eae_rep(src, "(pdl & 256) != 0\n      ?", "(pdl & 4096) != 0\n      ?", 2)
 
 
-def _eae_src4xl():
+def _eae_lts():
     s = _EAE_CONSUME[_EAE_CONSUME.index("template"):]
     for a, b in (("consume_e(const uint8_t* rec, uint32_t xb, int lane, int n,",
                   "consume_lt(uint32_t recl, uint32_t recs, uint32_t xb, uint32_t m16, uint32_t m78,"),
@@ -20739,10 +20721,15 @@ def _eae_src4xl():
                  ("rec + 4096 + (g * 4 + kq) * 16", "recs + kq * 16"), ("rec + 4096 + g * 32 + kq * 8", "recs + kq * 8"),
                  ("rec + 4096 + (g + 8) * 32 + kq * 8", "recs + 256 + kq * 8")):
         s = _eae_rep(s, a, b)
-    s = s.replace("*reinterpret_cast<const uint4*>(rec", "lds128(rec").replace("*reinterpret_cast<const uint2*>(rec", "lds64(rec")
-    src = _eae_src4x()
-    a = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
-    src = _eae_rep(src, a, _EAE_LT + s + a)
+    return _EAE_LT + s.replace("*reinterpret_cast<const uint4*>(rec", "lds128(rec").replace(
+        "*reinterpret_cast<const uint2*>(rec", "lds64(rec")
+
+
+_EAE_CA = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
+
+
+def _eae_src4xl():
+    src = _eae_rep(_eae_src4x(), _EAE_CA, _eae_lts() + _EAE_CA)
     i = src.index("  for (int q = b, i = 0; q < e; ++q, ++i) {\n", src.index("namespace eak4x {"))
     src = src[:i] + _EAE_LT_LOOP + src[i:]
     a = "  cudaLaunchConfig_t cfg = ea4x_cfg(grid, pdl, attr);\n"
@@ -20750,18 +20737,23 @@ def _eae_src4xl():
 
 
 def _eae_src6():
-    src = _eae_dev("#define EA6_FAST 1\n" + _ea6_source())
+    src = _eae_rep(_eae_dev("#define EA6_FAST 1\n" + _ea6_source()), _EAE_CA, _eae_lts() + _EAE_CA)
     src = _eae_rep(src, "template <bool W13, int D, int MINB, bool FAST = false>\n",
-                   "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2>\n")
+                   "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2, int LT = 0>\n")
+    a = "    const uint32_t xs = smem_u32(bsm) + static_cast<uint32_t>(warp * T * eak::XROW);\n"
+    src = _eae_rep(src, a, a + _EAE_T1XL)
     src = _eae_rep(src, "eak::consume<2, 1>(ring", "eak::consume<EQ, 1>(ring")
     for w, d in (("true", "D13"), ("false", "D2")):
         k = f"eak6::ea6_kernel<{w}, eak6::{d}, "
-        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>")
+        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>;\n"
+                       f"  if (flags & 1024) fn = (flags & 4096) ? &{k}2, true, 4, 1> : &{k}2, true, 3, 1>")
         src = _eae_rep(src, f"    fn = &{k}2, true>;\n", "")
         src = _eae_rep(src, f"(r, {k}2>, {w})", f"(r, {k}2, true, 3>, {w})")
         src = _eae_rep(src, f"(r, {k}1>, {w})", f"(r, {k}2, true, 4>, {w})")
         src = _eae_rep(src, f"  ea6_one_info(r, {k}2, true>, {w});\n", "")
-    return src
+    return _eae_rep(src, "  ea6_cmb_info(r);\n", "  ea6_cmb_info(r);\n" + "".join(
+        f"  ea6_one_info(r, eak6::ea6_kernel<{w}, eak6::{d}, 2, true, {q}, 1>, {w});\n" for w, d in (("true", "D13"),
+                                                                                              ("false", "D2")) for q in (3, 4)))
 
 
 
@@ -21045,9 +21037,12 @@ def _eae_run(state, weights, device, t0, job, L):
         if ext is None or ea.get(need) is None:
             continue
         rows = _eae_info(ext, w)
-        at.append(f"{key} " + " ".join(f"{n}{r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4 ", "K1e5 ", "K2e4 ", "K2e5 "), rows)))
+        at.append(f"{key} " + " ".join(f"{n}{r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4 ", "K1e5 ", "K2e4 ", "K2e5 ", "",
+                                                                                 "K1xl4 ", "K1xl5 ", "K2xl4 ", "K2xl5 "), rows) if n))
         for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
             ok[(key, kk, dq)] = bool(rows[i][0]) and (rows[i][2] == 0 and rows[i][3] >= 2 if key == "4xl" else rows[i][3] >= 1)
+            if len(rows) > 8:
+                ok[("6xl", kk, dq)] = bool(rows[5 + i][0]) and rows[5 + i][2] == 0 and rows[5 + i][3] >= rows[i][3] >= 1
     t = time.perf_counter()
     lo, hi, bad = 255, 0, 0
     for k in ("w13r", "w2r"):
@@ -21076,8 +21071,8 @@ def _eae_run(state, weights, device, t0, job, L):
             why[T] = "race cap / deadline"
             continue
         if kind == "t1":
-            arms = [a for a in EAE_T1 if all(c == "0" or (c in dqs and ok.get(("6", k, int(c))))
-                                             for c, k in zip(a, ("K1", "K2")))]
+            arms = [a for a in EAE_T1 if all(c == "0" or (str(EAE_ARMS[int(c)][0]) in dqs and ok.get(
+                ("6xl"[:1 + 2 * EAE_ARMS[int(c)][1]], k, EAE_ARMS[int(c)][0]))) for c, k in zip(a, ("K1", "K2")))]
         else:
             arms = [str(int(a) + 2 * j) for j, k in enumerate(("4x", "4xl")) for a in dqs
                     if ok.get((k, "K1", int(a))) and ok.get((k, "K2", int(a)))]
@@ -21090,9 +21085,9 @@ def _eae_run(state, weights, device, t0, job, L):
              + (f" tk/err {nb}" if nb else ""))
         if good:
             med = lambda k: sorted(rat[k])[len(rat[k]) // 2]
-            ge = [a for a in good if a not in "56"]
+            ge = [a for a in good if not set(a) & set("56")]
             a0 = a = min(ge or good, key=med)
-            for x in [x for x in good if x in "56" and ge]:  # ties keep the E arm
+            for x in [x for x in good if set(x) & set("56") and ge]:  # ties keep the E arm
                 rat[x + "e"] = [p / max(q, 1e-6) for p, q in zip(rat[x], rat[a0])]
                 s += f" | {_eae_lab(x)}/{_eae_lab(a0)} {_eae_rs(rat[x + 'e'])}"
                 if med(x + "e") < EAE_XL_TIE and (a == a0 or med(x) < med(a)):
@@ -21152,7 +21147,7 @@ def _eae_run(state, weights, device, t0, job, L):
     for ln in txt:
         L.append(f"{EAE_TAG} {ln}")
     L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
-        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") + " (no XL arm: ea6)" * (T == 1) for T in EAE_T)
+        f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
         + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
 
 
@@ -21174,4 +21169,4 @@ def _eae_rs(v):
 
 def _eae_info(ext, w):
     v = [int(t) for t in (ext.ea4x_info() if w == 5 else ext.ea6_info())]
-    return [(v[w * i], v[w * i + 1], v[w * i + 2], v[w * i + w - 1]) for i in range(4)]
+    return [(v[w * i], v[w * i + 1], v[w * i + 2], v[w * i + w - 1]) for i in range(len(v) // w)]
