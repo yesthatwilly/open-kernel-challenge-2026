@@ -40,12 +40,12 @@ evidence: >
   board 2.0201 judged T=128 as plain E5 (702f1004 E5/m 0.955)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-30T000536Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-30T000536Z
 base_sha: f03b88bbe6e9b548215edbe8af217b4a5c7b20da
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
@@ -64,6 +64,14 @@ attempt_file: 2026-10-30T001931Z-check-t128-hybrid-eacombine-judge-race.md
 prepared_at: 2026-10-30T001931Z
 job: 4c5032bc57be4cf5
 dispatched_at: 2026-10-30T001944Z
+outcome: neutral
+verdict_detail: unproven-vs-best
+speedup: 2.0420524662690562
+speedup_ci: [2.0114216792750206, 2.072683253263092]
+harvested_at: 2026-10-30T002712Z
+best_at_harvest: 2.035180868162415
+promotion: null
+mechanism: null
 ---
 
 # t128-hybrid-eacombine-judge-race
@@ -208,3 +216,29 @@ okc_lint (`python3 -I .claude/skills/churnsubs/bin/okc_lint.py <worktree>/muse_m
 - Result: `OK with warnings`, rc 0, with 10 `warn dtype` and 202 `warn host-sync`.
 - Master has 10 / 194. The 8 new host-sync warnings are all in `_t128g_phase`, each marked "outside kernel_fn's call graph; fine in prepare()".
 - py_compile OK; __pycache__ removed.
+
+## Result
+
+- job `4c5032bc57be4cf5` (check), status done, passed True, tests 5/5
+- speedup 2.0421x, 95% CI [2.0114, 2.0727], score 6585.775939719688 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 2.035180868162415, "ci": [2.0046531551399784, 2.065708581184851], "job": "575820c989c8412b"}; base result: muse_moe_w4a16/hypotheses/BEST.result.json
+- **outcome: neutral** (unproven-vs-best)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/t128-hybrid-eacombine-judge-race.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/t128-hybrid-eacombine-judge-race.patch`; branch `hyp/muse_moe_w4a16/t128-hybrid-eacombine-judge-race`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 28.02 | 29.15 | 0.9923 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 102.96 | 102.95 | 0.9971 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 132.13 | 135.12 | 0.9987 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 76.62 | 73.11 | 1.0463 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 220.72 | 226.82 | 0.9973 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 264.5 | 269.23 | 0.9896 | flat |
+
+gained on verify_1 verify_1. Expected hit: 0/2. Noise ±1.5%.
+
+## Follow-ups
+
+- unproven-vs-best: faster than the best but inside the drift margin; churn queues one confirm rerun when the margin allows (CONFIRM_MIN), and pools the two runs.
+

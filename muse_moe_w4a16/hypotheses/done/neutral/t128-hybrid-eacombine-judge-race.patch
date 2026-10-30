@@ -1,0 +1,275 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index d80df5ec..c49445a8 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -3383,6 +3383,9 @@ def _prepare_main(weights, t_prepare, whj):
+     if eaej is not None:
+         for line in _eae_phase(state, weights, device, t_prepare, eaej):
+             print(line[:400], flush=True)
++    if CAMPAIGN_HYBRID and CAMPAIGN_T128G:  # after [ea-enc] (plain T=128 = E5) and [hh-wh] (wh5ds bank)
++        for line in _t128g_phase(weights, state, device, t_prepare):
++            print(line[:700], flush=True)
+     return state
+ 
+ 
+@@ -13687,6 +13690,16 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
+                count, ea["grid"], ea["dq"], ea["pdl"] | cb)
+     if fk is not None:
+         torch.cuda.current_stream().wait_event(fk["e1"])
++    if (state["hm"].get("eacmb") or {}).get(num_tokens, 0):  # [t128g] gon: master's plain-E tail (ea_combine)
++        ea = state["ea"]
++        out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
++        if ea.get("cmb_t", {}).get(num_tokens, 0):
++            ea["ext"].ea_combine(cache3, local_ids, tw, state["post_norm_w"], out, POST_NORM_EPS, 1)
++        else:
++            _post_norm_combine_kernel[(num_tokens,)](
++                cache3, local_ids, tw, state["post_norm_w"], out, size_k, POST_NORM_EPS,
++                TOP_K_C=TOP_K, BLOCK_H=triton.next_power_of_2(size_k), num_warps=8)
++        return (out, cache3) if keep else out
+     y = cache3.view(num_tokens, TOP_K, size_k)
+     out = fused_post_expert_norm_weighted_sum(
+         y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
+@@ -14106,6 +14119,7 @@ def _hm_setup(weights, state, device, t_prepare):
+         for ln in wlines:
+             say(ln)
+         ok, kwhy, klines = _hm_canary(weights, bank, state, device, t_prepare, built)
++        state["hm"]["c128"] = (bool(ok.get((T128G_T, T128G_H), False)), kwhy.get((T128G_T, T128G_H)))
+         for ln in klines:
+             if "FAIL H=" not in ln:
+                 print(ln, flush=True)
+@@ -14114,6 +14128,10 @@ def _hm_setup(weights, state, device, t_prepare):
+         if CAMPAIGN_HMF:
+             fcodes = _hmf_prepare(weights, bank, state, device, t_prepare, ok)
+         for tokens in HM_TOKENS:
++            if CAMPAIGN_T128G and tokens == T128G_T:  # [t128g]: the judge-draw race after [ea-enc] decides T=128
++                why[tokens] = f"old {HM_TAG} T={tokens} gate OFF (superseded by {T128G_TAG})"
++                _hmf_say(f"{HMF_TAG} Q1 T={tokens}: no race (old gate OFF, {T128G_TAG} decides) -> master")
++                continue
+             cands = [h for h in HM_BSMS if ok.get((tokens, h), False)]
+             if not cands:
+                 why[tokens] = ("; ".join(sorted({kwhy[(tokens, h)] for h in HM_BSMS if (tokens, h) in kwhy}))[:300]
+@@ -15275,7 +15293,7 @@ def _wh_phase(state, weights, device, t0, job):
+     whk[WH_T] = pick[1] if pick else None
+     if pick:
+         why = cpy
+-    if not pick or not pick[1] & 8:
++    if (not pick or not pick[1] & 8) and not CAMPAIGN_T128G:  # [t128g] pops it after its race when unused
+         state.pop("whk_x5", None)
+     if not pick or not pick[1] & 1:
+         state.pop("whk_bank", None)
+@@ -18610,3 +18628,215 @@ def _eae_run(state, weights, device, t0, job, L):
+     L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
+         f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
+         + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
++
++
++# ---- [t128g] moe T=128: forked H=-16 hybrid 'gon' (wh5ds hot + E5 cold + ea_combine tail) vs plain E5, raced on
++# K raw judge-like draws through kernel_fn after [ea-enc] and [hh-wh]. Route gon only if the MEAN of the per-draw median
++# ratios is <= T128G_MEAN, no draw's median is > T128G_VETO, every draw is within the canary bound vs fp32 (gon is not
++# bitwise vs plain: its hot half runs on wgmma), the forced-cold control is bitwise (gon == plain when no expert is hot),
++# wh5ds == master wg bitwise on the T=128 hot half, graph == eager, err words clean and the copy check passes.
++CAMPAIGN_T128G = True
++T128G_TAG = "[t128g]"
++T128G_T = 128
++T128G_H = -16
++T128G_WH = 14
++T128G_E = 4
++T128G_K = 12
++T128G_ROUNDS = 6
++T128G_REPS = 21
++T128G_SEED = 20261301
++T128G_MEAN = 0.97
++T128G_VETO = 1.03
++T128G_START_S = 230.0
++T128G_DRAW_S = HM_GATE_DEADLINE_S
++
++
++class _T128GMiss(Exception):
++    pass
++
++
++def _t128g_phase(weights, state, device, t0):
++    """prepare() only, last. Never raises: any miss leaves T=128 on plain E5 (kernel_fn's existing route). Returns
++    [lines]; every graph and draw buffer is freed before it returns."""
++    L, T = [], T128G_T
++
++    def say(s):
++        L.append(f"{T128G_TAG} {s}")
++
++    def mark(s):
++        torch.cuda.synchronize()
++        print(f"{T128G_TAG} > {s}", flush=True)
++
++    hm, ea = state.get("hm") or {}, state.get("ea") or {}
++    whk = state.setdefault("whk", {})
++    cx, ce, eac = hm.setdefault("cold_x", {}), hm.setdefault("cold_e", {}), hm.setdefault("eacmb", {})
++    hon, hfon = hm.setdefault("on", {}), hm.setdefault("fon", {})
++    keep = (hon.get(T, 0), hfon.get(T, False), whk.get(T), cx.get(T), ce.get(T), eac.get(T))
++    plain = ea.get("on", {}).get(T)
++    base = str(plain).partition(":e")[0]
++
++    def setarm(g):
++        if g:
++            hon[T], hfon[T], whk[T], cx[T], ce[T], eac[T] = T128G_H, True, T128G_WH, base, T128G_E, 1
++        else:
++            hon[T], hfon[T], whk[T], cx[T], ce[T], eac[T] = keep
++
++    ts = time.perf_counter() - t0
++    chosen, why, draws, cpy = False, "", [], "not run"
++    say(f"old {HM_TAG} T={T} gate OFF (no H raced there; hm.on[{T}]={keep[0]}); race start at {ts:.1f}s, start "
++        f"deadline {T128G_START_S:.0f}s, mid-race {T128G_DRAW_S:.0f}s, copy {HM_COPY_DEADLINE_S:.0f}s, cap 300s")
++    try:
++        if ts > T128G_START_S:
++            raise _T128GMiss(f"start deadline: prepare at {ts:.0f}s > {T128G_START_S:.0f}s")
++        if keep[0]:
++            raise _T128GMiss(f"T={T} already hybrid H{keep[0]}")
++        if not str(plain).endswith(f":e{T128G_E}"):
++            raise _T128GMiss(f"plain T={T} route {plain} is not E5 ([ea-enc] did not pick E5)")
++        if base not in EA4X_ARMS or EA4X_ARMS[base] & 256:
++            raise _T128GMiss(f"plain base {base} is not a v4x s twin")
++        if ea.get("exte") is None or "w13e4" not in ea or "w2e4" not in ea:
++            raise _T128GMiss("E module / E5 copies missing")
++        c128 = hm.get("c128") or (False, "no canary")
++        if not c128[0]:
++            raise _T128GMiss(f"{HM_TAG} canary T={T} H{T128G_H} not clean ({str(c128[1])[:80]})")
++        for k in ("whk_x5", "whk_ext", "whk_err", "wg_banks", "wg_ext"):
++            if state.get(k) is None:
++                raise _T128GMiss(f"{k} missing (wh5ds bank / wgmma path)")
++        key = device.index if device.index is not None else torch.cuda.current_device()
++        if key not in _HMF_FK:
++            _HMF_FK[key] = {"s": _rt_fork_stream(device), "e0": torch.cuda.Event(), "e1": torch.cuda.Event()}
++        fk = _HMF_FK[key]
++        cmb = int(ea.get("cmb_t", {}).get(T, 0))
++        tail = "ea_combine (CUDA, cmb_t 1)" if cmb else "_post_norm_combine_kernel (cmb_t 0)"
++        say(f"arms: plain = Engine A {plain} (E5 K1+K2) + {tail}; gon = H{T128G_H} forked: hot (>{_hm_hot_rows(T128G_H)} "
++            f"routes) wg_gather + wh_gemm wg_kernel<G,{T128G_WH}> (wh5ds) on fork s {fk['s'].cuda_stream:#x} "
++            f"p{fk['s'].priority}, cold {base}:e{T128G_E} E5 K1+K2 (main stream), same tail; K {T128G_K} raw draws x "
++            f"{T128G_ROUNDS} rounds x {T128G_REPS} reps")
++        bank = state["banks"][(0, 32)]
++        wb = state["wg_banks"][(0, 32)]
++        start, count = bank["start"], bank["count"]
++        hidden = weights["w2"].shape[1]
++        # forced-cold control: every local expert gets exactly 16 routes (none hot) -> gon must equal plain bitwise
++        tt = torch.arange(T)
++        ids = torch.stack([(tt + 8 * j) % count + start for j in range(4)]
++                          + [(tt * 4 + j) % (N_EXPERTS - count) + count + start for j in range(4)], 1)
++        ids = (ids % N_EXPERTS).to(torch.int32).to(device).contiguous()
++        g0 = torch.Generator().manual_seed(T128G_SEED - 1)
++        tw = torch.rand((T, TOP_K), generator=g0)
++        tw = (tw / tw.sum(-1, keepdim=True)).to(device).contiguous()
++        x = torch.randn((T, hidden), generator=g0).to(torch.bfloat16).to(device)
++        data = _hm_data(bank, x, ids, tw)
++        mark("control plain")
++        m0 = kernel_fn(data, state).clone()
++        mark("control gon (forced cold)")
++        setarm(True)
++        try:
++            g0o = kernel_fn(data, state).clone()
++        finally:
++            setarm(False)
++        mark("control done")
++        if not torch.equal(m0, g0o):
++            raise _T128GMiss("forced-cold control gon != plain bitwise")
++        say("forced-cold control (16 routes on each local expert, none hot): gon == plain bitwise")
++        del m0, g0o, data, x, ids
++        for k in range(T128G_K):
++            if time.perf_counter() - t0 > T128G_DRAW_S:
++                raise _T128GMiss(f"mid-race deadline at draw {k} ({time.perf_counter() - t0:.0f}s)")
++            seed = T128G_SEED + k
++            gen = torch.Generator().manual_seed(seed)
++            ids = _eb_ref_ids(T, gen, "normal", start, count).to(device).contiguous()
++            tw = torch.rand((T, TOP_K), generator=gen)
++            tw = (tw / tw.sum(-1, keepdim=True)).to(device).contiguous()
++            x = torch.randn((T, hidden), generator=gen).to(torch.bfloat16).to(device)
++            data = _hm_data(bank, x, ids, tw)
++            loc = ids.long().flatten() - start
++            cnt = torch.bincount(loc[(loc >= 0) & (loc < count)], minlength=count).tolist()
++            hot = [c for c in cnt if c > _hm_hot_rows(T128G_H)]
++            if k == 0:
++                mark("draw 0 eager plain / gon")
++            m = kernel_fn(data, state).clone()
++            setarm(True)
++            try:
++                g = kernel_fn(data, state).clone()
++            finally:
++                setarm(False)
++            _, al = _hm_align(ids, hm["ls"], T128G_H, count)
++            if k == 0:
++                mark("draw 0 wh5ds vs wg at T=128 (hot half)")
++            whbad = bool(_wh_exact(state, wb, x, al[3:6], (("wh5ds", T128G_WH),))) if hot else False
++            ref = _combo_ref_fp32(weights, bank, state, x, ids, tw)
++            torch.cuda.synchronize()
++            _, mrel, mrow, _ = _rt_check(m.float(), ref)
++            gok, grel, grow, gtxt = _rt_check(g.float(), ref)
++            ok = bool(gok) and grel <= 2.0 * max(mrel, 2e-3) and not whbad
++            del ref, al
++            if k == 0:
++                mark("draw 0 graphs")
++            graphs, gout = {}, {}
++            for n in ("m", "gon"):
++                setarm(n == "gon")
++                try:
++                    graphs[n], gout[n] = _rt_graph(lambda: kernel_fn(data, state))
++                finally:
++                    setarm(False)
++            rs = _rt_time(graphs, device, reps=T128G_REPS, rounds=T128G_ROUNDS)
++            torch.cuda.synchronize()
++            ge = torch.equal(gout["m"], m) and torch.equal(gout["gon"], g)
++            ok = ok and ge
++            rr = [_rt_stats(r["gon"])[0] / max(_rt_stats(r["m"])[0], 1e-3) for r in rs]
++            mus = sorted(_rt_stats(r["m"])[0] for r in rs)[len(rs) // 2]
++            med = sorted(rr)[len(rr) // 2]
++            draws.append((seed, med, ok))
++            say(f"d{k} s{seed} touched {sum(1 for c in cnt if c)} max {max(cnt)} hot {len(hot)} ({sum(hot)} routes) | "
++                f"m {mus:.1f}us gon/m " + "/".join(f"{v:.3f}" for v in rr) + f" med {med:.3f} | rel/row gon "
++                f"{grel:.3g}/{grow:.3g} m {mrel:.3g}/{mrow:.3g}" + ("" if ok else " FAIL" + (f" ({gtxt})" if not gok else "")
++                                                                + (" wh5ds!=wg" if whbad else "")
++                                                                + ("" if ge else " graph!=eager")))
++            del graphs, gout, data, x, ids, m, g, rs
++        torch.cuda.synchronize()
++        errx = [int(v) for v in ea["errx"].flatten().tolist()] if "errx" in ea else []
++        werr = [int(v) for v in state["whk_err"].tolist()]
++        mean = sum(d[1] for d in draws) / len(draws)
++        wk = max(range(len(draws)), key=lambda i: draws[i][1])
++        nbad = sum(1 for d in draws if not d[2])
++        say(f"mean gon/m {mean:.3f} over {len(draws)} draws ({sum(1 for d in draws if d[1] < 1.0)} win); worst d{wk} "
++            f"s{draws[wk][0]} med {draws[wk][1]:.3f}; tolerance {len(draws) - nbad}/{len(draws)}; err errx {errx} whk "
++            f"{werr}; race at {time.perf_counter() - t0:.1f}s")
++        if nbad:
++            raise _T128GMiss(f"veto: {nbad} draw(s) outside tolerance")
++        if any(errx) or werr != [0, WG_MAGIC]:
++            raise _T128GMiss(f"veto: err words dirty (errx {errx}, whk {werr})")
++        if draws[wk][1] > T128G_VETO:
++            raise _T128GMiss(f"veto: d{wk} median {draws[wk][1]:.3f} > {T128G_VETO}")
++        if mean > T128G_MEAN:
++            raise _T128GMiss(f"veto: mean {mean:.3f} > {T128G_MEAN}")
++        if time.perf_counter() - t0 > HM_COPY_DEADLINE_S:
++            raise _T128GMiss(f"copy check deadline ({time.perf_counter() - t0:.0f}s > {HM_COPY_DEADLINE_S:.0f}s)")
++        setarm(True)
++        mark("copy check (T=128 forked gon + every ON T)")
++        cok, line = _hm_copy_check(weights, bank, state, device)
++        cpy = ("PASS " if cok else "FAIL ") + line[len(HM_TAG) + 1:][:160]
++        if not cok:
++            raise _T128GMiss("copy check FAIL")
++        chosen, why = True, f"mean {mean:.3f}, worst d{wk} {draws[wk][1]:.3f}, copy PASS"
++    except _T128GMiss as e:
++        why = str(e)
++    except Exception as e:
++        why = f"raised {type(e).__name__}: {str(e)[:200]}"
++    try:
++        torch.cuda.synchronize()
++    except Exception as e:
++        chosen, why = False, f"final sync raised {type(e).__name__}"
++    if not chosen:
++        setarm(False)
++        hm.get("eacmb", {}).pop(T, None)
++    if not chosen and not ((whk.get(256) or 0) & 8):
++        state.pop("whk_x5", None)
++    gc.collect()
++    torch.cuda.empty_cache()
++    say(f"copy check {cpy}")
++    say(f"PATH CHOSEN T={T} = " + (f"HYBRID gon (H{T128G_H}f wh5ds hot + {base}:e{T128G_E} cold + "
++                                   f"{'ea_combine' if ea.get('cmb_t', {}).get(T, 0) else 'post-norm'}; {why})"
++                                   if chosen else f"PLAIN E5 ({plain}; {why})")
++        + f"; old {HM_TAG} T={T} gate OFF; race end at {time.perf_counter() - t0:.1f}s")
++    return L
