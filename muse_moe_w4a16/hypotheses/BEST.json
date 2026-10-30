@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "45ef593d32ef445e",
- "check_job": null,
+ "job": "476d3a0e9dc74d0e",
+ "check_job": "54c956f1296c4b02",
  "mode": "submit",
- "speedup": 2.0793295163203553,
+ "speedup": 2.1000057291629464,
  "ci": [
-  2.04813957357555,
-  2.1105194590651606
+  2.0685056432255022,
+  2.1315058151003905
  ],
- "score_us": 6467.709852837022,
- "commit": "c5e2d8d40a2555cd7d2b241d0d1abf6e2f3d1be1",
- "submission_blob": "88edbb9f7f86c685db67af4fa57248849b4dab72",
- "slug": "landing-45ef593d",
- "master_slug": "landing-45ef593d",
- "master_job": "45ef593d32ef445e",
+ "score_us": 6404.030147746557,
+ "commit": "0a5b9f4917bd7fdb9d4d489c6054c0ab7f515420",
+ "submission_blob": "e3bdd86b510d0b0b736183c7bf5b7d89ba6dca1d",
+ "slug": "moefix-no-bf16-atomic-reduce",
+ "master_slug": "moefix-no-bf16-atomic-reduce",
+ "master_job": "476d3a0e9dc74d0e",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T024058Z",
- "note": "registered by churn.py register-landing from okc status 45ef593d32ef445e"
+ "updated_at": "2026-10-30T053530Z",
+ "note": "registered by churn.py register-landing from okc status 476d3a0e9dc74d0e"
 }
