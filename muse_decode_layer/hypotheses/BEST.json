@@ -1,17 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "beaed2ad8eb541bf",
- "check_job": "9263781bc2a040e9",
+ "job": "7c7524a61490426f",
+ "check_job": null,
  "mode": "submit",
- "speedup": 1.7196001543289197,
+ "speedup": 1.7225466738478081,
  "ci": [
-  1.6938061520139858,
-  1.7453941566438533
+  1.696708473740091,
+  1.748384873955525
  ],
- "score_us": 13154.395190681787,
- "commit": "787c0eaca685efd830abd7a04700941e4542793f",
- "submission_blob": "58cec976bd10d2fe4cbf513e93436ea3a0a2bc8f",
- "slug": "engine-a-xl-arms-t1-t256",
- "result": "muse_decode_layer/hypotheses/done/gain/engine-a-xl-arms-t1-t256.result.json",
- "updated_at": "2026-10-30T013315Z"
+ "score_us": 13131.893807829887,
+ "commit": "594adec807dd98587d88ec0c2524dcb68cdd645f",
+ "submission_blob": "2946e2dd6b3da13f7d1b29e2f82356f4f997a67e",
+ "slug": "landing-7c7524a6",
+ "master_slug": "landing-7c7524a6",
+ "master_job": "7c7524a61490426f",
+ "result": "muse_decode_layer/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-30T024835Z",
+ "note": "registered by churn.py register-landing from okc status 7c7524a61490426f"
 }

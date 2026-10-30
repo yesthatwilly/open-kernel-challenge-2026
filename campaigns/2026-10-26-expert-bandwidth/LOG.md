@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0247Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0248Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
-- **Boards 10-30 0240Z:** moe **2.0793** (315), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** decode scored **7c7524a6** (t256xl check 1.7285); GPUs 1 and 4 idle; **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
+- **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
+- **In flight:** GPUs 1 and 4 idle; **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2802,3 +2802,7 @@ with the operator's go-ahead.
 ## 2026-10-30 0247Z — xlres rebased onto moe master (027e33b7, 991,885 B, nodejudge 5/5); GPU 3 -> dxl
 - Rebased onto master with the mstack landing, no conflicts. xlres-val passed 5/5 tests and 6/6 shapes (prepare 131.6 s), and the mstack race still picks T=256 alcp after it. xlres-valf (forced) routed XR at T=8/32/128/256, all exact. Held as a ~+0.2% rider for the next moe carrier (UFS if the rung says go, else a phase-C check).
 - **dxl** (GPU 3): port moe's landed riders to decode on top of campaign/t256xl. t1xl comes first: decode's T=1 E4/E4 iso read 0.978 [0.968,0.991] and misses the 0.98 bar by one round. ms_align/cp come only if decode runs those paths. Room comes from trimming dead Python (999,631 B now).
+
+## 2026-10-30 0248Z — **decode 1.7225 LANDED** (scored 7c7524a6 [1.697, 1.748]; t256xl cold-iso gate); rank 409
+- Scored PATH: T=1 E5/E5 (the ea6 arm routed this time, no XL), T=8/16/32 E4XL, T=128 E5, T=256 E4XL. The check (1.7285) had T=1 master and T=128 E5XL. The race picks drift between runs at the edges.
+- Master = campaign/t256xl bytes (sha256 8e7b3ebf); register-landing wrote BEST.json, a [landed] CLAIMS line and DECISIONS. dxl builds on that same base.
