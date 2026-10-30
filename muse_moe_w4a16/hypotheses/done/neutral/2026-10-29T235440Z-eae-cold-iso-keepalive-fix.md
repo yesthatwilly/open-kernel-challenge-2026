@@ -37,12 +37,12 @@ evidence: >
   bytes (sha 986a2bad, 948,330 B) passed 4/4; the moe board 24f183ff (2.0201) carries the bug
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-29T235601Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: c6e41c9acc6169ac8a532684437955b1d560835b
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-29T235601Z
 base_sha: 2090c7b69f865761852a7f539d70bfb97f99f2c3
 base_blob: c6e41c9acc6169ac8a532684437955b1d560835b
@@ -61,6 +61,14 @@ attempt_file: 2026-10-29T235620Z-check-eae-cold-iso-keepalive-fix.md
 prepared_at: 2026-10-29T235620Z
 job: 582bb33467dc4663
 dispatched_at: 2026-10-29T235633Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 2.0468520899407205
+speedup_ci: [2.0161493085916096, 2.0799132584861164]
+harvested_at: 2026-10-30T000044Z
+best_at_harvest: 2.020119462295186
+promotion: null
+mechanism: null
 ---
 
 # eae-cold-iso-keepalive-fix
@@ -120,3 +128,29 @@ Applied the 3-line hunk from branch hyp/muse_moe_w4a16/eae-t1-guard (b743b4e4) t
 - [x] All work happens inside the timed call; no output caching or replay: unchanged.
 - [x] Size: `wc -c` = 948,330 B < 1,000,000.
 - [x] First line kept; `python3 -I -m py_compile` OK; __pycache__ removed; okc_lint: OK with warnings (prepare-only, same as master).
+
+## Result
+
+- job `582bb33467dc4663` (check), status done, passed True, tests 5/5
+- speedup 2.0469x, 95% CI [2.0161, 2.0799], score 6570.333081756526 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 2.020119462295186, "ci": [1.9898176703607582, 2.0504212542296134], "job": "24f183ff300949f2"}; base result: muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_moe_w4a16/hypotheses/done/neutral/eae-cold-iso-keepalive-fix.result.json`, `muse_moe_w4a16/hypotheses/done/neutral/eae-cold-iso-keepalive-fix.patch`; branch `hyp/muse_moe_w4a16/eae-cold-iso-keepalive-fix`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 27.82 | 27.84 | 0.9642 | lost |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 106.68 | 102.29 | 0.9953 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 132.24 | 138.97 | 0.9945 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 72.96 | 74.83 | 0.9899 | flat |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 226.67 | 228.27 | 1.0007 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 264.69 | 266.54 | 1.0044 | flat |
+
+lost on decode_1 decode_1. Expected hit: 0/1. Noise ±1.6%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: eae-cold-iso-keepalive-fix`) that adds a further change in the same area is the only way to learn more.
+

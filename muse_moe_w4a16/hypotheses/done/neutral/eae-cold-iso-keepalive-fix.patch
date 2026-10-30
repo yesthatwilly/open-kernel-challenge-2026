@@ -1,0 +1,30 @@
+diff --git a/muse_moe_w4a16/submission.py b/muse_moe_w4a16/submission.py
+index c6e41c9a..d80df5ec 100644
+--- a/muse_moe_w4a16/submission.py
++++ b/muse_moe_w4a16/submission.py
+@@ -18447,7 +18447,7 @@ def _eae_class(state, device, T, kind, base, arms, gen, hidden):
+         _eae_set(state, kind, T, base, None)
+         ref = kernel_fn(data, state).clone()
+         hy0 = _eae_hy(state, kind, T, base, data, None, cold)
+-        graphs, outs, iso = {}, {}, {}
++        graphs, outs, iso, keep = {}, {}, {}, []
+         for a in (None,) + tuple(arms):
+             _eae_set(state, kind, T, base, a)
+             try:
+@@ -18462,6 +18462,7 @@ def _eae_class(state, device, T, kind, base, arms, gen, hidden):
+                 h3 = torch.empty((T * TOP_K, ea["inter"]), dtype=torch.bfloat16, device=device)
+                 y3 = torch.empty((T * TOP_K, hidden), dtype=torch.bfloat16, device=device)
+                 l3 = torch.empty((T, TOP_K), dtype=torch.int32, device=device)
++                keep.append((h3, y3, l3))
+                 iso[("c", a)] = _rt_graph(lambda a=a, h3=h3, y3=y3, l3=l3: _eae_pair(
+                     ea, data["hidden_states"], cold, h3, l3, y3, T, 0, count, EA4X_ARMS[base], int(a or 0)))[0]
+         res = _rt_time({**graphs, **iso}, device, reps=EAE_REPS, rounds=EAE_ROUNDS)
+@@ -18473,7 +18474,7 @@ def _eae_class(state, device, T, kind, base, arms, gen, hidden):
+                 rat[a].append(_rt_stats(r[a])[0] / max(_rt_stats(r[None])[0], 1e-3))
+                 if cold is not None:
+                     crat[a].append(_rt_stats(r[("c", a)])[0] / max(_rt_stats(r[("c", None)])[0], 1e-3))
+-        del graphs, outs, iso, res
++        del graphs, outs, iso, res, keep
+     return exact, rat, crat
+ 
+ 
