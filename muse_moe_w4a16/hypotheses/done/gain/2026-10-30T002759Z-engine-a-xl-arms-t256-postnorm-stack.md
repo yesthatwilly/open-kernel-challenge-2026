@@ -79,6 +79,7 @@ best_at_harvest: 2.035180868162415
 promotion: merged
 mechanism: null
 promotion_commit: 59f2a35c11b32b20096964c3d804cbc8bddcaaae
+promotion_attempt: 2026-10-30T005158Z-submit-engine-a-xl-arms-t256-postnorm-stack.md
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack
