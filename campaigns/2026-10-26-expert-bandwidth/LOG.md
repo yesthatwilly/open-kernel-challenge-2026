@@ -149,11 +149,11 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0123Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0133Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
-- **Boards 10-30 0123Z:** moe **2.075** (305), decode **1.705** (409; check 1.7468 pending its scored run), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** decode scored **beaed2ad** (XL arms); H100 lanes **t1xl** (GPU 1) and **hhxl** (GPU 3).
-- **Next:** land decode on the scored result (register-landing); decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
+- **Boards 10-30 0133Z:** moe **2.075** (305), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
+- **In flight:** H100 lanes **t1xl** (GPU 1) and **hhxl** (GPU 3).
+- **Next:** decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
 - **Riders waiting for a carrier:** prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
 
@@ -2736,3 +2736,8 @@ with the operator's go-ahead.
 - PATH: T=1 master (layer VETO > 1.0; no XL arm, ea6); T=8/16/32 E4XL; T=128 E5XL; T=256 master (iso E/m > 0.98 in one round). churn promoted it; master = checked bytes (sha256 0303080a); scored **beaed2ad** dispatched.
 - XL beat its estimate on both problems: ea-enc2 predicted +1-2% per row; it delivered moe +1.55% and decode +2.45% headline. Consume-only issue cuts transfer to the H200 better than the 0.5-0.8x L3/L4 rate.
 - H100 lanes opened (the window was idle since the XL builder finished): **t1xl** = XL loop trims on the T=1 FAST K1/K2 (GPU 1), **hhxl** = XL trims on the hot-half wg kernel (GPU 3). Each has a pre-registered rule (>=3% / >=4% judge-scaled consume-only) and builds a moe branch only if it qualifies.
+
+## 2026-10-30 0133Z — **decode 1.7196 LANDED** (scored beaed2ad [1.694, 1.745]; XL arms); rank 403
+- Scored PATH: T=8/16 E4XL, T=32/128 E5XL; T=1 and T=256 master (iso E/m > 0.98 in a round). This time T=32 picked E5XL, not E4XL.
+- The scored run read 1.6% under its check (1.7468), which is more than the usual ~0.35% sd of run-to-run drift. The two runs average ~1.733. Decode has gone 1.661 -> 1.705 -> **1.7196** since 10-29.
+- BEST.json registered by churn (promotion → done); a [landed] CLAIMS line has been added. The T=256 XL row stays open: its reopen rule is a round-robust gate or a T=256-specific tune. Sized at ~1-2% headline, it is below the diag bar on its own.
