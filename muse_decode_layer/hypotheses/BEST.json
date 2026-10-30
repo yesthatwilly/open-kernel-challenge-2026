@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "43265863258a47a0",
- "check_job": "b734431f6736455f",
+ "job": "dfb318ee06b842f7",
+ "check_job": "82c6bac9fa004878",
  "mode": "submit",
- "speedup": 1.6902509443475904,
+ "speedup": 1.698879317075986,
  "ci": [
-  1.6648971801823764,
-  1.715604708512804
+  1.673396127319846,
+  1.7243625068321256
  ],
- "score_us": 13382.805716302126,
- "commit": "70446a48619416b0562e7d3daa17f39fd2483daf",
- "submission_blob": "4a9d00c6dc7f9bf48d40c24b826854d59512ddb9",
- "slug": "ladder-dc0b-fork-overlap",
- "master_slug": "ladder-dc0b-fork-overlap",
- "master_job": "43265863258a47a0",
+ "score_us": 13314.83629981014,
+ "commit": "d07539aed500a8c444c25f7554aac396a61ec467",
+ "submission_blob": "b5f84e27502be2bf9062256dda009b862efd6807",
+ "slug": "ladder-dc-at7e-port",
+ "master_slug": "ladder-dc-at7e-port",
+ "master_job": "dfb318ee06b842f7",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T082832Z",
- "note": "registered by churn.py register-landing from okc status 43265863258a47a0"
+ "updated_at": "2026-10-30T092856Z",
+ "note": "registered by churn.py register-landing from okc status dfb318ee06b842f7"
 }
