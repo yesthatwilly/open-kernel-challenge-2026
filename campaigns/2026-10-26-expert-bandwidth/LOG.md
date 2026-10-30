@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0415Z (date -u); **phase A (10-30)**; this campaign is quiet; active work is the public ladder.
+- updated: 2026-10-30T0502Z (date -u); session musespark-3b stood down at the user's request; another session (replicate-and-tune-h100-h200, campaign/public-ladder) is now writing
 - **User steer, 10-30 ~0400Z (lifts the 0311Z stop for the ladder):** "what we have here is a known answer. i do not want to simply adopt answers, I want the knowlege of any given value to be something i can test WORKS in a methodical approach ... you have unlimited h100 right now, so id love to replicate findings and get great outcomes iteratively. generate all the work you can in advance". Plan (Opus-reviewed, user-approved): `campaigns/2026-10-30-public-ladder/` on branch `campaign/public-ladder` (worktree `.worktrees/public-ladder`); tiers R (replicate a public fact) -> I (one mechanism, pre-registered delta) -> C (combine/tune rungs sharing rows) -> J (judge). Scored submits and master promotion of ladder wins need the user's go.
 - **Standing:** H100 gpunode06 GPUs 1/3/4/5/6 only (never 0/2/7), USER, guarded hopper-probe; H200 held; <= 6 agents.
-- **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409, landed 594adec8), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
+- **Boards 10-30 0502Z:** moe **2.0793** (315), decode **1.7241** (421), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
 - **In flight here:** nothing. Riders shelved (not dispatched; each below the ~1.2% landing margin): moe xlres C (027e33b7, ~+0.2%), moe t1xl (d5a52fbc), decode t1xl port (campaign/dxl 6ee687fd, ~+0.1%), T=128 fork (+0.3-0.9%, plumbing removed in dxl), ms_align (+0.2-0.35%, needs ~7.4 KB). They become candidate arms in the ladder's C-moe / C-decode campaigns.
 - **Size:** decode 999,631 B of 1,000,000; moe 981,562 B.
 - **Window end:** deferred; the ladder uses gpunode06. Cleanup (runner stop, nodejudge + venvs, /tmp/USER-hopper) at the user's word.
@@ -2864,3 +2864,13 @@ with the operator's go-ahead.
 - [ea-enc] T=1 iso E4XL/E4 0.952 [0.943,0.962] (E4/E4 0.968), so the worst round is well under 0.98; PATH T=1 E4XL/E4, T=8/16 E4XL, T=32 E4, T=128 E4XL, T=256 E5XL. That is the first T=1 XL route on decode, as dxl predicted.
 - Above the board, so scored **9299f06d** was sent from campaign/dxl (attempt c6e0230d) as the normal follow-through of the approved check. Land on master if it reads above 1.7225. dfork builds on this same branch.
 - The okc claims hook warned again about the unrelated 10-25 top-k/unpool attempt file; that warning does not apply to this run.
+
+## 2026-10-30 0502Z — **decode 1.7241 LANDED** (scored 9299f06d [1.698, 1.750]; dxl T=1 XL); rank 421. Session musespark-3b stands down
+- Master = campaign/dxl bytes (sha256 d6566bb2); register-landing wrote BEST.json, a [landed] CLAIMS line and DECISIONS. The scored run read 0.5% under its check (1.7323).
+- **Second writer on master:** session `replicate-and-tune-h100-h200` runs campaign/public-ladder (`.worktrees/public-ladder`, opened ~04:19Z). It replicates ideas from another team's public code (alygg77@6cae49a). It committed ae98caf0 (a rewrite of this Now block), af336767 (attention ladder AT6, [refuted]) and 9223929a (moe ladder R13'/MO1, [node-only]). It runs H100 lanes on GPU 5 (mo1) and GPU 6 (dece2). Its port of public code is a rules question for the user.
+- At the user's request ("i want this session to surrender") this session stopped:
+  - The dfork build (T=128 fork on dxl) was stopped before any node run. Its unfinished edit was discarded from `.worktrees/dfork` and saved outside the repo (session scratchpad, dfork-unfinished.patch). campaign/dfork == dxl.
+  - My orphaned local poll loop (pid 298237, from 10-29) could not be killed: the permission check refused it. It is harmless.
+- **Left for the next owner:**
+  - shelved riders: moe xlres (campaign/xlres 027e33b7, ~+0.2%); decode T=128 fork (+0.3-0.9%, research/h100-d128-1030.md; needs the plumbing that dxl removed); decode ms_align (+0.2-0.35%, ~7.4 KB; owner: "a cleanup round");
+  - the gpunode06 cleanup (nodejudge env, venvs, /tmp/USER-hopper) at window end.
