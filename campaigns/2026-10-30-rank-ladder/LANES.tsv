@@ -2,6 +2,6 @@ lane	rung	worktree	branch	gpu	status	next_action	updated_utc
 moe	MO3-S2 (N32 dequant-once twin)	.worktrees/rl-mo3s2	rl/mo3s2	1	building	register gate, then nodejudge A/B >=3 reps	2026-10-30T14:50Z
 attn-sliding	AT8F (cut pre-main-loop chain: seq_lens->page-index + hoisted q/positions) on all sliding rows	.worktrees/rl-vt-d16s	rl/vt-d16s	3	building	D16S-NCU: >55% of stall samples before the main loop; size AT8F across d1s/d16s/v1s/v16s, build if >= 1.5 us summed judge-weighted	2026-10-30T15:35Z
 attn-D	D-ATTN (side-by-side per-kernel driver)	~/git/.takemyjob-wt/rl-dattn	hopper/rl-dattn	4	building	first 4 rows, then all 12; name causes	2026-10-30T14:50Z
-bf16	BF2-DIAG (what holds the 12-bit stream at 2.7 TB/s)	-	-	5	h100	BF2W = BF2c already refuted (not rerun); diag arms smem-only / no-escape / BF1@768B / producer	2026-10-30T15:45Z
+bf16	BF2R (12-bit ring, early slot release: load stage then release, decode+MMA from registers)	.worktrees/rl-bf2r	rl/bf2r	5	building	screen: weights-only within 0.5 us of 17.8 us, then A/B; H200 pred -10% on pooler/unpooler m16/m32	2026-10-30T16:10Z
 moe-D	rl-d-moe2 (nodejudge inproc + profile)	-	-	7	done	node ratios d1 1.156 d16 1.083 d32 1.063 v1 1.098 v16 1.236 v32 1.087; v16 gap = ea4x_w13 (MO3 target); repeats CLAIMS:131	2026-10-30T15:10Z
 decode-D	rl-d-decode2	-	-	6	blocked	nodejudge decode shims cannot bind the public file API (0 call sites); not pursued: decode inherits component gaps	2026-10-30T15:10Z
