@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0300Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0309Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** **ufs** (GPU 4: persistent cold-schedule prototype), **hhcc** (GPU 5: hot-half concurrent dequant), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7); **ufsrung** (GPU 1: nsys per-SM idle in the moe T=256 window; >= 44 us judge-scaled -> UFS build plan).
+- **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), **ufs** (GPU 4: persistent cold-schedule prototype), **hhcc** (GPU 5: hot-half concurrent dequant), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2815,3 +2815,8 @@ with the operator's go-ahead.
   - **hhcc** (GPU 5): a new hot-half form running dequant concurrently with wgmma (m256 reopen 1: >= x1.4 on the hothalf4 kstep rungs).
   - **d128** (GPU 6): decode T=128 expert anatomy (hot 73 us at 1.55 TB/s, cold 144 us at 3.34 TB/s, serial?) -> a >= 2% lever, built if it is a gate or route change.
 - Lesson: a lane that spends 20+ min reading before its first run leaves its GPU idle. Briefs now ask for a baseline run first.
+
+## 2026-10-30 0309Z — ufsrung: CLOSE UFS-as-idle-filler (fillable idle 11-12 us judge-scaled, bar 44); GPU 1 -> relay
+- 4 runs on GPU 1 (nsys GPU metrics at 50/200 kHz, a non-PDL combine arm, per-CTA globaltimer/smid), judge route forced. The four kernels run as a packed relay (cold w13 -> hot w13 -> cold w2 -> hot w2). Empty-SM time is 0.9-1.2 us, cold-tail half-SM blocking 2.2-2.6 us (panel predicted 10-15), the hot w2 last-wave tail **8.3 us**, no hand-off drains, launch gaps 0.28 us. Align+gather 3.9 and combine 2.1 sit outside UFS. -> [refuted] moe CLAIMS for UFS as an idle filler. 313k tokens.
+- UFS's busy fixed-cost cut (~-8..-12 us) is still open; the ufs lane on GPU 4 measures it and was told so.
+- **relay** (GPU 1): reorder the relay so the coarse hot w2 runs before the fine-grained stream-K cold w2, which then fills the 8.3 us hot tail; >= 5 us judge-scaled -> a raced route change on campaign/relay.
