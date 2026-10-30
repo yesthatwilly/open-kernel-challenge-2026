@@ -6324,6 +6324,209 @@ def _bf5_summary(prepare_s: float) -> None:
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + (BF5_FLAG,)   # section (14)'s cell joins the A/B check and the FINAL FLAGS line
 
 
+# --- (15) BF4: router m == 1 as a row-per-CTA FP32 register GEMV (own flag), raced vs today's m == 1 route ---------
+# Rung BF4 of campaign 2026-10-30-public-ladder (hypothesis ladder-bf4-router-m1-fp32-row-gemv). The mechanism is the
+# public m == 1 router GEMV (github.com/alygg77/okc-muse-spark-kernels@6cae49a kernels/muse_bf16_proj.py, rgemv),
+# re-implemented here, not copied. out[0, n] = sum_k float(x[0, k]) * W[n, k] on the FP32 router weight as given (no
+# hi/lo split, no repack, no codec): the SGLang math at m <= 8 (F.linear on FP32), FP32 FMA accumulation. 256 CTAs x
+# RV_NTH threads, one weight row per CTA; thread i owns the 8-float chunks k = 8 (i + RV_NTH j), j < 8192 / (8 RV_NTH),
+# and issues every weight load (16 B ld.global.nc.L1::no_allocate) before its first FMA; FMA chain in k order, warp xor
+# butterfly, fixed-order cross-warp sum in smem (deterministic). One plain launch: no cluster, no memset. The output
+# is not bitwise today's hi/lo cluster route; it is within FP32 rounding of x.double() @ W.double().T (H100 max |err|
+# 4.8e-7 vs F.linear's 3.6e-7 and the hi/lo route's 6.8e-6). m = 2..8 keep router_kernel<8,8> (rv measured 1.7-2.2x
+# slower at m = 8: x is re-read per row).
+RV_FLAG = "router_rv_ok"
+RV_NTH = 512
+RV_ROUNDS = 3                    # read-flush _cell_gate rounds, judged by _bf1_rule (pooled <= 0.97, rounds <= 0.99)
+RV_EXT_NAME = "muse_bf16_router_rv_m1_v1"
+_RV_SUM = []
+
+_RV_CPP = r"""
+#include <torch/extension.h>
+void router_rv(torch::Tensor W, torch::Tensor x, torch::Tensor out);
+"""
+
+_RV_CUDA = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda_bf16.h>
+#include <cstdint>
+
+namespace {
+constexpr int RV_K = 8192;
+constexpr int RV_N = 256;
+
+__device__ __forceinline__ float4 rv_ld_stream(const float* p) {
+  float4 v;
+  asm volatile("ld.global.nc.L1::no_allocate.v4.f32 {%0,%1,%2,%3}, [%4];\n"
+               : "=f"(v.x), "=f"(v.y), "=f"(v.z), "=f"(v.w) : "l"(p));
+  return v;
+}
+
+template <int NTH>
+__global__ void __launch_bounds__(NTH) router_rv_kernel(const float* __restrict__ W,
+                                                        const __nv_bfloat16* __restrict__ x, float* __restrict__ out) {
+  constexpr int J = RV_K / (8 * NTH);
+  constexpr int NW = NTH / 32;
+  __shared__ float red[NW];
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const float* wr = W + (int64_t)blockIdx.x * RV_K;
+  float4 w[J][2];
+#pragma unroll
+  for (int j = 0; j < J; ++j) {
+    const float* p = wr + (tid + NTH * j) * 8;
+    w[j][0] = rv_ld_stream(p);
+    w[j][1] = rv_ld_stream(p + 4);
+  }
+  uint4 xv[J];
+#pragma unroll
+  for (int j = 0; j < J; ++j) xv[j] = __ldg(reinterpret_cast<const uint4*>(x + (tid + NTH * j) * 8));
+  float a = 0.f;
+#pragma unroll
+  for (int j = 0; j < J; ++j) {
+    const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&xv[j]);
+    const float2 f0 = __bfloat1622float2(h[0]), f1 = __bfloat1622float2(h[1]);
+    const float2 f2 = __bfloat1622float2(h[2]), f3 = __bfloat1622float2(h[3]);
+    a = fmaf(f0.x, w[j][0].x, a); a = fmaf(f0.y, w[j][0].y, a);
+    a = fmaf(f1.x, w[j][0].z, a); a = fmaf(f1.y, w[j][0].w, a);
+    a = fmaf(f2.x, w[j][1].x, a); a = fmaf(f2.y, w[j][1].y, a);
+    a = fmaf(f3.x, w[j][1].z, a); a = fmaf(f3.y, w[j][1].w, a);
+  }
+#pragma unroll
+  for (int o = 16; o > 0; o >>= 1) a += __shfl_xor_sync(0xffffffffu, a, o);
+  if (lane == 0) red[warp] = a;
+  __syncthreads();
+  if (tid == 0) {
+    float s = red[0];
+#pragma unroll
+    for (int q = 1; q < NW; ++q) s += red[q];
+    out[blockIdx.x] = s;
+  }
+}
+}  // namespace
+
+void router_rv(torch::Tensor W, torch::Tensor x, torch::Tensor out) {
+  TORCH_CHECK(W.scalar_type() == at::kFloat && W.is_contiguous() && W.size(0) == RV_N && W.size(1) == RV_K &&
+              reinterpret_cast<uintptr_t>(W.data_ptr()) % 16 == 0, "router_rv: W fp32 [256, 8192] contiguous");
+  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.dim() == 2 && x.size(0) == 1 && x.size(1) == RV_K &&
+              x.stride(1) == 1 && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0, "router_rv: x bf16 [1, 8192]");
+  TORCH_CHECK(out.scalar_type() == at::kFloat && out.is_contiguous() && out.numel() == RV_N, "router_rv: out");
+  router_rv_kernel<RV_NTH_T><<<RV_N, RV_NTH_T, 0, at::cuda::getCurrentCUDAStream()>>>(
+      W.data_ptr<float>(), reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), out.data_ptr<float>());
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+"""
+
+
+def _build_router_rv():
+    """Compile section (15)'s module once per process, at import (never during capture); the arch list is pinned to
+    9.0a around the build and restored after. Any failure keeps today's m == 1 router route."""
+    t0 = time.perf_counter()
+    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+    try:
+        from torch.utils.cpp_extension import load_inline
+        ext = load_inline(name=RV_EXT_NAME, cpp_sources=_RV_CPP,
+                          cuda_sources=_RV_CUDA.replace("RV_NTH_T", str(RV_NTH)),
+                          functions=["router_rv"], extra_cuda_cflags=["-O3", "-lineinfo"], verbose=False)
+    except Exception as e:
+        print(f"[rv] load_inline failed after {time.perf_counter() - t0:.1f}s, today's route kept: {e!r}", flush=True)
+        return None
+    finally:
+        if prev is None:
+            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+        else:
+            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+    print(f"[rv] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+    return ext
+
+
+_RV_EXT = _build_router_rv() if torch.cuda.is_available() else None
+
+
+def _rv_route(x: torch.Tensor, cfg, state: dict) -> bool:
+    """True when section (15) serves this call: the prepare()-set flag, cfg, shapes, dtype, strides and alignment
+    only, never input values."""
+    if state.get(RV_FLAG) is not True or x.dim() != 2:
+        return False
+    w = state["router"]
+    return (cfg["m"] == 1 and x.shape[0] == 1 and cfg["n"] == ROUTER_N and cfg["k"] == ROUTER_K
+            and x.shape[1] == ROUTER_K and x.dtype == torch.bfloat16 and x.is_cuda and x.stride(1) == 1
+            and x.data_ptr() % 16 == 0 and w.dtype == torch.float32 and w.shape == (ROUTER_N, ROUTER_K))
+
+
+def _rv_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
+    """x bf16 [1, 8192] @ W fp32 [256, 8192].T -> fp32 [1, 256]: ONE launch, no memset."""
+    out = torch.empty((1, ROUTER_N), dtype=torch.float32, device=x.device)
+    _RV_EXT.router_rv(state["router"], x, out)
+    return out
+
+
+def _rv_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (15). Sets state[RV_FLAG] (False unless every step passes). flags None (state A, the judge's):
+    _cell_check through kernel_fn at m = 1 (fp64 rel L2 <= 2e-5, the one-hot row exact to 1e-4, run 2 bit-identical),
+    RV_ROUNDS read-flush _cell_gate rounds of kernel_fn with the flag on vs off, _bf1_rule, and a torch.profiler
+    assertion of exactly one router_rv_kernel. flags a dict (the A/B check's second state): inherit. Never raises."""
+    state[RV_FLAG] = False
+    if flags is not None:
+        state[RV_FLAG] = bool(flags.get(RV_FLAG, False)) and _RV_EXT is not None
+        return
+    _RV_SUM.clear()
+    if _RV_EXT is None:
+        _RV_SUM.append("[rv] no module (build failed or no GPU): today's route at m = 1")
+        return
+    t0 = time.perf_counter()
+    why, rounds, rule = "", [], None
+    try:
+        if t0 - t_start > BF1_START_DEADLINE_S:
+            raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+        st_a = dict(state)
+        st_a[RV_FLAG] = True
+        cfg = {"m": 1, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}
+        if not _rv_route(torch.empty((1, ROUTER_K), dtype=torch.bfloat16, device=state["router"].device), cfg, st_a):
+            raise RuntimeError("route check failed at m=1")
+        bad = _cell_check("rv router m=1", lambda xx: kernel_fn({"x": xx, "config": cfg}, st_a), state["router"],
+                          1, ROUTER_N, ROUTER_K, rel_bound=2e-5)
+        if bad:
+            raise RuntimeError(bad)
+        for rnd in range(RV_ROUNDS):
+            st = {}
+            _cell_gate(f"rv router m=1 r{rnd + 1}", "router", 1, ROUTER_N, ROUTER_K, RV_FLAG, state,
+                       flush_mode="read", stats=st,
+                       route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+            rounds.append(st)
+        rule = _bf1_rule(rounds)
+        if not rule[0]:
+            why = rule[1]
+        else:
+            data = {"x": torch.randn((1, ROUTER_K), device=state["router"].device,
+                                     dtype=torch.float32).to(torch.bfloat16), "config": cfg}
+            try:
+                names = _cell_kernels(lambda: kernel_fn(data, st_a))
+                if not (len(names) == 1 and "router_rv_kernel" in names[0]):
+                    why = f"profiled kernels {names}: expected exactly one router_rv_kernel"
+            except Exception as e:
+                why = f"profiler unavailable ({type(e).__name__}: {str(e)[-120:]})"
+        if not why:
+            state[RV_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps today's route
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[RV_FLAG] = False
+    r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                     f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+    if rule is not None:
+        r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+    _RV_SUM.append(f"[rv] router m1 inc/rv us: {r_txt or 'not timed'} -> "
+                   + ("ROUTE" if state[RV_FLAG] else f"NO-ROUTE ({why[:100]})") + f" {time.perf_counter() - t0:.1f}s")
+    _decision("PATH CHOSEN rv router m=1: " + (f"router_rv_kernel<{RV_NTH}>" if state[RV_FLAG] else "incumbent")
+              + (f" [pooled {rule[2]:.3f}]" if rule is not None else "") + ("" if state[RV_FLAG] else f"; {why[:160]}"))
+    torch.cuda.synchronize()
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (RV_FLAG,)   # section (15)'s cell joins the A/B check and the FINAL FLAGS line
+
+
 def _prepare_state(weights: Weights, flags=None) -> dict:
     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
@@ -6440,6 +6643,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         # (14) BF5: pooler m = 256 on the CUTLASS pingpong GEMM (own flag), raced against today's NN route.
         _bf5_prepare(state, t_all)
         t = tick("bf5 cell (join build + checks + 3 read-flush rounds + profile)", t)
+        # (15) BF4: router m == 1 FP32 row GEMV (own flag), raced against today's m == 1 route.
+        _rv_prepare(state, t_all)
+        t = tick("rv router m=1 cell (check + 3 read-flush rounds + profile)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
@@ -6457,6 +6663,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         _lt_prepare(state, flags=flags)
         _bf1_prepare(state, t_all, flags=flags)
         _bf5_prepare(state, t_all, flags=flags)
+        _rv_prepare(state, t_all, flags=flags)
         t = tick("bulk / lt / bf1 / bf5 per-state buffers (flags inherited)", t)
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
@@ -6491,6 +6698,8 @@ def _ab_component(layer: str, m: int, st=None) -> str:
         return BULK_CELLS[layer][7]
     if layer == "qkv_gate" and m == LT_M:
         return LT_FLAG
+    if st is not None and layer == "router" and m == 1 and st.get(RV_FLAG) is True:
+        return RV_FLAG   # section (15): a miss turns off only this cell
     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
         return "router_cluster_ok"
     if st is not None and layer == "router" and _router_pdl_flag(m) and st.get(_router_pdl_flag(m)):
@@ -6628,6 +6837,8 @@ def prepare(weights: Weights) -> dict:
     _b12m_summary(time.perf_counter() - t0)   # section (12)'s <= 2 KB block, the very last lines of prepare()
     _bf1_summary(time.perf_counter() - t0)    # section (13)'s block, after it
     _bf5_summary(time.perf_counter() - t0)    # section (14)'s block, last
+    for line in _RV_SUM:                      # section (15)'s line, after it
+        print(line[:300], flush=True)
     return state
 
 
@@ -6681,6 +6892,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
             return _lt_forward(x, state["qkv_gate"], state["lt_algo_qkv128"], state["lt_ws_qkv128"])
         # The unpooler's slice is its first n rows (all of them above 8 tokens).
         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
+    if _rv_route(x, cfg, state):   # section (15): m == 1 FP32 row GEMV, own flag
+        return _rv_forward(x, state)
     if _router_cluster_route(x, cfg, state):   # 1 <= m <= 8, n == 256: one launch, no memset
         return _router_cluster_forward(x, state)
     hi, lo = state["router_hi"], state["router_lo"]
