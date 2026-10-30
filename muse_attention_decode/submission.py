@@ -5512,12 +5512,31 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
   const int b = static_cast<int>(blockIdx.x) / nsplit;
   const int split = static_cast<int>(blockIdx.x) % nsplit;
+  const bool last = split == nsplit - 1;
+  // AT8F: every load that does not depend on seq_lens is issued at entry (positions, inv_freq, this warp's q rows, the
+  // last CTA's new k/v row and cache_loc), so its round trip overlaps the seq_lens -> page-index -> gather chain instead
+  // of following the gather commit (whose "memory" clobber keeps the compiler from hoisting them). Same values, same math.
+  const float fr = inv_freq[lane];
+  const float pos = static_cast<float>(positions[b]);
+  __nv_bfloat162 qx[(HQ + WARPS - 1) / WARPS];
+#pragma unroll
+  for (int i = 0; i < (HQ + WARPS - 1) / WARPS; ++i) {
+    const int h = warp + i * WARPS;
+    if (h < HQ)
+      qx[i] = *reinterpret_cast<const __nv_bfloat162*>(qkv + static_cast<int64_t>(b) * qkv_stride + h * D + 2 * lane);
+  }
+  __nv_bfloat162 kvx = __float2bfloat162_rn(0.f);
+  int64_t loc_e = 0;
+  if (last && warp < 2 * HKV) {
+    kvx = *reinterpret_cast<const __nv_bfloat162*>(
+        qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (warp >= HKV ? HKV : 0) + warp % HKV) * D + 2 * lane);
+    loc_e = cache_loc[b];
+  }
   const int seq = seq_lens[b];
   const int lo = max(0, seq - (window - 1));
   const int ctile = WIDE ? tile : AT2_TILE;
   const int start = lo + split * ctile;
   const int n_old = max(0, min(ctile, seq - start));
-  const bool last = split == nsplit - 1;
   const int* prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
   // the finalizer (whichever CTA is last) reads the request's gate row: each of the first 16 splits pulls one of its
   // 16 128-byte lines into L2 now, so that load is an L2 hit at the end
@@ -5547,11 +5566,11 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
     if (n_old > 0) issue_sub<false>(smem, kc, vc, idx, 0, n_old, tid, 0);
     cp_commit();
   }
-  const float fr = inv_freq[lane];
-  const float pos = static_cast<float>(positions[b]);
-  for (int h = warp; h < HQ; h += WARPS) {
-    const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
-        qkv + static_cast<int64_t>(b) * qkv_stride + h * D + 2 * lane);
+#pragma unroll
+  for (int i = 0; i < (HQ + WARPS - 1) / WARPS; ++i) {
+    const int h = warp + i * WARPS;
+    if (h >= HQ) break;
+    const __nv_bfloat162 x2 = qx[i];
     float xe = __low2float(x2), xo = __high2float(x2);
     float ss = xe * xe + xo * xo;
 #pragma unroll
@@ -5573,7 +5592,7 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
     for (int u = warp; u < 2 * HKV; u += WARPS) {
       const bool isv = u >= HKV;
       const int g = u % HKV;
-      const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
+      const __nv_bfloat162 x2 = u == warp ? kvx : *reinterpret_cast<const __nv_bfloat162*>(
           qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (isv ? HKV : 0) + g) * D + 2 * lane);
       float xe = __low2float(x2), xo = __high2float(x2);
       uint16_t packed;
@@ -5591,7 +5610,7 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
       } else {
         packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
       }
-      const int64_t loc = cache_loc[b];
+      const int64_t loc = u == warp ? loc_e : cache_loc[b];
       *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
       *reinterpret_cast<uint16_t*>((isv ? XV : XK) + g * D + 2 * lane) = packed;
     }
