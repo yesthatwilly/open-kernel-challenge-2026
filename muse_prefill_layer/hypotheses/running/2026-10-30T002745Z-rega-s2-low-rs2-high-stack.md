@@ -45,11 +45,20 @@ evidence: >
   (turn_4 rega ~1076 us)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-30T003004Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
+stage: claimed
+claimed_at: 2026-10-30T003004Z
+base_sha: 7feca0ccdd2513dfd07fd00241f638b1889fb77c
+base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
+branch: hyp/muse_prefill_layer/rega-s2-low-rs2-high-stack
+worktree: .worktrees/muse_prefill_layer/rega-s2-low-rs2-high-stack
+mode: null
+restack_of: experts-rega-low-2cta-a5b
+stale_base: null
 ---
 
 # rega-s2-low-rs2-high-stack
