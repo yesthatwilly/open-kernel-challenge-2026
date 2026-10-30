@@ -144,6 +144,10 @@ AB_CASES = (
     ("qkv_gate", 2304, 8192, 1), ("o", 8192, 1024, 1), ("qkv_gate", 2304, 8192, 128),
     # b12-batched-escape-m8-32-race: the qkv_gate m=8 b12m cell (pooler m=8 is above).
     ("qkv_gate", 2304, 8192, 8),
+    # ladder-bf1-sk2-fragment-regstream-m8-32: the bf1 cells (pooler / qkv_gate m=8 are above).
+    ("pooler", 4096, 8192, 16), ("pooler", 4096, 8192, 32), ("unpooler", 8192, 4096, 16),
+    ("unpooler", 8192, 4096, 32), ("qkv_gate", 2304, 8192, 16), ("qkv_gate", 2304, 8192, 32),
+    ("o", 8192, 1024, 8), ("o", 8192, 1024, 16), ("o", 8192, 1024, 32),
 )
 AB_ROUNDS = 2           # A, B, A, B
 AB_BF16_REL_L2 = 6e-3   # bf16 output rounding is ~2e-3; the judge allows 1e-2
@@ -5457,6 +5461,635 @@ NEW_CELL_FLAGS = NEW_CELL_FLAGS + (KHALF_FLAG,)   # section (11)'s cell joins th
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + ROUTER_PDL_FLAGS   # R-PDL cells join the A/B check and the FINAL FLAGS line
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# (13) BF1 (campaign 2026-10-30-public-ladder rung BF1; one mechanism; user-requested): the skinny swap-AB GEMM at
+# m = 8..32 on a fragment-ordered, stage-major BF16 weight stream, intra-CTA warp split-K, no cross-CTA reduction.
+# Design re-implemented from github.com/alygg77/okc-muse-spark-kernels@6cae49a kernels/muse_bf16_proj.py (sk2 route),
+# uncompressed BF16 only (no 12-bit code; that is rung BF2); no code copied. prepare() permutes each raced layer's
+# [N, K] weight losslessly into mma.m16n8k16 B-fragment order (8 rows x 64 k = one 1024 B tile unit, lane l's
+# k-steps 0-1 at byte 16 l and 2-3 at 512 + 16 l), laid out [stage][CTA][warp][unit][n8 tile] so a CTA's stage is
+# one contiguous block. One CTA owns R rows over all of K; warps split rows (NWR) and, inside each stage, K (WSK);
+# the K-warps meet in a shared-memory FP32 reduction (intra-CTA only: bf16 CLAIMS:42/:57 refuted the cross-CTA
+# split-K / stream-K forms, this is not those). Tokens sit on the MMA M side (x by ldmatrix from a shared-memory
+# ring), weight rows on N. A producer warp moves each stage into a shared-memory ring: the CTA's weight block with
+# ONE 1-D cp.async.bulk and x with ONE 3-D TMA box {64 k, 16|32 rows, units} (SWIZZLE_128B, rows >= m zero-filled
+# out of bounds), both on the stage's mbarrier (complete_tx). (WREG True, consumers ld.global.nc their fragments
+# straight into registers, is kept in the template but lost 10-34% on the H100 and is not instantiated.) Each (layer, m range) cell is
+# raced in prepare() against the incumbent kernel_fn route (b12m / swap-AB Triton / cuBLAS) and routes only if it
+# is faster; the incumbent stays the fallback.
+BF1_EXT_NAME = "muse_bf16_bf1_sk_v1"
+BF1_RING_BUDGET = 200 * 1024     # ring bytes per CTA (1 CTA/SM)
+BF1_MAX_STAGES = 8
+# layer -> (N, K, NT, NWR, WSK, UPW, WREG): one stream geometry per layer (every m of a layer reads the same bytes)
+BF1_GEOMS = {
+    "pooler": (4096, 8192, 2, 2, 2, 4, False),     # R 32, 128 CTAs, 512 k / stage (32 KB weights)
+    "unpooler": (8192, 4096, 4, 2, 2, 2, False),   # R 64, 128 CTAs, 256 k / stage (32 KB weights)
+    "qkv_gate": (2304, 8192, 3, 1, 4, 2, False),   # R 24, 96 CTAs (NEG decode #8), 512 k / stage (24 KB weights)
+    "o": (8192, 1024, 4, 2, 2, 2, False),          # R 64, 128 CTAs, 256 k / stage (32 KB weights)
+}
+# (layer, m_lo, m_hi) -> (raced m, state flag); the kernel serves any m in [m_lo, m_hi] (MT = 1 if m_hi <= 16 else 2)
+BF1_CELLS = {
+    ("pooler", 8, 8): (8, "bf1_pooler8_ok"), ("pooler", 9, 16): (16, "bf1_pooler16_ok"),
+    ("pooler", 17, 32): (32, "bf1_pooler32_ok"),
+    ("unpooler", 9, 16): (16, "bf1_unpooler16_ok"), ("unpooler", 17, 32): (32, "bf1_unpooler32_ok"),
+    ("qkv_gate", 8, 8): (8, "bf1_qkv8_ok"), ("qkv_gate", 9, 16): (16, "bf1_qkv16_ok"),
+    ("qkv_gate", 17, 32): (32, "bf1_qkv32_ok"),
+    ("o", 8, 8): (8, "bf1_o8_ok"), ("o", 9, 16): (16, "bf1_o16_ok"), ("o", 17, 32): (32, "bf1_o32_ok"),
+}
+BF1_FLAGS = tuple(spec[1] for spec in BF1_CELLS.values())
+BF1_INSTS = tuple(sorted({(layer, 1 if hi <= 16 else 2) for (layer, lo, hi) in BF1_CELLS}))   # cfg id = index
+BF1_ROUNDS = 3                  # read-flush _cell_gate rounds (routing)
+BF1_POOLED_MAX = 0.97           # pooled cand / incumbent must be <= this
+BF1_ROUND_MAX = 0.99            # and every round's
+BF1_POOLED_IQR_MAX = 3.0        # pooled cand IQR <= this x max(pooled incumbent IQR, floor) (b12m rule, 2.0 -> 3.0: H100 pooler m32 0.929 x3 rounds was refused at 1.09 vs 1.0)
+BF1_IQR_FLOOR_US = 0.5
+BF1_START_DEADLINE_S = 200.0    # no bf1 cell later than this after state A's build began (prepare has 300 s)
+_BF1_SUM = []                   # [bf1] summary lines (state A), printed last by prepare()
+_BF1_BUILD = {"s": None, "ok": False}
+
+
+def _bf1_geom(layer: str, mt: int):
+    """(R, UPS, KST, NW, XBY, WBY, SST, NSTAGE, RED, smem, grid) of one instance."""
+    N, K, NT, NWR, WSK, UPW, WREG = BF1_GEOMS[layer]
+    R = NWR * NT * 8
+    UPS = WSK * UPW
+    KST = UPS * 64
+    NW = NWR * WSK
+    XBY = UPS * 16 * mt * 128         # one 3-D TMA box of x per stage: [unit][token row][128 B], SWIZZLE_128B
+    WBY = NW * UPW * NT * 1024
+    SST = XBY + (0 if WREG else WBY)
+    NSTAGE = max(2, min(BF1_MAX_STAGES, K // KST, BF1_RING_BUDGET // SST))
+    RP = R + ((40 - (R % 32)) % 32)
+    RED = WSK * 16 * mt * RP * 4 if WSK > 1 else 0
+    return R, UPS, KST, NW, XBY, WBY, SST, NSTAGE, RED, 2048 + max(NSTAGE * SST, RED), N // R
+
+
+def _bf1_repack(w: torch.Tensor, layer: str) -> torch.Tensor:
+    """Lossless permutation of w [N, K] bf16 into the layer's stage-major fragment stream (flat bf16, N*K elements):
+    tile units [n8][ku][jh][lane = 4 g + t4][jl][h][e] with k = 64 ku + 16 (2 jh + jl) + 8 h + 2 t4 + e and row
+    8 n8 + g; then n8 = (cta, wr, nt), ku = (stage, wk, uu) -> [stage][cta][wr][wk][uu][nt][512]."""
+    N, K, NT, NWR, WSK, UPW, WREG = BF1_GEOMS[layer]
+    R, UPS, KST = _bf1_geom(layer, 1)[:3]
+    if not (tuple(w.shape) == (N, K) and w.dtype == torch.bfloat16 and N % R == 0 and K % KST == 0):
+        raise RuntimeError(f"bf1: {layer} weight {tuple(w.shape)} {w.dtype} does not fit the geometry")
+    t = w.reshape(N // 8, 8, K // 64, 2, 2, 2, 4, 2).permute(0, 2, 3, 1, 6, 4, 5, 7).reshape(N // 8, K // 64, 512)
+    t = t.reshape(N // R, NWR, NT, K // KST, WSK, UPW, 512).permute(3, 0, 1, 4, 5, 2, 6)
+    return t.contiguous().view(-1)
+
+
+_BF1_CPP = r"""
+#include <torch/extension.h>
+void bf1_run(torch::Tensor ws, torch::Tensor x, torch::Tensor out, torch::Tensor err, int64_t cfg, int64_t dg);
+std::vector<int64_t> bf1_info(int64_t cfg);
+"""
+
+_BF1_CUDA = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+#define BF1_WAIT_NS 500000000ULL   // bounded mbarrier waits (0.5 s), then the error word
+
+namespace {
+
+__device__ __forceinline__ void bf1_mbar_init(uint32_t a, uint32_t cnt) {
+  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" :: "r"(a), "r"(cnt) : "memory");
+}
+__device__ __forceinline__ void bf1_expect(uint32_t a, uint32_t tx) {
+  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(a), "r"(tx) : "memory");
+}
+__device__ __forceinline__ void bf1_arrive(uint32_t a) {
+  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];" :: "r"(a) : "memory");
+}
+__device__ __forceinline__ bool bf1_wait(uint32_t a, uint32_t parity) {
+  unsigned long long t0 = 0;
+  for (uint32_t it = 0;; ++it) {
+    uint32_t done;
+    asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
+                 " selp.u32 %0, 1, 0, p;\n}\n" : "=r"(done) : "r"(a), "r"(parity) : "memory");
+    if (done) return true;
+    if ((it & 255) == 255) {
+      unsigned long long t;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+      if (t0 == 0) t0 = t;
+      else if (t - t0 > BF1_WAIT_NS) return false;
+    }
+  }
+}
+__device__ __forceinline__ void bf1_bulk(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
+  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
+               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
+}
+__device__ __forceinline__ void bf1_tma3(uint32_t dst, const CUtensorMap* map, int c0, int c1, int c2, uint32_t bar) {
+  asm volatile("cp.async.bulk.tensor.3d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3, %4}], [%5];"
+               :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(c2), "r"(bar) : "memory");
+}
+__device__ __forceinline__ void bf1_ldsm4(uint32_t a, uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3) {
+  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
+               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(a) : "memory");
+}
+__device__ __forceinline__ void bf1_lds16(uint32_t a, uint32_t* r) {
+  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a)
+               : "memory");
+}
+__device__ __forceinline__ uint4 bf1_ldg16(const void* p) {
+  uint4 v;
+  asm volatile("ld.global.nc.L1::no_allocate.L2::256B.v4.u32 {%0,%1,%2,%3}, [%4];"
+               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p));
+  return v;
+}
+__device__ __forceinline__ void bf1_mma(float* c, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t b0,
+                                        uint32_t b1) {
+  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
+               "{%0,%1,%2,%3};"
+               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+               : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+}
+
+// One CTA = R = NWR*NT*8 weight rows over all of K. Stage = UPS = WSK*UPW 64-k units. Warp w = wr*WSK + wk owns rows
+// (wr*NT .. wr*NT+NT-1) n8 tiles and units wk*UPW .. wk*UPW+UPW-1 of every stage. Warp NW = producer.
+template <int MT, int NT, int NWR, int WSK, int UPW, int NSTAGE, bool WREG>
+__global__ void __launch_bounds__((NWR * WSK + 1) * 32, 1)
+bf1_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__ Ws, const __nv_bfloat16* __restrict__ x, __nv_bfloat16* __restrict__ out,
+           int* __restrict__ err, int M, int N, int K, int dg) {
+  constexpr int NW = NWR * WSK, NC = NW * 32, R = NWR * NT * 8, UPS = WSK * UPW, KST = UPS * 64, TOKR = 16 * MT;
+  constexpr int XBY = UPS * TOKR * 128;                    // x box [unit][token row][128 B], SWIZZLE_128B
+  constexpr int WBY = NW * UPW * NT * 1024;
+  constexpr int SST = XBY + (WREG ? 0 : WBY);
+  constexpr int RP = R + ((40 - (R % 32)) % 32);           // = 8 (mod 32): conflict-free 64-bit partial stores
+  extern __shared__ __align__(1024) unsigned char smem_raw[];
+  const uint32_t sraw = (uint32_t)__cvta_generic_to_shared(smem_raw);
+  unsigned char* smem = smem_raw + (((sraw + 1023u) & ~1023u) - sraw);   // 1024 B aligned (SWIZZLE_128B boxes)
+  const uint32_t sb = (uint32_t)__cvta_generic_to_shared(smem);
+  const uint32_t bars = sb;                                // full[NSTAGE], empty[NSTAGE]
+  const uint32_t ring = sb + 1024;
+  unsigned char* ringp = smem + 1024;
+  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+  const int cta = blockIdx.x;
+  const int nst = K / KST;
+  const size_t wstride = (size_t)gridDim.x * WBY;          // one stage of every CTA
+  const uint8_t* wcta = Ws + (size_t)cta * WBY;
+
+  if (tid == 0) {
+    asm volatile("prefetch.tensormap [%0];" :: "l"(&xmap) : "memory");
+    for (int i = 0; i < NSTAGE; ++i) { bf1_mbar_init(bars + 8 * i, 1); bf1_mbar_init(bars + 8 * (NSTAGE + i), NW); }
+    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+  }
+  __syncthreads();
+
+  if (warp == NW) {   // producer warp
+    for (int st = 0; st < nst; ++st) {
+      const int slot = st % NSTAGE;
+      if (st >= NSTAGE && !bf1_wait(bars + 8 * (NSTAGE + slot), ((st / NSTAGE) - 1) & 1)) {
+        if (lane == 0) atomicOr(err, 1);
+        break;
+      }
+      const uint32_t s0 = ring + slot * SST;
+      if (lane == 0) bf1_expect(bars + 8 * slot, ((dg & 1) ? 0u : (uint32_t)XBY) + (WREG ? 0u : (uint32_t)WBY));
+      __syncwarp();
+      if (!WREG && lane == 0) bf1_bulk(s0 + XBY, wcta + (size_t)st * wstride, WBY, bars + 8 * slot);
+      // x: ONE 3-D box {64 k, TOKR rows, UPS units} per stage; rows >= M are out of bounds -> zero-filled
+      if (!(dg & 1) && lane == 0) bf1_tma3(s0, &xmap, 0, 0, st * UPS, bars + 8 * slot);
+    }
+    return;
+  }
+
+  const int wr = warp / WSK, wk = warp % WSK;
+  const int g = lane >> 2, t4 = lane & 3;
+  const int xr = (lane & 7) + ((lane >> 3) & 1) * 8, xc = lane >> 4;   // ldmatrix: this lane's row / 16 B chunk
+  float acc[MT][NT][4];
+#pragma unroll
+  for (int mt = 0; mt < MT; ++mt)
+#pragma unroll
+    for (int nt = 0; nt < NT; ++nt) acc[mt][nt][0] = acc[mt][nt][1] = acc[mt][nt][2] = acc[mt][nt][3] = 0.f;
+
+  const size_t woff = (size_t)(warp * UPW) * NT * 1024 + lane * 16;   // this lane's bytes inside a CTA stage
+  uint4 wa[WREG ? UPW : 1][WREG ? NT : 1][2];
+  if constexpr (WREG) {
+#pragma unroll
+    for (int uu = 0; uu < UPW; ++uu)
+#pragma unroll
+      for (int nt = 0; nt < NT; ++nt) {
+        const uint8_t* p = wcta + woff + (uu * NT + nt) * 1024;
+        wa[uu][nt][0] = bf1_ldg16(p);
+        wa[uu][nt][1] = bf1_ldg16(p + 512);
+      }
+  }
+  bool ok = true;
+  for (int st = 0; st < nst; ++st) {
+    const int slot = st % NSTAGE;
+    uint4 wb[WREG ? UPW : 1][WREG ? NT : 1][2];
+    if constexpr (WREG) {
+      if (st + 1 < nst) {
+        const uint8_t* base = wcta + (size_t)(st + 1) * wstride + woff;
+#pragma unroll
+        for (int uu = 0; uu < UPW; ++uu)
+#pragma unroll
+          for (int nt = 0; nt < NT; ++nt) {
+            wb[uu][nt][0] = bf1_ldg16(base + (uu * NT + nt) * 1024);
+            wb[uu][nt][1] = bf1_ldg16(base + (uu * NT + nt) * 1024 + 512);
+          }
+      }
+    }
+    if (!bf1_wait(bars + 8 * slot, (st / NSTAGE) & 1)) { ok = false; break; }
+    const uint32_t s0 = ring + slot * SST;
+#pragma unroll
+    for (int uu = 0; uu < UPW; ++uu) {
+      const int ui = wk * UPW + uu;
+      uint32_t b[NT][8];
+#pragma unroll
+      for (int nt = 0; nt < NT; ++nt) {
+        if constexpr (WREG) {
+          b[nt][0] = wa[uu][nt][0].x; b[nt][1] = wa[uu][nt][0].y; b[nt][2] = wa[uu][nt][0].z; b[nt][3] = wa[uu][nt][0].w;
+          b[nt][4] = wa[uu][nt][1].x; b[nt][5] = wa[uu][nt][1].y; b[nt][6] = wa[uu][nt][1].z; b[nt][7] = wa[uu][nt][1].w;
+        } else {
+          const uint32_t a0 = s0 + XBY + (uint32_t)woff + (uu * NT + nt) * 1024;
+          bf1_lds16(a0, &b[nt][0]);
+          bf1_lds16(a0 + 512, &b[nt][4]);
+        }
+      }
+      uint32_t a[4][MT][4];
+      if (dg & 2) {   // diagnostic: weights only (no x fragments, no MMA)
+#pragma unroll
+        for (int nt = 0; nt < NT; ++nt)
+          acc[0][nt][0] += __uint_as_float((b[nt][0] ^ b[nt][1] ^ b[nt][2] ^ b[nt][3] ^ b[nt][4] ^ b[nt][5] ^ b[nt][6] ^ b[nt][7]) & 0x007fffffu);
+        if (uu == UPW - 1) { __syncwarp(); if (lane == 0) bf1_arrive(bars + 8 * (NSTAGE + slot)); }
+        continue;
+      }
+#pragma unroll
+      for (int j = 0; j < 4; ++j)
+#pragma unroll
+        for (int mt = 0; mt < MT; ++mt)
+          bf1_ldsm4(s0 + (ui * TOKR + mt * 16 + xr) * 128 + (((2 * j + xc) ^ (xr & 7)) << 4), a[j][mt][0], a[j][mt][1], a[j][mt][2],
+                    a[j][mt][3]);
+      if (uu == UPW - 1) {   // every shared-memory read of the stage is in registers: hand the slot back
+        __syncwarp();
+        if (lane == 0) bf1_arrive(bars + 8 * (NSTAGE + slot));
+      }
+#pragma unroll
+      for (int j = 0; j < 4; ++j)
+#pragma unroll
+        for (int mt = 0; mt < MT; ++mt)
+#pragma unroll
+          for (int nt = 0; nt < NT; ++nt)
+            bf1_mma(acc[mt][nt], a[j][mt][0], a[j][mt][1], a[j][mt][2], a[j][mt][3], b[nt][2 * j], b[nt][2 * j + 1]);
+    }
+    if constexpr (WREG) {
+#pragma unroll
+      for (int uu = 0; uu < UPW; ++uu)
+#pragma unroll
+        for (int nt = 0; nt < NT; ++nt) { wa[uu][nt][0] = wb[uu][nt][0]; wa[uu][nt][1] = wb[uu][nt][1]; }
+    }
+  }
+  if (!ok && lane == 0) atomicOr(err, 2);
+
+  if constexpr (WSK == 1) {
+#pragma unroll
+    for (int mt = 0; mt < MT; ++mt)
+#pragma unroll
+      for (int nt = 0; nt < NT; ++nt) {
+        const int row = cta * R + (wr * NT + nt) * 8 + 2 * t4;
+        const int t0 = mt * 16 + g;
+        if (t0 < M)
+          *reinterpret_cast<__nv_bfloat162*>(out + (size_t)t0 * N + row) = __floats2bfloat162_rn(acc[mt][nt][0], acc[mt][nt][1]);
+        if (t0 + 8 < M)
+          *reinterpret_cast<__nv_bfloat162*>(out + (size_t)(t0 + 8) * N + row) = __floats2bfloat162_rn(acc[mt][nt][2], acc[mt][nt][3]);
+      }
+  } else {
+    float* red = reinterpret_cast<float*>(ringp);   // the ring is idle: every copy landed (all stages consumed)
+    asm volatile("bar.sync 1, %0;" :: "r"(NC) : "memory");
+#pragma unroll
+    for (int mt = 0; mt < MT; ++mt)
+#pragma unroll
+      for (int nt = 0; nt < NT; ++nt) {
+        const int row = (wr * NT + nt) * 8 + 2 * t4;
+        const int t0 = mt * 16 + g;
+        float* r0 = red + (wk * TOKR + t0) * RP + row;
+        *reinterpret_cast<float2*>(r0) = make_float2(acc[mt][nt][0], acc[mt][nt][1]);
+        *reinterpret_cast<float2*>(r0 + 8 * RP) = make_float2(acc[mt][nt][2], acc[mt][nt][3]);
+      }
+    asm volatile("bar.sync 1, %0;" :: "r"(NC) : "memory");
+    constexpr int R2 = R / 2;
+    for (int idx = tid; idx < M * R2; idx += NC) {
+      const int tt = idx / R2, row = (idx - tt * R2) * 2;
+      float2 v = *reinterpret_cast<const float2*>(red + tt * RP + row);
+#pragma unroll
+      for (int w = 1; w < WSK; ++w) {
+        const float2 p = *reinterpret_cast<const float2*>(red + (w * TOKR + tt) * RP + row);
+        v.x += p.x; v.y += p.y;
+      }
+      *reinterpret_cast<__nv_bfloat162*>(out + (size_t)tt * N + cta * R + row) = __floats2bfloat162_rn(v.x, v.y);
+    }
+  }
+}
+
+typedef CUresult (*Bf1EncodeFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
+                                const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
+                                CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
+
+// cuTensorMapEncodeTiled through the runtime (no -lcuda); the cached value is a driver function pointer.
+Bf1EncodeFn bf1_encode_fn() {
+  static Bf1EncodeFn cached = nullptr;
+  if (cached != nullptr) return cached;
+  void* fn = nullptr;
+  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
+#if CUDART_VERSION >= 12050
+  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
+#else
+  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
+#endif
+  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
+    (void)cudaGetLastError();
+    return nullptr;
+  }
+  cached = reinterpret_cast<Bf1EncodeFn>(fn);
+  return cached;
+}
+
+// Host-only, every call: a stack-local 3-D map over THIS call's x [M, K] bf16 as {64 k, M rows, K/64 units}
+// (strides K*2 B, 128 B), box {64, TOKR, UPS}, SWIZZLE_128B, OOB rows zero-filled; passed as the __grid_constant__.
+CUtensorMap bf1_xmap(const torch::Tensor& x, int tokr, int ups) {
+  const Bf1EncodeFn enc = bf1_encode_fn();
+  TORCH_CHECK(enc != nullptr, "bf1: cuTensorMapEncodeTiled entry point missing");
+  TORCH_CHECK(x.stride(1) == 1 && x.stride(0) == x.size(1) && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0,
+              "bf1: x must be contiguous and 16 B aligned");
+  CUtensorMap mp;
+  std::memset(&mp, 0, sizeof(mp));
+  const cuuint64_t dims[3] = {64, static_cast<cuuint64_t>(x.size(0)), static_cast<cuuint64_t>(x.size(1) / 64)};
+  const cuuint64_t strides[2] = {static_cast<cuuint64_t>(x.size(1)) * 2, 128};
+  const cuuint32_t box[3] = {64, static_cast<cuuint32_t>(tokr), static_cast<cuuint32_t>(ups)};
+  const cuuint32_t es[3] = {1, 1, 1};
+  const CUresult rc = enc(&mp, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 3, x.data_ptr(), dims, strides, box, es,
+                          CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
+                          CU_TENSOR_MAP_L2_PROMOTION_L2_128B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
+  TORCH_CHECK(rc == CUDA_SUCCESS, "bf1: cuTensorMapEncodeTiled rc ", static_cast<int>(rc));
+  return mp;
+}
+
+template <int MT, int NT, int NWR, int WSK, int UPW, int NSTAGE, bool WREG>
+struct Bf1Inst {
+  static constexpr int NW = NWR * WSK, R = NWR * NT * 8, UPS = WSK * UPW, KST = UPS * 64, TOKR = 16 * MT;
+  static constexpr int XBY = UPS * TOKR * 128, WBY = NW * UPW * NT * 1024;
+  static constexpr int SST = XBY + (WREG ? 0 : WBY), RP = R + ((40 - (R % 32)) % 32);
+  static constexpr int RED = WSK > 1 ? WSK * TOKR * RP * 4 : 0;
+  static constexpr int SMEM = 2048 + (NSTAGE * SST > RED ? NSTAGE * SST : RED);
+  static void set_attr() {
+    static bool done = false;
+    if (!done) {
+      C10_CUDA_CHECK(cudaFuncSetAttribute(bf1_kernel<MT, NT, NWR, WSK, UPW, NSTAGE, WREG>,
+                                          cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
+      done = true;
+    }
+  }
+  static void run(const torch::Tensor& ws, const torch::Tensor& x, torch::Tensor& out, torch::Tensor& err, int dg) {
+    const int M = (int)x.size(0), K = (int)x.size(1), N = (int)out.size(1);
+    TORCH_CHECK(M >= 1 && M <= TOKR && N % R == 0 && K % KST == 0, "bf1: shape outside the instance");
+    TORCH_CHECK(ws.numel() * ws.element_size() == (int64_t)N * K * 2, "bf1: weight stream size");
+    set_attr();
+    const CUtensorMap xm = bf1_xmap(x, TOKR, UPS);
+    bf1_kernel<MT, NT, NWR, WSK, UPW, NSTAGE, WREG><<<N / R, (NW + 1) * 32, SMEM, at::cuda::getCurrentCUDAStream()>>>(
+        xm, reinterpret_cast<const uint8_t*>(ws.data_ptr()), reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
+        reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), err.data_ptr<int>(), M, N, K, dg);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
+  static std::vector<int64_t> info() {
+    set_attr();
+    cudaFuncAttributes fa;
+    C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, bf1_kernel<MT, NT, NWR, WSK, UPW, NSTAGE, WREG>));
+    int occ = 0;
+    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, bf1_kernel<MT, NT, NWR, WSK, UPW, NSTAGE, WREG>,
+                                                                 (NW + 1) * 32, SMEM));
+    return {(int64_t)fa.numRegs, (int64_t)fa.localSizeBytes, (int64_t)SMEM, (int64_t)occ, (int64_t)NSTAGE};
+  }
+};
+
+}  // namespace
+
+void bf1_run(torch::Tensor ws, torch::Tensor x, torch::Tensor out, torch::Tensor err, int64_t cfg, int64_t dg) {
+  @@BF1_RUN@@
+  TORCH_CHECK(false, "bf1: no config ", cfg);
+}
+
+std::vector<int64_t> bf1_info(int64_t cfg) {
+  @@BF1_INFO@@
+  TORCH_CHECK(false, "bf1: no config ", cfg);
+}
+"""
+
+
+def _bf1_source() -> str:
+    runs, infos = [], []
+    for ci, (layer, mt) in enumerate(BF1_INSTS):
+        N, K, NT, NWR, WSK, UPW, WREG = BF1_GEOMS[layer]
+        inst = f"Bf1Inst<{mt}, {NT}, {NWR}, {WSK}, {UPW}, {_bf1_geom(layer, mt)[7]}, {str(WREG).lower()}>"
+        runs.append(f"if (cfg == {ci}) {{ {inst}::run(ws, x, out, err, (int)dg); return; }}")
+        infos.append(f"if (cfg == {ci}) return {inst}::info();")
+    return _BF1_CUDA.replace("@@BF1_RUN@@", "\n  ".join(runs)).replace("@@BF1_INFO@@", "\n  ".join(infos))
+
+
+def _bf1_build():
+    """Compile the bf1 module once per process, at import (never during capture), for 9.0a only, in its OWN
+    extension. Returns None (incumbent paths) on any failure; never raises."""
+    t0 = time.perf_counter()
+    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+    try:
+        from torch.utils import cpp_extension
+        ext = cpp_extension.load_inline(
+            name=BF1_EXT_NAME, cpp_sources=_BF1_CPP, cuda_sources=_bf1_source(),
+            functions=["bf1_run", "bf1_info"], extra_cuda_cflags=list(BULK_NVCC_FLAGS), verbose=False)
+    except Exception as e:
+        tail = "\n".join(str(e).splitlines()[-40:])
+        _BF1_BUILD["s"] = time.perf_counter() - t0
+        print(f"[bf1] build FAILED after {_BF1_BUILD['s']:.1f}s ({type(e).__name__}); log tail:\n{tail}\n"
+              f"[bf1] incumbent paths kept", flush=True)
+        return None
+    finally:
+        if prev is None:
+            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+        else:
+            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+    _BF1_BUILD["s"] = time.perf_counter() - t0
+    _BF1_BUILD["ok"] = True
+    print(f"[build-time] bf1 load_inline compiled in {_BF1_BUILD['s']:.1f}s", flush=True)
+    return ext
+
+
+_BF1_EXT = _bf1_build() if torch.cuda.is_available() else None
+
+
+def _bf1_cell(layer: str, m: int):
+    for key in BF1_CELLS:
+        if key[0] == layer and key[1] <= m <= key[2]:
+            return key
+    return None
+
+
+def _bf1_route(layer: str, x: torch.Tensor, cfg, state: dict):
+    """The bf1 cfg id serving this call, or None: (layer, cfg m) inside a BF1_CELLS range whose state flag is True,
+    the layer's stream in state, n / k the geometry's, x [m, k] bf16 contiguous and 16 B aligned. cfg, shapes and
+    state only, never input values."""
+    key = _bf1_cell(layer, cfg["m"])
+    if key is None or state.get(BF1_CELLS[key][1]) is not True or _BF1_EXT is None or ("bf1_ws_" + layer) not in state:
+        return None
+    N, K = BF1_GEOMS[layer][:2]
+    m = cfg["m"]
+    if not (cfg["n"] == N and cfg["k"] == K and x.dim() == 2 and x.shape[0] == m and x.shape[1] == K
+            and x.dtype == torch.bfloat16 and x.is_contiguous() and x.data_ptr() % 16 == 0):
+        return None
+    return BF1_INSTS.index((layer, 1 if key[2] <= 16 else 2))
+
+
+def _bf1_forward(layer: str, x: torch.Tensor, state: dict, ci: int) -> torch.Tensor:
+    """ONE launch: out[m, N] = x @ W.T from the state's fragment stream. The error word is passed, never read here."""
+    out = torch.empty((x.shape[0], BF1_GEOMS[layer][0]), dtype=torch.bfloat16, device=x.device)
+    _BF1_EXT.bf1_run(state["bf1_ws_" + layer], x, out, state["bf1_err"], ci, 0)
+    return out
+
+
+def _bf1_rule(rounds: list) -> tuple:
+    """(route, why, pooled, pooled cand IQR, pooled incumbent IQR) on BF1_ROUNDS read-flush _cell_gate rounds."""
+    base = _ouns_median([r["base"] for r in rounds])
+    pc = [t for r in rounds for t in r["cand"]["times"]]
+    pm = [t for r in rounds for t in r["master"]["times"]]
+    pooled = max(_ouns_median(pc) - base, 0.25) / max(_ouns_median(pm) - base, 0.25)
+    ic, im = _b12m_iqr(pc), _b12m_iqr(pm)
+    ratios = [r["cand"]["net"] / r["master"]["net"] for r in rounds]
+    if not pooled <= BF1_POOLED_MAX:
+        return False, f"pooled {pooled:.3f} > {BF1_POOLED_MAX}", pooled, ic, im
+    if not max(ratios) <= BF1_ROUND_MAX:
+        return False, f"a round {max(ratios):.3f} > {BF1_ROUND_MAX}", pooled, ic, im
+    if not ic <= BF1_POOLED_IQR_MAX * max(im, BF1_IQR_FLOOR_US):
+        return False, f"pooled IQR {ic:.2f} > {BF1_POOLED_IQR_MAX}x max({im:.2f}, {BF1_IQR_FLOOR_US})", pooled, ic, im
+    return True, "", pooled, ic, im
+
+
+def _bf1_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (13). Sets every BF1_CELLS flag (False unless every step passes) and, per layer with a routed cell, the
+    state's stream state["bf1_ws_" + layer]. flags None (state A, the judge's): per layer the stream; per instance
+    regs / spill / occupancy (>= 1 CTA/SM); per cell _cell_check at m_lo, m_hi and the raced m plus a per-row check,
+    BF1_ROUNDS read-flush _cell_gate rounds of kernel_fn with the flag on vs off, _bf1_rule, and a torch.profiler
+    assertion of exactly one bf1_kernel. flags a dict (the A/B check's second state): streams for flagged layers only.
+    Never raises."""
+    for spec in BF1_CELLS.values():
+        state[spec[1]] = False
+    if _BF1_EXT is None:
+        if flags is None:
+            _BF1_SUM.append("[bf1] no module (build failed or no GPU): incumbent everywhere")
+        return
+    dev = state["router"].device
+    state["bf1_err"] = torch.zeros(1, dtype=torch.int32, device=dev)
+    if flags is not None:
+        for key, (rm, flag) in BF1_CELLS.items():
+            if flags.get(flag):
+                try:
+                    if ("bf1_ws_" + key[0]) not in state:
+                        state["bf1_ws_" + key[0]] = _bf1_repack(state[key[0]], key[0])
+                    state[flag] = True
+                except Exception as e:
+                    print(f"[bf1] second state: {key} stream raised {type(e).__name__}: {e}; cell off", flush=True)
+        return
+    _BF1_SUM.clear()
+    inst_ok = {}
+    for ci, (layer, mt) in enumerate(BF1_INSTS):
+        try:
+            info = [int(v) for v in _BF1_EXT.bf1_info(ci)]
+            g = _bf1_geom(layer, mt)
+            print(f"[bf1] inst {ci} {layer} MT{mt} {BF1_GEOMS[layer][2:]}: regs={info[0]} spill={info[1]} B "
+                  f"smem={info[2]} B occ={info[3]} CTA/SM NSTAGE={info[4]} grid {g[10]} x {(g[3] + 1) * 32}", flush=True)
+            inst_ok[ci] = "" if (info[3] >= 1 and info[1] == 0) else f"occ {info[3]} spill {info[1]}"
+        except Exception as e:
+            inst_ok[ci] = f"info raised {type(e).__name__}"
+    for key, (rm, flag) in BF1_CELLS.items():
+        layer, lo, hi = key
+        t0 = time.perf_counter()
+        why, rounds, rule = "", [], None
+        try:
+            if t0 - t_start > BF1_START_DEADLINE_S:
+                raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+            ci = BF1_INSTS.index((layer, 1 if hi <= 16 else 2))
+            if inst_ok.get(ci):
+                raise RuntimeError(f"instance {ci}: {inst_ok[ci]}")
+            N, K = BF1_GEOMS[layer][:2]
+            w = state[layer]
+            if ("bf1_ws_" + layer) not in state:
+                t1 = time.perf_counter()
+                state["bf1_ws_" + layer] = _bf1_repack(w, layer)
+                torch.cuda.synchronize()
+                print(f"[bf1] {layer} stream repacked in {time.perf_counter() - t1:.2f}s "
+                      f"({state['bf1_ws_' + layer].numel() * 2 / 1e6:.1f} MB)", flush=True)
+            st_a = dict(state)
+            st_a[flag] = True
+            for m in sorted({lo, hi, rm}):
+                fn = (lambda xx, s=st_a, m=m: kernel_fn({"x": xx, "config": {"m": m, "n": N, "k": K, "layer": layer}}, s))
+                if _bf1_route(layer, torch.empty((m, K), dtype=torch.bfloat16, device=dev),
+                              {"m": m, "n": N, "k": K, "layer": layer}, st_a) != ci:
+                    raise RuntimeError(f"route check failed at m={m}")
+                bad = _cell_check(f"bf1 {layer} m={m}", fn, w, m, N, K, err=state["bf1_err"])
+                if not bad:
+                    bad = _b12m_rows(fn, w, m, N, K, state["bf1_err"])[0]
+                if bad:
+                    raise RuntimeError(f"m={m}: {bad}")
+            for rnd in range(BF1_ROUNDS):
+                st = {}
+                _cell_gate(f"bf1 {layer} {lo}-{hi} r{rnd + 1}", layer, rm, N, K, flag, state, flush_mode="read",
+                           stats=st, route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+                rounds.append(st)
+            code = int(state["bf1_err"].item())
+            state["bf1_err"].zero_()
+            if code:
+                raise RuntimeError(f"error word {code} after the gates")
+            rule = _bf1_rule(rounds)
+            if not rule[0]:
+                why = rule[1]
+            else:
+                data = {"x": torch.randn((rm, K), device=dev, dtype=torch.float32).to(torch.bfloat16),
+                        "config": {"m": rm, "n": N, "k": K, "layer": layer}}
+                try:
+                    names = _cell_kernels(lambda: kernel_fn(data, st_a))
+                    if not (len(names) == 1 and "bf1_kernel" in names[0]):
+                        why = f"profiled kernels {names}: expected exactly one bf1_kernel"
+                except Exception as e:
+                    why = f"profiler unavailable ({type(e).__name__}: {str(e)[-120:]})"
+            if not why:
+                state[flag] = True
+        except Exception as e:   # never raises: any surprise keeps the incumbent for this cell
+            why = f"{type(e).__name__}: {str(e)[-200:]}"
+            state[flag] = False
+        state["bf1_err"].zero_()
+        dt = time.perf_counter() - t0
+        r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                         f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+        if rule is not None:
+            r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+        _BF1_SUM.append(f"[bf1] {layer} m{lo}-{hi}@{rm} inc/bf1 us: {r_txt or 'not timed'} -> "
+                        + ("ROUTE" if state[flag] else f"NO-ROUTE ({why[:100]})") + f" {dt:.1f}s")
+        _decision(f"PATH CHOSEN bf1 {layer} m={lo}..{hi}: " + ("bf1_kernel" if state[flag] else "incumbent")
+                  + (f" [pooled {rule[2]:.3f}]" if rule is not None else "") + ("" if state[flag] else f"; {why[:160]}"))
+    for layer in BF1_GEOMS:
+        if not any(state[flag] for (lyr, lo, hi), (rm, flag) in BF1_CELLS.items() if lyr == layer):
+            state.pop("bf1_ws_" + layer, None)
+    torch.cuda.synchronize()
+
+
+def _bf1_summary(prepare_s: float) -> None:
+    b = _BF1_BUILD["s"]
+    print(f"[bf1] SUMMARY build {'n/a' if b is None else f'{b:.1f}s'} ({BF1_EXT_NAME}, "
+          f"{'ok' if _BF1_BUILD['ok'] else 'FAILED'}); prepare {prepare_s:.1f}s; route at pooled <= {BF1_POOLED_MAX}, "
+          f"rounds <= {BF1_ROUND_MAX}; rounds as inc/bf1=ratio", flush=True)
+    for line in _BF1_SUM:
+        print(line[:300], flush=True)
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + BF1_FLAGS   # section (13)'s cells join the A/B check and the FINAL FLAGS line
+
+
 def _prepare_state(weights: Weights, flags=None) -> dict:
     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
@@ -5567,6 +6200,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         # (11) pooler m == 128 K-halves, fp32 partials + Triton add-cast (own flag), after every other cell.
         _khalf_prepare(state, t_all)
         t = tick("pooler k-halves cell K (probe + canary + check + 2 read-flush gates + profile)", t)
+        # (13) BF1: fragment-ordered BF16 stream at m = 8..32 (own flags), raced against every incumbent above.
+        _bf1_prepare(state, t_all)
+        t = tick("bf1 cells (repack + checks + 3 read-flush rounds + profile)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
@@ -5582,7 +6218,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         _b12_prepare(state, flags=flags)
         _b12m_prepare(state, t_all, flags=flags)
         _lt_prepare(state, flags=flags)
-        t = tick("bulk / lt per-state buffers (flags inherited)", t)
+        _bf1_prepare(state, t_all, flags=flags)
+        t = tick("bulk / lt / bf1 per-state buffers (flags inherited)", t)
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
     return state
@@ -5600,6 +6237,9 @@ def _ab_component(layer: str, m: int, st=None) -> str:
     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell. A
     bulk12 cell that is on in st serves its m == 1 cell ahead of the raw bulk cell."""
+    bf1_key = _bf1_cell(layer, m)
+    if st is not None and bf1_key is not None and st.get(BF1_CELLS[bf1_key][1]) is True:
+        return BF1_CELLS[bf1_key][1]   # section (13): a miss turns off only this bf1 cell
     if st is not None and layer == "pooler" and m == KHALF_M and st.get(KHALF_FLAG):
         return KHALF_FLAG   # checked first: a miss turns off only this cell, never nn_ok (unpooler m=128 shares it)
     if st is not None and layer in B12_CELLS and m == B12_M and st.get(B12_CELLS[layer][5]):
@@ -5746,6 +6386,7 @@ def prepare(weights: Weights) -> dict:
         print(f"  {line}", flush=True)
     _DECISION_LINES.clear()
     _b12m_summary(time.perf_counter() - t0)   # section (12)'s <= 2 KB block, the very last lines of prepare()
+    _bf1_summary(time.perf_counter() - t0)    # section (13)'s block, after it
     return state
 
 
@@ -5756,6 +6397,9 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     # dispatch flag (ouns_cl, router_cluster_ok, nn_ok) is read from `state`.
     if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
         return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
+    bf1_ci = _bf1_route(layer, x, cfg, state)   # section (13): pooler / unpooler / qkv_gate / o, m = 8..32, per cell flag
+    if bf1_ci is not None:
+        return _bf1_forward(layer, x, state, bf1_ci)
     if _b12_route_ok(layer, x, cfg, state):    # pooler / qkv_gate / o at m == 1 on 12-bit weights
         return _b12_forward(layer, x, state)
     b12m_arm = _b12m_route(layer, x, cfg, state)   # pooler / qkv_gate at exactly m == 8 on 12-bit weights (TMA)
