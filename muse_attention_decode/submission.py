@@ -10330,7 +10330,8 @@ def _sw_setup() -> None:
 _FVG_CPP = r"""
 #include <torch/extension.h>
 #include <vector>
-// mode & 3: MODE (1 = the routed kernel); mode | 4: pv8 (FP8 E4M3 PV wgmma, rung AT7) instead of f16 PV
+// mode & 3: MODE (1 = the routed kernel); mode | 4: pv8 (FP8 E4M3 PV wgmma, rung AT7) instead of f16 PV;
+// mode & 8: AT5 (fvg_kernel<4, PV8>: atomic merge + last-CTA finalize instead of the grid barrier; plain launch)
 std::vector<int64_t> fvg_attr(int64_t mode);
 void fvg_launch(int64_t mode, torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
                 torch::Tensor cache_seqlens, torch::Tensor qkv, torch::Tensor part_o, torch::Tensor part_ml,
@@ -10403,6 +10404,39 @@ __device__ __forceinline__ uint2 lds2(uint32_t a) {
 }
 __device__ __forceinline__ void sts1(uint32_t a, uint32_t v) {
   asm volatile("st.shared.u32 [%0], %1;\n" ::"r"(a), "r"(v) : "memory");
+}
+// AT5 (rung AT5, full verify B=1): fixed-reference FP32 merge as AT2 (gates/R11.held): rows add o 2^(m - R) and
+// l 2^(m - R) into a per-request workspace by red.global.add; a row max outside [R - 90, guard_hi] stores its exact
+// (o, m, l) to the CTA's own partial slot instead (the R11 fallback, LSE-merged by the finalizer)
+constexpr float AT5_REF = 16.f;
+constexpr float AT5_GUARD_LO = AT5_REF - 90.f;
+constexpr int AT5_NF = 8;  // AT5b: finalizer CTAs (the last 8 to arrive), each 16 of the 128 rows per request
+__device__ __forceinline__ void at5_red4(float* p, float a, float b, float c, float d) {
+  asm volatile("red.global.add.v4.f32 [%0], {%1, %2, %3, %4};" :: "l"(p), "f"(a), "f"(b), "f"(c), "f"(d) : "memory");
+}
+__device__ __forceinline__ void at5_red1(float* p, float a) {
+  asm volatile("red.global.add.f32 [%0], %1;" :: "l"(p), "f"(a) : "memory");
+}
+// AT5 finalizer, R11 fallback only (never on judge data): LSE-merge the row's exact slots (finite m) onto the workspace
+// value (reference R, or none when l = 0); dims d4..d4+3 of the row (16 threads per row). The caller resets the slots.
+__device__ __forceinline__ float4 at5_fallback(const float* part_o, const float2* part_ml, int s0, int nseg, int row, int d4,
+                                            float4 x, float& Ls) {
+  float Mt = Ls > 0.f ? AT5_REF : -__builtin_huge_valf();
+  for (int sg = 0; sg < nseg; ++sg) {
+    const float2 ml = __ldcg(part_ml + (int64_t)(s0 + sg) * 128 + row);
+    if (ml.x != -__builtin_huge_valf()) {
+      const float4 v = __ldcg(reinterpret_cast<const float4*>(part_o + ((int64_t)(s0 + sg) * 128 + row) * 64 + d4));
+      const float Mn = fmaxf(Mt, ml.x);
+      const float f1 = Mt == -__builtin_huge_valf() ? 0.f : exp2f(Mt - Mn), f2 = exp2f(ml.x - Mn);
+      x.x = x.x * f1 + v.x * f2;
+      x.y = x.y * f1 + v.y * f2;
+      x.z = x.z * f1 + v.z * f2;
+      x.w = x.w * f1 + v.w * f2;
+      Ls = Ls * f1 + ml.y * f2;
+      Mt = Mn;
+    }
+  }
+  return x;
 }
 __device__ __forceinline__ int cta_of(int x, int T, int G) {  // largest i with floor(i T / G) <= x
   return (int)(((int64_t)(x + 1) * G + T - 1) / T) - 1;
@@ -10520,6 +10554,14 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
   const int h = warp >> 2, wm = warp & 3, g = lane >> 2, qd = lane & 3;
   const int G = gridDim.x;
+  // AT5 workspace past the partial slots: acc [B][128][D], then l [B][128]; zero between launches (self-reset)
+  float* const ws = part_o + (int64_t)(G + B) * 128 * D;
+  float* const wl = ws + (int64_t)B * 128 * D;
+  // guard_hi (R11): o and l carry 2^(m - R) x 2^8 (FP8 PV Max_offset) x at most W keys x |v| <= 448, kept < 2^123
+  const float ghi = fminf(100.f, AT5_REF + 127.f - 8.f - 8.81f - 4.f - log2f((float)W));
+  if (MODE == 4 && tid == 0 && (int)blockIdx.x < B * 16)  // the finalizer's gate rows: one 128-B line per CTA into L2
+    asm volatile("prefetch.global.L2 [%0];" ::"l"(qkv + (int64_t)(blockIdx.x >> 4) * qkv_stride + (HQ + 2 * HKV) * D +
+                                                 (blockIdx.x & 15) * 64));
 
   if (warp == 0) {  // lens read fresh on device every call: per-request tile counts, prefix sum (B <= 64)
     const int n0 = lane < B ? lens[lane] : 0, n1 = lane + 32 < B ? lens[lane + 32] : 0;
@@ -10637,6 +10679,31 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
     lb_ += __shfl_xor_sync(~0u, lb_, 2);
     const int slot = vid + b;
     const int rA = h * 64 + (2 * wm) * 8 + g, rB = rA + 8;
+    if constexpr (MODE == 4) {
+      // lanes qd, qd ^ 1 swap halves so each holds 4 contiguous dims of one row: even qd row A, odd qd row B
+      const bool ev = (qd & 1) == 0;
+      const int row = ev ? rA : rB, dq = 2 * (qd & 2);
+      const float mm = ev ? m0 : m1, ll = ev ? la : lb_;
+      const bool live = mm != NEG_INF;  // a row with every key of this range masked adds nothing
+      const bool inr = mm >= AT5_GUARD_LO && mm <= ghi;
+      const float wsc = inr ? ex2(mm - AT5_REF) : 1.f;
+      float* const dst = inr ? ws + ((int64_t)b * 128 + row) * D + dq : part_o + ((int64_t)slot * 128 + row) * D + dq;
+#pragma unroll
+      for (int jj = 0; jj < 8; ++jj) {
+        const float sx = ev ? o[4 * jj + 2] : o[4 * jj + 0], sy = ev ? o[4 * jj + 3] : o[4 * jj + 1];
+        const float rx = __shfl_xor_sync(~0u, sx, 1), ry = __shfl_xor_sync(~0u, sy, 1);
+        const float4 v = ev ? make_float4(o[4 * jj + 0], o[4 * jj + 1], rx, ry) : make_float4(rx, ry, o[4 * jj + 2], o[4 * jj + 3]);
+        if (live) {
+          if (inr) at5_red4(dst + 8 * jj, v.x * wsc, v.y * wsc, v.z * wsc, v.w * wsc);
+          else *reinterpret_cast<float4*>(dst + 8 * jj) = v;
+        }
+      }
+      if (live && qd < 2) {
+        if (inr) at5_red1(wl + b * 128 + row, ll * wsc);
+        else { part_ml[(int64_t)slot * 128 + row] = make_float2(mm, ll); atomicAdd(cnt + 3, 1); }
+      }
+      return;
+    }
     float* pa = part_o + ((int64_t)slot * 128 + rA) * D + 2 * qd;
     float* pb = part_o + ((int64_t)slot * 128 + rB) * D + 2 * qd;
 #pragma unroll
@@ -10927,6 +10994,78 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
       __threadfence();
     }
   }
+  if (MODE == 4) {
+    // AT5: release this CTA's reds, one ticket per CTA (cnt[0]). AT5b: the last AT5_NF CTAs to arrive are the
+    // finalizers, one row group each (ticket G - AT5_NF + g -> group g); each waits (acquire, bounded spin) until all G
+    // CTAs have arrived, so it sees every red, then finalizes its rows (16 threads per row, float4) and re-zeroes them;
+    // the last finalizer to finish (cnt[1]) resets the ticket, cnt[1] and the fallback count (cnt[3]). The finalizers
+    // only wait on at most AT5_NF - 1 CTAs, while G - AT5_NF arrived CTAs exit and free their slots.
+    int* flag = reinterpret_cast<int*>(smem + L::FLAG);
+    asm volatile("fence.acq_rel.gpu;" ::: "memory");
+    __syncthreads();
+    if (tid == 0) {
+      int old;
+      asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(old) : "l"(cnt) : "memory");
+      flag[0] = old - (G - AT5_NF);
+      if (old >= G - AT5_NF) {
+        long long spins = 0;
+        int seen = old + 1;
+        while (seen < G) {
+          asm volatile("ld.acquire.gpu.global.s32 %0, [%1];" : "=r"(seen) : "l"(cnt) : "memory");
+          if (++spins > SPIN_MAX) { atomicOr(cnt + 2, 1); break; }
+        }
+      }
+    }
+    __syncthreads();
+    const int grp = flag[0];
+    if (grp < 0) return;
+    const int d4 = (tid & 15) * 4;
+    for (int i = 0; !over && i < B; ++i) {
+      const int R = grp * (B * 16) + i * 16 + (tid >> 4);  // flat row b * 128 + row
+      const int c = R >> 7, row = R & 127;
+      const int head = (row >> 6) * 8 + (row & 7);
+      const int64_t tok = (int64_t)c * 8 + ((row & 63) >> 3);
+      float4 x = __ldcg(reinterpret_cast<const float4*>(ws + (int64_t)R * D + d4));
+      float Ls = __ldcg(wl + R);
+      const __nv_bfloat162* gp = reinterpret_cast<const __nv_bfloat162*>(qkv + tok * qkv_stride + (HQ + 2 * HKV) * D + head * D + d4);
+      const __nv_bfloat162 gr01 = gp[0], gr23 = gp[1];
+      const int nfb = __ldcg(cnt + 3);  // rows that took the R11 fallback (never on judge data): 0 -> no slot scan;
+                                        // loaded with the row, so it costs no extra L2 round trip
+      if (nfb > 0) {
+        const int cf = cta_of(tst[c], T, Ge), nseg = cta_of(tst[c + 1] - 1, T, Ge) - cf + 1, s0 = cf + c;
+        x = at5_fallback(part_o, part_ml, s0, nseg, row, d4, x, Ls);
+        __syncwarp();
+        for (int sg = tid & 15; sg < nseg; sg += 16) part_ml[(int64_t)(s0 + sg) * 128 + row].x = NEG_INF;
+      }
+      // fused master epilogue as MODE 1: attention row (fp32) -> scaleless RMSNorm (eps inside the sqrt) x sigmoid(gate);
+      // hardware rcp / rsqrt / ex2 (~2 ulp fp32, far below the bf16 output rounding)
+      const float inv = __fdividef(1.f, Ls);  // every row attends at least key 0: l > 0
+      x.x *= inv; x.y *= inv; x.z *= inv; x.w *= inv;
+      float ss = x.x * x.x + x.y * x.y + x.z * x.z + x.w * x.w;
+#pragma unroll
+      for (int o_ = 8; o_ >= 1; o_ >>= 1) ss += __shfl_xor_sync(~0u, ss, o_);
+      const float r = rsqrtf(ss * (1.f / D) + eps);
+      const float2 g01 = __bfloat1622float2(gr01), g23 = __bfloat1622float2(gr23);
+      constexpr float NL2E = -1.4426950408889634f;
+      const float y0 = x.x * r * __fdividef(1.f, 1.f + ex2(NL2E * g01.x));
+      const float y1 = x.y * r * __fdividef(1.f, 1.f + ex2(NL2E * g01.y));
+      const float y2 = x.z * r * __fdividef(1.f, 1.f + ex2(NL2E * g23.x));
+      const float y3 = x.w * r * __fdividef(1.f, 1.f + ex2(NL2E * g23.y));
+      __nv_bfloat162 o01 = __floats2bfloat162_rn(y0, y1), o23 = __floats2bfloat162_rn(y2, y3);
+      uint2 ov;
+      ov.x = *reinterpret_cast<uint32_t*>(&o01);
+      ov.y = *reinterpret_cast<uint32_t*>(&o23);
+      *reinterpret_cast<uint2*>(out + (tok * HQ + head) * D + d4) = ov;
+      __stcg(reinterpret_cast<float4*>(ws + (int64_t)R * D + d4), make_float4(0.f, 0.f, 0.f, 0.f));
+      if ((tid & 15) == 0) __stcg(wl + R, 0.f);
+    }
+    __syncthreads();
+    if (tid == 0) {
+      int d;
+      asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(d) : "l"(cnt + 1) : "memory");
+      if (d == AT5_NF - 1) { cnt[0] = 0; cnt[1] = 0; cnt[3] = 0; }
+    }
+  }
 #else
   if (threadIdx.x == 0 && blockIdx.x == 0) atomicOr(cnt + 2, 4);
 #endif
@@ -10936,6 +11075,7 @@ constexpr int SMEM = SmemY::BYTES;
 using KFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*, const int*, int, int, float, float*,
                      float2*, int*, const __nv_bfloat16*, int64_t, float, __nv_bfloat16*);
 KFn kfn(int64_t mode) {
+  if (mode & 8) return fvg_kernel<4, true>;  // AT5: FP8 PV main loop + atomic merge (no grid barrier, plain launch)
   switch (mode & 7) {
     case 0: return fvg_kernel<0, false>;
     case 1: return fvg_kernel<1, false>;
@@ -10947,9 +11087,9 @@ KFn kfn(int64_t mode) {
     default: return fvg_kernel<3, true>;
   }
 }
-bool g_attr_set[8] = {false, false, false, false, false, false, false, false};
+bool g_attr_set[9] = {false, false, false, false, false, false, false, false, false};
 void set_smem(int64_t mode) {
-  const int m = (int)(mode & 7);
+  const int m = (mode & 8) ? 8 : (int)(mode & 7);
   if (!g_attr_set[m]) {
     C10_CUDA_CHECK(cudaFuncSetAttribute((const void*)kfn(m), cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
     g_attr_set[m] = true;
@@ -10993,6 +11133,8 @@ void fvg_launch(int64_t mode, torch::Tensor q, torch::Tensor k_cache, torch::Ten
   TORCH_CHECK(part_o.scalar_type() == at::kFloat && part_o.numel() >= (grid + B) * 128 * D &&
               part_ml.scalar_type() == at::kFloat && part_ml.numel() >= (grid + B) * 128 * 2 &&
               cnt.scalar_type() == at::kInt && cnt.numel() >= 4, "fvg: workspace");
+  TORCH_CHECK(!(mode & 8) || part_o.numel() >= (grid + 2 * B) * 128 * D + B * 128, "fvg: AT5 workspace");
+  TORCH_CHECK(!(mode & 8) || grid >= 8, "fvg: AT5 needs >= 8 CTAs (one per finalizer row group)");
   set_smem(mode);
   cudaLaunchConfig_t cfg = {};
   cfg.gridDim = dim3(static_cast<unsigned>(grid), 1, 1);
@@ -11017,6 +11159,8 @@ void fvg_launch(int64_t mode, torch::Tensor q, torch::Tensor k_cache, torch::Ten
 _FVG_FLAGS = ["-O3", "-lineinfo", "-std=c++20", "-gencode=arch=compute_90a,code=sm_90a"]
 _FVG_ROUTE = MappingProxyType({})  # batch -> launch mode (1 f16 PV, 5 FP8 PV); frozen at the end of _fvg_setup
 _FVG_ARMS = (1, 5)  # fvg_kernel<1> f16 PV (incumbent), fvg_kernel<1, PV8> (rung AT7); raced per row
+_FVG_V1_ARM = 13   # rung AT5, full verify B=1: fvg_kernel<4, PV8> (atomic merge + last-CTA finalize, plain launch)
+_FVG_V1_BAR = 1 / 1.03  # AT5 routes at >= 1.03x of the incumbent (FA3 + combine + metadata) in every round
 _FVG_EXT = None
 _FVG_G = 0         # 2 x the device's multiProcessorCount, set in prepare
 _FVG_COOP = 1      # cooperative launch (cleared only if a captured cooperative launch fails in the probe)
@@ -11031,8 +11175,8 @@ _FVG_LOG2E = 1.4426950408889634
 
 
 def _fvg_gate(cfg) -> bool:
-    """Config-only predicate of the routed class: full verify B=16 / 32, tp8, d 64, page 1, kv_scale 1."""
-    return (cfg["window"] == 0 and not cfg["rope_theta"] and cfg["q_len"] == 8 and cfg["batch"] in (16, 32)
+    """Config-only predicate of the routed class: full verify B=1 (AT5) / 16 / 32, tp8, d 64, page 1, kv_scale 1."""
+    return (cfg["window"] == 0 and not cfg["rope_theta"] and cfg["q_len"] == 8 and cfg["batch"] in (1, 16, 32)
             and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
             and cfg["page_size"] == 1 and cfg["kv_scale"] == 1.0)
 
@@ -11064,9 +11208,10 @@ def _fvg_forward(data: Inputs) -> torch.Tensor:
     )
     out = torch.empty((tokens, hq * d), dtype=torch.bfloat16, device=qkv.device)
     part_o, part_ml, cnt = _FVG_BUF[batch]
-    _FVG_EXT.fvg_launch(_FVG_ROUTE[batch], q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], qkv,
+    mode = _FVG_ROUTE[batch]
+    _FVG_EXT.fvg_launch(mode, q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], qkv,
                         part_o, part_ml, cnt, out, cfg["sm_scale"] * cfg["qk_scale_factor"] * _FVG_LOG2E, RMS_EPS,
-                        _FVG_G, _FVG_COOP)
+                        _FVG_G, 0 if mode & 8 else _FVG_COOP)
     return out.view(batch, 8, hq * d)
 
 
@@ -11199,12 +11344,16 @@ def _fvg_set_route(route) -> None:
 
 
 def _fvg_cnt_clean(batch) -> bool:
-    """Import-time only: the row's counters (arrive, depart, error word) must be 0 after every launch."""
-    return int(_FVG_BUF[batch][2][:3].abs().sum()) == 0
+    """Import-time only: the row's counters (arrive / AT5 ticket, depart, error word, AT5 fallback count) must be 0
+    after every launch."""
+    return int(_FVG_BUF[batch][2][:4].abs().sum()) == 0
 
 
 def _fvg_agentic(batch, rnd):
-    """Lengths uniform in 80000 +- 7.5% (the agentic spread); tails (n + 8) % 64 of 1, 63 and the longest row."""
+    """Lengths uniform in 80000 +- 7.5% (the agentic spread); tails (n + 8) % 64 of 1, 63 and the longest row.
+    Batch 1 (the judge's fixed 80000): 80000 or a tail of 1 / 63."""
+    if batch == 1:
+        return [rnd.choice((80000, 80001 - 8, 80063 - 8))]
     ls = [int(80000 * (1 + 0.075 * (2 * rnd.random() - 1))) for _ in range(batch)]
     ls = [n - 1 if (n + 8) % 64 == 0 else n for n in ls]
     ls[0], ls[1], ls[2] = 80001 - 8, 80063 - 8, _FVG_W - 8
@@ -11315,9 +11464,10 @@ def _fvg_row(batch, gen, flush, dev, arms):
     txt = f"master/{'/'.join(f'mode {a}' for a in live)} us: {txt}; {errs}" + (f"; {drop}" if drop else "")
     if not _fvg_cnt_clean(batch):
         return 0, f"{txt}; dirty counters after the race"
-    ok = [a for k, a in enumerate(live) if all(us[k + 1] / us[0] <= _FVG_BAR for us in rounds)]
+    bar = _FVG_V1_BAR if batch == 1 else _FVG_BAR
+    ok = [a for k, a in enumerate(live) if all(us[k + 1] / us[0] <= bar for us in rounds)]
     if not ok:
-        return 0, f"{txt}; no mode <= {_FVG_BAR} of master in every round"
+        return 0, f"{txt}; no mode <= {bar:.3f} of master in every round"
     if 5 in ok and 1 in ok:
         k5, k1 = live.index(5) + 1, live.index(1) + 1
         pick = 5 if all(us[k5] < us[k1] for us in rounds) else 1
@@ -11390,7 +11540,7 @@ def _fvg_setup() -> None:
     _FVG_ROUTE. Never raises; any miss keeps that row on master."""
     global _FVG_EXT, _FVG_G
     route = {}
-    why = {16: "not raced", 32: "not raced"}
+    why = {16: "not raced", 32: "not raced", 1: "not raced"}
     th = _FVG_BUILD["thread"]
     try:
         if th is None:
@@ -11416,23 +11566,35 @@ def _fvg_setup() -> None:
             _fvg_note(f"[fvg] fvg_kernel<1, PV8>: regs {r5}, local {l5} B, {o5} CTAs/SM")
             if o5 >= 2 and l5 == 0:
                 arms.append(5)
+        r13, l13, _, _, o13, _, _ = [int(x) for x in ext.fvg_attr(_FVG_V1_ARM)]
+        _fvg_note(f"[fvg] AT5 fvg_kernel<4, PV8> (v1): regs {r13}, local {l13} B, {o13} CTAs/SM")
+        # a few spilled bytes are the finalizer's (one CTA, after the main loop; nofin build spills 0); the race decides
+        arms1 = [_FVG_V1_ARM] if l13 <= 64 and o13 >= 1 else []
         _FVG_EXT = ext
         dev = torch.device("cuda")
         for b in (16, 32):
             _FVG_BUF[b] = (torch.empty((_FVG_G + b) * 128 * 64, dtype=torch.float32, device=dev),
                            torch.empty((_FVG_G + b) * 128 * 2, dtype=torch.float32, device=dev),
                            torch.zeros(16, dtype=torch.int32, device=dev))
+        # AT5 (B=1, mode 13 only): partial slots (R11 fallback) + zeroed workspace acc [128][64] + l [128]; slot row maxima
+        # start at -inf (the finalizer merges a slot only when its m is finite, and resets it)
+        _FVG_BUF[1] = (torch.zeros((_FVG_G + 2) * 128 * 64 + 128, dtype=torch.float32, device=dev),
+                       torch.full(((_FVG_G + 1) * 128 * 2,), float("-inf"), dtype=torch.float32, device=dev),
+                       torch.zeros(16, dtype=torch.int32, device=dev))
         gen = torch.Generator(device=dev).manual_seed(0xF7C)
         _fvg_coop_probe(gen, dev)
         _fvg_note("[fvg] routed rows: q unpaired e4m3 [B*8,16,64] (_pre_attention_kernel PAIRED=False); out bf16 "
                   "[B*8,1024] from the gate's combine with the fused RMSNorm x sigmoid(gate) (no norm-gate launch)")
         flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
-        for b in (16, 32):
+        for b in (16, 32, 1):
             if time.perf_counter() - _IMPORT_T0 > _FVG_ROW_BY:
                 why[b] = f"import clock past {_FVG_ROW_BY:.0f} s"
                 continue
+            if b == 1 and not arms1:
+                why[b] = "AT5 kernel spills > 64 B or has no occupancy"
+                continue
             try:
-                ok, why[b] = _fvg_row(b, gen, flush, dev, arms)
+                ok, why[b] = _fvg_row(b, gen, flush, dev, arms1 if b == 1 else arms)
             except Exception as e:
                 ok, why[b] = 0, f"raised {str(e)[:200]!r}"
             finally:
@@ -11455,6 +11617,11 @@ def _fvg_setup() -> None:
             buf[2].zero_()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+    if 1 in _FVG_ROUTE:
+        _say(f"PATH CHOSEN: full verify B=1 [AT5]: pre-attn (unpaired q) + fvg_kernel<4, PV8> (mode {_FVG_ROUTE[1]}) "
+             f"grid {_FVG_G}, plain launch, fixed-reference atomic merge + 8 finalizer CTAs (AT5b), self-reset (fused norm-gate)")
+    else:
+        _say("PATH CHOSEN: full verify B=1: master FA3 + combine (AT5 not routed)")
     for b in (16, 32):
         if b in _FVG_ROUTE:
             _say(f"PATH CHOSEN: full verify B={b} [fvg gate]: pre-attn (unpaired q) + fvg_kernel<1"
