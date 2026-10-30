@@ -51,7 +51,7 @@ review_at: 2026-10-30T003155Z
 review_companions: null
 review_best: 2.035180868162415
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-30T003155Z
 base_sha: 3c2132ae83986e59ae1e72def1637af0f8535c5f
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
@@ -68,6 +68,8 @@ submission_blob: 5220385a87251699b3c366632c532841f8a389f0
 lint_warnings: 204
 attempt_file: 2026-10-30T004457Z-check-engine-a-xl-arms-t256-postnorm-stack.md
 prepared_at: 2026-10-30T004457Z
+job: 73156455c9f242f6
+dispatched_at: 2026-10-30T004507Z
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack
