@@ -2208,8 +2208,8 @@ ROUTER_CLUSTER_CHECK_MS = (1, 5, 8)
 _RC_CPP = r"""
 #include <torch/extension.h>
 #include <vector>
-void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out);
-std::vector<int64_t> router_info();
+void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, bool push);
+std::vector<int64_t> router_info(bool push);
 """
 
 _RC_CUDA = r"""
@@ -2298,7 +2298,7 @@ __device__ __forceinline__ float ld_cluster_f32(uint32_t addr) {
 
 // out[m, 256] fp32 = x[m, 8192] bf16 @ (hi + lo)[256, 8192]^T, 1 <= m <= NT. Grid 128 CTAs, cluster
 // dim (CS, 1, 1): blockIdx.x = cluster * CS + rank. Only <8, 8> is instantiated.
-template <int CS, int NT>
+template <int CS, int NT, bool PUSH>
 __global__ void __launch_bounds__(THREADS, 1)
 router_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
               const __nv_bfloat16* __restrict__ hi, const __nv_bfloat16* __restrict__ lo,
@@ -2337,6 +2337,7 @@ router_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
     cp_commit();
   }
 
+  if constexpr (PUSH) asm volatile("barrier.cluster.arrive.relaxed.aligned;\n" ::: "memory");   // BF4e phase 1
   // ---- main loop: this warp only waits for its own copies ----
   float acc[C::G][C::NTILE][4];
 #pragma unroll
@@ -2386,6 +2387,32 @@ router_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
       WP[(warp * C::COLS + col) * NT + tk + 1] = acc[g][t][1] + acc[g][t][3];
     }
   __syncthreads();
+  if constexpr (PUSH) {
+    // BF4e: every CTA of the cluster is running (phase 1); each pushes its [COLS][NT] partial into rank 0's receive
+    // buffer [CS][COLS][NT]; phase 2 releases the pushes; ranks 1..CS-1 exit; rank 0 alone waits (acquire) and sums
+    // each output over ranks 0..CS-1 in that order from local smem: the pull path's values and order (bitwise).
+    float* RV = reinterpret_cast<float*>(smem + C::SMEM);
+    asm volatile("barrier.cluster.wait.aligned;\n" ::: "memory");
+    const uint32_t r0 = map_rank(smem_u32(RV + rank * C::COLS * NT), 0u);
+    for (int e = tid; e < C::COLS * NT; e += THREADS) {
+      float s = WP[e];
+#pragma unroll
+      for (int w = 1; w < NWARP; ++w) s += WP[w * C::COLS * NT + e];
+      asm volatile("st.shared::cluster.f32 [%0], %1;\n" :: "r"(r0 + 4u * e), "f"(s) : "memory");
+    }
+    asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
+    if (rank != 0) return;
+    asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
+    for (int e = tid; e < C::COLS * NT; e += THREADS) {
+      const int col = e / NT, tok = e % NT;
+      if (tok < m) {
+        float s = 0.f;
+#pragma unroll
+        for (int q = 0; q < CS; ++q) s += RV[q * C::COLS * NT + e];
+        out[(int64_t)tok * N_OUT + col0 + col] = s;
+      }
+    }
+  } else {
   for (int e = tid; e < C::COLS * NT; e += THREADS) {
     float s = WP[e];
 #pragma unroll
@@ -2406,25 +2433,29 @@ router_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx,
     out[(int64_t)tok * N_OUT + colo] = s;
   }
   cluster_sync_rel_acq();  // peers are done reading this CTA's smem before it exits
+  }
 }
 
-template <int CS, int NT>
+template <int CS, int NT, bool PUSH>
+constexpr int smem_t() { return Cfg<CS, NT>::SMEM + (PUSH ? CS * Cfg<CS, NT>::COLS * NT * 4 : 0); }
+
+template <int CS, int NT, bool PUSH>
 void set_attr() {
   static bool done = false;
   if (!done) {
-    C10_CUDA_CHECK(cudaFuncSetAttribute(router_kernel<CS, NT>, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                        Cfg<CS, NT>::SMEM));
+    C10_CUDA_CHECK(cudaFuncSetAttribute(router_kernel<CS, NT, PUSH>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                        smem_t<CS, NT, PUSH>()));
     done = true;
   }
 }
 
-template <int CS, int NT>
+template <int CS, int NT, bool PUSH>
 void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out) {
-  set_attr<CS, NT>();
+  set_attr<CS, NT, PUSH>();
   cudaLaunchConfig_t cfg = {};
   cfg.gridDim = dim3(NCTA);
   cfg.blockDim = dim3(THREADS);
-  cfg.dynamicSmemBytes = Cfg<CS, NT>::SMEM;
+  cfg.dynamicSmemBytes = smem_t<CS, NT, PUSH>();
   cfg.stream = at::cuda::getCurrentCUDAStream();
   cudaLaunchAttribute attr[1];
   attr[0].id = cudaLaunchAttributeClusterDimension;
@@ -2434,22 +2465,22 @@ void launch(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor o
   cfg.attrs = attr;
   cfg.numAttrs = 1;
   C10_CUDA_CHECK(cudaLaunchKernelEx(
-      &cfg, router_kernel<CS, NT>,
+      &cfg, router_kernel<CS, NT, PUSH>,
       reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), static_cast<int64_t>(x.stride(0)),
       reinterpret_cast<const __nv_bfloat16*>(hi.data_ptr()), reinterpret_cast<const __nv_bfloat16*>(lo.data_ptr()),
       out.data_ptr<float>(), static_cast<int>(x.size(0))));
   C10_CUDA_KERNEL_LAUNCH_CHECK();  // cudaGetLastError, raises
 }
 
-template <int CS, int NT>
+template <int CS, int NT, bool PUSH>
 std::vector<int64_t> info() {
-  set_attr<CS, NT>();
+  set_attr<CS, NT, PUSH>();
   cudaFuncAttributes fa;
-  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_kernel<CS, NT>));
+  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_kernel<CS, NT, PUSH>));
   cudaLaunchConfig_t cfg = {};
   cfg.gridDim = dim3(NCTA);
   cfg.blockDim = dim3(THREADS);
-  cfg.dynamicSmemBytes = Cfg<CS, NT>::SMEM;
+  cfg.dynamicSmemBytes = smem_t<CS, NT, PUSH>();
   cudaLaunchAttribute attr[1];
   attr[0].id = cudaLaunchAttributeClusterDimension;
   attr[0].val.clusterDim.x = CS;
@@ -2458,17 +2489,17 @@ std::vector<int64_t> info() {
   cfg.attrs = attr;
   cfg.numAttrs = 1;
   int nclusters = -1;
-  if (cudaOccupancyMaxActiveClusters(&nclusters, router_kernel<CS, NT>, &cfg) != cudaSuccess) {
+  if (cudaOccupancyMaxActiveClusters(&nclusters, router_kernel<CS, NT, PUSH>, &cfg) != cudaSuccess) {
     (void)cudaGetLastError();
     nclusters = -1;
   }
   return {fa.numRegs, static_cast<int64_t>(fa.localSizeBytes), static_cast<int64_t>(fa.sharedSizeBytes),
-          static_cast<int64_t>(Cfg<CS, NT>::SMEM), nclusters};
+          static_cast<int64_t>(smem_t<CS, NT, PUSH>()), nclusters};
 }
 
 }  // namespace
 
-void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out) {
+void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::Tensor out, bool push) {
   const int64_t m = x.size(0);
   TORCH_CHECK(x.dim() == 2 && m >= 1 && m <= 8 && x.size(1) == K_TOT, "router_cluster: x shape");
   TORCH_CHECK(x.scalar_type() == at::kBFloat16 && hi.scalar_type() == at::kBFloat16 &&
@@ -2480,11 +2511,11 @@ void router_cluster(torch::Tensor x, torch::Tensor hi, torch::Tensor lo, torch::
               reinterpret_cast<uintptr_t>(hi.data_ptr()) % 16 == 0 &&
               reinterpret_cast<uintptr_t>(lo.data_ptr()) % 16 == 0, "router_cluster: x strides / alignment");
   TORCH_CHECK(out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT, "router_cluster: out");
-  launch<8, 8>(x, hi, lo, out);
+  if (push) launch<8, 8, true>(x, hi, lo, out); else launch<8, 8, false>(x, hi, lo, out);
 }
 
 // {regs, local (spill) bytes, static smem, dynamic smem, max active clusters (-1: query failed)}
-std::vector<int64_t> router_info() { return info<8, 8>(); }
+std::vector<int64_t> router_info(bool push) { return push ? info<8, 8, true>() : info<8, 8, false>(); }
 """
 
 
@@ -2502,7 +2533,7 @@ def _build_router_cluster():
     try:
         from torch.utils.cpp_extension import load_inline
         ext = load_inline(
-            name="muse_bf16_router_cluster_m8_v1",
+            name="muse_bf16_router_cluster_m8_v2",
             cpp_sources=_RC_CPP,
             cuda_sources=_RC_CUDA,
             functions=["router_cluster", "router_info"],
@@ -2540,7 +2571,7 @@ def _router_cluster_route(x: torch.Tensor, cfg, state: dict) -> bool:
 def _router_cluster_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
     """x bf16 [m <= 8, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, no memset."""
     out = torch.empty((x.shape[0], ROUTER_N), dtype=torch.float32, device=x.device)
-    _RC_EXT.router_cluster(x, state["router_hi"], state["router_lo"], out)
+    _RC_EXT.router_cluster(x, state["router_hi"], state["router_lo"], out, state.get(RCP_FLAG) is True)
     return out
 
 
@@ -2601,7 +2632,7 @@ def _router_cluster_prepare(state: dict) -> None:
         if (_RC_EXT is None or tuple(router.shape) != (ROUTER_N, ROUTER_K)
                 or router.dtype != torch.float32 or not router.is_cuda):
             raise RuntimeError("extension missing or router weight shape/dtype unexpected")
-        regs, spill, ssmem, dsmem, ncl = _RC_EXT.router_info()
+        regs, spill, ssmem, dsmem, ncl = _RC_EXT.router_info(False)
         print(f"[router_cluster] cs=8 nt=8: regs={regs} local(spill)={spill} B static smem={ssmem} B "
               f"dynamic smem={dsmem} B max active clusters={ncl}", flush=True)
         if ncl < 16:
@@ -7094,6 +7125,83 @@ def _ounsp_prepare(state: dict, t_start: float, flags=None) -> None:
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + (OUNSP_FLAG,)   # section (17)'s cell joins the A/B check and the FINAL FLAGS line
 
 
+# --- (18) BF4e: section (8)'s router_kernel<8,8> with the push cluster reduce (own flag), raced vs its pull reduce ---
+# Rung BF4e of campaign 2026-10-30-public-ladder (hypothesis ladder-bf4e-router-cluster-push-reduce): BF4d's push
+# reduce (judge 9acab018: ouns push/pull m1 0.870, m8 0.932) on today's router load path (cp.async smem + ldmatrix,
+# hi/lo mma.sync), not behind section (16)'s fragment loads. The PUSH instance lives in section (8)'s module; the
+# reduce keeps its values and order, so the output is bitwise today's router_kernel<8,8>. The race masks section (16)
+# off (on the judge it does not route), so it compares exactly the cluster kernel's pull vs push.
+RCP_FLAG = "router_cluster_push_ok"
+RCP_CHECK_MS = (1, 2, 5, 8)
+RCP_RACE_M = 8
+RCP_STRESS = 64
+_RCP_SUM = []
+
+
+def _rcp_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (18). flags None (state A): only if router_cluster_ok: attrs / co-resident clusters of the push
+    instance, bitwise equality with the pull instance over RCP_STRESS launches at each RCP_CHECK_MS m, then
+    FK_ROUNDS read-flush _cell_gate rounds at RCP_RACE_M of kernel_fn with the flag on vs off (section (16) masked
+    off in both), _bf1_rule. flags a dict: inherit. Never raises."""
+    state[RCP_FLAG] = False
+    if flags is not None:
+        state[RCP_FLAG] = bool(flags.get(RCP_FLAG, False)) and bool(state.get("router_cluster_ok"))
+        return
+    _RCP_SUM.clear()
+    t0 = time.perf_counter()
+    why, rounds, rule = "", [], None
+    try:
+        if not state.get("router_cluster_ok") or _RC_EXT is None:
+            raise RuntimeError("router_cluster_ok is off: no cluster kernel to push")
+        if t0 - t_start > BF1_START_DEADLINE_S:
+            raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+        regs, spill, ssmem, dsmem, ncl = [int(v) for v in _RC_EXT.router_info(True)]
+        print(f"[rcp] router_kernel<8,8,push>: regs={regs} spill={spill} B smem={dsmem} B max clusters={ncl}", flush=True)
+        if spill != 0 or ncl < 16:
+            raise RuntimeError(f"spill {spill} B / max active clusters {ncl} < 16")
+        dev = state["router"].device
+        st_p = dict(state, **{RCP_FLAG: True})
+        st_q = dict(state, **{RCP_FLAG: False})
+        g = torch.Generator(device=dev)
+        g.manual_seed(86420)
+        for m in RCP_CHECK_MS:
+            xr = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
+            ref = _router_cluster_forward(xr, st_q)
+            outs = [_router_cluster_forward(xr, st_p) for _ in range(RCP_STRESS)]
+            torch.cuda.synchronize()
+            nbad = sum(0 if torch.equal(o, ref) else 1 for o in outs)
+            print(f"[rcp] m={m}: {RCP_STRESS - nbad}/{RCP_STRESS} launches bitwise the pull reduce", flush=True)
+            if nbad:
+                raise RuntimeError(f"m={m}: {nbad}/{RCP_STRESS} launches differ from the pull reduce")
+        st_g = dict(state, **{FK_FLAG: False, FKP_FLAG: False})
+        for rnd in range(FK_ROUNDS):
+            st = {}
+            _cell_gate(f"rcp router m={RCP_RACE_M} r{rnd + 1}", "router", RCP_RACE_M, ROUTER_N, ROUTER_K, RCP_FLAG,
+                       st_g, flush_mode="read", stats=st,
+                       route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+            rounds.append(st)
+        rule = _bf1_rule(rounds)
+        if not rule[0]:
+            why = rule[1]
+        else:
+            state[RCP_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps the pull reduce
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[RCP_FLAG] = False
+    r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                     f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+    if rule is not None:
+        r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+    _RCP_SUM.append(f"[rcp] router m{RCP_RACE_M} pull/push us: {r_txt or 'not timed'} -> "
+                    + ("ROUTE" if state[RCP_FLAG] else f"NO-ROUTE ({why[:100]})") + f" {time.perf_counter() - t0:.1f}s")
+    _decision("PATH CHOSEN rcp router m<=8 cluster: " + ("push reduce" if state[RCP_FLAG] else "pull reduce")
+              + (f" [pooled {rule[2]:.3f}]" if rule is not None else "") + ("" if state[RCP_FLAG] else f"; {why[:160]}"))
+    torch.cuda.synchronize()
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (RCP_FLAG,)   # section (18)'s cell joins the A/B check and the FINAL FLAGS line
+
+
 def _prepare_state(weights: Weights, flags=None) -> dict:
     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
@@ -7219,6 +7327,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         # (17) BF4d: ouns push reduce (own flag), raced vs the routed ouns pull reduce.
         _ounsp_prepare(state, t_all)
         t = tick("ounsp unpooler m<=8 push (stress + 2 x 3 read-flush rounds)", t)
+        # (18) BF4e: router_kernel<8,8> push reduce (own flag), raced vs its pull reduce.
+        _rcp_prepare(state, t_all)
+        t = tick("rcp router cluster push (stress + 3 read-flush rounds)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
@@ -7239,6 +7350,7 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         _rv_prepare(state, t_all, flags=flags)
         _fk_prepare(state, t_all, flags=flags)
         _ounsp_prepare(state, t_all, flags=flags)
+        _rcp_prepare(state, t_all, flags=flags)
         t = tick("bulk / lt / bf1 / bf5 per-state buffers (flags inherited)", t)
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
@@ -7279,6 +7391,8 @@ def _ab_component(layer: str, m: int, st=None) -> str:
         return FKP_FLAG   # BF4c-3: a miss turns off only the push reduce
     if st is not None and layer == "router" and FK_M_LO <= m <= FK_M_HI and st.get(FK_FLAG) is True:
         return FK_FLAG   # section (16): a miss turns off only this cell
+    if st is not None and layer == "router" and m <= ROUTER_CLUSTER_MAX_M and st.get(RCP_FLAG) is True:
+        return RCP_FLAG   # section (18): a miss turns off only the push reduce
     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
         return "router_cluster_ok"
     if st is not None and layer == "router" and _router_pdl_flag(m) and st.get(_router_pdl_flag(m)):
@@ -7402,7 +7516,7 @@ def prepare(weights: Weights) -> dict:
                 print(f"[ouns] final: cl={cl}: cudaOccupancyMaxActiveClusters={int(_OUNS_EXT.ouns_occupancy(cl))}, "
                       f"needs {OUNS_CLUSTERS_NEEDED[cl]}", flush=True)
         if _RC_EXT is not None:
-            print(f"[router_cluster] final: {_RC_EXT.router_info()} (regs, spill B, static smem, dyn smem, "
+            print(f"[router_cluster] final: {_RC_EXT.router_info(False)} (regs, spill B, static smem, dyn smem, "
                   f"max active clusters; needs 16)", flush=True)
     except Exception as e:
         print(f"[prepare] final occupancy query failed ({type(e).__name__}: {e})", flush=True)
@@ -7423,6 +7537,8 @@ def prepare(weights: Weights) -> dict:
     for line in _FK_SUM:                      # section (16)'s line, last
         print(line[:300], flush=True)
     for line in _OUNSP_SUM:                   # section (17)'s line
+        print(line[:300], flush=True)
+    for line in _RCP_SUM:                     # section (18)'s line
         print(line[:300], flush=True)
     return state
 
