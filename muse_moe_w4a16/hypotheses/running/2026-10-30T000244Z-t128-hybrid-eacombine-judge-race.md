@@ -45,7 +45,7 @@ review_at: 2026-10-30T000536Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-30T000536Z
 base_sha: f03b88bbe6e9b548215edbe8af217b4a5c7b20da
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
@@ -62,6 +62,8 @@ submission_blob: c49445a86f76dd17f8321c0f4b88d79ff7adfde2
 lint_warnings: 212
 attempt_file: 2026-10-30T001931Z-check-t128-hybrid-eacombine-judge-race.md
 prepared_at: 2026-10-30T001931Z
+job: 4c5032bc57be4cf5
+dispatched_at: 2026-10-30T001944Z
 ---
 
 # t128-hybrid-eacombine-judge-race
