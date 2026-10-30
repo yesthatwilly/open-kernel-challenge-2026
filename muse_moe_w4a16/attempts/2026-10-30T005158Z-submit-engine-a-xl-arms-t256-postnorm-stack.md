@@ -2,7 +2,7 @@
 
 Hypothesis: `muse_moe_w4a16/hypotheses/done/gain/2026-10-30T002759Z-engine-a-xl-arms-t256-postnorm-stack.md` (branch `hyp/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack`).
 
-- **Job:** `<job id>` (`okc status <job>`)
+- **Job:** `922ddf4c5b4847f2` (`okc status <job>`)
 - **File:** `muse_moe_w4a16/submission.py` at git `eb21652b`
 
 ## Goal
