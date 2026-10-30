@@ -1,6 +1,10 @@
 # Rank ladder v3: LOG
 
-## Now (2026-10-30T14:50Z)
+## Now (2026-10-30T16:05Z)
+
+- **USER STOP 16:05Z:** "stop submitting new stuff. finish only whats in flight". No new trials, checks or submits.
+  In flight to finish: AT8F scored confirm 9e6d3d1fa805495f (promote from 2f2da16a if it lands > 1.805); lane agents
+  finish their current GPU runs only (MO3 feed bench, AT8H, T1, attn-full). hopper-queue STOP touched.
 
 - **Mode:** H100 first (user 14:35Z): tokens only on advancing H100 trials; gpunode06 any GPU (0/2 held: overheat at idle).
   Judge checks only for unions that held on the H100.
