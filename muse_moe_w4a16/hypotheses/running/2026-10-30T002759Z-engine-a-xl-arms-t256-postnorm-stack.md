@@ -57,7 +57,7 @@ base_sha: 3c2132ae83986e59ae1e72def1637af0f8535c5f
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
 branch: hyp/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack
 worktree: .worktrees/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack
-mode: null
+mode: check
 restack_of: null
 stale_base: null
 implemented_at: 2026-10-30T004456Z
@@ -66,6 +66,8 @@ submission_sha256: 091c05b8670abe6ec6ce3a4b93e66944ca8e40d8c47c098bb0c1bd0830800
 norm_sha256: 6c66cf5a8bc6742be6765f395510f38f7aa5cb1c3084d5247d09a7332ea534c9
 submission_blob: 5220385a87251699b3c366632c532841f8a389f0
 lint_warnings: 204
+attempt_file: 2026-10-30T004457Z-check-engine-a-xl-arms-t256-postnorm-stack.md
+prepared_at: 2026-10-30T004457Z
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack
