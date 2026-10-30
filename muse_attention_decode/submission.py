@@ -12,6 +12,7 @@ an in-kernel ticket combine and epilogue, stage 2; see below) replaces FA3 and t
 stage 1's two kernels kept as its fallback.
 """
 
+import math
 import os
 import random
 import time
@@ -5140,6 +5141,8 @@ def _slide_launch(ext, data: Inputs, c: int, ph: bool = False) -> torch.Tensor:
 def _slide_forward(data: Inputs, c: int) -> torch.Tensor:
     """The gated path: the module that passed for cluster size c (C=16 serves B=1 only; PERHEAD there when
     the import-time flag is set)."""
+    if _SLIDE_AT2 and c == 16:  # AT2 (import-time flag, B=1 only)
+        return _slide_at2_launch(_SLIDE_AT2_MOD, data)
     if _SLIDE_PH and c == 16:
         return _slide_launch(_SLIDE_PH_MOD, data, 16, True)
     return _slide_launch(_SLIDE_MOD[c], data, c)
@@ -5455,12 +5458,523 @@ def _slide_ph_init(ext, tag: str) -> "str | None":
     return None
 
 
+# ---------------------------------------------------------------------------------------------
+# AT2 (campaign 2026-10-30-public-ladder rung AT2, sliding decode B=1): a plain split-KV launch, no cluster. CTA s of
+# request b owns the old keys [lo + 64 s, lo + 64 s + 64) (one 64-key tile, both kv heads; warp w = kv head w & 1, 16-key
+# tile w >> 1), the last split also the new key (and it writes the new cache row). Every CTA builds the queries itself.
+# The 4 tile warps of a head merge in smem (master's staging code), then the CTA adds its 16 rows into a per-request FP32
+# workspace with red.global.add (fixed reference R = AT2_REF in the log2 domain: acc 2^(M - R), l 2^(M - R)); a row max
+# outside the R11 guard [R - 90, guard_hi] stores its exact (m, l, acc) to its own fallback slot instead. Then
+# fence.acq_rel + one atom.acq_rel ticket per CTA; the last CTA reads the workspace (LSE-merging any fallback slots onto
+# it), applies v_scale, RMSNorm and sigmoid(gate), writes bf16 out, and re-zeroes the workspace, the slots it used and the
+# ticket (self-reset: the next launch finds everything zero). FP8 K/V and the E4M3 query are unchanged; every key in the
+# window is attended once; the merge is FP32. Inserted into a copy of the PERHEAD module source (its own module name),
+# so master's and PERHEAD's modules stay byte-identical.
+# ---------------------------------------------------------------------------------------------
+_SLIDE_AT2_KERNEL = r"""
+constexpr int AT2_TILE = 64;        // old keys per CTA
+constexpr int AT2_MAXSPLIT = 32;    // window <= 2048: ceil(2047 / 64)
+constexpr float AT2_REF = 16.f;     // fixed reference (log2 domain), gates/R11.held
+constexpr float AT2_GUARD_LO = AT2_REF - 90.f;
+constexpr int AT2_WS = HQ * D + HQ;                        // per request: acc [HQ][D], l [HQ]
+constexpr int AT2_SLOT = D + 4;                            // acc[D], m, l, 2 pad: 16-byte aligned slots
+constexpr int AT2_FB = AT2_MAXSPLIT * HQ * AT2_SLOT;      // per request: fallback slots [split][HQ]
+
+__device__ __forceinline__ void at2_red4(float* p, float a, float b, float c, float d) {
+  asm volatile("red.global.add.v4.f32 [%0], {%1, %2, %3, %4};" :: "l"(p), "f"(a), "f"(b), "f"(c), "f"(d) : "memory");
+}
+__device__ __forceinline__ void at2_red1(float* p, float a) {
+  asm volatile("red.global.add.f32 [%0], %1;" :: "l"(p), "f"(a) : "memory");
+}
+
+__global__ void __launch_bounds__(THREADS, 2)
+sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                   const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
+                   const int* __restrict__ seq_lens, const int* __restrict__ page_table, int64_t pt_stride,
+                   const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
+                   const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
+                   __nv_bfloat16* __restrict__ out, float* ws, float* fb, int* ticket, int nsplit, int window,
+                   float q_scale, float score_scale, float eps, float guard_hi) {
+  extern __shared__ __align__(128) uint8_t smem[];
+  uint8_t* XK = smem + XK_OFF;
+  uint8_t* XV = smem + XV_OFF;
+  uint8_t* Qs = smem + Q_OFF;
+  __shared__ int last_cta_s;
+  const float NEG_INF = __int_as_float(0xff800000u);
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const int b = static_cast<int>(blockIdx.x) / nsplit;
+  const int split = static_cast<int>(blockIdx.x) % nsplit;
+  const int seq = seq_lens[b];
+  const int lo = max(0, seq - (window - 1));
+  const int start = lo + split * AT2_TILE;
+  const int n_old = max(0, min(AT2_TILE, seq - start));
+  const bool last = split == nsplit - 1;
+  const int* prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
+  // the finalizer (whichever CTA is last) reads the request's gate row: each of the first 16 splits pulls one of its
+  // 16 128-byte lines into L2 now, so that load is an L2 hit at the end
+  if (tid == 0 && split < HQ * D * 2 / 128)
+    asm volatile("prefetch.global.L2 [%0];" :: "l"(qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D +
+                                                    split * 64));
+  {
+    int idx[SK / 32];
+    load_idx<false>(idx, prow, 0, n_old, tid);
+    if (n_old > 0) issue_sub<false>(smem, kc, vc, idx, 0, n_old, tid, 0);
+    cp_commit();
+  }
+  const float fr = inv_freq[lane];
+  const float pos = static_cast<float>(positions[b]);
+  for (int h = warp; h < HQ; h += WARPS) {
+    const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
+        qkv + static_cast<int64_t>(b) * qkv_stride + h * D + 2 * lane);
+    float xe = __low2float(x2), xo = __high2float(x2);
+    float ss = xe * xe + xo * xo;
+#pragma unroll
+    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+    const float r = 1.f / sqrtf(ss / D + eps);
+    xe *= r;
+    xo *= r;
+    float sn, cs;
+    sincosf(pos * fr, &sn, &cs);
+    const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
+    *reinterpret_cast<uint16_t*>(Qs + h * D + 2 * lane) = f32x2_to_e4m3x2(ye * q_scale, yo * q_scale);
+  }
+  if (last) {
+    for (int x = tid; x < 15 * 16; x += THREADS) {
+      const int r = 1 + (x >> 4), part = x & 15;
+      *reinterpret_cast<uint4*>((part < 8 ? XK : XV) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
+    }
+    const float ksc = __ldg(k_scale_p), vsc = __ldg(v_scale_p);
+    for (int u = warp; u < 2 * HKV; u += WARPS) {
+      const bool isv = u >= HKV;
+      const int g = u % HKV;
+      const __nv_bfloat162 x2 = *reinterpret_cast<const __nv_bfloat162*>(
+          qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (isv ? HKV : 0) + g) * D + 2 * lane);
+      float xe = __low2float(x2), xo = __high2float(x2);
+      uint16_t packed;
+      if (!isv) {
+        float ss = xe * xe + xo * xo;
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+        const float r = 1.f / sqrtf(ss / D + eps);
+        xe *= r;
+        xo *= r;
+        float sn, cs;
+        sincosf(pos * fr, &sn, &cs);
+        const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
+        packed = f32x2_to_e4m3x2(ye / ksc, yo / ksc);
+      } else {
+        packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
+      }
+      const int64_t loc = cache_loc[b];
+      *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
+      *reinterpret_cast<uint16_t*>((isv ? XV : XK) + g * D + 2 * lane) = packed;
+    }
+  }
+  __syncthreads();
+
+  const int quad = lane >> 2, qi = lane & 3;
+  const int g = warp & 1, sub = warp >> 1;
+  const int qra = g * G + quad;
+#if SLIDE_FP8QK
+  uint32_t qa[QKS][4];
+#pragma unroll
+  for (int ks = 0; ks < 2; ++ks) {
+    const uint8_t* pa = Qs + qra * D + ks * 32 + qi * 4;
+    qa[ks][0] = ld32(pa);
+    qa[ks][2] = ld32(pa + 16);
+    qa[ks][1] = qa[ks][3] = 0u;
+  }
+#else
+  uint32_t qa[QKS][4];
+#pragma unroll
+  for (int s = 0; s < 4; ++s) {
+    e4m3x4_to_f16x2x2(ld32(Qs + qra * D + s * 16 + qi * 4), qa[s][0], qa[s][2]);
+    qa[s][1] = qa[s][3] = 0u;
+  }
+#endif
+  const float scale = score_scale * __ldg(k_scale_p);
+  const int p_row = seq;
+  const int low = p_row - (window - 1);
+  float m_a = NEG_INF, l_a = 0.f;
+  float acc[8][4];
+#pragma unroll
+  for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
+  cp_wait_all();
+  __syncthreads();
+  const int nt = (n_old + 15) >> 4;
+  if (sub < nt)
+    attend_tile(smem + K_OFF, smem + V_OFF, sub * 16, n_old, start, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
+  if (last && sub == (nt & 3))
+    attend_tile(XK, XV, 0, 1, seq, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
+  l_a += __shfl_xor_sync(0xffffffffu, l_a, 1);
+  l_a += __shfl_xor_sync(0xffffffffu, l_a, 2);
+  __syncthreads();
+
+  float* stg_acc = reinterpret_cast<float*>(smem + STG_ACC);
+  float* stg_ml = reinterpret_cast<float*>(smem + STG_ML);
+  {
+    const int rw = warp * G + quad;
+    if (qi == 0) { stg_ml[rw * 2] = m_a; stg_ml[rw * 2 + 1] = l_a; }
+    float* ar = stg_acc + rw * D;
+#pragma unroll
+    for (int nb = 0; nb < 8; ++nb) {
+      ar[(qi * 2) * 8 + nb] = acc[nb][0];
+      ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
+    }
+  }
+  __syncthreads();
+  // Row h = tid / 16 (query head), dims d0 .. d0 + 3: merge the 4 tile warps of kv head h / G.
+  const int h = tid >> 4, d0 = (tid & 15) * 4;
+  float* wsb = ws + static_cast<int64_t>(b) * AT2_WS;
+  float* fbb = fb + static_cast<int64_t>(b) * AT2_FB;
+  {
+    const int hg = h / G, r = h % G;
+    float mw[4];
+    float M = NEG_INF;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) { mw[j] = stg_ml[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
+    const float Mu = M == NEG_INF ? 0.f : M;
+    float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
+    float Ls = 0.f;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      const int wr = (hg + 2 * j) * G + r;
+      const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
+      Ls += wt * stg_ml[wr * 2 + 1];
+      const float4 a = *reinterpret_cast<const float4*>(stg_acc + wr * D + d0);
+      o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
+    }
+    if (M != NEG_INF) {  // an empty split (short sequence) adds nothing
+      if (M >= AT2_GUARD_LO && M <= guard_hi) {
+        const float w = ex2(M - AT2_REF);
+        at2_red4(wsb + h * D + d0, o.x * w, o.y * w, o.z * w, o.w * w);
+        if ((tid & 15) == 0) at2_red1(wsb + HQ * D + h, Ls * w);
+      } else {  // R11 guard: exact partial to this split's own slot, LSE-merged by the finalizer
+        float* sl = fbb + (split * HQ + h) * AT2_SLOT;
+        *reinterpret_cast<float4*>(sl + d0) = o;
+        if ((tid & 15) == 0) { sl[D] = M; sl[D + 1] = Ls; atomicAdd(ticket + 2 * b + 1, 1); }  // fallback count
+      }
+    }
+  }
+  asm volatile("fence.acq_rel.gpu;" ::: "memory");
+  __syncthreads();
+  if (tid == 0) {
+    int old;
+    asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(old) : "l"(ticket + 2 * b) : "memory");
+    last_cta_s = old == nsplit - 1;
+  }
+  __syncthreads();
+  if (!last_cta_s) return;
+
+  // ---- finalize (last CTA of the request): workspace (+ fallback slots) -> out; then self-reset.
+  float4 a = __ldcg(reinterpret_cast<const float4*>(wsb + h * D + d0));
+  float L = __ldcg(wsb + HQ * D + h);
+  float Mt = L > 0.f ? AT2_REF : NEG_INF;
+  const int nfb = __ldcg(ticket + 2 * b + 1);  // rows that took the R11 fallback (never on judge data): 0 -> no scan
+  for (int s = 0; nfb > 0 && s < nsplit; ++s) {
+    float* sl = fbb + (s * HQ + h) * AT2_SLOT;
+    const float m = __ldcg(sl + D);
+    if (m != NEG_INF) {
+      const float l = __ldcg(sl + D + 1);
+      const float4 x = __ldcg(reinterpret_cast<const float4*>(sl + d0));
+      const float Mn = fmaxf(Mt, m);
+      const float f1 = Mt == NEG_INF ? 0.f : ex2(Mt - Mn), f2 = ex2(m - Mn);
+      a.x = a.x * f1 + x.x * f2; a.y = a.y * f1 + x.y * f2; a.z = a.z * f1 + x.z * f2; a.w = a.w * f1 + x.w * f2;
+      L = L * f1 + l * f2;
+      Mt = Mn;
+    }
+  }
+  const float vs = __ldg(v_scale_p);
+  const float fsc = vs / L;  // every row attends its own new key: L > 0
+  a.x *= fsc; a.y *= fsc; a.z *= fsc; a.w *= fsc;
+  float ss = a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w;
+#pragma unroll
+  for (int x = 8; x > 0; x >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, x);
+  const float rr = 1.f / sqrtf(ss / D + eps);
+  const int64_t t = static_cast<int64_t>(b);
+  const __nv_bfloat162* gp = reinterpret_cast<const __nv_bfloat162*>(
+      qkv + t * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
+  const __nv_bfloat162 g01 = gp[0], g23 = gp[1];
+  const float y0 = a.x * rr / (1.f + expf(-__low2float(g01)));
+  const float y1 = a.y * rr / (1.f + expf(-__high2float(g01)));
+  const float y2 = a.z * rr / (1.f + expf(-__low2float(g23)));
+  const float y3 = a.w * rr / (1.f + expf(-__high2float(g23)));
+  __nv_bfloat162* op = reinterpret_cast<__nv_bfloat162*>(out + (t * HQ + h) * D + d0);
+  op[0] = __floats2bfloat162_rn(y0, y1);
+  op[1] = __floats2bfloat162_rn(y2, y3);
+  __syncthreads();  // every thread of the row has read L and the slots
+  __stcg(reinterpret_cast<float4*>(wsb + h * D + d0), make_float4(0.f, 0.f, 0.f, 0.f));
+  if ((tid & 15) == 0) {
+    __stcg(wsb + HQ * D + h, 0.f);
+    for (int s = 0; nfb > 0 && s < nsplit; ++s) {
+      float* sl = fbb + (s * HQ + h) * AT2_SLOT;
+      if (__ldcg(sl + D) != NEG_INF) __stcg(sl + D, NEG_INF);
+    }
+  }
+  if (tid == 0) { ticket[2 * b] = 0; ticket[2 * b + 1] = 0; }
+}
+
+"""
+
+_SLIDE_AT2_HOST = r"""
+// int64 CPU [regs, local bytes, max active CTAs per SM] of sliding_at2_kernel
+torch::Tensor slide_at2_setup() {
+  C10_CUDA_CHECK(cudaFuncSetAttribute(sliding_at2_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
+  cudaFuncAttributes fa;
+  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(sliding_at2_kernel)));
+  int occ = 0;
+  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, sliding_at2_kernel, THREADS, SMEM_BYTES));
+  torch::Tensor t = torch::empty({4}, torch::dtype(torch::kLong));
+  t.data_ptr<int64_t>()[0] = fa.numRegs;
+  t.data_ptr<int64_t>()[1] = static_cast<int64_t>(fa.localSizeBytes);
+  t.data_ptr<int64_t>()[2] = occ;
+  t.data_ptr<int64_t>()[3] = fa.binaryVersion;
+  return t;
+}
+
+void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                    torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                    torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
+                    torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
+                    double eps, double guard_hi) {
+  const int64_t B = seq_lens.size(0);
+  TORCH_CHECK(B >= 1 && B <= 64, "slide_at2_attn: batch out of range");
+  TORCH_CHECK(window >= 2 && window <= 2048, "slide_at2_attn: window must be in [2, 2048]");
+  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.dim() == 2 && qkv.size(0) == B &&
+              qkv.size(1) >= (2 * HQ + 2 * HKV) * D && qkv.stride(1) == 1, "slide_at2_attn: qkv layout (decode)");
+  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.numel() == B * HQ * D,
+              "slide_at2_attn: out layout");
+  TORCH_CHECK(positions.scalar_type() == at::kLong && positions.is_contiguous() && positions.numel() == B &&
+              cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() == B,
+              "slide_at2_attn: positions / cache_loc");
+  TORCH_CHECK(seq_lens.scalar_type() == at::kInt && seq_lens.is_contiguous() &&
+              page_table.scalar_type() == at::kInt && page_table.dim() == 2 && page_table.size(0) == B &&
+              page_table.stride(1) == 1, "slide_at2_attn: seq_lens / page_table");
+  TORCH_CHECK(inv_freq.scalar_type() == at::kFloat && inv_freq.is_contiguous() && inv_freq.numel() == D / 2,
+              "slide_at2_attn: inv_freq");
+  TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat, "slide_at2_attn: scales");
+  for (const auto* c : {&k_cache, &v_cache})
+    TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
+                c->size(2) == HKV && c->size(3) == D, "slide_at2_attn: cache layout (page 1, 2 kv heads, 64)");
+  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.is_contiguous() && ws.numel() >= B * AT2_WS, "slide_at2_attn: ws");
+  TORCH_CHECK(fb.scalar_type() == at::kFloat && fb.is_contiguous() && fb.numel() >= B * AT2_FB, "slide_at2_attn: fb");
+  TORCH_CHECK(ticket.scalar_type() == at::kInt && ticket.is_contiguous() && ticket.numel() >= 2 * B,
+              "slide_at2_attn: ticket");
+  const int nsplit = static_cast<int>((window - 1 + AT2_TILE - 1) / AT2_TILE);
+  sliding_at2_kernel<<<static_cast<unsigned>(B * nsplit), THREADS, SMEM_BYTES, at::cuda::getCurrentCUDAStream()>>>(
+      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
+      positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), seq_lens.data_ptr<int>(),
+      page_table.data_ptr<int>(), static_cast<int64_t>(page_table.stride(0)), inv_freq.data_ptr<float>(),
+      k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), reinterpret_cast<uint8_t*>(k_cache.data_ptr()),
+      reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
+      ws.data_ptr<float>(), fb.data_ptr<float>(), ticket.data_ptr<int>(), nsplit, static_cast<int>(window),
+      static_cast<float>(q_scale), static_cast<float>(score_scale), static_cast<float>(eps),
+      static_cast<float>(guard_hi));
+  C10_CUDA_CHECK(cudaGetLastError());
+}
+"""
+
+_SLIDE_AT2_CPP = _SLIDE_PH_CPP + r"""
+torch::Tensor slide_at2_setup();
+void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                    torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                    torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
+                    torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
+                    double eps, double guard_hi);
+"""
+_SLIDE_AT2_ANCHOR = "template <bool PH>\nint occupancy_of(int C) {"
+
+
+def _slide_at2_source():
+    """The AT2 module source: the PERHEAD module's source with the AT2 kernel inserted inside its namespace (before
+    occupancy_of) and the AT2 host functions appended. The PERHEAD and master modules are not touched."""
+    assert _SLIDE_PH_CUDA.count(_SLIDE_AT2_ANCHOR) == 1, "AT2 anchor"
+    return _SLIDE_PH_CUDA.replace(_SLIDE_AT2_ANCHOR, _SLIDE_AT2_KERNEL + _SLIDE_AT2_ANCHOR) + _SLIDE_AT2_HOST
+
+
+_SLIDE_AT2 = False      # import-time flag: AT2 routed at sliding decode B=1 (else the incumbent C=16 / PERHEAD)
+_SLIDE_AT2_MOD = None
+_SLIDE_AT2_BUF = None   # (ws, fb, ticket): persistent, all-zero / -inf / 0 between launches (self-resetting)
+_SLIDE_AT2_GATE = 1.03  # incumbent time / AT2 time needed in the interleaved timing to route AT2
+_SLIDE_AT2_DEADLINE = 120.0  # s on the import clock the AT2 phase (build ~40 s, checks, race) may need
+_SLIDE_AT2_LENS = (1, 10, 63, 64, 65, 2047, 2048, 2049, 80000)
+
+
+def _slide_at2_guard_hi(window: int) -> float:
+    """gates/R11.held: the largest row max the fixed reference R = 16 keeps in FP32 range for this window."""
+    return min(108.0, 16.0 + 127.0 - 8.0 - 8.81 - math.log2(window + 8) - 4.0)
+
+
+def _build_slide_at2(fp8qk: bool):
+    tag = ("fp8qk" if fp8qk else "f16qk") + "+AT2"
+    name = "muse_sliding_at2_v1" + ("" if fp8qk else "_f16qk")
+    t0 = time.perf_counter()
+    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+    try:
+        from torch.utils.cpp_extension import load_inline
+        ext = load_inline(
+            name=name, cpp_sources=_SLIDE_AT2_CPP,
+            cuda_sources=f"#define SLIDE_FP8QK {int(fp8qk)}\n" + _slide_at2_source(),
+            functions=["slide_ph_setup", "slide_ph_attn", "slide_at2_setup", "slide_at2_attn"],
+            extra_cuda_cflags=["-O3", "-lineinfo"], verbose=False)
+    except Exception as e:
+        print(f"[slide-at2] load_inline ({tag}) module {name} FAILED after {time.perf_counter() - t0:.1f}s: "
+              f"{str(e)[-1500:]!r}", flush=True)
+        return None
+    finally:
+        if prev is None:
+            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+        else:
+            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+    print(f"[slide-at2] load_inline ({tag}) module {name} compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+    return ext
+
+
+def _slide_at2_bufs(dev):
+    """Workspace for B = 1 (the only batch AT2 serves): acc + l zero, fallback slots -inf (= unused), ticket 0."""
+    ws = torch.zeros(16 * 64 + 16, dtype=torch.float32, device=dev)
+    fb = torch.full((32 * 16 * 68,), float("-inf"), dtype=torch.float32, device=dev)
+    ticket = torch.zeros(2, dtype=torch.int32, device=dev)  # [arrivals, fallback rows]
+    return ws, fb, ticket
+
+
+def _slide_at2_clean(bufs) -> bool:
+    ws, fb, ticket = bufs
+    m = fb.view(32, 16, 68)[:, :, 64]
+    return (int((ws != 0).sum()) == 0 and int(ticket.abs().sum()) == 0
+            and bool(torch.isneginf(m).all()))
+
+
+def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None) -> torch.Tensor:
+    cfg = data["config"]
+    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
+    qkv = data["qkv"].reshape(batch, -1)
+    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=qkv.device)
+    ws, fb, ticket = bufs if bufs is not None else _SLIDE_AT2_BUF
+    ext.slide_at2_attn(
+        qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
+        _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
+        data["k_cache"], data["v_cache"], out, ws, fb, ticket,
+        cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS,
+        _slide_at2_guard_hi(cfg["window"]) if guard_hi is None else guard_hi)
+    return out
+
+
+def _slide_at2_run(ext, data, what, bufs, guard_hi=None) -> torch.Tensor:
+    bad = _slide_bounds(data)
+    if bad is not None:
+        raise RuntimeError(f"AT2 launch refused, host bounds check: {bad}")
+    print(f"[slide-at2] launch sliding_at2_kernel {what} B={data['config']['batch']} ...", flush=True)
+    out = _slide_at2_launch(ext, data, bufs, guard_hi)
+    torch.cuda.synchronize()
+    print(f"[slide-at2] launch sliding_at2_kernel {what}: done", flush=True)
+    return out
+
+
+def _slide_at2_init(inc_ext, inc_ph: bool, tag: str) -> "str | None":
+    """AT2 at sliding decode B=1, tried after the incumbent route (C=16, PERHEAD when inc_ph) is decided. (1) build its
+    own module, sm_90 image, 0 B local; (2) canary; (3) eager self-check at B=1 over _SLIDE_AT2_LENS (kv scale 0.25) and
+    2049 at 1.0: vs the FP32 reference (< 2e-2), vs the incumbent on cloned caches (< 1e-2), new cache rows vs the
+    incumbent's (rel < 1e-2), workspace clean after every launch; the R11 guard forced (every split on its fallback
+    slot) and mixed (guard 24) on the same inputs; (4) the two-state alternating graph-replay check through kernel_fn
+    with the flag provisionally on; (5) interleaved cold-L2 graph replays incumbent vs AT2 at B=1 x 80000 (median of
+    31, empty graph subtracted), routed only at >= _SLIDE_AT2_GATE. Import time only. None = route, else why not."""
+    global _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF
+    ext = _build_slide_at2(tag == "fp8qk")
+    if ext is None:
+        return f"AT2 module build failed ({tag})"
+    regs, local, occ, binv = [int(x) for x in ext.slide_at2_setup()]
+    print(f"[slide-at2] {tag}: sliding_at2_kernel {regs} regs, {local} B local/spill, {occ} CTAs/SM, "
+          f"binaryVersion {binv}", flush=True)
+    if binv != 90 or local > 32 or occ < 1:  # 32 B = sincosf's slow-path frame (the PERHEAD kernel has the same)
+        return f"AT2 attrs: binaryVersion {binv}, local {local} B, {occ} CTAs/SM"
+    dev = torch.device("cuda")
+    bufs = _slide_at2_bufs(dev)
+    gen = torch.Generator(device="cuda").manual_seed(97 + 2)
+    try:
+        data = _slide_synthetic([40], 1, 1.0, gen, dev)
+        out = _slide_at2_run(ext, data, f"canary {tag}", bufs)
+        if not bool(torch.isfinite(out).all()) or not _slide_at2_clean(bufs):
+            return "AT2 canary: non-finite output or workspace not clean"
+    except Exception as e:
+        return f"AT2 canary raised {e!r}"
+    gen = torch.Generator(device="cuda").manual_seed(1357)
+    for lens, kv_scale in [([n], 0.25) for n in _SLIDE_AT2_LENS] + [([2049], 1.0)]:
+        data = _slide_synthetic(lens, 1, kv_scale, gen, dev)
+        idata = dict(data)
+        idata["k_cache"], idata["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
+        out_i = _slide_run(inc_ext, idata, 16, f"AT2 self-check (incumbent side) {tag}", inc_ph)
+        outs = {}
+        for arm, gh in (("at2", None), ("forced", -1e30), ("mixed", 24.0)):
+            outs[arm] = _slide_at2_run(ext, data, f"self-check {arm} {tag}", bufs, gh)
+            if not _slide_at2_clean(bufs):
+                return f"AT2 self-check {arm} len {lens[0]}: workspace not clean after the launch"
+        ref = _slide_reference(data, lens)  # after the launches: the reference reads the new cache row AT2 wrote
+        notes, cache_ok = [], True
+        loc = data["cache_loc"]
+        for name, mine, inc in (("k", data["k_cache"], idata["k_cache"]), ("v", data["v_cache"], idata["v_cache"])):
+            a = mine.view(-1, 2, 64)[loc]
+            m = inc.view(-1, 2, 64)[loc]
+            match = float((a.view(torch.uint8) == m.view(torch.uint8)).float().mean())
+            rel = float((a.float() - m.float()).norm() / m.float().norm().clamp_min(1e-30))
+            notes.append(f"{name} byte match {match:.4f} rel {rel:.1e}")
+            cache_ok = cache_ok and rel < 1e-2
+        ok = cache_ok
+        parts = []
+        for arm, o in outs.items():
+            err, finite = _rel_l2(o, ref)
+            err_i, _ = _rel_l2(o, out_i.float())
+            ok = ok and finite and err < 2e-2 and err_i < 1e-2
+            parts.append(f"{arm} vs fp32 {err:.2e} vs incumbent {err_i:.2e} finite {finite}")
+        print(f"[slide-at2] self-check {tag} B=1 len={lens[0]} kv_scale={kv_scale:g}: {'; '.join(parts)}; cache vs "
+              f"incumbent {', '.join(notes)} -> {'ok' if ok else 'FAIL'}", flush=True)
+        del data, idata
+        if not ok:
+            return f"AT2 self-check failed at len {lens[0]} kv_scale {kv_scale:g}"
+    torch.cuda.empty_cache()
+    base, kv_scale = [2049], 0.25
+    sets = _alt_sets(base)
+    mp = max(max(x) for x in sets) + 1 + 29
+    _SLIDE_AT2_MOD, _SLIDE_AT2_BUF = ext, bufs
+    _SLIDE_AT2 = True  # provisional, import time only: kernel_fn must take the AT2 route under test
+    try:
+        why = _alt_check("[slide-at2] replay AT2 B=1",
+                         lambda l: _slide_synthetic(l, 1, kv_scale, gen, dev, max_pages=mp), _slide_reference, sets,
+                         gate=_slide_gate)
+    finally:
+        _SLIDE_AT2 = False
+    if why is not None:
+        return why
+    if not _slide_at2_clean(bufs):
+        return "AT2 workspace not clean after the replay check"
+    data = _slide_synthetic([80000], 1, 1.0, gen, dev)
+    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
+    inc_name = "PERHEAD 2 x C=16" if inc_ph else "cluster C=16"
+    print(f"[slide-gate] AT2-vs-incumbent B=1: timing [{inc_name}] vs [AT2 split-KV atomic] interleaved (graph replays, "
+          "cold L2, median of 31, empty graph subtracted)", flush=True)
+    t_inc, t_at2 = _interleaved_us([lambda: _slide_launch(inc_ext, data, 16, inc_ph),
+                                    lambda: _slide_at2_launch(ext, data)], flush, reps=31)
+    ratio = t_inc / t_at2 if t_at2 > 0 else 0.0
+    clean = _slide_at2_clean(bufs)
+    verdict = "ROUTE AT2" if ratio >= _SLIDE_AT2_GATE and clean else f"AT2 not >= {_SLIDE_AT2_GATE:.2f}x: incumbent"
+    print(f"[slide-gate] AT2-vs-incumbent B=1 x 80000: [{inc_name}] {t_inc:.2f} us, [AT2] {t_at2:.2f} us -> "
+          f"incumbent / AT2 {ratio:.3f}x, workspace clean {clean} ({verdict})", flush=True)
+    del data, flush
+    torch.cuda.empty_cache()
+    if not clean:
+        return "AT2 workspace not clean after the timing"
+    if ratio < _SLIDE_AT2_GATE:
+        return f"timing gate: incumbent {t_inc:.2f} us vs AT2 {t_at2:.2f} us ({ratio:.3f}x < {_SLIDE_AT2_GATE:.2f}x)"
+    return None
+
+
 def _slide_init():
     """Confirm the sm_90a image, build (fp8 QK first, then the f16 QK fallback only for a cluster
     size whose canary or self-check failed), report occupancy / registers / spills, disable each
     cluster size that cannot run its largest batch in one wave, canary + self-check the rest, and
     print the path chosen per batch class."""
-    global _SLIDE_PH, _SLIDE_PH_MOD
+    global _SLIDE_PH, _SLIDE_PH_MOD, _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF
     try:
         cap = tuple(torch.cuda.get_device_capability())
     except Exception as e:
@@ -5535,6 +6049,24 @@ def _slide_init():
             _SLIDE_PH_MOD = None
     else:
         why_ph = f"C=16 did not route ({_SLIDE_WHY[16]})"
+    _SLIDE_AT2 = False
+    if _SLIDE_MOD[16] is not None:  # AT2 races the incumbent B=1 route (PERHEAD when it routed, else C=16)
+        now = time.perf_counter() - _IMPORT_T0
+        if now + _SLIDE_AT2_DEADLINE > _IMPORT_BUDGET_S:  # the file's import-clock rule: start only if it can finish
+            why_at2 = f"skipped: import clock {now:.0f} s + {_SLIDE_AT2_DEADLINE:.0f} s > {_IMPORT_BUDGET_S:.0f} s"
+        else:
+            try:
+                why_at2 = _slide_at2_init(_SLIDE_PH_MOD if _SLIDE_PH else _SLIDE_MOD[16], _SLIDE_PH, _SLIDE_TAG[16])
+            except Exception as e:
+                why_at2 = f"AT2 setup raised {e!r}"
+            print(f"[slide-at2] phase AT2: {time.perf_counter() - _IMPORT_T0 - now:.1f} s (import clock now "
+                  f"{time.perf_counter() - _IMPORT_T0:.0f} s)", flush=True)
+        _SLIDE_AT2 = why_at2 is None
+        if not _SLIDE_AT2:
+            _SLIDE_AT2_MOD, _SLIDE_AT2_BUF = None, None
+    else:
+        why_at2 = f"C=16 did not route ({_SLIDE_WHY[16]})"
+    _say(f"[slide] PATH CHOSEN: sliding B=1 AT2 {'ON: split-KV 32 x 64 keys, fixed-reference atomic merge' if _SLIDE_AT2 else 'OFF (' + why_at2 + ')'}")
     _say(f"[slide] PATH CHOSEN: sliding B=1 PERHEAD {'ON: 2 clusters x C=16, one kv head each' if _SLIDE_PH else 'OFF (' + why_ph + ')'}")
     print(f"[slide] modules: master C=16 {getattr(_SLIDE_MOD[16], '__name__', None)}, C=4 "
           f"{getattr(_SLIDE_MOD[4], '__name__', None)}, PERHEAD {getattr(_SLIDE_PH_MOD, '__name__', None)}", flush=True)
