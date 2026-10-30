@@ -45,12 +45,12 @@ evidence: >
   (turn_4 rega ~1076 us)
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-30T003004Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-30T003004Z
 base_sha: 7feca0ccdd2513dfd07fd00241f638b1889fb77c
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
@@ -69,6 +69,14 @@ attempt_file: 2026-10-30T003722Z-check-rega-s2-low-rs2-high-stack.md
 prepared_at: 2026-10-30T003722Z
 job: 2c9af73f6b0f4e1b
 dispatched_at: 2026-10-30T003735Z
+outcome: neutral
+verdict_detail: within-ci
+speedup: 1.5720221095410187
+speedup_ci: [1.5484417778979034, 1.5956024411841339]
+harvested_at: 2026-10-30T004723Z
+best_at_harvest: 1.5721154841318719
+promotion: null
+mechanism: null
 ---
 
 # rega-s2-low-rs2-high-stack
@@ -148,3 +156,31 @@ OK with warnings: .worktrees/muse_prefill_layer/rega-s2-low-rs2-high-stack/muse_
 (warnings: host-sync / dtype lines, all "outside kernel_fn's call graph; fine in prepare()" or pre-existing uint8 buffers; no errors)
 ```
 py_compile: ok; __pycache__ removed. Size 494706 B.
+
+## Result
+
+- job `2c9af73f6b0f4e1b` (check), status done, passed True, tests 5/5
+- speedup 1.5720x, 95% CI [1.5484, 1.5956], score 246436.67391746154 µs vs SGLang 387403.9 µs
+- best at harvest: {"speedup": 1.5721154841318719, "ci": [1.5485337518698938, 1.5956972163938499], "job": "9f93484606cd4f9e"}; base result: muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json
+- **outcome: neutral** (within-ci)
+- files: `muse_prefill_layer/hypotheses/done/neutral/rega-s2-low-rs2-high-stack.result.json`, `muse_prefill_layer/hypotheses/done/neutral/rega-s2-low-rs2-high-stack.patch`; branch `hyp/muse_prefill_layer/rega-s2-low-rs2-high-stack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| batch=1 ctx=80000 dist=soft layer=sliding load=turn_1 page=1 q_len=753 repeats=6 | 46 | 661.91 | 669.5 | 0.9867 | flat |
+| batch=1 ctx=80000 dist=soft layer=full load=turn_1 page=1 q_len=753 repeats=6 | 16 | 1030.83 | 1040.38 | 0.9854 | flat |
+| batch=4 ctx=80000 dist=soft layer=sliding load=turn_4 page=1 q_len=753 repeats=6 | 46 | 1936.06 | 1945.17 | 1.0148 | flat |
+| batch=4 ctx=80000 dist=soft layer=full load=turn_4 page=1 q_len=753 repeats=6 | 16 | 3491.54 | 3446.48 | 1.0022 | flat |
+| batch=1 ctx=0 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 11160.68 | 10662.7 | 0.9558 | lost |
+| batch=1 ctx=32768 dist=soft layer=sliding load=first_turn page=1 q_len=16384 repeats=6 | 138 | 10326.33 | 10457.03 | 0.9889 | flat |
+| batch=1 ctx=32768 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 14556.85 | 14136.08 | 0.9983 | flat |
+| batch=1 ctx=65536 dist=soft layer=full load=first_turn page=1 q_len=16384 repeats=6 | 16 | 17600.87 | 17407.69 | 0.9987 | flat |
+
+lost on full first_turn. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- within-ci: the change is not proven either way; a stacked hypothesis (`depends_on: rega-s2-low-rs2-high-stack`) that adds a further change in the same area is the only way to learn more.
+
