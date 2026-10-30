@@ -2859,3 +2859,8 @@ with the operator's go-ahead.
 - (2) ms_align on decode: "leave that alone for now ... a cleanup round". Submitted code must be clean; for H100 work, "go with what gives good signal back".
 - (3) T=128 fork: "if theres a finding that shows its worth turning on, and thats informed knowledge, then follow it." d128's node finding qualifies, so **dfork** (GPU 6) re-adds the fork plumbing on top of campaign/dxl. It is raced with a layer gate (≤ 0.99 every round, exact, copy check, serial fallback), and room comes from clean Python tidying only.
 - Everything else stays stopped.
+
+## 2026-10-30 0453Z — dxl check faaf3c63: 1.7323 (+0.57% over 1.7225); T=1 routes XL on decode; scored 9299f06d
+- [ea-enc] T=1 iso E4XL/E4 0.952 [0.943,0.962] (E4/E4 0.968), so the worst round is well under 0.98; PATH T=1 E4XL/E4, T=8/16 E4XL, T=32 E4, T=128 E4XL, T=256 E5XL. That is the first T=1 XL route on decode, as dxl predicted.
+- Above the board, so scored **9299f06d** was sent from campaign/dxl (attempt c6e0230d) as the normal follow-through of the approved check. Land on master if it reads above 1.7225. dfork builds on this same branch.
+- The okc claims hook warned again about the unrelated 10-25 top-k/unpool attempt file; that warning does not apply to this run.
