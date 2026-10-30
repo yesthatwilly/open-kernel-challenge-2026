@@ -1,17 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "24f183ff300949f2",
- "check_job": "702f1004b45f4bfa",
+ "job": "575820c989c8412b",
+ "check_job": null,
  "mode": "submit",
- "speedup": 2.020119462295186,
+ "speedup": 2.035180868162415,
  "ci": [
-  1.9898176703607582,
-  2.0504212542296134
+  2.0046531551399784,
+  2.065708581184851
  ],
- "score_us": 6657.279557477411,
- "commit": "bbd1661f3d77230ea0673d67b390da4277ee5ea8",
- "submission_blob": "c6e41c9acc6169ac8a532684437955b1d560835b",
- "slug": "engine-a-a4b-a5b-encodings-race",
- "result": "muse_moe_w4a16/hypotheses/done/gain/engine-a-a4b-a5b-encodings-race.result.json",
- "updated_at": "2026-10-29T223315Z"
+ "score_us": 6608.012197040151,
+ "commit": "f2b510f593c8804ba80679a6f04f7048a209560d",
+ "submission_blob": "d80df5ecc71315466253dae86b28e4f6dfc41642",
+ "slug": "landing-575820c9",
+ "master_slug": "landing-575820c9",
+ "master_job": "575820c989c8412b",
+ "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-30T000737Z",
+ "note": "registered by churn.py register-landing from okc status 575820c989c8412b"
 }
