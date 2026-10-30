@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "ab23aba5fa6d4616",
- "check_job": "8ea881e2ac154152",
+ "job": "e6d3766f385048fd",
+ "check_job": "6aa73de650b144c8",
  "mode": "submit",
- "speedup": 1.7153910231483525,
+ "speedup": 1.7571209849301606,
  "ci": [
-  1.6896601578011272,
-  1.7411218884955775
+  1.7307641701562082,
+  1.7869621578222543
  ],
- "score_us": 2195.592695295502,
- "commit": "ee566de07c3eea414a1e728d8fc26816820adb93",
- "submission_blob": "827ad2c6b102d56c93a858f9680c8195ff23f0c6",
- "slug": "ladder-at12-window-uniform-mask-branch",
- "master_slug": "ladder-at12-window-uniform-mask-branch",
- "master_job": "ab23aba5fa6d4616",
+ "score_us": 2143.449445030501,
+ "commit": "e2590b3c6eccf811b68aa12140a5d847e43f1e72",
+ "submission_blob": "89d0b045fbaeade0d076f4804b34a110148b3051",
+ "slug": "ladder-at2-atomic-merge-d1s",
+ "master_slug": "ladder-at2-atomic-merge-d1s",
+ "master_job": "e6d3766f385048fd",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T083447Z",
- "note": "registered by churn.py register-landing from okc status ab23aba5fa6d4616"
+ "updated_at": "2026-10-30T090641Z",
+ "note": "registered by churn.py register-landing from okc status e6d3766f385048fd"
 }
