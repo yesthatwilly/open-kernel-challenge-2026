@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0318Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0322Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** **"stop making new things. run whatevers running. finish it out" (10-30 0311Z): no new lanes or checks; harvest the five running lanes only.** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), **ufs** (GPU 4: persistent cold-schedule prototype), hhcc done (null 0318Z), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7).
+- **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), ufs done (null 0322Z), hhcc done (null 0318Z), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2829,3 +2829,8 @@ with the operator's go-ahead.
 - Baseline hh4 kstep reproduced (wh5ds w13 N32/64/128 = 782/931/1159 cyc). MMA alone runs at the 8N tensor floor; wh5ds is already at that floor at N128. Even perfect overlap caps at x1.59/1.43/1.18/1.00 for N32/64/96/128.
 - Ping-pong WGs x1.018 at N32 and slower elsewhere (dequant throughput saturates at 2 warps/SMSP). Dequant into swizzled smem + SS wgmma x0.60-0.79 (smem pipe). Deeper-ring ideal ≤ x1.074. Any work on an SM runs ~2x slower while a wgmma runs (the general form of the RF-port slowdown). -> [refuted] moe CLAIMS. New reopen: only a dequant instruction-count cut, at N≤64. research/h100-hhcc-1030.md (6bacc6ac); 214k tokens.
 - GPU 5 stays idle per the 0311Z steer.
+
+## 2026-10-30 0322Z — ufs stage-1 null: the fused persistent cold K1+K2 is exact but slower consume-only; GPU 4 done
+- `ea4x_ufs` (grid 264, occ 2, one build_map, per-(pass,kc) readiness counters, XL consumer as-is; 96 regs, lmem 0) is bitwise equal to master's pair on 18 draws, including NaN-poisoned buffers, with no hangs.
+- Consume-only vs master's K1->K2 PDL pair: E4XL x1.027-1.041, E5XL x1.069-1.087 slower. Normal mode reads -0.7..-1.7 us but does not transfer. The K1 phase alone is ~4% slower (two XL loops in one kernel). Without waits it reads x0.984-0.999. Waits add +6..+12 us, because each CTA's K2 is tied to its slowest neighbour, while the separate kernels place K2 CTAs on whichever SM frees first.
+- Judge-scaled saving is 0 or negative (bar 8 us) -> [refuted] moe CLAIMS. Reopen only as a dynamic queue with a single XL loop. research/h100-ufs-1030.md (d3633c82); 252k tokens. GPU 4 stays idle per the 0311Z steer.
