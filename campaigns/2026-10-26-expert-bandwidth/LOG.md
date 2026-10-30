@@ -2874,3 +2874,9 @@ with the operator's go-ahead.
 - **Left for the next owner:**
   - shelved riders: moe xlres (campaign/xlres 027e33b7, ~+0.2%); decode T=128 fork (+0.3-0.9%, research/h100-d128-1030.md; needs the plumbing that dxl removed); decode ms_align (+0.2-0.35%, ~7.4 KB; owner: "a cleanup round");
   - the gpunode06 cleanup (nodejudge env, venvs, /tmp/USER-hopper) at window end.
+
+## 2026-10-30 ~05:45Z - compliance pass (public ladder; the user: "STAY COMPLIANT")
+- R16: decode fed the router BF16 x at every T<=8 since 164c1d27 (SGLang: FP32). The user said "withdraw now": all 43 scored decode runs withdrawn (incl. dxl 9299f06d, which musespark-3b had landed as 5dfc6d96). Compliant decode = ladder/dece2 (E2 trim + DC0 FP32 router input + w2 FP32 reduce pinned): scored 44de5103 **1.671**, landed eb78a8c0. dxl's t1xl twins are not on master any more; re-applied later as rung ladder-dc1-t1xl-port-on-compliant.
+- Compliance audit: attn/bf16/prefill compliant; moe had a BF16-atomic split-K fallback (never timed by the board row). 8 old moe scored runs that timed it withdrawn (user-approved). Fix scored 476d3a0e **2.100**, landed 0a5b9f49.
+- bf16: ladder BF1 scored 83cf0c48 **1.310**, landed 3e577458.
+- Shelved riders of this campaign now sit on compliant bases only; anything that needs BF16 router x is dead (CLAIMS decode 04de1ad5).
