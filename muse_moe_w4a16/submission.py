@@ -3294,6 +3294,7 @@ def prepare(weights: Weights) -> dict:
 def _prepare_main(weights, t_prepare, whj):
     device = weights["w13"].device
     eaej = _eae_start(t_prepare) if CAMPAIGN_EAE else None
+    msj = _ms_start(t_prepare)
     if CAMPAIGN_ES1A:
         _es1_build_start(t_prepare)
     if CAMPAIGN_ENGINE_A and CAMPAIGN_EA6:
@@ -3383,6 +3384,9 @@ def _prepare_main(weights, t_prepare, whj):
     if eaej is not None:
         for line in _eae_phase(state, weights, device, t_prepare, eaej):
             print(line[:400], flush=True)
+    if CAMPAIGN_MSTACK and CAMPAIGN_HYBRID:
+        for line in _ms_phase(state, weights, device, t_prepare, msj):
+            print(line[:480], flush=True)
     return state
 
 
@@ -8856,10 +8860,12 @@ def _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     """v1's contract: ea6_w13 (h [32, T, I], local_ids), ea6_w2 (y; PDL when k2_pdl), then the CUDA combine if it
     checked out, else the Triton one. dbg / scratch (NaN h, y): prepare only.
     fast (prepare-admitted FAST arms, T = 1): 1 K1 FAST, 2 K2 FAST, 4 the early combine.
-    enc (ea-enc, FAST K1 / K2 only): 3 / 4 runs that kernel from ea['ext6e'] on its A4b / A4b + A5b copy, 0 master's."""
+    enc (ea-enc, FAST K1 / K2 only): 3 / 4 runs that kernel from ea['ext6e'] on its A4b / A4b + A5b copy, 5 / 6 its T = 1
+    XL instance (EAE_T1XL_BIT) on the same copies (EAE_ARMS), 0 master's."""
     ext = ea["ext6"]
-    k1 = (ea["ext6e"], ea[f"w13e{enc[0]}"]) if enc[0] else (ext, ea["w13r"])
-    k2 = (ea["ext6e"], ea[f"w2e{enc[1]}"]) if enc[1] else (ext, ea["w2r"])
+    (q1, l1), (q2, l2) = EAE_ARMS.get(enc[0], (0, 0)), EAE_ARMS.get(enc[1], (0, 0))
+    k1 = (ea["ext6e"], ea[f"w13e{q1}"]) if q1 else (ext, ea["w13r"])
+    k2 = (ea["ext6e"], ea[f"w2e{q2}"]) if q2 else (ext, ea["w2r"])
     tokens, hidden = x.shape
     inter = ea["inter"]
     if scratch is None:
@@ -8878,12 +8884,12 @@ def _ea6_forward_core(ea, x, topk_ids, topk_weights, start, count, norm_w, trace
     if trace is not None:
         trace("before ea6_w13")
     k1[0].ea6_w13(x, topk_ids, k1[1], ea["gs13"], h, local_ids, ea["err"], d, tokens, start, count, grid, minb,
-                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if enc[0] == 4 else 0))
+                  (4 if pdl13 else 0) | (8 if fast & 1 else 0) | (4096 if q1 == 4 else 0) | (EAE_T1XL_BIT if l1 else 0))
     if trace is not None:
         trace("after ea6_w13 / before ea6_w2")
     k2[0].ea6_w2(h, topk_ids, k2[1], ea["gs2"], y, ea["err"], d, tokens, start, count, g2, minb,
                  ((1 | (2 if ea.get("ea6_cores") else 0)) if k2_pdl else 0) | (8 if fast & 2 else 0)
-                 | (4096 if enc[1] == 4 else 0))
+                 | (4096 if q2 == 4 else 0) | (EAE_T1XL_BIT if l2 else 0))
     if trace is not None:
         trace("after ea6_w2 / before post-expert norm")
     out = torch.empty((tokens, hidden), device=x.device, dtype=torch.bfloat16)
@@ -13688,6 +13694,11 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
     if fk is not None:
         torch.cuda.current_stream().wait_event(fk["e1"])
     y = cache3.view(num_tokens, TOP_K, size_k)
+    ms = state.get("ms")
+    if ms is not None and ms["cp"].get(num_tokens) and fill is None and not keep:
+        out = torch.empty((num_tokens, size_k), device=x.device, dtype=torch.bfloat16)
+        state["ea"]["ext"].ea_combine(cache3, local_ids, tw, state["post_norm_w"], out, POST_NORM_EPS, 1)
+        return out
     out = fused_post_expert_norm_weighted_sum(
         y, tw, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=local_ids)
     return (out, cache3) if keep else out
@@ -13696,7 +13707,11 @@ def _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill=None, fork=N
 def _hm_forward(x, topk_ids, topk_weights, bank, state, bsm_hot, fill=None):
     """kernel_fn's hybrid branch: out [T, H] bf16 from the GLOBAL ids (shifted on the device by state['hm']['ls'])."""
     tw = topk_weights.to(torch.float32).contiguous()
-    local_ids, align = _hm_align(topk_ids, state["hm"]["ls"], bsm_hot, bank["count"])
+    ms = state.get("ms")
+    if ms is not None and ms["al"].get(x.shape[0]) and fill is None:
+        local_ids, align = _ms_align(ms["ext"], topk_ids, state["hm"]["ls"], bsm_hot, bank["count"])
+    else:
+        local_ids, align = _hm_align(topk_ids, state["hm"]["ls"], bsm_hot, bank["count"])
     return _hm_experts(x, local_ids, tw, align, bank, state, bsm_hot, fill)
 
 
@@ -18142,6 +18157,8 @@ EAE_PERM = (3, 4, 5, 10, 11, 9, 6, 7, 8, 12, 13, 14, 16, 17, 18, 15, 19, 20, 21,
 EAE_XL_BIT = 16384  # XL arms (module '4xl'): pdl bit 14, clear of EA_PDL_BITS (1, cw << 4, 256, 512) and E5's 4096
 EAE_XL_TIE = 0.995  # an XL arm replaces the passing E arm only when its per-round XL/E median is below this
 EAE_ARMS = {3: (3, 0), 4: (4, 0), 5: (3, 1), 6: (4, 1)}  # arm digit -> (bank copy dq, XL): E4 E5 E4XL E5XL
+EAE_T1XL_BIT = 1024  # T = 1 XL (ext6e LT instances, ea6 flags bit 10; research/h100-t1xl-1030.md)
+EAE_T1XL = ((5, 3), (5, 5), (6, 4), (6, 6))  # T = 1 XL pairs (K1, K2): K1 XL with K2 E or XL
 
 _EAE_COMMON = r"""
 // ea-enc: A4b views of the recoded word (pair I's e2m1 bits on {6,7,8,15,22,23,24,31}); rtv(n, v) = v, opaque to ptxas
@@ -18305,6 +18322,60 @@ __device__ __forceinline__ void consume_lt(uint32_t recl, uint32_t recs, uint32_
 }
 
 """
+_EAE_T1XL_STS = r"""__device__ __forceinline__ void t1xl_sts128(uint32_t a, float4 v) {
+  asm volatile("st.shared.v4.f32 [%0], {%1, %2, %3, %4};\n" :: "r"(a), "f"(v.x), "f"(v.y), "f"(v.z), "f"(v.w) : "memory");
+}
+"""
+# T = 1 XL (takemyjob hopper/t1xl-1030 cut_xl.py): ea6's FAST consumer already preloads B by ldmatrix.x4 (X1), so this
+# is eaenc2's L on ea6's loop: consume_lt on carried code / scale addresses (B address, m16 / m78 hoisted: fixed per CTA
+# at T = 1), ring slot / full / empty addresses stepped by one IMAD (s = +1, -(D - 1) at the wrap), the parity flipped
+# at the wrap, a count-down, tries first; the P handoff on a carried address with pfull / pfree stepped by +-1 and its
+# pfree wait unconditional (parity ((i >> 1) - 1) & 1 carried: at i < 2 parity 1 of a fresh barrier is complete);
+# record 0's wait, K1's griddep_launch and dbg[1] peeled. Same records, order, arithmetic and handoff: bitwise the E arm.
+_EAE_T1XL_LOOP = r"""    if constexpr (LT != 0) {  // T = 1 XL: the loop below with its bookkeeping trimmed (eaenc2 L)
+      static_assert(FAST && EQ >= 3, "t1xl: FAST, A4b codes only");
+      const int g = lane >> 2;
+      const int xr = (lane & 7) < T ? (lane & 7) : T - 1;
+      const uint32_t xb = xs + static_cast<uint32_t>(xr * eak::XROW + ((lane >> 3) & 1) * 16 + (lane >> 4) * 32);
+      const uint32_t m16 = rt16(T), m78 = rtv(T, 0x78007800u);
+      const uint32_t rb = smem_u32(ring) + static_cast<uint32_t>(warp * eak::REC);
+      uint32_t recl = rb + static_cast<uint32_t>(lane * 16);
+      uint32_t recs = rb + static_cast<uint32_t>(4096 + g * (EQ == 4 ? 64 : 32));
+      uint32_t fb = full0, ph = 0u, sl = 0u;
+      uint32_t pa = smem_u32(P) + static_cast<uint32_t>((warp * 32 + lane) * 16);
+      uint32_t pb = pfull0, pq = 1u, ps = 1u;  // pfull0 + 8 k; pfree = pb + 16; ps +1: buffer 0 -> 1, -1: 1 -> 0
+      mbar_wait(full0, 0u, err, dead);
+      if (W13) griddep_launch();
+      if (dme != nullptr && threadIdx.x == 0) dme[1] = gtimer();
+      for (int cnt = r;;) {
+        if (!mbar_try(fb, ph)) mbar_wait(fb, ph, err, dead);
+        float acc[2][4] = {};
+        eak::consume_lt<EQ>(recl, recs, xb, m16, m78, acc);
+        __syncwarp();
+        if (lane == 0) mbar_arrive(fb + 8u * D);  // empty0 + 8 * slot
+        const float4 cv = make_float4(acc[0][0] + acc[1][0], acc[0][1] + acc[1][1], acc[0][2] + acc[1][2],
+                                      acc[0][3] + acc[1][3]);
+        if (!mbar_try(pb + 16u, pq)) mbar_wait(pb + 16u, pq, err, dead);
+        t1xl_sts128(pa, cv);
+        __syncwarp();
+        if (lane == 0) mbar_arrive(pb);
+        const uint32_t wrap = sl == static_cast<uint32_t>(D - 1) ? 1u : 0u;
+        const uint32_t st = wrap ? 0u - static_cast<uint32_t>(D - 1) : 1u;
+        ph ^= wrap;
+        sl = wrap ? 0u : sl + 1u;
+        eak::imad_step(recl, st, static_cast<uint32_t>(RECB));
+        eak::imad_step(recs, st, static_cast<uint32_t>(RECB));
+        eak::imad_step(fb, st, 8u);
+        pq ^= ps >> 31;  // flips after buffer 1 (ps == -1)
+        eak::imad_step(pa, ps, 4096u);
+        eak::imad_step(pb, ps, 8u);
+        ps = 0u - ps;
+        if (--cnt == 0) break;
+      }
+      if (dme != nullptr && threadIdx.x == 0) dme[2] = gtimer();
+      return;
+    }
+"""
 _EAE_LT_AT = ("  int pend0 = -1, pend1 = -1;  // DEFER: the super-groups whose partial sits in slot 0 / 1 (CTA-uniform)\n"
               "  float acc[2][2][4];  // [tile][k16 parity][C fragment]; tile 1 only in passes of 9..16 routes\n"
               "#pragma unroll\n  for (int t = 0; t < 2; ++t)\n#pragma unroll\n    for (int s = 0; s < 2; ++s)\n"
@@ -18451,19 +18522,27 @@ def _eae_src4xl():
 
 def _eae_src6():
     """the FAST v6 module with only E instances: ea6_kernel<., ., 2, true, 3> (E4) / <., ., 2, true, 4> (E5, flags bit
-    4096) in place of master's MINB 2 / 1 and FAST ones."""
+    4096) in place of master's MINB 2 / 1 and FAST ones, plus their T = 1 XL twins <., ., 2, true, EQ, 1> (consume_lt +
+    the trimmed loop, _EAE_T1XL_LOOP; flags bit EAE_T1XL_BIT; ea6_info rows 5..8 after the cmb row)."""
     src = _eae_dev("#define EA6_FAST 1\n" + _ea6_source())
+    a = "template <int DQ, int XB = 0>\n__device__ __forceinline__ void consume("
+    src = _eae_rep(src, a, _EAE_LT + a)
     src = _eae_rep(src, "template <bool W13, int D, int MINB, bool FAST = false>\n",
-                   "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2>\n")
+                   _EAE_T1XL_STS + "template <bool W13, int D, int MINB, bool FAST = false, int EQ = 2, int LT = 0>\n")
+    a = "    const uint32_t xs = smem_u32(bsm) + static_cast<uint32_t>(warp * T * eak::XROW);\n"
+    src = _eae_rep(src, a, a + _EAE_T1XL_LOOP)
     src = _eae_rep(src, "eak::consume<2, 1>(ring", "eak::consume<EQ, 1>(ring")
     for w, d in (("true", "D13"), ("false", "D2")):
         k = f"eak6::ea6_kernel<{w}, eak6::{d}, "
-        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>")
+        src = _eae_rep(src, f"minb == 2 ? &{k}2> : &{k}1>", f"(flags & 4096) ? &{k}2, true, 4> : &{k}2, true, 3>;\n"
+                       f"  if (flags & {EAE_T1XL_BIT}) fn = (flags & 4096) ? &{k}2, true, 4, 1> : &{k}2, true, 3, 1>")
         src = _eae_rep(src, f"    fn = &{k}2, true>;\n", "")
         src = _eae_rep(src, f"(r, {k}2>, {w})", f"(r, {k}2, true, 3>, {w})")
         src = _eae_rep(src, f"(r, {k}1>, {w})", f"(r, {k}2, true, 4>, {w})")
         src = _eae_rep(src, f"  ea6_one_info(r, {k}2, true>, {w});\n", "")
-    return src
+    k1, k2 = "eak6::ea6_kernel<true, eak6::D13, 2, true, ", "eak6::ea6_kernel<false, eak6::D2, 2, true, "
+    return _eae_rep(src, "  ea6_cmb_info(r);\n", "  ea6_cmb_info(r);\n" + "".join(
+        f"  ea6_one_info(r, {k}{q}, 1>, {w});\n" for k, w in ((k1, "true"), (k2, "false")) for q in (3, 4)))
 
 
 def _eae_start(t0):
@@ -18555,7 +18634,8 @@ def _eae_t1core(base, e1, e2):
 
 
 _EAE_CORES = {**{f"{b}:e{d}": _eae_xcore(b, d) for b, v in EA4X_ARMS.items() if not v & 256 for d in EAE_ARMS},
-              **{f"{b}:e{p}{q}": _eae_t1core(b, p, q) for b in EA6F_ARMS for p in (0, 3, 4) for q in (0, 3, 4) if p or q}}
+              **{f"{b}:e{p}{q}": _eae_t1core(b, p, q) for b in EA6F_ARMS for p in (0, 3, 4) for q in (0, 3, 4) if p or q},
+              **{f"{b}:e{p}{q}": _eae_t1core(b, p, q) for b in EA6F_ARMS for p, q in EAE_T1XL}}
 
 
 def _eae_base(state, T):
@@ -18738,6 +18818,10 @@ def _eae_run(state, weights, device, t0, job, L):
         for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
             # XL (92-94 regs on cu13.0 vs the 96 cap): admitted only with no local memory and 2 CTAs / SM
             ok[(key, kk, dq)] = bool(rows[i][0]) and (rows[i][2] == 0 and rows[i][3] >= 2 if xl else rows[i][3] >= 1)
+        if key == "6" and len(rows) >= 9:  # T = 1 XL rows 5..8 (after the cmb row): no local memory, the E rows' occupancy
+            at.append("6 " + " ".join(f"{n}xl {r[1]}/{r[2]}/{r[3]}" for n, r in zip(("K1e4", "K1e5", "K2e4", "K2e5"), rows[5:9])))
+            for i, (kk, dq) in enumerate((("K1", 3), ("K1", 4), ("K2", 3), ("K2", 4))):
+                ok[("6xl", kk, dq)] = bool(rows[5 + i][0]) and rows[5 + i][2] == 0 and rows[5 + i][3] >= rows[i][3] >= 1
     t = time.perf_counter()
     lo, hi, bad = 255, 0, 0
     for k in ("w13r", "w2r"):
@@ -18769,6 +18853,9 @@ def _eae_run(state, weights, device, t0, job, L):
         if kind == "t1":
             arms = [f"{p}{q}" for p in (0,) + dqs for q in (0,) + dqs if (p or q) and (not p or ok.get(("6", "K1", p)))
                     and (not q or ok.get(("6", "K2", q)))]
+            okk = lambda kk, d: ok.get(("6xl", kk, EAE_ARMS[d][0])) if EAE_ARMS[d][1] else ok.get(("6", kk, d))
+            arms += [f"{p}{q}" for p, q in EAE_T1XL if EAE_ARMS[p][0] in dqs and EAE_ARMS[q][0] in dqs and okk("K1", p)
+                     and okk("K2", q)]
         else:
             arms = [str(d) for d in dqs if ok.get(("4x", "K1", d)) and ok.get(("4x", "K2", d))]
             arms += [str(d + 2) for d in dqs if ok.get(("4xl", "K1", d)) and ok.get(("4xl", "K2", d))]
@@ -18777,13 +18864,15 @@ def _eae_run(state, weights, device, t0, job, L):
             continue
         ex, rat, crat = _eae_class(state, device, T, kind, base, arms, gen, hidden)
         good = {a: max(rat[a]) for a in arms if ex[a] and rat[a] and max(rat[a]) <= EAE_BAR}
-        xe = {x: _eae_xe(rat, x) for x in arms if x in ("5", "6") and str(int(x) - 2) in arms}
+        isx = lambda a: "5" in a or "6" in a  # an XL arm (one digit, or a T = 1 pair with an XL kernel)
+        xb = lambda a: a.replace("5", "3").replace("6", "4")  # its E arm (same codes, master's loop)
+        xe = {x: _eae_xe(rat, x, xb(x)) for x in arms if isx(x) and xb(x) in arms}
         txt.append(f"T={T} {base}: " + " ".join(f"{_eae_lab(a)} {'y' if ex[a] else 'n'} {_eae_rs(rat[a])}" for a in arms)
                    + (" | cold iso " + " ".join(f"{_eae_lab(a)} {_eae_rs(crat[a])}" for a in arms) if crat[arms[0]] else "")
                    + (" | XL/E " + " ".join(f"{_eae_lab(x)} {_eae_rs(v)}" for x, v in xe.items()) if xe else ""))
         if good:
             med = lambda k: sorted(rat[k])[len(rat[k]) // 2]
-            ge, gx = [a for a in good if a in ("3", "4")], [a for a in good if a in ("5", "6")]
+            ge, gx = [a for a in good if not isx(a)], [a for a in good if isx(a)]
             a = min(ge or gx or good, key=med)
             if ge and gx:  # ties keep the E arm: XL only when its per-round ratio to that E arm is clearly lower
                 x = min(gx, key=lambda k: sorted(_eae_xe(rat, k, a))[len(rat[k]) // 2])
@@ -18819,3 +18908,321 @@ def _eae_run(state, weights, device, t0, job, L):
     L.append(f"{EAE_TAG} PATH CHOSEN " + "; ".join(
         f"T={T} " + (_eae_lab(picks[T][2]) if T in picks else f"master ({why.get(T, '?')})") for T in EAE_T)
         + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
+
+
+# ---- mstack (campaign/mstack, research/h100-mstack-1030.md): the T >= 128 hybrid's serial glue, raced in prepare ----
+# al: _hm_align (Triton, grid 33, 10.1 us on the judge at T=256) -> ms_align (CUDA, grid 33 x 256: one warp-aggregated
+#     shared histogram per CTA, then CTA e ranks expert e's routes with one block scan; the last CTA writes local / cold
+#     ids, sentinels and the -1 blocks). Outputs bit-identical to _hm_align (checked on every routing kind + judge draws).
+# cp: the hybrid's SGLang post-norm -> ea_combine pdl 1 (the CUDA combine the board already runs at T=1..128; fp32
+#     math, (1 + w) in fp32: same output class, closer to the fp32 reference). Either one only if it wins every round.
+CAMPAIGN_MSTACK = True
+MS_TAG = "[mstack]"
+MS_JOIN_S = 245.0
+MS_END_S = 262.0
+MS_ROUNDS = 5
+MS_REPS = 21
+MS_BAR = 0.999
+MS_SEED = 20261030
+MS_ARMS = {"base": (0, 0), "al": (1, 0), "cp": (0, 1), "alcp": (1, 1)}
+
+_MS_CPP = ("void ms_align(torch::Tensor ids, torch::Tensor ls, torch::Tensor lid, torch::Tensor sc, torch::Tensor bc, "
+           "torch::Tensor nc, torch::Tensor sh, torch::Tensor bh, torch::Tensor nh, torch::Tensor cold, int64_t cap_c, "
+           "int64_t nb_c, int64_t cap_h, int64_t nb_h, int64_t hot, int64_t bsm_c, int64_t bsm_h, int64_t cold_ids);")
+_MS_SRC = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+namespace msa {
+constexpr int NE = 32, NG = 256, NT = 256, NW = NT / 32, MAXN = 8192, QM = 8;
+__global__ void __launch_bounds__(NT) ms_align_kernel(const int* __restrict__ ids, const int* __restrict__ lsp,
+    int* __restrict__ lid, int* __restrict__ sc, int* __restrict__ bc, int* __restrict__ nc, int* __restrict__ sh,
+    int* __restrict__ bh, int* __restrict__ nh, int* __restrict__ cold, int n, int cap_c, int nb_c, int cap_h, int nb_h,
+    int hot_rows, int bsm_c, int bsm_h, int cold_ids) {
+  __shared__ signed char s_loc[MAXN];
+  __shared__ int s_cnt[NE], s_st[NE], s_pad[NE], s_hot[NE], s_tot[2], s_ws[NW];
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  if (tid < NE) s_cnt[tid] = 0;
+  const int ls = __ldg(lsp);
+  __syncthreads();
+  for (int b = 0; b < n; b += QM * NT) {  // local ids into smem + a warp-aggregated histogram; QM loads in flight
+    int v[QM];
+#pragma unroll
+    for (int j = 0; j < QM; ++j) {
+      const int i = b + j * NT + tid;
+      v[j] = i < n ? __ldg(ids + i) : 0;
+    }
+#pragma unroll
+    for (int j = 0; j < QM; ++j) {
+      const int i = b + j * NT + tid;
+      int l = -1;
+      if (i < n) {
+        l = ((v[j] - ls) % NG + NG) % NG;
+        l = l < NE ? l : -1;
+        s_loc[i] = static_cast<signed char>(l);
+      }
+      const unsigned peers = __match_any_sync(0xffffffffu, l);
+      if (l >= 0 && lane == __ffs(peers) - 1) atomicAdd(&s_cnt[l], __popc(peers));
+    }
+  }
+  __syncthreads();
+  if (warp == 0) {  // per class: padded counts, exclusive starts in expert order, totals
+    const int k = s_cnt[lane], h = k > hot_rows;
+    const int pc = h ? 0 : (k + bsm_c - 1) / bsm_c * bsm_c, ph = h ? (k + bsm_h - 1) / bsm_h * bsm_h : 0;
+    int ic = pc, ih = ph;
+#pragma unroll
+    for (int o = 1; o < 32; o <<= 1) {
+      const int a = __shfl_up_sync(0xffffffffu, ic, o), c = __shfl_up_sync(0xffffffffu, ih, o);
+      if (lane >= o) { ic += a; ih += c; }
+    }
+    s_hot[lane] = h;
+    s_st[lane] = h ? ih - ph : ic - pc;
+    s_pad[lane] = h ? ph : pc;
+    if (lane == 31) { s_tot[0] = ic; s_tot[1] = ih; }
+  }
+  __syncthreads();
+  const int e = blockIdx.x;
+  if (e < NE) {
+    const int k = s_cnt[e];
+    if (k == 0) return;  // CTA-uniform
+    const int h = s_hot[e], st = s_st[e], pad = s_pad[e], bsm = h ? bsm_h : bsm_c;
+    int* const arr = h ? sh : sc;
+    int* const barr = h ? bh : bc;
+    const int q = (n + NT - 1) / NT, i0 = tid * q, i1 = min(n, i0 + q);  // a contiguous run per thread: ascending ranks
+    int c = 0;
+    for (int i = i0; i < i1; ++i) c += s_loc[i] == e;
+    int inc = c;
+#pragma unroll
+    for (int o = 1; o < 32; o <<= 1) {
+      const int a = __shfl_up_sync(0xffffffffu, inc, o);
+      if (lane >= o) inc += a;
+    }
+    if (lane == 31) s_ws[warp] = inc;
+    __syncthreads();
+    int wb = 0;
+#pragma unroll
+    for (int w = 0; w < NW; ++w) wb += w < warp ? s_ws[w] : 0;
+    int pos = st + wb + inc - c;
+    for (int i = i0; i < i1; ++i)
+      if (s_loc[i] == e) arr[pos++] = i;
+    for (int j = k + tid; j < pad; j += NT) arr[st + j] = n;
+    const int b0 = st / bsm, nb = pad / bsm;
+    for (int kb = tid; kb < nb; kb += NT) barr[b0 + kb] = e;
+  } else {
+    for (int i = tid; i < n; i += NT) {
+      const int l = s_loc[i];
+      lid[i] = l;
+      if (cold_ids) cold[i] = (l >= 0 && s_hot[l]) ? -1 : l;
+    }
+    const int tc = s_tot[0], th = s_tot[1];
+    for (int s = tc + tid; s < cap_c; s += NT) sc[s] = n;
+    for (int s = th + tid; s < cap_h; s += NT) sh[s] = n;
+    for (int kb = tc / bsm_c + tid; kb < nb_c; kb += NT) bc[kb] = -1;
+    for (int kb = th / bsm_h + tid; kb < nb_h; kb += NT) bh[kb] = -1;
+    if (tid == 0) { *nc = tc; *nh = th; }
+  }
+}
+}  // namespace msa
+void ms_align(torch::Tensor ids, torch::Tensor ls, torch::Tensor lid, torch::Tensor sc, torch::Tensor bc, torch::Tensor nc,
+              torch::Tensor sh, torch::Tensor bh, torch::Tensor nh, torch::Tensor cold, int64_t cap_c, int64_t nb_c,
+              int64_t cap_h, int64_t nb_h, int64_t hot, int64_t bsm_c, int64_t bsm_h, int64_t cold_ids) {
+  const int n = static_cast<int>(ids.numel());
+  TORCH_CHECK(n >= 1 && n <= msa::MAXN && ids.is_contiguous() && ids.scalar_type() == at::kInt &&
+              ls.scalar_type() == at::kInt && lid.numel() == n && cold.numel() == n && sc.numel() == cap_c &&
+              bc.numel() == nb_c && sh.numel() == cap_h && bh.numel() == nb_h && bsm_c > 0 && bsm_h > 0, "ms_align: args");
+  msa::ms_align_kernel<<<msa::NE + 1, msa::NT, 0, at::cuda::getCurrentCUDAStream()>>>(
+      ids.data_ptr<int>(), ls.data_ptr<int>(), lid.data_ptr<int>(), sc.data_ptr<int>(), bc.data_ptr<int>(),
+      nc.data_ptr<int>(), sh.data_ptr<int>(), bh.data_ptr<int>(), nh.data_ptr<int>(), cold.data_ptr<int>(), n,
+      (int)cap_c, (int)nb_c, (int)cap_h, (int)nb_h, (int)hot, (int)bsm_c, (int)bsm_h, (int)cold_ids);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+"""
+
+
+def _ms_align(ext, topk_ids, ls, bsm_hot, count):
+    """_hm_align's exact outputs from ms_align (count == 32, int32 ids)."""
+    topk_ids = topk_ids.contiguous()
+    device = topk_ids.device
+    n = topk_ids.numel()
+    cap_c, nb_c, cap_h, nb_h = _hm_caps(n, bsm_hot, count)
+    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
+    sc = torch.empty((cap_c,), dtype=torch.int32, device=device)
+    bc = torch.empty((nb_c,), dtype=torch.int32, device=device)
+    nc = torch.empty((1,), dtype=torch.int32, device=device)
+    sh = torch.empty((cap_h,), dtype=torch.int32, device=device)
+    bh = torch.empty((nb_h,), dtype=torch.int32, device=device)
+    nh = torch.empty((1,), dtype=torch.int32, device=device)
+    hyb, h = bsm_hot < 0, _hm_hot_block(bsm_hot)
+    cold_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device) if hyb else local_ids
+    ext.ms_align(topk_ids, ls, local_ids, sc, bc, nc, sh, bh, nh, cold_ids, cap_c, nb_c, cap_h, nb_h,
+                 _hm_hot_rows(bsm_hot), HM_COLD_BSM, h, int(hyb))
+    return local_ids, ((sc, bc, nc, sh, bh, nh, cold_ids) if hyb else (sc, bc, nc, sh, bh, nh))
+
+
+def _ms_start(t0):
+    """prepare()'s first steps: build ms_align in a background thread (TORCH_CUDA_ARCH_LIST 9.0a, as the others)."""
+    import hashlib
+    import threading
+    job = {"th": None, "res": None}
+    if not (CAMPAIGN_MSTACK and CAMPAIGN_HYBRID):
+        return job
+    name = "okc_mstack_align_" + hashlib.sha256((_MS_CPP + _MS_SRC).encode()).hexdigest()[:10]
+
+    def run():
+        try:
+            job["res"] = _rt_build(MS_TAG, name, _MS_CPP, _MS_SRC, ["ms_align"])
+        except BaseException as e:
+            job["res"] = (None, f"thread {type(e).__name__}: {str(e)[:100]}", 0.0)
+
+    job["th"] = threading.Thread(target=run, name="mstack-build", daemon=True)
+    job["th"].start()
+    return job
+
+
+def _ms_set(state, T, arm):
+    al, cp = MS_ARMS[arm]
+    ms = state["ms"]
+    for k, v in (("al", al), ("cp", cp)):
+        if v:
+            ms[k][T] = 1
+        else:
+            ms[k].pop(T, None)
+
+
+def _ms_phase(state, weights, device, t0, job):
+    """The [mstack] block. Never raises; any failure leaves the hybrid on master's align and post-norm."""
+    L = []
+    state["ms"] = {"al": {}, "cp": {}, "ext": None}
+    try:
+        _ms_run(state, weights, device, t0, job, L)
+    except Exception as e:
+        state["ms"] = {"al": {}, "cp": {}, "ext": None}
+        L.append(f"{MS_TAG} raised {type(e).__name__}: {str(e)[:150]} -> master")
+    return L
+
+
+def _ms_med(v):
+    return sorted(v)[len(v) // 2]
+
+
+def _ms_run(state, weights, device, t0, job, L):
+    ms = state["ms"]
+    hm = state.get("hm")
+    tj = time.perf_counter()
+    if job.get("th") is not None:
+        job["th"].join(max(0.0, MS_JOIN_S - (time.perf_counter() - t0)))
+    res = job.get("res") if job.get("th") is not None and not job["th"].is_alive() else None
+    ext = res[0] if res else None
+    L.append(f"{MS_TAG} build " + (f"{res[2]:.0f}s" + ("" if ext is not None else f" FAIL {str(res[1])[:80]}")
+                                   if res else "not joined") + f" (bg from 0s), join wait {time.perf_counter() - tj:.1f}s")
+    Ts = [T for T in HM_TOKENS if hm is not None and hm["on"].get(T, 0)]
+    if not Ts or time.perf_counter() - t0 > MS_END_S:
+        L.append(f"{MS_TAG} PATH CHOSEN master (" + ("no hybrid T" if not Ts else "deadline") + ")")
+        return
+    ms["ext"] = ext
+    bank = state["banks"][(0, 32)]
+    start, count = bank["start"], bank["count"]
+    hidden = weights["w2"].shape[1]
+    ea = state.get("ea")
+    has_cmb = ea is not None and hasattr(ea.get("ext"), "ea_combine")
+    gen = torch.Generator().manual_seed(MS_SEED)
+    tr, picks = time.perf_counter(), {}
+    for T in Ts:
+        H = hm["on"][T]
+        draws = _ea4x_draws(T, gen, start, count, device)
+        al_ok, bad, ncase = ext is not None and count == 32, [], 0
+        if al_ok:
+            cases = _ea_routings(T, gen, list(range(start, start + count)), device) + draws
+            for lab, ids in cases:
+                for h in sorted({H, HM_WG_H, -8, 32}):
+                    a_l, a = _hm_align(ids, hm["ls"], h, count)
+                    b_l, b = _ms_align(ext, ids, hm["ls"], h, count)
+                    ncase += 1
+                    if not all(torch.equal(p, q) for p, q in zip((a_l,) + a, (b_l,) + b)):
+                        bad.append(f"{lab} H{h}")
+            b_l, b = _ms_align(ext, draws[1][1], hm["ls"], H, count)
+            prob = _hm_align_cmp(draws[1][1].cpu(), start, H, count, b_l, b)
+            if prob:
+                bad.append(f"host ref: {prob}")
+            al_ok = not bad
+        L.append(f"{MS_TAG} T={T} H={H} align: " + (f"{ncase} cases vs _hm_align " + (
+            "BIT-IDENTICAL (+ host ref)" if al_ok else "MISMATCH " + "; ".join(bad[:4])) if ext is not None else "no module"))
+        cp_ok, ctxt = has_cmb, []
+        if cp_ok:
+            for lab, ids in (draws[1], _ea_routings(T, gen, list(range(start, start + count)), device)[3]):
+                data = _ea6_data(bank, ids, gen, device, hidden)
+                ref = _combo_ref_fp32(weights, bank, state, data["hidden_states"], data["topk_ids"],
+                                      data["topk_weights"].float())
+                o0 = kernel_fn(data, state).float()
+                _ms_set(state, T, "cp")
+                try:
+                    o1 = kernel_fn(data, state).float()
+                finally:
+                    _ms_set(state, T, "base")
+                ok1, r1, w1, _ = _rt_check(o1, ref)
+                _, r0, w0, _ = _rt_check(o0, ref)
+                cp_ok = cp_ok and ok1 and r1 <= 2.0 * r0 + 1e-6
+                ctxt.append(f"{lab.split(' ')[0]} rel {r1:.3g}/{r0:.3g} row {w1:.3g}/{w0:.3g}")
+                del ref
+        L.append(f"{MS_TAG} T={T} combine vs fp32 (cp/post-norm): " + ("; ".join(ctxt) if ctxt else "no ea_combine")
+                 + f" -> {'ok' if cp_ok else 'OFF'}")
+        arms = ["base"] + (["al"] if al_ok else []) + (["cp"] if cp_ok else []) + (["alcp"] if al_ok and cp_ok else [])
+        if len(arms) == 1 or time.perf_counter() - t0 > MS_END_S:
+            continue
+        rat, exact, iso = {a: [] for a in arms[1:]}, {a: True for a in arms[1:]}, {}
+        for lab, ids in draws:
+            data = _ea6_data(bank, ids, gen, device, hidden)
+            graphs, outs, eag = {}, {}, {}
+            for a in arms:
+                _ms_set(state, T, a)
+                try:
+                    eag[a] = kernel_fn(data, state).clone()
+                    graphs[a], outs[a] = _rt_graph(lambda: kernel_fn(data, state))
+                finally:
+                    _ms_set(state, T, "base")
+            ids_c = data["topk_ids"]
+            graphs["iso_tri"] = _rt_graph(lambda: _hm_align(ids_c, hm["ls"], H, count))[0]
+            if al_ok:
+                graphs["iso_cuda"] = _rt_graph(lambda: _ms_align(ext, ids_c, hm["ls"], H, count))[0]
+            if cp_ok:
+                yb = torch.randn((T, TOP_K, hidden), generator=gen).to(torch.bfloat16).to(device)
+                lid = _hm_align(ids_c, hm["ls"], H, count)[0]
+                tw32 = data["topk_weights"].float().contiguous()
+                ob = torch.empty((T, hidden), dtype=torch.bfloat16, device=device)
+                graphs["iso_sgl"] = _rt_graph(lambda: fused_post_expert_norm_weighted_sum(
+                    yb, tw32, norm_weight=state["norm_w"], eps=POST_NORM_EPS, weight_first=True, slot_expert_ids=lid))[0]
+                graphs["iso_eac"] = _rt_graph(lambda: ea["ext"].ea_combine(yb, lid, tw32, state["post_norm_w"], ob,
+                                                                           POST_NORM_EPS, 0))[0]
+            r = _rt_time(graphs, device, reps=MS_REPS, rounds=MS_ROUNDS)
+            torch.cuda.synchronize()
+            for a in arms[1:]:
+                want = eag["base"] if a == "al" else (eag["cp"] if a == "alcp" else eag[a])
+                exact[a] = exact[a] and torch.equal(outs[a], want) and torch.equal(eag[a], want)
+                rat[a] += [_ms_med(x[a]) / max(_ms_med(x["base"]), 1e-3) for x in r]
+            exact["base"] = exact.get("base", True) and torch.equal(outs["base"], eag["base"])
+            for k in ("base", "iso_tri", "iso_cuda", "iso_sgl", "iso_eac"):
+                if k in graphs:
+                    iso.setdefault(k, []).extend(_ms_med(x[k]) for x in r)
+            del graphs, outs, eag
+        good = [a for a in arms[1:] if exact[a] and exact.get("base", False) and rat[a] and max(rat[a]) < MS_BAR]
+        L.append(f"{MS_TAG} T={T} race (kernel_fn graphs, {len(draws)} judge draws x {MS_ROUNDS} rounds, arm/base med "
+                 f"[worst]): " + " ".join(f"{a} {'y' if exact[a] else 'n'} {_ms_med(rat[a]):.4f} [{max(rat[a]):.4f}]"
+                                          for a in arms[1:])
+                 + " | iso us " + " ".join(f"{k[4:] if k != 'base' else 'row'} {_ms_med(v):.2f}" for k, v in iso.items()))
+        if good:
+            picks[T] = min(good, key=lambda a: _ms_med(rat[a]))
+    for T, a in picks.items():
+        _ms_set(state, T, a)
+    if picks:
+        gen2 = torch.Generator().manual_seed(MS_SEED + 1)
+        cpst = _wg_copy_tree(state)
+        good = True
+        for T in picks:
+            d = _ea6_data(bank, _ea4x_draws(T, gen2, start, count, device)[1][1], gen2, device, hidden)
+            good = good and torch.equal(kernel_fn(d, cpst), kernel_fn(d, state))
+        del cpst
+        if not good:
+            state["ms"] = {"al": {}, "cp": {}, "ext": None}
+            picks = {}
+            L.append(f"{MS_TAG} state-copy check FAILED -> master")
+    L.append(f"{MS_TAG} PATH CHOSEN " + "; ".join(f"T={T} {picks.get(T, 'master')}" for T in Ts)
+             + f" (race {time.perf_counter() - tr:.1f}s, prepare at {time.perf_counter() - t0:.0f}s)")
