@@ -2762,3 +2762,6 @@ with the operator's go-ahead.
 - ncu over 70 consume-only launches: issue 50-62%, dequant burst pipe-bound (math-throttle 29%, not-selected 28%); dequant is 85% of SASS per record; E5XL is ALU-bound at 18.4 vs 17.2 issue cycles per k16, which is why it doesn't beat E4XL. 9 ops/word (7 ALU + 2 FMA) is exhaustively minimal.
 - Why L recovered only half: 45-100% of its cut came back as waits at the full barrier and the stream-K run-end barrier (2-slot ring, slowest of 8 warps).
 - IMAD.WIDE/HI arms (W/W2): bit-exact but 2-8% / 10-17% slower -> [refuted] moe CLAIMS. Residual riders (consume2 XL trim 0.5-1% at T256, run-end barrier 1-3% consume, LDS.128 0.3%) -> [shelf]. research/h100-xlncu-1030.md (a4795a87); 363k tokens.
+
+## 2026-10-30 0221Z — 5-hour usage limit hit ~0214Z; reset 0220Z, three lanes resumed
+- t256xl (GPU 4), mstack (GPU 1) and xlres (GPU 3, had only started reading) died on HTTP 429 and were resumed via SendMessage with their saved transcripts. Each was told to check its own hopper-probe runs before relaunching.
