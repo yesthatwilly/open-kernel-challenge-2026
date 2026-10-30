@@ -46,11 +46,20 @@ evidence: >
   (2 replicates x 50 pairs); judge 702f1004: consume gains transferred at ~60-70%
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-30T003155Z
 review_companions: null
 review_best: 2.035180868162415
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
+stage: claimed
+claimed_at: 2026-10-30T003155Z
+base_sha: 3c2132ae83986e59ae1e72def1637af0f8535c5f
+base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
+branch: hyp/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack
+worktree: .worktrees/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack
