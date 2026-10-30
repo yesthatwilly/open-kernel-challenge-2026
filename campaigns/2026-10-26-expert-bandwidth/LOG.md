@@ -2714,3 +2714,7 @@ with the operator's go-ahead.
 
 ## 2026-10-30 0026Z — moe T=128 hybrid check 4c5032bc: 2.0421 (flat; plain kept by the worst-draw veto) -> [shelf]
 - First judge read of the T=128 hybrid below 1: gon/m mean 0.963 over 12 raw judge draws (9 win), tolerance 12/12; d8 (1 hot expert, 24 routes) 1.070 vetoed; small hot sets lose (d2 1.010, d9 1.023), big ones win 0.90-0.97. Node had said 0.913. Worth ~+0.5% headline at most: [shelf].
+
+## 2026-10-30 0035Z — dglue read: decode glue ~6 us/row to T=32; T>=128 router chain starved by the pooler; no cut
+- research/h100-dglue-1030.md (takemyjob hopper/dglue-1030 cbbcd13; GPU 3). Glue 1.4-5.7% of rows to T=32 (route/top-k ~4 us, combine ~2.5 us); verify_16/32 glue 9-14% (router GEMM + zero 34.5-43.5 us, align + gather 8.5-13.9, combine 2.9-5.6) because the pooler GEMM holds 128 of 132 SMs and the router side chain runs on ~4. Ceilings: all non-router glue free x1.049; hiding the whole T>=128 front x1.012 (realistic ~x1.006). Priority -1 side stream x0.996, router GEMM before the pooler x0.998 (T=256 x0.9945): both slower. The decode hot/cold fork note is already measured (44f30364 FORK: fork = serial within .002).
+- Day's expert-block H100 sweep is now through glue (moe, decode, prefill), T=1 (t1b, EPF), hot half (hh1-4), rega (1-4), Engine A (enc, enc2), splits (hsplit, t128h/g). Remaining levers are ~0.5-1.5% riders being stacked: prefill S2+RS2 and moe XL builds in progress.
