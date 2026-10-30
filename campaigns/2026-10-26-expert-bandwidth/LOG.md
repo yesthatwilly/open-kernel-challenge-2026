@@ -149,12 +149,12 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0136Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0144Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0133Z:** moe **2.075** (305), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** H100 lanes **t1xl** (GPU 1), **xlncu** (GPU 3: XL cold-path stall mix -> next issue cut; hhxl null 0136Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
+- **In flight:** H100 lanes **m256** (GPU 1: moe T=256 anatomy vs floor -> top structural lever), **xlncu** (GPU 3: XL cold-path stall mix -> next issue cut; hhxl null 0136Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
 - **Next:** decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
-- **Riders waiting for a carrier:** prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
+- **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
 
 ## 2026-10-26T15:35Z: campaign opened
