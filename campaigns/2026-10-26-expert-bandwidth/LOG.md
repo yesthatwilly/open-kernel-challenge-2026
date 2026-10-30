@@ -2698,3 +2698,7 @@ with the operator's go-ahead.
 - Boards: moe 2.020, decode 1.705, prefill 1.572, bf16 1.284, attention 1.634; quota reset (20 checks each).
 - moe eae-cold-iso-keepalive-fix check 582bb334: 2.0469 [2.016, 2.080] (+1.33% over 2.0201; churn filed within-ci and did not promote). The fix is correctness-only, so the fixed bytes (986a2bad) were landed on master by hand (f2b510f5) and sent as scored run **575820c9** (attempt 2026-10-30T000114Z, rules 9/9) so the board's top entry is the fixed code before the final reruns.
 - Phase A plan in the Now block (targeted lanes; reasons there).
+
+## 2026-10-30 0003Z — EPF closed at T=1 (x1.09 slower, bit-exact); phase-A builds minted
+- research/h100-epf-1029.md (takemyjob hopper/epf-1029 248fb26; GPU 6). EPF streams faster per expert (9.1 vs 10.65 us) but pays 11.1 vs 4.1 us fixed; break-even only at n4-5; in consume-only the per-expert rates are equal. [refuted] (EPF's [shelf] closes).
+- Minted (user-requested): decode engine-a-xl-arms-t1-t256 (XL arms aimed at the T=256/T=1 near-misses) and moe t128-hybrid-eacombine-judge-race (mean-over-judge-draws race, worst-draw veto). Reviews running. GPUs free: 1, 3, 4, 5, 6.
