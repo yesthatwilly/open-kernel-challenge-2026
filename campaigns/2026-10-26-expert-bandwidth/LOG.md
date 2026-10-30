@@ -149,13 +149,13 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0341Z (date -u); **phase A (10-30)**; /loop /3to1 running
-- **User steers in force:** **"stop making new things. run whatevers running. finish it out" (10-30 0311Z): no new lanes or checks; harvest the five running lanes only.** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
-- **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** nothing. All H100 lanes finished 0341Z (relay, dxl, ufs, hhcc, d128 nulls or shelved riders; see the 0341Z entry). No checks out.
-- **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
-- **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
-- **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
+- updated: 2026-10-30T0415Z (date -u); **phase A (10-30)**; this campaign is quiet; active work is the public ladder.
+- **User steer, 10-30 ~0400Z (lifts the 0311Z stop for the ladder):** "what we have here is a known answer. i do not want to simply adopt answers, I want the knowlege of any given value to be something i can test WORKS in a methodical approach ... you have unlimited h100 right now, so id love to replicate findings and get great outcomes iteratively. generate all the work you can in advance". Plan (Opus-reviewed, user-approved): `campaigns/2026-10-30-public-ladder/` on branch `campaign/public-ladder` (worktree `.worktrees/public-ladder`); tiers R (replicate a public fact) -> I (one mechanism, pre-registered delta) -> C (combine/tune rungs sharing rows) -> J (judge). Scored submits and master promotion of ladder wins need the user's go.
+- **Standing:** H100 gpunode06 GPUs 1/3/4/5/6 only (never 0/2/7), USER, guarded hopper-probe; H200 held; <= 6 agents.
+- **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409, landed 594adec8), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
+- **In flight here:** nothing. Riders shelved (not dispatched; each below the ~1.2% landing margin): moe xlres C (027e33b7, ~+0.2%), moe t1xl (d5a52fbc), decode t1xl port (campaign/dxl 6ee687fd, ~+0.1%), T=128 fork (+0.3-0.9%, plumbing removed in dxl), ms_align (+0.2-0.35%, needs ~7.4 KB). They become candidate arms in the ladder's C-moe / C-decode campaigns.
+- **Size:** decode 999,631 B of 1,000,000; moe 981,562 B.
+- **Window end:** deferred; the ladder uses gpunode06. Cleanup (runner stop, nodejudge + venvs, /tmp/USER-hopper) at the user's word.
 
 ## 2026-10-26T15:35Z: campaign opened
 
