@@ -2741,3 +2741,8 @@ with the operator's go-ahead.
 - Scored PATH: T=8/16 E4XL, T=32/128 E5XL; T=1 and T=256 master (iso E/m > 0.98 in a round). This time T=32 picked E5XL, not E4XL.
 - The scored run read 1.6% under its check (1.7468), which is more than the usual ~0.35% sd of run-to-run drift. The two runs average ~1.733. Decode has gone 1.661 -> 1.705 -> **1.7196** since 10-29.
 - BEST.json registered by churn (promotion → done); a [landed] CLAIMS line has been added. The T=256 XL row stays open: its reopen rule is a round-robust gate or a T=256-specific tune. Sized at ~1-2% headline, it is below the diag bar on its own.
+
+## 2026-10-30 0136Z — hhxl null: the XL record-loop trim on the hot half is 1.0-1.6% judge-scaled (bar 4%)
+- Only the loop trim (L) ports to wh5ds; ldmatrix.x4 has no counterpart because wgmma reads B by descriptor. ptxas spends L's savings on descriptor moves, so the per-stage instruction count is flat (191 -> 190-193). Exact in 48/48.
+- Consume-only cox/co5: decode T=256 0.974-0.978 (hot share 50%), decode T=128 0.956-0.990 (34%), moe T=256 0.981. Normal 0.990-1.012. -> [shelf] moe CLAIMS (an N48-96-gated rider at most ~0.2% headline). research/h100-hhxl-1030.md (fb6d16fc); 274k tokens.
+- GPU 3 goes to **xlncu**, the ee2-ncu question left open in ea-enc2: the XL consume kernels' stall mix, to find the next issue cut in the cold path.
