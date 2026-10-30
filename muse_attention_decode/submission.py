@@ -8138,8 +8138,17 @@ __device__ __forceinline__ uint32_t pack_e4m3x4(float a, float b, float c, float
 // fast merge_head. MODE_TICKET_ONLY (DIAG, never routed): the ticket's fences, named barriers, atomics and reset,
 // merge_head compiled out, out NOT written.
 constexpr int MODE_SPLIT = 0, MODE_TICKET = 1, MODE_TICKET_ONLY = 2;
+// AT10 (campaign 2026-10-30-public-ladder rung AT10): the same kernel<SPLIT> with a shallower K/V pipeline, NS = 3
+// tiles in the ring (prefetch distance 2) instead of STAGES = 4. Same arithmetic in the same order (bit-identical);
+// only how much of the CTA's range is front-loaded before the first tile computes. H100 per-CTA stamps: the 3-tile
+// prologue burst (132 CTAs x 48 KB) is ~7k cycles of the startup chain, and the loop never waits on data after tile 0.
+constexpr int AT10_NS = 3;
+// AT12 (campaign 2026-10-30-public-ladder rung AT12): UB = true takes the score mask (the upper causal edge and the
+// lower window edge) on a CTA-uniform branch: only tiles with edge || elo run the per-element compare/select; every
+// other tile scales and takes the row max with no mask instructions. Same values in the same order (bit-identical).
+// SASS (NS = 3): the mask compiled branch-free costs ~140 of ~715 instructions per thread per tile on EVERY tile.
 
-template <int MODE>
+template <int MODE, int NS = STAGES, bool UB = false>
 __global__ void __launch_bounds__(THREADS, 2)
 slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B * QL, HQ, D]
                             const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
@@ -8156,6 +8165,7 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
                             int* ticket,                            // int32 [MAXB * HKV], 0 between launches
                             int* err,
                             int window) {                           // 0: every key (full layer); > 0: sliding window
+  static_assert(NS >= 3 && NS <= STAGES, "AT10: pipeline depth 3..STAGES (the ring is sized for STAGES)");
 #if defined(__CUDA_ARCH_FEAT_SM90_ALL)
   extern __shared__ __align__(1024) uint8_t smem_raw[];
   // Swizzle atoms need 1024-byte-aligned stage bases: round the dynamic base up (SMEM_A has slack).
@@ -8248,7 +8258,7 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
   auto issue_tile = [&](int nn) {
     const int f = s0 + nn;
     while (f >= pre_s[ib + 1]) ++ib;
-    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
+    uint8_t* st = ring + (nn % NS) * STAGE_BYTES;
     const int tt = tid >> 2;
     const bool ok = (f - pre_s[ib]) * TILE + tt < seq_s[ib];
     int64_t row = 0;
@@ -8274,7 +8284,7 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
   asm volatile("cp.async.wait_group 0;\n" ::: "memory");
   __syncthreads();
 #pragma unroll
-  for (int j = 0; j < STAGES - 1; ++j) {
+  for (int j = 0; j < NS - 1; ++j) {
     if (j < N) {
       issue_tile(j);
       if (j % IDX_TILES == 0 && j / IDX_TILES + 1 < nk) issue_meta(j / IDX_TILES + 1);
@@ -8297,16 +8307,16 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
   int cb = bfirst;
 
   for (int n = 0; n < N; ++n) {
-    const int st = n % STAGES;
+    const int st = n % NS;
     {
       // Refill: tile n + 3 goes to the stage tile n - 1 used, once all 256 threads released it.
       // Its FULL arrival also covers the next page-index block when one is issued here.
-      const int nn = n + STAGES - 1;
+      const int nn = n + NS - 1;
       if (nn < N) {
-        if (n >= 1) wait_bar(empty_bar(nn % STAGES), ((n - 1) / STAGES) & 1);
+        if (n >= 1) wait_bar(empty_bar(nn % NS), ((n - 1) / NS) & 1);
         issue_tile(nn);
         if (nn % IDX_TILES == 0 && nn / IDX_TILES + 1 < nk) issue_meta(nn / IDX_TILES + 1);
-        cp_mbar_arrive_noinc(full_bar(nn % STAGES));
+        cp_mbar_arrive_noinc(full_bar(nn % NS));
       }
     }
     const int f = s0 + n;
@@ -8342,7 +8352,7 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
       for (int j = 0; j < 4; ++j) qa[kk][j] = lds32(qs_u + 4u * THREADS * (4 * kk + j));
     }
 
-    wait_bar(full_bar(st), (n / STAGES) & 1);
+    wait_bar(full_bar(st), (n / NS) & 1);
     fence_proxy_async();  // the cp.async (generic proxy) writes -> wgmma (async proxy) reads
     __syncwarp();
     const uint32_t kst = ring_u + st * STAGE_BYTES;
@@ -8403,17 +8413,31 @@ slidewin_verify_wgmma_kernel(const uint8_t* __restrict__ q,          // e4m3 [B 
     const int lim = seq - (QL - 1) + r - lt * TILE;
     const int llim = lim - window;
     float mxA = NEG_INF, mxB = NEG_INF;
+    if (!UB || edge || elo) {
 #pragma unroll
-    for (int nb = 0; nb < 8; ++nb) {
+      for (int nb = 0; nb < 8; ++nb) {
 #pragma unroll
-      for (int e = 0; e < 2; ++e) {
-        float xa = sacc[4 * nb + e] * scale, xb = sacc[4 * nb + 2 + e] * scale;
-        const int ct = nb * 8 + 2 * tig + e;
-        if ((edge && ct >= lim) || (elo && ct < llim)) { xa = NEG_INF; xb = NEG_INF; }
-        sacc[4 * nb + e] = xa;
-        sacc[4 * nb + 2 + e] = xb;
-        mxA = fmaxf(mxA, xa);
-        mxB = fmaxf(mxB, xb);
+        for (int e = 0; e < 2; ++e) {
+          float xa = sacc[4 * nb + e] * scale, xb = sacc[4 * nb + 2 + e] * scale;
+          const int ct = nb * 8 + 2 * tig + e;
+          if ((edge && ct >= lim) || (elo && ct < llim)) { xa = NEG_INF; xb = NEG_INF; }
+          sacc[4 * nb + e] = xa;
+          sacc[4 * nb + 2 + e] = xb;
+          mxA = fmaxf(mxA, xa);
+          mxB = fmaxf(mxB, xb);
+        }
+      }
+    } else {  // AT12: interior tile (CTA-uniform): no key of the tile is masked
+#pragma unroll
+      for (int nb = 0; nb < 8; ++nb) {
+#pragma unroll
+        for (int e = 0; e < 2; ++e) {
+          const float xa = sacc[4 * nb + e] * scale, xb = sacc[4 * nb + 2 + e] * scale;
+          sacc[4 * nb + e] = xa;
+          sacc[4 * nb + 2 + e] = xb;
+          mxA = fmaxf(mxA, xa);
+          mxB = fmaxf(mxB, xb);
+        }
       }
     }
     mxA = fmaxf(mxA, __shfl_xor_sync(0xffffffffu, mxA, 1));
@@ -8635,6 +8659,10 @@ void set_attrs_once() {
                                         cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
     C10_CUDA_CHECK(cudaFuncSetAttribute(slidewin_verify_wgmma_kernel<MODE_TICKET_ONLY>,
                                         cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
+    C10_CUDA_CHECK(cudaFuncSetAttribute(slidewin_verify_wgmma_kernel<MODE_SPLIT, AT10_NS>,
+                                        cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
+    C10_CUDA_CHECK(cudaFuncSetAttribute(slidewin_verify_wgmma_kernel<MODE_SPLIT, AT10_NS, true>,
+                                        cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
     done = true;
   }
 }
@@ -8674,14 +8702,14 @@ void launch_combine(torch::Tensor& cache_seqlens, torch::Tensor& v_scale, torch:
   C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, kern, p_seq, B, window, gx, p_acc, p_ml, p_vs, p_qkv, qkv_stride, p_out, ep));
 }
 
-template <int MODE>
+template <int MODE, int NS = STAGES, bool UB = false>
 void launch_attn(torch::Tensor& q, torch::Tensor& k_cache, torch::Tensor& v_cache, torch::Tensor& page_table,
                  torch::Tensor& cache_seqlens, torch::Tensor& k_scale, torch::Tensor& v_scale, torch::Tensor& qkv,
                  int64_t qkv_stride, torch::Tensor& out, torch::Tensor& ws_acc, torch::Tensor& ws_ml,
                  torch::Tensor& ticket, double score_scale, double eps, int64_t grid, int B, int window) {
   const int64_t rows = k_cache.numel() / ROW;
   auto stream = at::cuda::getCurrentCUDAStream();
-  slidewin_verify_wgmma_kernel<MODE><<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
+  slidewin_verify_wgmma_kernel<MODE, NS, UB><<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
       reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
       reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), rows, page_table.data_ptr<int>(), page_table.stride(0),
       cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), v_scale.data_ptr<float>(),
@@ -8721,7 +8749,7 @@ void sw_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
                     int64_t window) {
   check_common(cache_seqlens, out, ws_acc, ws_ml, grid, window, qkv_stride);
   const int B = static_cast<int>(cache_seqlens.size(0));
-  TORCH_CHECK(mode >= 0 && mode <= 4, "sw_verify_attn: mode");
+  TORCH_CHECK(mode >= 0 && mode <= 8, "sw_verify_attn: mode");
   TORCH_CHECK(q.size(0) == static_cast<int64_t>(B) * QL && q.size(1) == HQ && q.size(2) == D, "sw_verify_attn: q shape");
   TORCH_CHECK(ticket.numel() >= static_cast<int64_t>(MAXB) * HKV + 1, "sw_verify_attn: ticket/err");
   TORCH_CHECK(k_cache.numel() % ROW == 0 && k_cache.numel() >= ROW, "sw_verify_attn: cache rows");
@@ -8729,7 +8757,13 @@ void sw_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
               "sw_verify_attn: layout");
   set_attrs_once();
   const int w = static_cast<int>(window);
-  if (mode <= 2) {
+  if (mode >= 7) {   // AT12: kernel<SPLIT, AT10_NS> with the uniform-branch score mask (7: + PDL combine, 8: alone)
+    launch_attn<MODE_SPLIT, AT10_NS, true>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv,
+                                           qkv_stride, out, ws_acc, ws_ml, ticket, score_scale, eps, grid, B, w);
+  } else if (mode >= 5) {   // AT10: kernel<SPLIT> at pipeline depth AT10_NS (5: + PDL combine, 6: alone)
+    launch_attn<MODE_SPLIT, AT10_NS>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, qkv_stride,
+                                     out, ws_acc, ws_ml, ticket, score_scale, eps, grid, B, w);
+  } else if (mode <= 2) {
     launch_attn<MODE_SPLIT>(q, k_cache, v_cache, page_table, cache_seqlens, k_scale, v_scale, qkv, qkv_stride, out,
                             ws_acc, ws_ml, ticket, score_scale, eps, grid, B, w);
   } else if (mode == 3) {
@@ -8740,8 +8774,8 @@ void sw_verify_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cach
                                   out, ws_acc, ws_ml, ticket, score_scale, eps, grid, B, w);
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
-  if (mode == 1 || mode == 2) {
-    launch_combine(cache_seqlens, v_scale, qkv, qkv_stride, out, ws_acc, ws_ml, eps, grid, B, w, mode == 2);
+  if (mode == 1 || mode == 2 || mode == 5 || mode == 7) {
+    launch_combine(cache_seqlens, v_scale, qkv, qkv_stride, out, ws_acc, ws_ml, eps, grid, B, w, mode != 1);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
 }
@@ -8770,12 +8804,13 @@ void attrs_into(int64_t* p, K kern) {
 
 torch::Tensor sw_verify_attrs() {
   set_attrs_once();
-  auto t = torch::zeros({16}, torch::dtype(torch::kInt64));
+  auto t = torch::zeros({21}, torch::dtype(torch::kInt64));
   int64_t* p = t.data_ptr<int64_t>();
   attrs_into(p, slidewin_verify_wgmma_kernel<MODE_SPLIT>);
   attrs_into(p + 5, slidewin_verify_wgmma_kernel<MODE_TICKET>);
   attrs_into(p + 10, slidewin_verify_wgmma_kernel<MODE_TICKET_ONLY>);
   p[15] = SMEM_A;
+  attrs_into(p + 16, slidewin_verify_wgmma_kernel<MODE_SPLIT, AT10_NS, true>);  // AT12 (pdl3u)
   return t;
 }
 """
@@ -8789,8 +8824,19 @@ _SW_BAND_NAMES = {1: "B=1", 2: "B=2..16", 3: "B=17..32"}
 _SW_SPECS = ("2b", "4b", "8b", "sm", "2sm")   # grid = 2B / 4B / 8B CTAs, one per SM, two per SM; capped at 2 x SM
 # Routable merges -> sw_verify_attn mode: 'pdl' = kernel<SPLIT> + sw_combine_kernel<true> (PDL launch),
 # 'tk' = kernel<TICKET> (in-kernel fast merge). Mode 4 (kernel<TICKET_ONLY>) is the DIAG, never routed.
-_SW_MERGES = MappingProxyType({"pdl": 2, "tk": 3})
-_SW_MERGE_TXT = MappingProxyType({"pdl": "kernel<SPLIT> + PDL sw_combine_kernel", "tk": "kernel<TICKET> (in-kernel merge)"})
+_SW_MERGES = MappingProxyType({"pdl": 2, "tk": 3, "pdl3": 5, "pdl3u": 7})
+_SW_MERGE_TXT = MappingProxyType({"pdl": "kernel<SPLIT> + PDL sw_combine_kernel", "tk": "kernel<TICKET> (in-kernel merge)",
+                                  "pdl3": "kernel<SPLIT, NS=3> + PDL sw_combine_kernel (AT10 pipeline depth 3)",
+                                  "pdl3u": "kernel<SPLIT, NS=3, UB> + PDL sw_combine_kernel (AT12 uniform-branch mask)"})
+# AT12 (campaign 2026-10-30-public-ladder rung AT12): 'pdl3u' = pdl3 with the score mask on a CTA-uniform branch
+# (interior tiles run no mask instructions; bit-identical, checked). Raced per band AFTER the AT10 race, against
+# whatever that race left routed, with the same bar / IQR rule.
+# AT10 (campaign 2026-10-30-public-ladder rung AT10): 'pdl3' = the incumbent pdl pair with the window kernel's K/V ring
+# at depth 3 instead of 4 (bit-identical output, checked). Raced per band AFTER the incumbent gate, at the incumbent's
+# grid: routed only if pdl3 <= _SW_AT10_BAR x the routed pdl pair in both interleaved rounds (IQR bound, bit-identical),
+# or, when the band kept master, if master / pdl3 >= the band's gate bar.
+_SW_AT10_BAR = 0.99     # bit-identical kernel variant: a >= 1% win in BOTH interleaved rounds routes it
+_SW_AT10_IQR = 2.0      # its IQR <= this x max(the incumbent's IQR, 0.25 us) in both rounds
 _SW_GATE = 1.05          # master / candidate needed in BOTH interleaved rounds
 _SW_GATE_BAND = MappingProxyType({"B=17..32": 1.03})  # per-band override: af08448e measured x1.050 / x1.047 here
 _SW_IQR = 1.5            # candidate IQR <= this x master's IQR in both rounds
@@ -9035,6 +9081,37 @@ def _sw_case(tag, lens, kv_scale, grid, gen, fams, window=_SW_WINDOW) -> set:
             passed.add("tk")
         elif not (clear and clear_d):
             _sw_buf(dev)[:128].zero_()   # never let a stale counter reach a later ticket launch
+    if "pdl3" in fams:
+        # AT10: the depth-3 pair must reproduce the incumbent depth-4 pair BIT FOR BIT (same arithmetic, same order).
+        _sw_buf(dev)[-1:].zero_()
+        _say(f"[sw] {tag}: launching the incumbent PDL pair (depth 4) and the AT10 PDL pair (kernel<SPLIT, NS=3>) grid {grid}")
+        o4 = _sw_launch(data, q, qkv, grid, 2, window)
+        o3 = _sw_launch(data, q, qkv, grid, 5, window)
+        torch.cuda.synchronize()
+        same = bool(torch.equal(o3, o4))
+        word = _sw_err(dev)
+        err, finite = _rel_l2(o3, ref)
+        ok = finite and err < 2e-2 and word == 0 and same
+        _say(f"[sw] {tag}: pdl3: rel L2 {err:.2e}, finite {finite}, bit-identical to the depth-4 pair {same}, error word "
+             f"{word} -> {'ok' if ok else 'FAIL'}")
+        if ok:
+            passed.add("pdl3")
+    if "pdl3u" in fams:
+        # AT12: the uniform-branch mask pair must reproduce the incumbent depth-4 pair BIT FOR BIT (same values, order).
+        _sw_buf(dev)[-1:].zero_()
+        _say(f"[sw] {tag}: launching the incumbent PDL pair (depth 4) and the AT12 PDL pair (kernel<SPLIT, NS=3, UB>) "
+             f"grid {grid}")
+        o4 = _sw_launch(data, q, qkv, grid, 2, window)
+        ou = _sw_launch(data, q, qkv, grid, 7, window)
+        torch.cuda.synchronize()
+        same = bool(torch.equal(ou, o4))
+        word = _sw_err(dev)
+        err, finite = _rel_l2(ou, ref)
+        ok = finite and err < 2e-2 and word == 0 and same
+        _say(f"[sw] {tag}: pdl3u: rel L2 {err:.2e}, finite {finite}, bit-identical to the depth-4 pair {same}, error "
+             f"word {word} -> {'ok' if ok else 'FAIL'}")
+        if ok:
+            passed.add("pdl3u")
     return passed
 
 
@@ -9292,6 +9369,72 @@ def _sw_gate_band(band: int, batch: int, gen, flush, sms: int, fams):
     return ((best[1], best[2]), f"GATE {name}: ROUTE {best[1]} grid {best[3]} ({best[2]}) ({rtxt}; {qline})", cline)
 
 
+def _sw_at10_race(band: int, batch: int, gen, flush, sms: int, inc, fam="pdl3", rung="AT10"):
+    """AT10 vs the incumbent this band just chose (inc = (merge, spec) or None = master's path), at the incumbent's
+    grid (grid sm when master kept), batch x 80000: eager bit-identity / correctness, then two interleaved 31-rep rounds
+    of [incumbent, pdl3, pre-attn + kernel<SPLIT> depth 4 (F4), pre-attn + kernel<SPLIT> depth 3 (F3)], cold L2, so the
+    kernel-only change (F3 - F4) is printed next to the routed pair's. Returns ((merge, spec) to route, summary line)."""
+    dev = torch.device("cuda")
+    name = _SW_BAND_NAMES[band]
+    lens = [80000] * batch
+    data = _ps_synthetic(lens, 1.0, gen, dev)
+    q, qkv = _sw_prepare_q(data)
+    torch.cuda.synchronize()
+    ref = _ps_reference(data, lens)
+    if inc is not None:
+        fam_i, spec = inc
+        g = _sw_grid(spec, batch, sms)
+        inc_fn = lambda: _sw_forward_grid(data, g, _SW_MERGES[fam_i])
+        inc_txt = f"{fam_i} grid {g} ({spec})"
+    else:
+        spec = "sm"
+        g = _sw_grid(spec, batch, sms)
+        inc_fn = lambda: kernel_fn(data)
+        inc_txt = "master's path"
+    mode = _SW_MERGES[fam]
+    new_fn = lambda: _sw_forward_grid(data, g, mode)
+    f4_fn = lambda: _sw_forward_grid(data, g, 0)
+    f3_fn = lambda: _sw_forward_grid(data, g, mode + 1)   # the candidate's kernel<SPLIT> alone (6: AT10, 8: AT12)
+    _sw_buf(dev)[-1:].zero_()
+    out_i = inc_fn()
+    out_n = new_fn()
+    out_p = _sw_forward_grid(data, g, 2)
+    torch.cuda.synchronize()
+    en, fn = _rel_l2(out_n, ref)
+    same = bool(torch.equal(out_n, out_p))
+    agree, _ = _rel_l2(out_n, out_i.float())
+    word = _sw_err(dev)
+    _say(f"[sw-{rung.lower()}] {name}: eager: {fam} grid {g} rel L2 vs fp32 {en:.2e}, bit-identical to the depth-4 pair {same}, "
+         f"vs {inc_txt} {agree:.2e}, error word {word}")
+    if not (fn and en < 2e-2 and same and agree < _SW_REL and word == 0):
+        return inc, f"{rung} {name}: correctness run failed: incumbent kept ({inc_txt})"
+    rounds = []
+    for rd in (1, 2):
+        lists, emp = _sw_rounds([inc_fn, new_fn, f4_fn, f3_fn], flush, warm=3, reps=31)
+        (mi_, ii), (mn, inn), (m4, _), (m3, _) = (_sw_stats(x, emp) for x in lists)
+        rounds.append((mi_, ii, mn, inn))
+        _say(f"[sw-{rung.lower()}] {name} round {rd} (31 reps, cold L2, empty graph {emp:.1f} us subtracted): {inc_txt} {mi_:.1f} us "
+             f"(IQR {ii:.1f}); {fam} grid {g} {mn:.1f} us (IQR {inn:.1f}); pre-attn + kernel<SPLIT> depth 4 {m4:.1f} / "
+             f"candidate {m3:.1f} us; {fam} / incumbent {mn / max(mi_, 1e-3):.3f}")
+    ratios = [mn / max(mi_, 1e-3) for mi_, _, mn, _ in rounds]
+    iqr_ok = all(inn <= _SW_AT10_IQR * max(ii, 0.25) for _, ii, _, inn in rounds)
+    if inc is not None:
+        need = f"{fam} / incumbent <= {_SW_AT10_BAR} in both"
+        good = max(ratios) <= _SW_AT10_BAR
+    else:
+        bar = _SW_GATE_BAND.get(name, _SW_GATE)
+        need = f"master / {fam} >= {bar} in both"
+        good = min(1.0 / max(r, 1e-6) for r in ratios) >= bar
+    good = good and iqr_ok
+    line = (f"{rung} {name}: {fam} grid {g} vs {inc_txt}: {ratios[0]:.3f} / {ratios[1]:.3f} ({need}), IQR bound "
+            f"{'met' if iqr_ok else 'MISSED'}")
+    del data, q, qkv, ref, out_i, out_n, out_p
+    torch.cuda.empty_cache()
+    if good:
+        return (fam, spec), line + f": ROUTE {fam}"
+    return inc, line + f": incumbent kept ({inc_txt})"
+
+
 def _sw_setup() -> None:
     """Build, canary + self-check, gate B=2..16 and B=17..32 against kernel_fn's routed path, replay-check the routed
     bands with two states, freeze _SW_ROUTE. Every failure, deadline or unsupported shape leaves master."""
@@ -9335,7 +9478,7 @@ def _sw_setup() -> None:
                 continue
             t0 = time.perf_counter()
             try:
-                pick, line, cline = _sw_gate_band(band, batch, gen, flush, sms, fams)
+                pick, line, cline = _sw_gate_band(band, batch, gen, flush, sms, fams - {"pdl3", "pdl3u"})
             except Exception as e:
                 pick, line, cline = None, f"GATE {_SW_BAND_NAMES[band]}: raised {e!r}: master kept", ""
             _sw_phase(f"gate {_SW_BAND_NAMES[band]}", t0)
@@ -9343,6 +9486,26 @@ def _sw_setup() -> None:
             if cline:
                 costs[band] = cline
             _say(f"[sw] {line}")
+            if "pdl3" in fams and (pick is None or pick[0] == "pdl") and _sw_ok_to_start(
+                    f"at10 race {_SW_BAND_NAMES[band]}", _SW_GATE_BY):
+                t0 = time.perf_counter()
+                try:
+                    pick, aline = _sw_at10_race(band, batch, gen, flush, sms, pick)
+                except Exception as e:
+                    aline = f"AT10 {_SW_BAND_NAMES[band]}: raised {e!r}: incumbent kept"
+                _sw_phase(f"at10 race {_SW_BAND_NAMES[band]}", t0)
+                summ[band] += f" | {aline}"
+                _say(f"[sw] {aline}")
+            if "pdl3u" in fams and (pick is None or pick[0] in ("pdl", "pdl3")) and _sw_ok_to_start(
+                    f"at12 race {_SW_BAND_NAMES[band]}", _SW_GATE_BY):
+                t0 = time.perf_counter()
+                try:
+                    pick, aline = _sw_at10_race(band, batch, gen, flush, sms, pick, fam="pdl3u", rung="AT12")
+                except Exception as e:
+                    aline = f"AT12 {_SW_BAND_NAMES[band]}: raised {e!r}: incumbent kept"
+                _sw_phase(f"at12 race {_SW_BAND_NAMES[band]}", t0)
+                summ[band] += f" | {aline}"
+                _say(f"[sw] {aline}")
             if pick is not None:
                 route[band] = pick
         del flush
