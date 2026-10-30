@@ -479,3 +479,4 @@ overrides of a reviewer) with the reason, newest last. Written by `churn.py note
 - 2026-10-30T135138Z `muse_attention_decode` **ladder-attu1-at3b-at8c**: register-landing: 62a818bfa8964dac 1.8049x (submit) from okc status 62a818bfa8964dac, master d5f1175b61 blob 24589a716b (was 1.8032023372335204 4b70ac831ea04c49)
 - 2026-10-30T135929Z `muse_bf16_proj` **ladder-bf4e-router-cluster-push-reduce**: register-landing: 7753d5c7031a4e72 1.3425x (submit) from okc status 7753d5c7031a4e72, master 55149e2bd4 blob f6cf9245ac (was 1.3327025731713515 3d3e844c7dab46c2)
 - 2026-10-30T152854Z `muse_attention_decode` **rl-at8f-entry-hoist**: register-landing: 9e6d3d1fa805495f 1.8264x (submit) from okc status 9e6d3d1fa805495f, master 524fd3b6d4 blob 3de7a9456c (was 1.804888028905732 62a818bfa8964dac)
+- 2026-10-30T222533Z `muse_attention_decode` **am-s1-v1s**: register-landing: 47b125eebdd54157 1.9027x (submit) from okc status 47b125eebdd54157, master 524fd3b6d4 blob 3de7a9456c

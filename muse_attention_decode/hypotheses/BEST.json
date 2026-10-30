@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "9e6d3d1fa805495f",
- "check_job": "aea46cb2e2ca40e2",
+ "job": "47b125eebdd54157",
+ "check_job": "70e499b955f145c7",
  "mode": "submit",
- "speedup": 1.8264499823036233,
+ "speedup": 1.9027158518695668,
  "ci": [
-  1.799053232569069,
-  1.8538467320381775
+  1.8741751140915233,
+  1.9389703350481284
  ],
- "score_us": 2062.0876763620577,
+ "score_us": 1979.4337637431865,
  "commit": "524fd3b6d4c9119a3687d1e3a0a21a77957d143c",
  "submission_blob": "3de7a9456c01a825e445f9500a45caa3b0ce6bd7",
- "slug": "rl-at8f-entry-hoist",
- "master_slug": "rl-at8f-entry-hoist",
- "master_job": "9e6d3d1fa805495f",
+ "slug": "am-s1-v1s",
+ "master_slug": "am-s1-v1s",
+ "master_job": "47b125eebdd54157",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T152854Z",
- "note": "registered by churn.py register-landing from okc status 9e6d3d1fa805495f"
+ "updated_at": "2026-10-30T222533Z",
+ "note": "registered by churn.py register-landing from okc status 47b125eebdd54157"
 }
