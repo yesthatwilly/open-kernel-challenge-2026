@@ -1837,6 +1837,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
     if cfg["window"] and cfg["q_len"] == 1:
         if _sd_gate(cfg):  # import-time frozen route table, config-only predicate: [pre-attn + sk window] pair
             return _sliding_decode_sk(data)
+        if _SLIDE_AT8 and _slide_at8_gate(cfg):  # import-time flag, config-only: AT8 split-KV atomic merge, B=2..16
+            return _slide_at8_forward(data)
         if _slide_gate(cfg):  # sliding cluster kernel at B=1 (C=16) and B=17..32 (C=4), config-only
             return _slide_forward(data, _slide_clusters(cfg))
         return _sliding_forward(data)
@@ -5487,6 +5489,10 @@ __device__ __forceinline__ void at2_red1(float* p, float a) {
   asm volatile("red.global.add.f32 [%0], %1;" :: "l"(p), "f"(a) : "memory");
 }
 
+// WIDE (AT8, sliding decode B=2..16): the same kernel with `tile` old keys per CTA (a multiple of 16, <= NS * SK = 384):
+// the CTA gathers ceil(tile / SK) ring slots in one cp.async group and each tile warp walks the 16-key tiles sub, sub + 4,
+// ... of its head (online softmax across them, as master's cluster kernel does); WIDE = false is AT2's B=1 code, unchanged.
+template <bool WIDE>
 __global__ void __launch_bounds__(THREADS, 2)
 sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
                    const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
@@ -5494,7 +5500,7 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
                    const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
                    const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
                    __nv_bfloat16* __restrict__ out, float* ws, float* fb, int* ticket, int nsplit, int window,
-                   float q_scale, float score_scale, float eps, float guard_hi) {
+                   float q_scale, float score_scale, float eps, float guard_hi, int tile) {
   extern __shared__ __align__(128) uint8_t smem[];
   uint8_t* XK = smem + XK_OFF;
   uint8_t* XV = smem + XV_OFF;
@@ -5506,16 +5512,29 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
   const int split = static_cast<int>(blockIdx.x) % nsplit;
   const int seq = seq_lens[b];
   const int lo = max(0, seq - (window - 1));
-  const int start = lo + split * AT2_TILE;
-  const int n_old = max(0, min(AT2_TILE, seq - start));
+  const int ctile = WIDE ? tile : AT2_TILE;
+  const int start = lo + split * ctile;
+  const int n_old = max(0, min(ctile, seq - start));
   const bool last = split == nsplit - 1;
   const int* prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
   // the finalizer (whichever CTA is last) reads the request's gate row: each of the first 16 splits pulls one of its
   // 16 128-byte lines into L2 now, so that load is an L2 hit at the end
-  if (tid == 0 && split < HQ * D * 2 / 128)
+  if (WIDE) {  // line x of the 16 goes to split x % nsplit (fewer splits: some pull two or more)
+    if (tid < HQ * D * 2 / 128 && tid % nsplit == split)
+      asm volatile("prefetch.global.L2 [%0];" :: "l"(qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D +
+                                                      tid * 64));
+  } else if (tid == 0 && split < HQ * D * 2 / 128) {
     asm volatile("prefetch.global.L2 [%0];" :: "l"(qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D +
                                                     split * 64));
-  {
+  }
+  if (WIDE) {
+    int idx[SK / 32];
+    for (int s = 0; s * SK < n_old; ++s) {  // <= NS slots, all in one group
+      load_idx<false>(idx, prow, s, n_old, tid);
+      issue_sub<false>(smem, kc, vc, idx, s, n_old, tid, 0);
+    }
+    cp_commit();
+  } else {
     int idx[SK / 32];
     load_idx<false>(idx, prow, 0, n_old, tid);
     if (n_old > 0) issue_sub<false>(smem, kc, vc, idx, 0, n_old, tid, 0);
@@ -5602,8 +5621,15 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
   cp_wait_all();
   __syncthreads();
   const int nt = (n_old + 15) >> 4;
-  if (sub < nt)
+  if (WIDE) {
+    for (int t = sub; t < nt; t += 4) {  // tile t: ring slot t / 8, slot rows (t % 8) * 16 ..
+      const int sl = t >> 3;
+      attend_tile(smem + K_OFF + sl * SLOT, smem + V_OFF + sl * SLOT, (t & 7) * 16, n_old - sl * SK, start + sl * SK,
+                  qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
+    }
+  } else if (sub < nt) {
     attend_tile(smem + K_OFF, smem + V_OFF, sub * 16, n_old, start, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
+  }
   if (last && sub == (nt & 3))
     attend_tile(XK, XV, 0, 1, seq, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
   l_a += __shfl_xor_sync(0xffffffffu, l_a, 1);
@@ -5718,17 +5744,23 @@ sliding_at2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
 
 _SLIDE_AT2_HOST = r"""
 // int64 CPU [regs, local bytes, max active CTAs per SM] of sliding_at2_kernel
-torch::Tensor slide_at2_setup() {
-  C10_CUDA_CHECK(cudaFuncSetAttribute(sliding_at2_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
+template <bool WIDE>
+void at2_attrs_into(int64_t* p) {
+  C10_CUDA_CHECK(cudaFuncSetAttribute(sliding_at2_kernel<WIDE>, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
   cudaFuncAttributes fa;
-  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(sliding_at2_kernel)));
+  C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(sliding_at2_kernel<WIDE>)));
   int occ = 0;
-  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, sliding_at2_kernel, THREADS, SMEM_BYTES));
-  torch::Tensor t = torch::empty({4}, torch::dtype(torch::kLong));
-  t.data_ptr<int64_t>()[0] = fa.numRegs;
-  t.data_ptr<int64_t>()[1] = static_cast<int64_t>(fa.localSizeBytes);
-  t.data_ptr<int64_t>()[2] = occ;
-  t.data_ptr<int64_t>()[3] = fa.binaryVersion;
+  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, sliding_at2_kernel<WIDE>, THREADS, SMEM_BYTES));
+  p[0] = fa.numRegs;
+  p[1] = static_cast<int64_t>(fa.localSizeBytes);
+  p[2] = occ;
+  p[3] = fa.binaryVersion;
+}
+// [0..3] the AT2 (B=1) instance, [4..7] the WIDE (AT8) instance
+torch::Tensor slide_at2_setup() {
+  torch::Tensor t = torch::empty({8}, torch::dtype(torch::kLong));
+  at2_attrs_into<false>(t.data_ptr<int64_t>());
+  at2_attrs_into<true>(t.data_ptr<int64_t>() + 4);
   return t;
 }
 
@@ -5736,7 +5768,7 @@ void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor ca
                     torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
                     torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
                     torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
-                    double eps, double guard_hi) {
+                    double eps, double guard_hi, int64_t tile) {
   const int64_t B = seq_lens.size(0);
   TORCH_CHECK(B >= 1 && B <= 64, "slide_at2_attn: batch out of range");
   TORCH_CHECK(window >= 2 && window <= 2048, "slide_at2_attn: window must be in [2, 2048]");
@@ -5760,8 +5792,12 @@ void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor ca
   TORCH_CHECK(fb.scalar_type() == at::kFloat && fb.is_contiguous() && fb.numel() >= B * AT2_FB, "slide_at2_attn: fb");
   TORCH_CHECK(ticket.scalar_type() == at::kInt && ticket.is_contiguous() && ticket.numel() >= 2 * B,
               "slide_at2_attn: ticket");
-  const int nsplit = static_cast<int>((window - 1 + AT2_TILE - 1) / AT2_TILE);
-  sliding_at2_kernel<<<static_cast<unsigned>(B * nsplit), THREADS, SMEM_BYTES, at::cuda::getCurrentCUDAStream()>>>(
+  // tile 64 = AT2's kernel (WIDE = false); any other tile = the WIDE (AT8) kernel
+  TORCH_CHECK(tile >= 16 && tile <= NS * SK && tile % 16 == 0, "slide_at2_attn: tile");
+  const int nsplit = static_cast<int>((window - 1 + tile - 1) / tile);
+  TORCH_CHECK(nsplit <= AT2_MAXSPLIT, "slide_at2_attn: splits");
+  auto kern = tile == AT2_TILE ? sliding_at2_kernel<false> : sliding_at2_kernel<true>;
+  kern<<<static_cast<unsigned>(B * nsplit), THREADS, SMEM_BYTES, at::cuda::getCurrentCUDAStream()>>>(
       reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
       positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), seq_lens.data_ptr<int>(),
       page_table.data_ptr<int>(), static_cast<int64_t>(page_table.stride(0)), inv_freq.data_ptr<float>(),
@@ -5769,7 +5805,7 @@ void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor ca
       reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()),
       ws.data_ptr<float>(), fb.data_ptr<float>(), ticket.data_ptr<int>(), nsplit, static_cast<int>(window),
       static_cast<float>(q_scale), static_cast<float>(score_scale), static_cast<float>(eps),
-      static_cast<float>(guard_hi));
+      static_cast<float>(guard_hi), static_cast<int>(tile));
   C10_CUDA_CHECK(cudaGetLastError());
 }
 """
@@ -5780,7 +5816,7 @@ void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor ca
                     torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
                     torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
                     torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
-                    double eps, double guard_hi);
+                    double eps, double guard_hi, int64_t tile);
 """
 _SLIDE_AT2_ANCHOR = "template <bool PH>\nint occupancy_of(int C) {"
 
@@ -5807,7 +5843,7 @@ def _slide_at2_guard_hi(window: int) -> float:
 
 def _build_slide_at2(fp8qk: bool):
     tag = ("fp8qk" if fp8qk else "f16qk") + "+AT2"
-    name = "muse_sliding_at2_v1" + ("" if fp8qk else "_f16qk")
+    name = "muse_sliding_at2_v2" + ("" if fp8qk else "_f16qk")
     t0 = time.perf_counter()
     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
@@ -5841,12 +5877,12 @@ def _slide_at2_bufs(dev):
 
 def _slide_at2_clean(bufs) -> bool:
     ws, fb, ticket = bufs
-    m = fb.view(32, 16, 68)[:, :, 64]
+    m = fb.view(-1, 16, 68)[:, :, 64]  # B=1 (AT2) or B<=16 (AT8) buffers
     return (int((ws != 0).sum()) == 0 and int(ticket.abs().sum()) == 0
             and bool(torch.isneginf(m).all()))
 
 
-def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None) -> torch.Tensor:
+def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None, tile=64) -> torch.Tensor:
     cfg = data["config"]
     batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
     qkv = data["qkv"].reshape(batch, -1)
@@ -5857,16 +5893,16 @@ def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None) -> torch.Tens
         _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
         data["k_cache"], data["v_cache"], out, ws, fb, ticket,
         cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS,
-        _slide_at2_guard_hi(cfg["window"]) if guard_hi is None else guard_hi)
+        _slide_at2_guard_hi(cfg["window"]) if guard_hi is None else guard_hi, tile)
     return out
 
 
-def _slide_at2_run(ext, data, what, bufs, guard_hi=None) -> torch.Tensor:
+def _slide_at2_run(ext, data, what, bufs, guard_hi=None, tile=64) -> torch.Tensor:
     bad = _slide_bounds(data)
     if bad is not None:
         raise RuntimeError(f"AT2 launch refused, host bounds check: {bad}")
-    print(f"[slide-at2] launch sliding_at2_kernel {what} B={data['config']['batch']} ...", flush=True)
-    out = _slide_at2_launch(ext, data, bufs, guard_hi)
+    print(f"[slide-at2] launch sliding_at2_kernel {what} B={data['config']['batch']} tile {tile} ...", flush=True)
+    out = _slide_at2_launch(ext, data, bufs, guard_hi, tile)
     torch.cuda.synchronize()
     print(f"[slide-at2] launch sliding_at2_kernel {what}: done", flush=True)
     return out
@@ -5880,15 +5916,17 @@ def _slide_at2_init(inc_ext, inc_ph: bool, tag: str) -> "str | None":
     slot) and mixed (guard 24) on the same inputs; (4) the two-state alternating graph-replay check through kernel_fn
     with the flag provisionally on; (5) interleaved cold-L2 graph replays incumbent vs AT2 at B=1 x 80000 (median of
     31, empty graph subtracted), routed only at >= _SLIDE_AT2_GATE. Import time only. None = route, else why not."""
-    global _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF
+    global _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF, _SLIDE_AT2_EXT
     ext = _build_slide_at2(tag == "fp8qk")
     if ext is None:
         return f"AT2 module build failed ({tag})"
-    regs, local, occ, binv = [int(x) for x in ext.slide_at2_setup()]
+    attrs = [int(x) for x in ext.slide_at2_setup()]
+    regs, local, occ, binv = attrs[:4]
     print(f"[slide-at2] {tag}: sliding_at2_kernel {regs} regs, {local} B local/spill, {occ} CTAs/SM, "
           f"binaryVersion {binv}", flush=True)
     if binv != 90 or local > 32 or occ < 1:  # 32 B = sincosf's slow-path frame (the PERHEAD kernel has the same)
         return f"AT2 attrs: binaryVersion {binv}, local {local} B, {occ} CTAs/SM"
+    _SLIDE_AT2_EXT = (ext, tag, attrs)  # AT8 reuses this module (its WIDE instance) whether or not AT2 routes
     dev = torch.device("cuda")
     bufs = _slide_at2_bufs(dev)
     gen = torch.Generator(device="cuda").manual_seed(97 + 2)
@@ -5969,12 +6007,164 @@ def _slide_at2_init(inc_ext, inc_ph: bool, tag: str) -> "str | None":
     return None
 
 
+# ---------------------------------------------------------------------------------------------
+# AT8 (campaign 2026-10-30-public-ladder rung AT8, sliding decode B=2..16): AT2's split-KV + fixed-reference atomic
+# merge, extended to batches 2..16 (master: Triton _sliding_fused_kernel, 16 splits per (request, kv head) + a partial
+# buffer reduced by the last program). Request b's window is split into `tile`-key pieces over CTAs b * nsplit ..
+# (b + 1) * nsplit - 1; each request merges into its OWN workspace rows (distinct addresses per request), draws its own
+# ticket and its last CTA finalizes and self-resets those rows. Same module as AT2 (its WIDE instance for tile != 64),
+# same R11 guard, FP8 K/V, E4M3 queries, every window key attended once, FP32 merge. Grid: the smallest tile whose grid
+# B * ceil(2047 / tile) fits one CTA per SM (_slide_at8_tile). Raced at import against master Triton at
+# B=16 x 80000 (interleaved cold-L2 graph replays), routed only at >= _SLIDE_AT8_GATE; import time only.
+# ---------------------------------------------------------------------------------------------
+_SLIDE_AT2_EXT = None   # (module, tag, attrs) once the AT2 module built with sane attributes (set by _slide_at2_init)
+_SLIDE_AT8 = False      # import-time flag: AT8 routed at sliding decode B=2..16 (else master Triton)
+_SLIDE_AT8_MOD = None
+_SLIDE_AT8_BUF = None   # (ws, fb, ticket) for B <= 16: persistent, all-zero / -inf / 0 between launches (self-resetting)
+_SLIDE_AT8_TILES = MappingProxyType({})  # batch -> keys per CTA, frozen at import
+_SLIDE_AT8_GATE = 1.03  # master Triton time / AT8 time needed at B=16 x 80000 to route AT8
+_SLIDE_AT8_DEADLINE = 60.0  # s on the import clock the AT8 phase (checks + race; the module is AT2's) may need
+_SLIDE_AT8_MAXB = 16
+
+
+def _slide_at8_tile(batch: int, sms: int) -> int:
+    """Keys per CTA: the smallest of 64 / 128 / 192 / 256 / 384 whose grid B * ceil(2047 / tile) fits ONE CTA per SM
+    (H100 sweep runs/20261030-020607-gpunode06: B=16 best at 256 (128 CTAs; 128 keys / 256 CTAs at 2 per SM gained only
+    0.8 us), B=8 at 128-192, B<=4 at 64)."""
+    for tile in (64, 128, 192, 256, 384):
+        if batch * ((2047 + tile - 1) // tile) <= sms:
+            return tile
+    return 384
+
+
+def _slide_at8_gate(cfg) -> bool:
+    """Config-only predicate for AT8: sliding decode B=2..16, tp8, page 1, RoPE, window <= 2048."""
+    return (_SLIDE_AT8 and cfg["q_len"] == 1 and 2 <= cfg["window"] <= 2048 and cfg["rope_theta"] != 0
+            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
+            and cfg["page_size"] == 1 and 2 <= cfg["batch"] <= _SLIDE_AT8_MAXB)
+
+
+def _slide_at8_forward(data: Inputs) -> torch.Tensor:
+    return _slide_at2_launch(_SLIDE_AT8_MOD, data, _SLIDE_AT8_BUF, None, _SLIDE_AT8_TILES[data["config"]["batch"]])
+
+
+def _slide_at8_bufs(dev):
+    ws = torch.zeros(_SLIDE_AT8_MAXB * (16 * 64 + 16), dtype=torch.float32, device=dev)
+    fb = torch.full((_SLIDE_AT8_MAXB * 32 * 16 * 68,), float("-inf"), dtype=torch.float32, device=dev)
+    ticket = torch.zeros(2 * _SLIDE_AT8_MAXB, dtype=torch.int32, device=dev)
+    return ws, fb, ticket
+
+
+_SLIDE_AT8_CASES = (  # (lens, kv_scale): batches 2..16, empty / partial / full windows, tile and slot edges
+    ([1, 2049], 0.25), ([10, 2047, 2048], 0.25), ([63, 64, 65, 127, 129], 0.25), ([255, 257, 383, 385], 1.0),
+    ([2049, 3000, 4000, 2100], 1.0), ([5000 - 37 * i for i in range(9)], 0.25),
+    ([2047 + 211 * i for i in range(16)], 0.25), ([16 + 131 * i for i in range(16)], 1.0))
+
+
+def _slide_at8_init() -> "str | None":
+    """AT8 at sliding decode B=2..16, after the AT2 phase (reuses its module). (1) WIDE instance attributes (sm_90,
+    <= 32 B local, >= 2 CTAs/SM); (2) eager self-check over _SLIDE_AT8_CASES at each batch's tile: vs the FP32 reference
+    (< 2e-2), vs master Triton on cloned caches (<= its own error vs the reference + 2e-2), new cache rows vs master's, workspace clean after every launch;
+    the R11 guard forced and mixed on the same inputs; (3) the two-state graph-replay check through kernel_fn with the
+    flag provisionally on (B=16); (4) interleaved cold-L2 graph replays master Triton vs AT8 at B=16 x 80000 (median of
+    31, empty graph subtracted), routed only at >= _SLIDE_AT8_GATE. None = route, else why not."""
+    global _SLIDE_AT8, _SLIDE_AT8_MOD, _SLIDE_AT8_BUF, _SLIDE_AT8_TILES
+    if _SLIDE_AT2_EXT is None:
+        return "AT2 module not built"
+    ext, tag, attrs = _SLIDE_AT2_EXT
+    regs, local, occ, binv = attrs[4:8]
+    print(f"[slide-at8] {tag}: sliding_at2_kernel<WIDE> {regs} regs, {local} B local/spill, {occ} CTAs/SM, "
+          f"binaryVersion {binv}", flush=True)
+    if binv != 90 or local > 32 or occ < 2:
+        return f"AT8 attrs: binaryVersion {binv}, local {local} B, {occ} CTAs/SM"
+    dev = torch.device("cuda")
+    sms = torch.cuda.get_device_properties(dev).multi_processor_count
+    tiles = {b: _slide_at8_tile(b, sms) for b in range(2, _SLIDE_AT8_MAXB + 1)}
+    print(f"[slide-at8] {sms} SMs: keys per CTA by batch {tiles}", flush=True)
+    bufs = _slide_at8_bufs(dev)
+    gen = torch.Generator(device="cuda").manual_seed(2468)
+    for lens, kv_scale in _SLIDE_AT8_CASES:
+        tile = tiles[len(lens)]
+        data = _slide_synthetic(lens, 1, kv_scale, gen, dev)
+        idata = dict(data)
+        idata["k_cache"], idata["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
+        out_i = _sliding_forward(idata)
+        torch.cuda.synchronize()
+        outs = {}
+        for arm, gh, tl_ in (("at8", None, tile), ("forced", -1e30, tile), ("mixed", 24.0, tile),
+                             ("at8-128", None, 128)):
+            if arm == "at8-128" and tile == 128:
+                continue
+            outs[arm] = _slide_at2_run(ext, data, f"AT8 self-check {arm} {tag}", bufs, gh, tl_)
+            if not _slide_at2_clean(bufs):
+                return f"AT8 self-check {arm} B={len(lens)}: workspace not clean after the launch"
+        ref = _slide_reference(data, lens)
+        loc = data["cache_loc"]
+        ok = True
+        notes = []
+        for name, mine, inc in (("k", data["k_cache"], idata["k_cache"]), ("v", data["v_cache"], idata["v_cache"])):
+            a = mine.view(-1, 2, 64)[loc].float()
+            m = inc.view(-1, 2, 64)[loc].float()
+            rel = float((a - m).norm() / m.norm().clamp_min(1e-30))
+            notes.append(f"{name} rel {rel:.1e}")
+            ok = ok and rel < 1e-2
+        # master Triton rounds its query differently from this FP32 reference (which uses the E4M3 query rounding of the
+        # CUDA kernels): AT8 must match the reference tightly and be no farther from master than master is from it
+        err_m, _ = _rel_l2(out_i, ref)
+        parts = []
+        for arm, o in outs.items():
+            err, finite = _rel_l2(o, ref)
+            err_i, _ = _rel_l2(o, out_i.float())
+            ok = ok and finite and err < 2e-2 and err_i <= err_m + 2e-2
+            parts.append(f"{arm} vs fp32 {err:.2e} vs master {err_i:.2e}")
+        print(f"[slide-at8] self-check {tag} B={len(lens)} tile {tile} kv_scale {kv_scale:g} (master vs fp32 "
+              f"{err_m:.2e}): {'; '.join(parts)}; cache vs master {', '.join(notes)} -> {'ok' if ok else 'FAIL'}",
+              flush=True)
+        del data, idata
+        if not ok:
+            return f"AT8 self-check failed at B={len(lens)} kv_scale {kv_scale:g}"
+    torch.cuda.empty_cache()
+    base = [2049 + 97 * i for i in range(16)]
+    sets = _alt_sets(base)
+    mp = max(max(x) for x in sets) + 1 + 29
+    _SLIDE_AT8_MOD, _SLIDE_AT8_BUF, _SLIDE_AT8_TILES = ext, bufs, MappingProxyType(tiles)
+    _SLIDE_AT8 = True  # provisional, import time only: kernel_fn must take the AT8 route under test
+    try:
+        why = _alt_check("[slide-at8] replay AT8 B=16",
+                         lambda l: _slide_synthetic(l, 1, 0.25, gen, dev, max_pages=mp), _slide_reference, sets,
+                         gate=_slide_at8_gate)
+    finally:
+        _SLIDE_AT8 = False
+    if why is not None:
+        return why
+    if not _slide_at2_clean(bufs):
+        return "AT8 workspace not clean after the replay check"
+    data = _slide_synthetic([80000 - 997 * i for i in range(16)], 1, 1.0, gen, dev)
+    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)  # 256 MB > L2
+    print(f"[slide-gate] AT8-vs-master B=16: timing [master Triton] vs [AT8 split-KV atomic, {tiles[16]} keys/CTA] "
+          "interleaved (graph replays, cold L2, median of 31, empty graph subtracted)", flush=True)
+    t_tri, t_at8 = _interleaved_us([lambda: _sliding_forward(data),
+                                    lambda: _slide_at2_launch(ext, data, bufs, None, tiles[16])], flush, reps=31)
+    ratio = t_tri / t_at8 if t_at8 > 0 else 0.0
+    clean = _slide_at2_clean(bufs)
+    verdict = "ROUTE AT8" if ratio >= _SLIDE_AT8_GATE and clean else f"AT8 not >= {_SLIDE_AT8_GATE:.2f}x: master"
+    print(f"[slide-gate] AT8-vs-master B=16 x 80000: [master Triton] {t_tri:.2f} us, [AT8] {t_at8:.2f} us -> "
+          f"master / AT8 {ratio:.3f}x, workspace clean {clean} ({verdict})", flush=True)
+    del data, flush
+    torch.cuda.empty_cache()
+    if not clean:
+        return "AT8 workspace not clean after the timing"
+    if ratio < _SLIDE_AT8_GATE:
+        return f"timing gate: master {t_tri:.2f} us vs AT8 {t_at8:.2f} us ({ratio:.3f}x < {_SLIDE_AT8_GATE:.2f}x)"
+    return None
+
+
 def _slide_init():
     """Confirm the sm_90a image, build (fp8 QK first, then the f16 QK fallback only for a cluster
     size whose canary or self-check failed), report occupancy / registers / spills, disable each
     cluster size that cannot run its largest batch in one wave, canary + self-check the rest, and
     print the path chosen per batch class."""
-    global _SLIDE_PH, _SLIDE_PH_MOD, _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF
+    global _SLIDE_PH, _SLIDE_PH_MOD, _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF, _SLIDE_AT8, _SLIDE_AT8_MOD, _SLIDE_AT8_BUF
     try:
         cap = tuple(torch.cuda.get_device_capability())
     except Exception as e:
@@ -6066,6 +6256,23 @@ def _slide_init():
             _SLIDE_AT2_MOD, _SLIDE_AT2_BUF = None, None
     else:
         why_at2 = f"C=16 did not route ({_SLIDE_WHY[16]})"
+    _SLIDE_AT8 = False
+    now = time.perf_counter() - _IMPORT_T0
+    if _SLIDE_AT2_EXT is None:
+        why_at8 = "AT2 module not built (" + why_at2 + ")"
+    elif now + _SLIDE_AT8_DEADLINE > _IMPORT_BUDGET_S:  # the file's import-clock rule: start only if it can finish
+        why_at8 = f"skipped: import clock {now:.0f} s + {_SLIDE_AT8_DEADLINE:.0f} s > {_IMPORT_BUDGET_S:.0f} s"
+    else:
+        try:
+            why_at8 = _slide_at8_init()
+        except Exception as e:
+            why_at8 = f"AT8 setup raised {e!r}"
+        print(f"[slide-at8] phase AT8: {time.perf_counter() - _IMPORT_T0 - now:.1f} s (import clock now "
+              f"{time.perf_counter() - _IMPORT_T0:.0f} s)", flush=True)
+    _SLIDE_AT8 = why_at8 is None
+    if not _SLIDE_AT8:
+        _SLIDE_AT8_MOD, _SLIDE_AT8_BUF = None, None
+    _say(f"[slide] PATH CHOSEN: sliding B=2..16 AT8 {'ON: split-KV atomic merge, keys/CTA ' + str(dict(_SLIDE_AT8_TILES)) if _SLIDE_AT8 else 'OFF (' + why_at8 + ')'}")
     _say(f"[slide] PATH CHOSEN: sliding B=1 AT2 {'ON: split-KV 32 x 64 keys, fixed-reference atomic merge' if _SLIDE_AT2 else 'OFF (' + why_at2 + ')'}")
     _say(f"[slide] PATH CHOSEN: sliding B=1 PERHEAD {'ON: 2 clusters x C=16, one kv head each' if _SLIDE_PH else 'OFF (' + why_ph + ')'}")
     print(f"[slide] modules: master C=16 {getattr(_SLIDE_MOD[16], '__name__', None)}, C=4 "
@@ -6073,7 +6280,7 @@ def _slide_init():
     for batch, rng in ((1, "B=1"), (16, "B=2..16"), (32, "B=17..32")):
         c = _slide_clusters({"batch": batch})
         if 1 < batch <= 16:
-            _say(f"[slide] PATH CHOSEN: sliding master Triton {rng} (C=8 off by gate)")
+            _say(f"[slide] PATH CHOSEN: sliding {'AT8' if _SLIDE_AT8 else 'master Triton'} {rng} (C=8 off by gate)")
         elif c == 16 and _SLIDE_PH:
             _say(f"[slide] PATH CHOSEN: sliding cluster v2 PERHEAD 2 x C=16 {rng} ({_SLIDE_TAG[c]})")
         elif c:
