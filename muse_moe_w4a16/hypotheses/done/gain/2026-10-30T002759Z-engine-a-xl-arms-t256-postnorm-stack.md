@@ -76,12 +76,13 @@ speedup: 2.0666647252878665
 speedup_ci: [2.0356647544085487, 2.0976646961671843]
 harvested_at: 2026-10-30T005157Z
 best_at_harvest: 2.035180868162415
-promotion: submitted
+promotion: done
 mechanism: null
 promotion_commit: 59f2a35c11b32b20096964c3d804cbc8bddcaaae
 promotion_attempt: 2026-10-30T005158Z-submit-engine-a-xl-arms-t256-postnorm-stack.md
 promotion_job: 922ddf4c5b4847f2
 promotion_at: 2026-10-30T005213Z
+board: "{\"rank\": 305, \"team\": \"yesthatwilly\", \"speedup\": 2.0753, \"first\": false, \"ahead\": 304, \"to_first\": 1.3008}"
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack

@@ -60,4 +60,4 @@ Every XL arm is exact at every class. XL/E is 0.995-0.997 at T8/32/128/256 for E
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 2.0753x [2.0441,2.1129], board: {"rank": 305, "team": "yesthatwilly", "speedup": 2.0753, "first": false, "ahead": 304, "to_first": 1.3008}
