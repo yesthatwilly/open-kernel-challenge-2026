@@ -46,12 +46,12 @@ evidence: >
   (2 replicates x 50 pairs); judge 702f1004: consume gains transferred at ~60-70%
 user_requested: true
 review: proceed
-status: running
+status: done
 review_at: 2026-10-30T003155Z
 review_companions: null
 review_best: 2.035180868162415
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
-stage: dispatched
+stage: harvested
 claimed_at: 2026-10-30T003155Z
 base_sha: 3c2132ae83986e59ae1e72def1637af0f8535c5f
 base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
@@ -70,6 +70,14 @@ attempt_file: 2026-10-30T004457Z-check-engine-a-xl-arms-t256-postnorm-stack.md
 prepared_at: 2026-10-30T004457Z
 job: 73156455c9f242f6
 dispatched_at: 2026-10-30T004507Z
+outcome: gain
+verdict_detail: gain
+speedup: 2.0666647252878665
+speedup_ci: [2.0356647544085487, 2.0976646961671843]
+harvested_at: 2026-10-30T005157Z
+best_at_harvest: 2.035180868162415
+promotion: pending
+mechanism: null
 ---
 
 # engine-a-xl-arms-t256-postnorm-stack
@@ -169,3 +177,29 @@ Bytes sha256 091c05b8670a... (959,292 B). Prepare took 131 s of 300; all 5 TASK 
 [ea-enc] PATH CHOSEN all T master (no arm <= 0.98 every round; T=16 route v4xe, T=1 v1) (race 2.4s, prepare at 131s)
 ```
 Every XL arm is exact at every class. XL/E is 0.995-0.997 at T8/32/128/256 for E4XL and at 256 for E5XL. On the node no arm, E or XL, clears the 0.98-every-round bar, so the node picks master everywhere, the same as master's own E arms on the node. Results: scratchpad `build-moe-xl/hp/prototypes/hopper-probe/runs/20261029-174132-gpunode06/out/`.
+
+## Result
+
+- job `73156455c9f242f6` (check), status done, passed True, tests 5/5
+- speedup 2.0667x, 95% CI [2.0357, 2.0977], score 6507.344822526427 µs vs SGLang 13448.5 µs
+- best at harvest: {"speedup": 2.035180868162415, "ci": [2.0046531551399784, 2.065708581184851], "job": "575820c989c8412b"}; base result: muse_moe_w4a16/hypotheses/BEST.result.json
+- **outcome: gain** (gain)
+- files: `muse_moe_w4a16/hypotheses/done/gain/engine-a-xl-arms-t256-postnorm-stack.result.json`, `muse_moe_w4a16/hypotheses/done/gain/engine-a-xl-arms-t256-postnorm-stack.patch`; branch `hyp/muse_moe_w4a16/engine-a-xl-arms-t256-postnorm-stack`
+
+## Attribution
+
+| shape | w | base µs | hyp µs | delta | verdict |
+|---|---|---|---|---|---|
+| bs=1 load=decode_1 sharding=ep8 | 60 | 28.02 | 28.93 | 1.0061 | flat |
+| bs=16 load=decode_16 sharding=ep8 | 60 | 102.96 | 100.91 | 1.0154 | flat |
+| bs=32 load=decode_32 sharding=ep8 | 60 | 132.13 | 132.03 | 1.004 | flat |
+| bs=8 load=verify_1 sharding=ep8 | 60 | 76.62 | 71.96 | 1.0535 | gained |
+| bs=128 load=verify_16 sharding=ep8 | 60 | 220.72 | 222.5 | 1.0117 | flat |
+| bs=256 load=verify_32 sharding=ep8 | 60 | 264.5 | 263.2 | 1.0029 | flat |
+
+gained on verify_1 verify_1. Expected hit: 0/3. Noise ±1.5%.
+
+## Follow-ups
+
+- candidate for promotion; stack further changes with `depends_on` once it lands.
+

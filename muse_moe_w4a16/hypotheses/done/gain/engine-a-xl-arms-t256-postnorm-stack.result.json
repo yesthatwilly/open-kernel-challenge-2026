@@ -1,0 +1,359 @@
+{
+ "schema": 1,
+ "problem": "muse_moe_w4a16",
+ "slug": "engine-a-xl-arms-t256-postnorm-stack",
+ "job": "73156455c9f242f6",
+ "mode": "check",
+ "duplicate_of": null,
+ "content_hash": "ffe72d67b0e2275caead3f09f3d010f21bca71f0572d903e7a990f85eee9a0ff",
+ "submission_sha256": "091c05b8670abe6ec6ce3a4b93e66944ca8e40d8c47c098bb0c1bd0830800c17",
+ "submission_blob": "5220385a87251699b3c366632c532841f8a389f0",
+ "impl_commit": "28cd633359d5c9a8c8abd9d852b3bb8b056eb210",
+ "base_sha": "3c2132ae83986e59ae1e72def1637af0f8535c5f",
+ "created_at": 1793321103.2308712,
+ "finished_at": 1793321495.1716418,
+ "gpu": "H200",
+ "evaluator_sha256": "afcead6a6ff090aa50fe9bc907f0fa8f4ba73d95fa92af93ec260b5e8ff00f00",
+ "status": "done",
+ "passed": true,
+ "error": null,
+ "returncode": 0,
+ "tests": {
+  "total": 5,
+  "passed": 5
+ },
+ "first_failing": null,
+ "speedup": 2.0666647252878665,
+ "speedup_ci": [
+  2.0356647544085487,
+  2.0976646961671843
+ ],
+ "score_us": 6507.344822526427,
+ "baseline_us": 13448.5,
+ "flags": [],
+ "checks": {
+  "flagged": [],
+  "ok": true,
+  "rejected": []
+ },
+ "shapes": [
+  {
+   "key": "bs=1 load=decode_1 sharding=ep8",
+   "load": "decode 1",
+   "case": {
+    "bs": 1,
+    "load": "decode 1",
+    "seed": 636250574052067185,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 28934.706843382915,
+   "baseline_ns": 80432.00010433793,
+   "speedup": 2.779775877450507,
+   "speedup_of_medians": 2.483695707425053,
+   "err_ns": 653.800225394358,
+   "speed_of_light_ns": 11416.507733333334,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak6::ea6_kernel<true, 3, 2, true>(__nv_bfloat16 con...",
+     19.6,
+     55.8
+    ],
+    [
+     "void eak6::ea6_kernel<false, 2, 2, true>(__nv_bfloat16 co...",
+     12.6,
+     35.7
+    ],
+    [
+     "eak6::ea6_cmb_kernel(__nv_bfloat16 const*, int const*, fl...",
+     3.0,
+     8.5
+    ]
+   ]
+  },
+  {
+   "key": "bs=16 load=decode_16 sharding=ep8",
+   "load": "decode 16",
+   "case": {
+    "bs": 16,
+    "load": "decode 16",
+    "seed": 636368639240220277,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 100908.16299669161,
+   "baseline_ns": 188047.99858480692,
+   "speedup": 1.8635558610949274,
+   "speedup_of_medians": 1.8561276374531155,
+   "err_ns": 1528.424821506994,
+   "speed_of_light_ns": 52519.458133333326,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak4x::ea4x_w13_kernel<3, false>(__nv_bfloat16 const...",
+     50.6,
+     58.8
+    ],
+    [
+     "void eak4x::ea4x_w2_kernel<3, false>(__nv_bfloat16 const*...",
+     32.7,
+     38.0
+    ],
+    [
+     "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
+     2.8,
+     3.2
+    ]
+   ]
+  },
+  {
+   "key": "bs=32 load=decode_32 sharding=ep8",
+   "load": "decode 32",
+   "case": {
+    "bs": 32,
+    "load": "decode 32",
+    "seed": 636486704428373370,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 132032.65542686984,
+   "baseline_ns": 204463.9978557825,
+   "speedup": 1.548586576515769,
+   "speedup_of_medians": 1.5478439540057396,
+   "err_ns": 1637.2270196435807,
+   "speed_of_light_ns": 70755.39626666668,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak4x::ea4x_w13_kernel<4, false>(__nv_bfloat16 const...",
+     84.8,
+     58.7
+    ],
+    [
+     "void eak4x::ea4x_w2_kernel<4, false>(__nv_bfloat16 const*...",
+     49.3,
+     34.1
+    ],
+    [
+     "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
+     10.4,
+     7.2
+    ]
+   ]
+  },
+  {
+   "key": "bs=8 load=verify_1 sharding=ep8",
+   "load": "verify 1",
+   "case": {
+    "bs": 8,
+    "load": "verify 1",
+    "seed": 636604769616526464,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 71955.47055696527,
+   "baseline_ns": 141327.99860090017,
+   "speedup": 1.9641035977801642,
+   "speedup_of_medians": 2.024524342495256,
+   "err_ns": 1321.0530756453857,
+   "speed_of_light_ns": 37318.92906666667,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak4x::ea4x_w13_kernel<3, false>(__nv_bfloat16 const...",
+     49.7,
+     58.9
+    ],
+    [
+     "void eak4x::ea4x_w2_kernel<3, false>(__nv_bfloat16 const*...",
+     31.8,
+     37.7
+    ],
+    [
+     "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
+     2.9,
+     3.5
+    ]
+   ]
+  },
+  {
+   "key": "bs=128 load=verify_16 sharding=ep8",
+   "load": "verify 16",
+   "case": {
+    "bs": 128,
+    "load": "verify 16",
+    "seed": 636722834804679559,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 222498.45936612392,
+   "baseline_ns": 468687.99859657884,
+   "speedup": 2.1064775007064074,
+   "speedup_of_medians": 2.141301162605907,
+   "err_ns": 1950.3937551173676,
+   "speed_of_light_ns": 101341.04746666664,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak4x::ea4x_w13_kernel<4, false>(__nv_bfloat16 const...",
+     138.3,
+     60.4
+    ],
+    [
+     "void eak4x::ea4x_w2_kernel<4, false>(__nv_bfloat16 const*...",
+     75.8,
+     33.1
+    ],
+    [
+     "eac::ea_combine_kernel(__nv_bfloat16 const*, int const*, ...",
+     14.8,
+     6.5
+    ]
+   ]
+  },
+  {
+   "key": "bs=256 load=verify_32 sharding=ep8",
+   "load": "verify 32",
+   "case": {
+    "bs": 256,
+    "load": "verify 32",
+    "seed": 636840899992832655,
+    "sharding": "ep8",
+    "weight": 60
+   },
+   "weight": 60,
+   "median_ns": 263200.83258588804,
+   "baseline_ns": 617872.0016032457,
+   "speedup": 2.347530574021345,
+   "speedup_of_medians": 2.340282375267327,
+   "err_ns": 1678.234736839083,
+   "speed_of_light_ns": 108944.31573333332,
+   "status": "pass",
+   "top_kernels": [
+    [
+     "void eak4x::ea4x_w13_kernel<3, false>(__nv_bfloat16 const...",
+     98.7,
+     32.7
+    ],
+    [
+     "void eak4x::ea4x_w2_kernel<3, false>(__nv_bfloat16 const*...",
+     77.3,
+     25.6
+    ],
+    [
+     "void (anonymous namespace)::wg_kernel<false, 14>((anonymo...",
+     54.4,
+     18.0
+    ],
+    [
+     "void (anonymous namespace)::wg_kernel<true, 14>((anonymou...",
+     52.7,
+     17.4
+    ]
+   ]
+  }
+ ],
+ "loads": [
+  {
+   "load": "decode 1",
+   "sglang_ns": 4825920.006260276,
+   "yours_ns": 1736082.410602975,
+   "speedup": 2.779775877450507
+  },
+  {
+   "load": "decode 16",
+   "sglang_ns": 11282879.915088415,
+   "yours_ns": 6054489.779801496,
+   "speedup": 1.8635558610949274
+  },
+  {
+   "load": "decode 32",
+   "sglang_ns": 12267839.87134695,
+   "yours_ns": 7921959.32561219,
+   "speedup": 1.548586576515769
+  },
+  {
+   "load": "verify 1",
+   "sglang_ns": 8479679.91605401,
+   "yours_ns": 4317328.233417916,
+   "speedup": 1.9641035977801644
+  },
+  {
+   "load": "verify 16",
+   "sglang_ns": 28121279.91579473,
+   "yours_ns": 13349907.561967434,
+   "speedup": 2.1064775007064074
+  },
+  {
+   "load": "verify 32",
+   "sglang_ns": 37072320.096194744,
+   "yours_ns": 15792049.955153283,
+   "speedup": 2.347530574021345
+  }
+ ],
+ "attribution": {
+  "base_result": "muse_moe_w4a16/hypotheses/BEST.result.json",
+  "noise": 0.015,
+  "shapes": [
+   {
+    "key": "bs=1 load=decode_1 sharding=ep8",
+    "weight": 60,
+    "base_us": 28.02,
+    "hyp_us": 28.93,
+    "delta": 1.0061,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=16 load=decode_16 sharding=ep8",
+    "weight": 60,
+    "base_us": 102.96,
+    "hyp_us": 100.91,
+    "delta": 1.0154,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=32 load=decode_32 sharding=ep8",
+    "weight": 60,
+    "base_us": 132.13,
+    "hyp_us": 132.03,
+    "delta": 1.004,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=8 load=verify_1 sharding=ep8",
+    "weight": 60,
+    "base_us": 76.62,
+    "hyp_us": 71.96,
+    "delta": 1.0535,
+    "verdict": "gained"
+   },
+   {
+    "key": "bs=128 load=verify_16 sharding=ep8",
+    "weight": 60,
+    "base_us": 220.72,
+    "hyp_us": 222.5,
+    "delta": 1.0117,
+    "verdict": "flat"
+   },
+   {
+    "key": "bs=256 load=verify_32 sharding=ep8",
+    "weight": 60,
+    "base_us": 264.5,
+    "hyp_us": 263.2,
+    "delta": 1.0029,
+    "verdict": "flat"
+   }
+  ],
+  "summary": "gained on verify_1 verify_1",
+  "expected_hit": "0/3",
+  "mechanism": null,
+  "mechanism_rows": null
+ },
+ "mechanism": null
+}
