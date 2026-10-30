@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-30T000048Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -17,6 +17,7 @@ Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a h
 - [shelf] side-stream logits sum + routing top-k + local-id remap in one Triton kernel (routing-triton-hilo-sum-topk-localids), est ~0.2%, stack-only | rows: all | evidence: DECISIONS:423 | board: 1.5008 | blob: - | reopen: - | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5721)
 - [shelf] rega epilogue overlapped with the next item's first wgmma (experts-rega-epilogue-overlap-next-stage), est <= 1.2%, high risk (232-register ceiling) | rows: all | evidence: DECISIONS:425 | board: 1.5008 | blob: - | reopen: re-aim at the fsilu_w2a module | 2026-10-28 screen (re-measure: measured on 1.5008, best now 1.5721)
 - [shelf] full-layer FA3 with a fraction f of exp2 on the FMA pipe (Cody-Waite + polynomial) | rows: load=turn_1, load=turn_4, load=first_turn | evidence: H100 pfexp (takemyjob hopper/pfexp-1029 405fbe2; research/h100-pfexp-1029.md, GPU 5): within its own FA3 build f=0.1-0.2 gives 1.07-1.10x (turn_1/turn_4 full), collapsing above f=0.3 (6 extra issue slots per exp); but the rebuilt FA3 (sgl-flash-attn 141fa063 + pinned cutlass/flags) is 1.31-1.34x slower than sgl_kernel 0.4.9's binary and not bit-identical, so every arm vs master is 0.67-0.85x; error holds at every f; value <= ~1-1.5% headline even at 10% | board: 1.5721 | blob: 7569df17 | reopen: a FA3 build that reproduces sgl_kernel's binary speed (or patching the shipped kernel), then f ~0.15, stacked with another prefill full-row gain to >= 2.5% | 2026-10-29 h100
+- [shelf] 2-CTA/SM low-class rega tile S2 (A5b+D+SC loop, 80 regs, 3 stages, 64-row slab, N64 cap), routed at low only (experts-rega-low-2cta-a5b) | rows: load=turn_1 | evidence: check 074a0e02f4e94efd 1.5678 (board 1.5721, flat): S2 routed at low, S2/A5b .932 pop warm / .931 cold / .885 random / guard 1348r .968; vs master .743-.772; probe regs 80, spill 0, C7510/C7512 0; high/ft keep A5b | board: 1.5721 | blob: 7569df17 | reopen: ride in the next prefill candidate (~+1% headline, below one run's noise alone) | 2026-10-29 churn
 
 ### node-only
 

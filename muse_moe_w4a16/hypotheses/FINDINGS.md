@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-29T235820Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-30T000048Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -166,6 +166,9 @@ Diagnosis of 2026-10-25T203317Z, written on board 1.4021 (today 2.0201): histori
 - **post-norm-triton-hoisted-decode32** → neutral (within-ci), 1.3248x, mechanism flat 0/1 — no shape moved outside noise. num_tokens == 32 only (decode_32); bs<32 keeps master's _post_norm_combine_kernel unchanged and bs>=33 (incl. the bs=33 test) keeps SGLang's fused_post_expert_n
 - **cmbf-combine-fused-w2-epilogue-t8-32** → neutral (unproven-vs-best), 1.9675x — gained on verify_16 verify_16. DIAG (print-only race; the board's arms stay routed, so the timed path is master's). Build arm CF ("combine fused") of the routed K2 twins: the w2 kernel of v4x
 
+### prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs
+- **eae-cold-iso-keepalive-fix** → neutral (within-ci), 2.0469x — lost on decode_1 decode_1. Correctness fix with no timed-path change: in _eae_class (muse_moe_w4a16/submission.py ~18447-18477), the iso[('c', a)] timing graphs are captured over h3/y3/l3
+
 ### w13 marlin
 - **triton-w13-grouped-gemv-small-m** → regression (regression), 0.7506x, mechanism miss 0/2 — lost on decode_1 decode_1; verify_1 verify_1. For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path untouched), replace the first moe_wna16_marlin_gemm (w13, top_k=8) with t
 - **marlin-workspace-blocks-per-sm-8** → neutral (unproven-vs-best), 0.9921x, mechanism flat 0/2 — no shape moved outside noise. In prepare(), build a second lock workspace marlin_make_workspace(device, max_blocks_per_sm=8) and pass it to the w13 moe_wna16_marlin_gemm call only; the w2 ca
@@ -246,6 +249,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **stack-onewarp-hoisted-dispatchcombine-from17** [MoE align (bs<=8 one warp; 17..32 parallel; bs>=128 CUDA) + post-expert combine] neutral, within-ci: The variant of stack-onewarp-hoisted-dispatchcombine (same three done/ patches, unchanged)
 - **w2-marlin-atomic-add-verify** [w2 marlin] neutral, within-ci: On master (9080a71), widen the landed w2 use_atomic_add path from num_tokens <= 32 to all 
 - **restack-occ2-wg2-b256-two-stream-halves-on-master** [expert GEMM path selection (wgmma wg2 at B256 + Marlin two-stream halves at T 8-32) restack] neutral, within-ci: COMBINATION RESTACK of two measured per-cell wins onto current master (bdbbc97b, combo-top
+- **eae-cold-iso-keepalive-fix** [prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs] neutral, within-ci: Correctness fix with no timed-path change: in _eae_class (muse_moe_w4a16/submission.py ~18
 - **triton-w13-grouped-gemv-small-m** [w13 marlin] regression, regression: For num_tokens <= 8 only (decode_1 and verify_1; all other shapes keep the parity path unt
 - **marlin-block-size-m-next-larger** [MoE align/dispatch] regression, regression: Change only the block_size_m pick in kernel_fn. SGLang's loop breaks on the first candidat
 - **w2-l2-prefetch-decode1** [w2 marlin] regression, regression: At num_tokens == 1 only (decode_1; every other M runs master unchanged), warm L2 with the 
@@ -264,5 +268,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: wg2-w13-occ2-nmax128-stg2-hot [w13 marlin + silu-mul] p3 hold
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 hold
 - queue: cmbf-combine-fused-w2-epilogue-t8-32-cf [post-expert norm+combine] p1 queued
-- running: eae-cold-iso-keepalive-fix [prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs] p1 running
+- queue: eae-cold-iso-keepalive-fix-cf [prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs] p1 queued
 - 21 stale holds expired to `done/expired/` (not run)
