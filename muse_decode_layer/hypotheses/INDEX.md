@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-30T002716Z. Best: 1.7051x [1.6795,1.7307] job `e42339989d554019` (submit)
+Regenerated 2026-10-30T005856Z. Best: 1.7051x [1.6795,1.7307] job `e42339989d554019` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -90,7 +90,7 @@ Regenerated 2026-10-30T002716Z. Best: 1.7051x [1.6795,1.7307] job `e42339989d554
 | 2026-10-29T190020Z | hothalf-a3-exactn-ring-wh | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6794 | [1.654,1.705] | 44f303647100481b | check |  | proceed | 0/4 |
 | 2026-10-29T202838Z | hothalf-wh5ds-moe-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6968 | [1.671,1.722] | 35cc220cd79e4668 | check |  | proceed | 0/3 |
 | 2026-10-29T223938Z | engine-a-encodings-wh5ds-decode-stack | primary | decode expert block: Engine A dequant (ea4x/v4x/ea6) at T=1..32 and the cold half, plus the wh5ds hot half | done/gain | gain | 1.7197 | [1.694,1.746] | 824b60fac87c4ff4 | check | done | proceed | 0/4 |
-| 2026-10-30T000244Z | engine-a-xl-arms-t1-t256 | primary | decode expert block: Engine A dequant arms at T=1 and the T=256 cold half (+ all E classes) | queue | hold |  |  |  |  |  | proceed |  |
+| 2026-10-30T000244Z | engine-a-xl-arms-t1-t256 | primary | decode expert block: Engine A dequant arms at T=1 and the T=256 cold half (+ all E classes) | running | running |  |  |  |  |  | proceed |  |
 
 ## Held
 
@@ -112,4 +112,3 @@ Regenerated 2026-10-30T002716Z. Best: 1.7051x [1.6795,1.7307] job `e42339989d554
 - marlin-bsm8-t17-t32-w13-atomic-t1: screen 2026-10-28 1520Z (value bar, vs master): STALE: Marlin no longer on the T<=32 path
 - marlin-hot-cold-two-class-bsm-t128-t256: screen 2026-10-28 1520Z (value bar, vs master): SUPERSEDED: hotcold landed (H=-16)
 - wg2-occ2-b256-decode-port: screen 2026-10-28 1520Z (value bar, vs master): BELOW-BAR ~0.4%; Marlin premise gone
-- engine-a-xl-arms-t1-t256: main thread 10-30: review proceed but T=1 has no XL arm (ea6), gain re-sized to ~+0.3-0.6% (below one run's noise) and the size headroom (6,172 B) needs a re-authored XL arm in decode's template style; ride as part of the next larger decode candidate instead of a standalone check

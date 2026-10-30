@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-30T005201Z. Best: 2.0667x [2.0357,2.0977] job `73156455c9f242f6` (check)
+Regenerated 2026-10-30T005856Z. Best: 2.0753x [2.0441,2.1129] job `922ddf4c5b4847f2` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -99,7 +99,7 @@ Regenerated 2026-10-30T005201Z. Best: 2.0667x [2.0357,2.0977] job `73156455c9f24
 | 2026-10-29T235440Z | eae-cold-iso-keepalive-fix | primary | prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs | done/neutral | neutral | 2.0469 | [2.016,2.080] | 582bb33467dc4663 | check |  | proceed | 0/1 |
 | 2026-10-30T000046Z | eae-cold-iso-keepalive-fix-cf | confirm→eae-cold-iso-keepalive-fix | prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs | queue | queued |  |  |  |  |  | proceed |  |
 | 2026-10-30T000244Z | t128-hybrid-eacombine-judge-race | primary | moe T=128 expert block: forked hot/cold hybrid (wh5ds hot + E5 cold) with ea_combine tail vs plain Engine A E5 | done/neutral | neutral | 2.0421 | [2.011,2.073] | 4c5032bc57be4cf5 | check |  | proceed | 0/2 |
-| 2026-10-30T002759Z | engine-a-xl-arms-t256-postnorm-stack | primary | moe expert block: Engine A XL dequant arms (all classes) + T=256 ea_combine replacing the post-norm weighted sum | done/gain | gain | 2.0667 | [2.036,2.098] | 73156455c9f242f6 | check | merged | proceed | 0/3 |
+| 2026-10-30T002759Z | engine-a-xl-arms-t256-postnorm-stack | primary | moe expert block: Engine A XL dequant arms (all classes) + T=256 ea_combine replacing the post-norm weighted sum | done/gain | gain | 2.0667 | [2.036,2.098] | 73156455c9f242f6 | check | done | proceed | 0/3 |
 
 ## Held
 
