@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "e42339989d554019",
- "check_job": "824b60fac87c4ff4",
- "mode": "submit",
- "speedup": 1.7050937985916388,
+ "job": "9263781bc2a040e9",
+ "check_job": "9263781bc2a040e9",
+ "mode": "check",
+ "speedup": 1.7468462935547873,
  "ci": [
-  1.6795173916127641,
-  1.7306702055705132
+  1.7206435991514655,
+  1.7730489879581088
  ],
- "score_us": 13266.308292648624,
- "commit": "10442ca2d41e8d5ab2b09728f8c5bcfe421b31ee",
- "submission_blob": "4f529d7b0f87fd4e4daa18fb355df14d73096e58",
- "slug": "engine-a-encodings-wh5ds-decode-stack",
- "result": "muse_decode_layer/hypotheses/done/gain/engine-a-encodings-wh5ds-decode-stack.result.json",
- "updated_at": "2026-10-29T231952Z"
+ "score_us": 12949.22173946299,
+ "commit": "787c0eaca685efd830abd7a04700941e4542793f",
+ "submission_blob": "58cec976bd10d2fe4cbf513e93436ea3a0a2bc8f",
+ "slug": "engine-a-xl-arms-t1-t256",
+ "result": "muse_decode_layer/hypotheses/done/gain/engine-a-xl-arms-t1-t256.result.json",
+ "updated_at": "2026-10-30T012159Z"
 }
