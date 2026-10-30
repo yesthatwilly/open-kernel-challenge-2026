@@ -1,5 +1,5 @@
 lane	rung	worktree	branch	gpu	status	next_action	updated_utc
-moe	MO3-FEED (in-situ feed+consume microbench of the wide stage)	~/git/.takemyjob-wt/mo3	hopper/ladder-mo3s2	1,6	h100	MO3 S2 refuted (+80 us); bench feed variants (quarter buffers, K2 2-D TMA box, 2nd producer); rebuild only if wide <= 1.1x 16-route stage	2026-10-30T16:20Z
+moe	MO3-FEED bench	~/git/.takemyjob-wt/mo3	hopper/ladder-mo3s2	-	done	no rebuild: stage feed is not the loss (WT 1.02 HBM / 1.25 L2); reopen: profile twin vs incumbent in nodejudge	2026-10-30T16:35Z
 attn-sliding	AT8F LANDED 1.826 (scored 9e6d3d1f, master 524fd3b6); AT8H WIP stopped	.worktrees/rl-at8h	rl/at8h	-	stopped	user stop; AT8H WIP 015d83af does not build	2026-10-30T16:25Z
 attn-D	T1 AT2W4 (4 warps/CTA)	.worktrees/rl-at2w4	rl/at2w4	-	refuted	d1s +1.9 us slower (x0.865); next idea (not started): clock64 per-phase latency breakdown of the d1s chain	2026-10-30T16:20Z
 attn-full	WGDEC (per-warpgroup loads + named barrier) + QMAX arm	.worktrees/rl-attnfull	rl/attnfull	-	stopped	user stop: baseline ncu done (run 082002); fvgaf-ab1 A/B written, not run (plan-ab1.sh to write)	2026-10-30T16:15Z

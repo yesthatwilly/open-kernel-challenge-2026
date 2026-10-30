@@ -1,6 +1,14 @@
 # Rank ladder v3: LOG
 
-## Now (2026-10-30T16:05Z)
+## Now (2026-10-30T16:35Z)
+
+- **All in-flight work finished (16:35Z); campaign paused under the user stop.** Landed: AT8F attention 1.826 (scored
+  9e6d3d1f, master 524fd3b6; rank 513). H100 verdicts today: VT-D16S refuted, D16S-NCU diag, AT8F held -> landed,
+  AT8G null, T1 refuted, BF-VT refuted, BF2-DIAG diag, BF2R refuted, MO3 S2 refuted, MO3-FEED diag, D-moe/D-attn done,
+  attn-full baseline diag. Ready on the user's word: WGDEC A/B (attn full rows, pred +1.3..+2.6%), AT8H (WIP, does not
+  build), MO3 in-situ profile. hopper-queue STOP; no GPU work running.
+
+### Earlier (16:05Z)
 
 - **USER STOP 16:05Z:** "stop submitting new stuff. finish only whats in flight". No new trials, checks or submits.
   In flight to finish: AT8F scored confirm 9e6d3d1fa805495f (promote from 2f2da16a if it lands > 1.805); lane agents
