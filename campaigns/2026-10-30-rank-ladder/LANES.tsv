@@ -1,0 +1,7 @@
+lane	rung	worktree	branch	gpu	status	next_action	updated_utc
+moe	MO3-S2 (N32 dequant-once twin)	.worktrees/rl-mo3s2	rl/mo3s2	1	building	register gate, then nodejudge A/B >=3 reps	2026-10-30T14:50Z
+attn-sliding	VT-D16S (CTAs/request sweep at B=2..16)	.worktrees/rl-vt-d16s	rl/vt-d16s	3	building	validity check, then sweep ours/mid/theirs/past	2026-10-30T14:50Z
+attn-D	D-ATTN (side-by-side per-kernel driver)	~/git/.takemyjob-wt/rl-dattn	hopper/rl-dattn	4	building	first 4 rows, then all 12; name causes	2026-10-30T14:50Z
+bf16	BF-VT (m16/m32 weight-stream knobs)	.worktrees/rl-bfvt	rl/bfvt	5	building	knob map, then sweep	2026-10-30T14:50Z
+moe-D	rl-d-moe (nodejudge iso + profile)	-	-	queue 6/7	queued	harvest kernel diff (nj_profile.py diff ours pub)	2026-10-30T14:50Z
+decode-D	rl-d-decode (nodejudge iso + profile)	-	-	queue 6/7	queued	harvest kernel diff	2026-10-30T14:50Z
