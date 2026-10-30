@@ -2706,3 +2706,8 @@ with the operator's go-ahead.
 ## 2026-10-30 0007Z — **moe 2.035 LANDED with the use-after-free fix** (scored 575820c9 [2.005, 2.066])
 - The fixed bytes (986a2bad, master f2b510f5) are now moe's best run, so the final reruns rerun code without the [ea-enc] prepare UAF; no withdrawal needed. register-landing done (BEST.json 575820c9).
 - Decode XL arms held as a rider (review: T=1 has no XL arm, ~+0.3-0.6%, 6 KB size headroom). moe T=128 hybrid race being built (review: gate gon on fp32 tolerance, not bitwise; old [hybrid-moe] T=128 gate off; p ~0.25).
+
+## 2026-10-30 0020Z — pglue read (no prefill glue cut >= 1%); /home was 100% full -> 119 clean worktrees removed (6.3 GB free)
+- research/h100-pglue-1030.md (takemyjob hopper/pglue-1030 10c8180; GPU 4): prefill expert glue on the critical path turn_1 24.8 us (3.5%), turn_4 55.5 (2.8%), first_turn 273 (2.65%); ceiling 2.6% headline if free, ~0.7% at floors. norm_gather 4-rows/iter 0.93-1.03 (already at the HBM copy floor at T>=3012); remote-slot-skipping weighted sum is bit-exact but SGLang's kernel is already at that level (gate 3fb4e723); best structural: fold norm_gather into rega w13's epilogue (ceiling 0.93%).
+- **/home hit 100% (52 MB free)**: removed 119 clean git worktrees under .worktrees (plain `git worktree remove`, which refuses dirty trees; branches kept, so any can be recreated); skipped dirty pc-* trees, the running t128 hypothesis, eb-sp and expert-bandwidth. /home now 24G used / 6.3G free (79%). 11 worktrees remain.
+- moe T=128 hybrid race check 4c5032bc in flight (node: race ran when E5 was forced: mean 0.913, 10/12, worst 1.016; tolerance + control bitwise + copy check PASS).
