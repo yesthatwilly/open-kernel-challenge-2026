@@ -1,6 +1,6 @@
 # muse_decode_layer hypotheses
 
-Regenerated 2026-10-30T012202Z. Best: 1.7468x [1.7206,1.7730] job `9263781bc2a040e9` (check)
+Regenerated 2026-10-30T013320Z. Best: 1.7196x [1.6938,1.7454] job `beaed2ad8eb541bf` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -90,7 +90,7 @@ Regenerated 2026-10-30T012202Z. Best: 1.7468x [1.7206,1.7730] job `9263781bc2a04
 | 2026-10-29T190020Z | hothalf-a3-exactn-ring-wh | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6794 | [1.654,1.705] | 44f303647100481b | check |  | proceed | 0/4 |
 | 2026-10-29T202838Z | hothalf-wh5ds-moe-port | primary | moe hot half (wg_kernel w13/w2, dq_stage) at T=128/256 | done/neutral | neutral | 1.6968 | [1.671,1.722] | 35cc220cd79e4668 | check |  | proceed | 0/3 |
 | 2026-10-29T223938Z | engine-a-encodings-wh5ds-decode-stack | primary | decode expert block: Engine A dequant (ea4x/v4x/ea6) at T=1..32 and the cold half, plus the wh5ds hot half | done/gain | gain | 1.7197 | [1.694,1.746] | 824b60fac87c4ff4 | check | done | proceed | 0/4 |
-| 2026-10-30T000244Z | engine-a-xl-arms-t1-t256 | primary | decode expert block: Engine A dequant arms at T=1 and the T=256 cold half (+ all E classes) | done/gain | gain | 1.7468 | [1.721,1.773] | 9263781bc2a040e9 | check | merged | proceed | 0/3 |
+| 2026-10-30T000244Z | engine-a-xl-arms-t1-t256 | primary | decode expert block: Engine A dequant arms at T=1 and the T=256 cold half (+ all E classes) | done/gain | gain | 1.7468 | [1.721,1.773] | 9263781bc2a040e9 | check | done | proceed | 0/3 |
 
 ## Held
 
