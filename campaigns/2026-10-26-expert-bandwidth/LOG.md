@@ -1,6 +1,153 @@
 # Log: campaign 2026-10-26-expert-bandwidth
 
-The "## Now
+The "## Now" block is rewritten by every loop tick (read it first; `head -40 LOG.md`). Entries below it are
+append-only, newest last.
+- **NOW: 2026-10-29, phase A of the 3:1 rhythm (expert block).** updated: 2026-10-29T0450Z (date -u), session c24a6e21.
+  - **The user, ~04:45Z:** "commit the h100-cs report.  ready to go autonomous, those things you describe: all of em, and then
+    follow up with it per any of the known loops, e.g., 3to1 or any unfinished campaigns"; then "what h100 ideas are being
+    explored?  put out some agents to get those in use". Read as: /loop /3to1 resumes; H100 gpunode06 reopened (to 12:00Z at the
+    latest, H200 held); the GPU 1 orphan pids 2688846/2688840 stay the user's call.
+  - **Expert-block focus stands** (10-28 22:05Z): moe/decode only; attention, bf16 and prefill get no new tokens.
+  - **Boards 0441Z:** moe **1.950** (314/1016); decode **1.661** (370/889); prefill 1.501 (245/597); bf16 1.279 (473/1271);
+    attention 1.634 (510/974). Quota: moe 19 checks / 9 runs, the rest 20 / 10.
+  - **In flight (phase-A workflows, build -> audit -> fix, each returns a check-ready commit + attempt):**
+    - wf_1d6718ba-871 `v6deep-r0`: moe T=1 rung R0 (prints only), .worktrees/eb-v6deep from eb-v4x256c.
+    - wf_1de8ed7d-8d2 `v4x-routes`: moe route robustness (s alone in every class, pooled/hysteresis races), .worktrees/eb-v4x-routes.
+    - wf_633beb18-44a `v4xd-forkguard`: decode port of the guarded prio-0 fork stream, .worktrees/eb-v4xd-forkguard from eb-v4xd256b.
+  - **H100 agents (gpunode06):** T=1 lane (w2 prefetch before the PDL wait; R0 node pre-read) -> research/h100-t1-1029.md;
+    fork/route lane (cold-branch high priority; route-flip counts; decode guard A/B + sanitize) -> research/h100-fork-1029.md.
+  - **Pending the user:** gpunode06 close-out (runner stop, prev.py, nodejudge env clean) is deferred to the end of the new window;
+    the GPU 1 orphan kill.
+  - **Next:** dispatch each lane's check as it lands (scored run on any check that beats its board); port route robustness
+    to decode if it holds on moe; H100 Q1 results may mint a T=1 build.
+- **(10-27 blocks below are kept for the user's bullets.)**
+- **X5 RUNNING: the user's go at 2026-10-27T1623Z** (session 0605b7cc; ultracode on for the session). Verbatim:
+  "run campaigns/2026-10-26-expert-bandwidth/SINGLE-PASS.md. if you need to install cu130, you can do so only as the
+  'USER' unpriv user. otherwise, stay focused on this campaign specifically, on a loop such that this specific area
+  gets considerable attention with proving, h100/h200 testing, and all other things i can do when im out of check
+  runs. use checks and submissions as you see fit. maximize the value of the h100/h200 as much as you can"
+  - SINGLE-PASS §13 answered: (1) go, now; (2) cu130 installs allowed, only as the unprivileged USER user
+    (node-local); (3) the plan is linked from here.
+  - **Focus: X5 only, on a self-paced loop.** The 3:1 rhythm's phase B/C spending on the other problems is suspended
+    while X5 runs; checks and scored runs at discretion, X5 questions first.
+  - updated: 2026-10-27T1635Z (date -u)
+  - **Code:** `campaign/eb-sp` (worktree `.worktrees/eb-sp`) from 4c0f0253. Tooling: takemyjob 54aaa57 (hopper-probe
+    probe packages, `HP_BUNDLE`, `HP_ONLY`, ssh ControlMaster).
+  - **Hopper:** gpunode06 is IDLE+DRAIN with 0 jobs, but a DCGM diagnostic (`nvvs`, user nvidia-dcgm) has run on all 8
+    GPUs since ~1623Z, with root on pts/0 since 1622Z, so the guard refuses until it is clean. gpunode26 is busy
+    (MIXED+PLANNED). Sol has `cuda-13.0.1-gcc-12.1.0` (nvcc 13.0, no install needed); pypi and pytorch.org are reachable
+    from gpunode06.
+  - **Boards and quota:** unchanged since 1505Z (below).
+  - **Gate 0 done on gpunode06 (1823Z):** calibration passes (consumer-bound 37/37 within 5%, median 0.986 of the
+    judge). **(e) N=16 device-wide = 29.8 el/clk/SM: the "< 30" band, at its edge**, so X5 = S1a (hot list) + T<=8
+    fixed costs, with S1b open on K4/K6. RS wgmma runs at the tensor rate from N=64 (32/16/8 el/clk/SM at N=64/128/256).
+    Write-up: `research/kstep-schedule-2026-10-27.md`.
+  - **PIVOT (the user, ~2125Z): "ive put h100 submission on hold momentarily, priority pivot back to 3:1 schedule".**
+    - USER stopped all H100 work at 2122Z (peer session takemyjob-40: runner stopped, nodejudge env and
+      /tmp/USER-hopper removed). **No GPU runs until they say.**
+    - Stopped at 2127-2129Z because their next stages could GPU-validate: the H100 program workflow (E1 / E2 builders
+      mid-edit) and S1a (in its fix stage). Their uncommitted partial edits stay as they are:
+      - takemyjob nodejudge {nodejudge.py, shims.py, configs/decode.json, README};
+      - musespark .worktrees/eb-s1a {rewrite/lib/hotcold_moe.py, muse_moe_w4a16/submission.py}.
+    - **S1a's build** (eb-s1a c020f1e2 / bc87b3d3; takemyjob probes/es1a af083a7): 29/29 PASS on both toolchains,
+      sanitizers clean. **S/wg hot half at T=256 p10/p50/p90 x0.889/0.922/0.946, i.e. ~x1.08, under §5's x1.10
+      kill bar.** Two audits ran (results in workflow journal wf_b65a89ce-1f7); the fix was interrupted.
+    - Phase C (2125Z): checks left moe 11, bf16 13, attention 12, prefill 13, decode 0.
+  - **More H100 work (2115Z, the user: "design more use for the h100s ... especially when we are awaiting"):** queued
+    without new enablers:
+    - moe-k9 x2: T=1/8/16 replay time vs distinct local experts, 2000 reps (the S3 per-expert target);
+    - moe-bigt x2: T=128/256 time vs routing features (the worst draws S1a must beat);
+    - moe-san-{ea4, ea_w, wg, ea_combine}: memcheck limited to one kernel family each;
+    - FILLER at priority 90, repeat 10: moe-fuzz-odd (53 odd/prime bs) and moe-fuzz-skew (22 skewed bs), a fresh seed
+      per run, so idle GPUs keep proving correctness while workflows run.
+  - **Ladder + proving (2040Z):**
+    - Cold with more consumer WGs: (e) N=16 best 30.4 (S4), so cold stays on Engine A.
+    - Hot K4: N=256 at the tensor rate (7.92, go); N=128 12.64 (at target); N=64 best 18.2 (target 25.6 missed: per-unit
+      bookkeeping).
+    - K6 mixing: no go.
+    - moe board proven: 37/37 held-out tests; 12,000 checked replays with 0 faults.
+    - Write-up: research/kstep-schedule-2026-10-27.md §6-7. Ladder replicates are queued (8 jobs).
+  - **Decode race lottery (2010Z):** pin128 8e3b9874 passed at 1.5722 (not over the board; no scored run).
+    - The T=128 pin worked: (16,8) rows 333.8 / 475.8 us, the best of three runs.
+    - T=256 flipped to H-8 and lost ~20 us per (32,8) row.
+    - Across three judged runs, H-16 beats master at T=128 and H-8 at T=256 by ~20 us per row. The board's 1.5920 drew
+      H-16 at both.
+    - **Pin-both 5a33db71: passed, 1.5847** (-0.46% vs the board, inside the noise band). Both pins routed, and the rows
+      match the board's draw ((16,8) 339.6 / 489.9; (32,8) 448.9 / 709.6).
+    - **Plan:** the pins go into the X5 decode base (`campaign/eb-pin128`). Decode's first scored run after 00:00Z goes
+      out from these bytes, or from a later candidate carrying the pins.
+    - **For the user:** the final held-out rerun runs the board row's bytes. c1daf58b's races can draw H-8 / master
+      (~1-2% worse), so the deterministic pinned bytes should become the row. That needs a pinned scored run to beat
+      1.5920 (or a withdrawal, which is the user's call).
+  - **The user, ~1945Z (PRIMARY FOCUS NOW):** "brainstorm and queue up as much h100 work as you can do; i want these
+    findings in place as right now's primary focus ... much quicker and surgically applicable than the check process
+    ... use any number of checks where it is the better choice ... what matters is good rigorous methodology"; and
+    "submit a scored run if pin128 beats the board". Workflow **x5-h100-program**: 3 brainstorms + a judge (max),
+    enablers E1 arm overrides / E2 decode shim / E3 profiling (high, audited), then pre-registered experiments queued
+    with the ledger `research/h100-findings.md`. Two moe soak runs are queued (1000 reps, every replay checked);
+    gpunode06 GPU 7 is reserved for agents. At 1944Z the admin ran dcgmproftester (900 s) on all gpunode06 GPUs, so the
+    runner backed off.
+  - **The user, ~1940Z:** "dispatch any h100 uses. dispatch any checks you see fit."
+  - **1950Z:** the 4 node board runs agree: every moe race picked the same path, headlines 1.3893-1.3929 (0.26% spread),
+    so the node is a precise moe A/B instrument. Queued a held-out-shape correctness sweep (37 tests, bs 2..257 +
+    skewed). **Decode check 8e3b9874d56e4657 (pin128):** H-16 pinned at T=128 on the trim; it asks whether the judged
+    (16,8) rows follow H-16 (board 339/482 us with H vs trim 358/498 with master).
+  - **Node judge landed (1930Z; takemyjob fbe5a4a, bdbb9f7):** moe runs on an H100 judge-like (cold prepare 147.8 s vs
+    the judge's 163.8 s; tests and checks as the judge). **Decode is blocked:** its reference needs SGLang's judge-only
+    muse_spark_v12 modules. Use `moe-iso` (one process per submission) for A/B claims: in-process, the board's own
+    races pick differently per copy. **K9 answered:** the T=1 / T=8 bimodality is the routing draw (2 vs 3 distinct
+    local experts, ~10 us per extra expert on the judge = ~2.75 TB/s marginal), not noise. 4 board runs (race flip
+    rates) are queued.
+  - **S1a build started (1918Z, the user: "start the S1a hot kernel build now"):** workflow x5-s1a-hot-kernel
+    (design x2 + judge at max, build / 2 audits / fix at high) on `campaign/eb-s1a` from eb-sp 2d5938d7, moe first, with
+    a node test package. Kill rule: < x1.10 on the hot half after 2 judge checks.
+  - **Gate 0 confirmed on the judge (moe check 5a641040, 1910Z):** es16 streamed 27.5 el/clk/SM at 3.60 TB/s (x1.02
+    over Engine A); consumer el/clk equals the node's to the decimal; all 20 `.text` hashes equal the node's cu130
+    builds (the bridge holds). Verdict: S1a + T<=8. Not scored (timed path = board, 1.7199 vs 1.7187 is noise).
+  - **Decode trim (S4 prerequisite) done:** check ced20a71 passed at 1.5758 (board 1.5920). The routing deltas are race
+    flips (the T=128 W6-G race went to master: (16,8) rows +15..19 us). Decode is 924,048 B on `campaign/eb-sp-trim`
+    fba4a8fb. Not scored.
+  - **In flight (1845Z):** the stage-0 ladder build (x5-stage0-ladder; the user: "queue the ladder build too"); resumed workflows: moe Gate-0 judge carrier (integrate -> audit -> fix) and the node judge (gpunode06 GPU 7 only).
+  - **GPU queue (1835Z, the user: "set up the queue and runner now"):** takemyjob eb403fa `bin/hopper-queue`, running
+    detached (pid 1258023). Queued: H200 es-cal / es-kstep. Next: node-judge jobs once that harness lands. The stage-0
+    ladder build waits for the user's budget.
+  - **H200 (the user, ~1850Z):** expect gpunode26 unavailable near term; the user will push for H200 probe time. Do not
+    check it. The H200 jobs sit in takemyjob `queue/held/`. **Node-judge jobs go into the queue when that harness
+    lands** (the user's ask).
+  - **The user, ~1855Z:** "dispatch the gate-0 moe check when the carrier lands. dispatch any use of h100s when it is
+    possible".
+  - **Session limit:** the user's tokens ran out at ~1750Z (two agents died); the user said "please resume the
+    interrupted work" after the 1820Z reset. Keep agent use lean.
+- **Earlier today, state at 1505Z (kept for history):**
+- **Today (10-27), phase B** (updated 2026-10-27T1505Z):
+  - **Boards** (day start -> now; ranks at 1455Z):
+    - decode 1.4956 -> **1.5920** (327 / 794);
+    - moe 1.6851 -> **1.7187** (426 / 914);
+    - attention 1.5347 -> **1.6340** (417 / 868); the onepass scored run aa9fc860 drew 1.6183, not landed;
+    - bf16 1.2664 -> **1.2740** (388 / 1152);
+    - prefill 1.4677 -> **1.4897** (177 / 516).
+  - **Decode stack on master:** W6-B T>=128 diet + PERHEAD d1s + c320t bar + fast silu + W6-G T=128 confirm race
+    (promote-only).
+  - **Killed today:** W6-A glue fold, W6-C BN128, the decode fork (W6-E/F), trigger-first boundary, bf16 U12s / S5 /
+    qkv R=32, prefill rotation / fine-N (no scored transfer).
+  - **In flight:** nothing. **/loop /3to1 STOPPED by the user at 2026-10-27T1505Z** ("lets stop whatever is in flight"); no ticks until restarted by hand.
+  - **Phase C (18:00Z):** spend every check. Quota 1505Z: decode 3 / 0 scored; moe 12 / 8; attention 12 / 5;
+    bf16 13 / 8; prefill 13 / 8.
+  - **Structural-gap read (1455Z, for the user's question "tiny gains x50 or one massive change?"):** top-25 teams
+    used a median 10-17 scored runs (we used 21-37); several top-10 rows took 1 run; the decode board is a smooth
+    continuum (2.40 #1, 2.06 #50, 1.92 #100, 1.63 #300). Gains under ~1.2% are unreadable on one run, and our own
+    all-levers ceiling is ~2.0 against a 2.40 leader. Read: leaders made a few structural changes, chiefly the expert
+    block (53% of decode) done in one weight pass per expert at HBM rate, not stacked gates.
+  - **By ~23:00Z:** tomorrow's phase-A plan, headed by a **single-pass expert-block rewrite** (each expert's weights
+    read once per call, warp-specialized producer / consumer, activations staged once, >=3 CTAs or persistent),
+    with the gate-scale items behind it:
+    - a decode size trim (963-975 KB now);
+    - T=2..8 folds spread over CTAs (W6-A's last-arriver tail lost);
+    - s2b at v16s for decode;
+    - SKW full-line + b16;
+    - the T=128 hybrid's other H candidates.
+
+## Now
 
 - updated: 2026-10-30T0123Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
@@ -2589,4 +2736,3 @@ with the operator's go-ahead.
 - PATH: T=1 master (layer VETO > 1.0; no XL arm, ea6); T=8/16/32 E4XL; T=128 E5XL; T=256 master (iso E/m > 0.98 in one round). churn promoted it; master = checked bytes (sha256 0303080a); scored **beaed2ad** dispatched.
 - XL beat its estimate on both problems: ea-enc2 predicted +1-2% per row; it delivered moe +1.55% and decode +2.45% headline. Consume-only issue cuts transfer to the H200 better than the 0.5-0.8x L3/L4 rate.
 - H100 lanes opened (the window was idle since the XL builder finished): **t1xl** = XL loop trims on the T=1 FAST K1/K2 (GPU 1), **hhxl** = XL trims on the hot-half wg kernel (GPU 3). Each has a pre-registered rule (>=3% / >=4% judge-scaled consume-only) and builds a moe branch only if it qualifies.
-
