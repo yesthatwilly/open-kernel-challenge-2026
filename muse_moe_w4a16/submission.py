@@ -164,7 +164,9 @@ COMBO_TAG = "[combo]"
 COMBO_MAX_RATIO = 0.98
 COMBO_TIMING_DEADLINE_S = 270.0
 COMBO_DEADLINES_S = {"F1": 120.0, "F2": 150.0, "C1a": 160.0, "C1b": 170.0, "F2-select-diag": 200.0, "copy": 255.0}
-W13_ATOMIC_MAX_TOKENS = 1
+# Compliance (rules :107/:137): Marlin use_atomic_add reduces split-K partials with BF16 atomics; SGLang
+# (baseline :137-138) reduces in FP32 (use_atomic_add=False, use_fp32_reduce=True). 0 = never atomic.
+W13_ATOMIC_MAX_TOKENS = 0
 W13_POISON = 3.0e4
 W13_ATOMIC_TOL = 1.25e-2
 W13_FP32_TOL = 1.25e-2
@@ -3341,7 +3343,9 @@ def _prepare_main(weights, t_prepare, whj):
     align2_lines = []
     if (0, 32) in banks and banks[(0, 32)]["expert_map"] is not None:
         align2_lines = _align2_setup(state, device, 0, 32)
-        state["w2_mode"] = _w2_atomic_self_check(weights, state, device)
+        # Compliance: no _w2_atomic_self_check; w2_mode stays "master" (FP32 reduce, as SGLang).
+        print("[w2-atomic] PATH CHOSEN = master (compliance: BF16 atomic split-K reduce disabled; "
+              "use_atomic_add=False, use_fp32_reduce=True at every T)", flush=True)
     _wg_setup(weights, banks, state, device, t_prepare)
     torch.cuda.synchronize()
     t_master = time.perf_counter() - t_prepare
@@ -3475,7 +3479,8 @@ def _moe_marlin(x, topk_ids, topk_weights, bank, state, w2_mode="master", w13_mo
     return out, local_ids, cache2, y
 
 
-W2_ATOMIC_MAX_TOKENS = 32
+# Compliance: 0 = w2 Marlin never uses BF16 atomic add (SGLang FP32 reduce at every T).
+W2_ATOMIC_MAX_TOKENS = 0
 
 
 def _w2_atomic_self_check(weights, state, device):
@@ -4097,7 +4102,8 @@ def _combo_setup(weights, state, device, t_prepare):
     def reset_c1b():
         state["d32_post_norm"] = 0
 
-    run("F1", lambda: _combo_f1(weights, state, device, t_prepare), [master_line("F1", "decode_1 (T=1)")], reset_f1)
+    # Compliance: F1 (w13 Marlin BF16 atomic add at T == 1) removed; w13_mode stays "master".
+    chosen.append(f"{master_line('F1', 'decode_1 (T=1)')} (compliance: atomic reduce disabled)")
     run("F2", lambda: _combo_f2(weights, state, device, t_prepare),
         [master_line("F2", "B128"), master_line("F2", "B256")], reset_f2)
     run("C1a", lambda: _combo_c1a(weights, state, device, t_prepare), [master_line("C1a", "d32 (T 17..32)")],
