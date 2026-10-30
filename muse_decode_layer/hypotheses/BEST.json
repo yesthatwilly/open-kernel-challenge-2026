@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "9299f06d2d854864",
- "check_job": null,
+ "job": "44de510326bb4e02",
+ "check_job": "7f5e68e6fcfe402d",
  "mode": "submit",
- "speedup": 1.7241452012108647,
+ "speedup": 1.6710048262106134,
  "ci": [
-  1.6982830231927017,
-  1.7500073792290274
+  1.6459397538174543,
+  1.6960698986037726
  ],
- "score_us": 13119.718678052055,
- "commit": "5dfc6d96fefa1b4877807c8a32459e2a07893aa7",
- "submission_blob": "4c96d64c8209fb937a33ae908713971872845e9d",
- "slug": "landing-9299f06d",
- "master_slug": "landing-9299f06d",
- "master_job": "9299f06d2d854864",
+ "score_us": 13536.94474437678,
+ "commit": "eb78a8c0ed8fce43bd6922e91e6cbdf3bd0c2184",
+ "submission_blob": "eefd20f5adbc676d8d4a06036df980a7bfc8a682",
+ "slug": "ladder-dc0-router-fp32x-compliance",
+ "master_slug": "ladder-dc0-router-fp32x-compliance",
+ "master_job": "44de510326bb4e02",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T050243Z",
- "note": "registered by churn.py register-landing from okc status 9299f06d2d854864"
+ "updated_at": "2026-10-30T054001Z",
+ "note": "registered by churn.py register-landing from okc status 44de510326bb4e02"
 }
