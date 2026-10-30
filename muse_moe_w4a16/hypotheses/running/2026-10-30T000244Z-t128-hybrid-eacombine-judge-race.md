@@ -40,11 +40,20 @@ evidence: >
   board 2.0201 judged T=128 as plain E5 (702f1004 E5/m 0.955)
 user_requested: true
 review: proceed
-status: queued
+status: running
 review_at: 2026-10-30T000536Z
 review_companions: null
 review_best: 2.020119462295186
 review_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
+stage: claimed
+claimed_at: 2026-10-30T000536Z
+base_sha: f03b88bbe6e9b548215edbe8af217b4a5c7b20da
+base_blob: d80df5ecc71315466253dae86b28e4f6dfc41642
+branch: hyp/muse_moe_w4a16/t128-hybrid-eacombine-judge-race
+worktree: .worktrees/muse_moe_w4a16/t128-hybrid-eacombine-judge-race
+mode: null
+restack_of: null
+stale_base: null
 ---
 
 # t128-hybrid-eacombine-judge-race
