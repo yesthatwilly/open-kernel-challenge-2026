@@ -149,20 +149,16 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-29T2121Z (date -u); **phase C**; /loop /3to1 running; 10-30 phase-A plan written (2121Z entry)
-- **Operating policy: the 3:1 daily rhythm** (`campaigns/DAILY-RHYTHM.md`, `/3to1`).
-- **User steers in force:**
-  - 10-29 ~15:04Z "run all you want that youre able to": below-bar user-requested runs allowed.
-  - **H100 OPEN 10-29 18:04Z -> 10-30 ~14:00Z** (gpunode06; H200 held); ~18:29Z "prioritize [h100 tests] with tokens";
-    ~19:30Z "feel free to use like 5 or 6 lanes". GPUs 0/2 overheat at idle; GPU 7 runs refused by the user's policy
-    (also one GPU 3 run for the Engine A lane): **Engine A node measurement awaits the user's approval.**
-  - Usage limit hit ~20:36Z (reset 21:20Z): pace agents.
-- **Boards 10-29 2121Z:** prefill **1.572** (from 1.501), moe **1.975** (from 1.952), decode 1.690, bf16 1.279,
-  attention 1.634.
-- **In flight:** bf16 b12 uc1 build (check next); decode wh5ds build (check next); fa3ws wrap-up (GPU 4).
-- **Next:** dispatch both checks; scored runs on beats; window-end cleanup at ~14:00Z 10-30 (runner stop,
-  nodejudge + fa3ws/pfexp venvs clean, /tmp/USER-hopper removed).
-- **Quota ~2120Z:** prefill 14 checks; moe 10; decode 17; bf16 19; attention 19.
+- updated: 2026-10-30T0001Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
+- **Boards 10-30 0001Z:** moe **2.020** (339), decode **1.705** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599). Quota: 20 checks each; scored 10 (moe 9).
+- **In flight:** moe scored 575820c9 (the use-after-free-fixed bytes, check 582bb334 2.0469; master already holds them, f2b510f5); EPF fused T=1 lane (GPU 6).
+- **Phase A, as targeted lanes (not one ultracode workflow: owner wants parallel expert-block lanes; the 5-hour limit hit once):**
+  1. Engine A XL arms (ea-enc2 shelf) into decode (T=256 cold iso .977-.983 and T=1 layer .997-1.007 sit on the bars) and moe -> checks.
+  2. moe T=128 hybrid + ea_combine tail (node mean 0.934, 11/12 draws) as a judge check raced on the judge's own routing mix.
+  3. EPF T=1 (lane running) -> check if >= 5%.
+  4. Riders waiting for a carrier: prefill S2 (2-CTA low), RS2 at high (~4%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
+- **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
 
 ## 2026-10-26T15:35Z: campaign opened
 
@@ -2697,3 +2693,8 @@ with the operator's go-ahead.
 ## 2026-10-29 2358Z — prefill 2-CTA check 074a0e02: 1.5678 (flat vs 1.5721); S2 routed at low -> [shelf] rider
 - S2 vs A5b at low: .932 pop warm, .931 cold, .885 random, guard (1348 routes) .968; vs master .743-.772; probe 80 regs / 0 spill / no C75xx; high/ft kept A5b. ~+1% headline expected: below one run's noise. Rides in the next prefill candidate.
 - In flight: moe UAF-fix check 582bb334; EPF lane (GPU 6). Day start (phase A) next tick.
+
+## 2026-10-30 0001Z — day start (phase A); moe UAF fix check 582bb334 2.0469, landed on master, scored 575820c9
+- Boards: moe 2.020, decode 1.705, prefill 1.572, bf16 1.284, attention 1.634; quota reset (20 checks each).
+- moe eae-cold-iso-keepalive-fix check 582bb334: 2.0469 [2.016, 2.080] (+1.33% over 2.0201; churn filed within-ci and did not promote). The fix is correctness-only, so the fixed bytes (986a2bad) were landed on master by hand (f2b510f5) and sent as scored run **575820c9** (attempt 2026-10-30T000114Z, rules 9/9) so the board's top entry is the fixed code before the final reruns.
+- Phase A plan in the Now block (targeted lanes; reasons there).
