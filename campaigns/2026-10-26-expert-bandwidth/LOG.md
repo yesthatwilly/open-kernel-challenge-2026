@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0211Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0223Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0133Z:** moe **2.075** (305), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** H100 lanes **mstack** (GPU 1: moe rider stack on campaign/t1xl -> a check; m256 null 0154Z), **xlres** (GPU 3: consume2 XL trim + barrier-free run-end exchange, campaign/xlres; xlncu null 0211Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
+- **In flight:** mstack audit (Opus) -> moe check; GPU 1 idle; **xlres** (GPU 3: consume2 XL trim + barrier-free run-end exchange, campaign/xlres; xlncu null 0211Z), **t256xl** (GPU 4: decode T=256 split re-sweep with an XL cold half, plus why its race fails 0.98 in one round).
 - **Next:** decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2765,3 +2765,9 @@ with the operator's go-ahead.
 
 ## 2026-10-30 0221Z — 5-hour usage limit hit ~0214Z; reset 0220Z, three lanes resumed
 - t256xl (GPU 4), mstack (GPU 1) and xlres (GPU 3, had only started reading) died on HTTP 429 and were resumed via SendMessage with their saved transcripts. Each was told to check its own hopper-probe runs before relaunching.
+
+## 2026-10-30 0223Z — mstack built: exact, nodejudge 5/5, sized +0.54-0.84% headline; audit before a moe check
+- campaign/mstack 5c7b1c65 on t1xl d5a52fbc, 981,562 B; okc_lint gives warnings only. It replaces Triton `_hm_align` with a CUDA `ms_align` (bit-identical on 33 cases plus a host-reference check in prepare; node 9.66 -> 3.33 us), and SGLang's post-norm on the hybrid path with `ea_combine` (same formula, BF16 in/out, fp32 math, lower error vs fp32 than SGLang). Both are raced in a new [mstack] prepare phase that only switches on a piece that wins every round.
+- Align runs only at T=256: T=1..128 Engine A builds its expert map in-kernel, so m256's "every row" guess was wrong. hhxl was left out (it lives in a separate build).
+- T=256 node race: al 0.979, cp 0.985 (overstated: nodejudge's post-norm stand-in is slower than the judge's), al+cp 0.963. Sized: al +0.42%, cp +0.06-0.19%, t1xl 0-0.3%. research/h100-mstack-1030.md (1ae8bb28); 236k tokens.
+- **Plan:** an Opus audit of master..mstack (rules, ms_align edge cases, graph lifetimes, toolchain fallback) runs first. Then a moe check: it can only land if it reads >= 1.24% (likely not alone), but it shows whether al/cp/t1xl route on the judge. xlres riders get added to a later carrier when ready.
