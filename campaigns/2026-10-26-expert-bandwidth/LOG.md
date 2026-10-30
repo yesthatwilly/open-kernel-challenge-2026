@@ -2746,3 +2746,8 @@ with the operator's go-ahead.
 - Only the loop trim (L) ports to wh5ds; ldmatrix.x4 has no counterpart because wgmma reads B by descriptor. ptxas spends L's savings on descriptor moves, so the per-stage instruction count is flat (191 -> 190-193). Exact in 48/48.
 - Consume-only cox/co5: decode T=256 0.974-0.978 (hot share 50%), decode T=128 0.956-0.990 (34%), moe T=256 0.981. Normal 0.990-1.012. -> [shelf] moe CLAIMS (an N48-96-gated rider at most ~0.2% headline). research/h100-hhxl-1030.md (fb6d16fc); 274k tokens.
 - GPU 3 goes to **xlncu**, the ee2-ncu question left open in ea-enc2: the XL consume kernels' stall mix, to find the next issue cut in the cold path.
+
+## 2026-10-30 0144Z — t1xl qualifies on its rule but sizes as a rider (~+0.2-0.3% headline); moe branch campaign/t1xl d5a52fbc held
+- ea6's FAST consumer already had ldmatrix.x4, so the port is the trimmed record loop only. Fc consume-only 1.173-1.194 -> 1.114-1.119 us/record/SM (-4.9..-6.3%); bit-exact in 4/4 runs; regs 71 -> 72.
+- The fixed per-launch cost does not move: at the judge's n mix the cut is -2.3..-2.8% consume-only, and n1 is flat. To route, an arm must also beat the 0.98 worst-round bar, which E4 missed at T=1 (0.990). -> [shelf] moe CLAIMS: ride on the next moe carrier. nodejudge t1xl-val passed 5/5 (prepare 128 s); moe 964,802 B. research/h100-t1xl-1030.md (61f2716d); 264k tokens.
+- triage 0144Z: moe's biggest row is verify 32 (bs 256): 269.7 us vs SoL 108.9 (x2.5), x1.113 headline at the practical floor. It is followed by decode 1 (27.4 vs 11.4) and verify 16 (221 vs 101). GPU 1 goes to **m256**: the moe T=256 per-kernel anatomy against its floor, then a node test of the top structural lever.
