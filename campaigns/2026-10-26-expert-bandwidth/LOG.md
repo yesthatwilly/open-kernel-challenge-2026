@@ -149,10 +149,10 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0228Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- updated: 2026-10-30T0232Z (date -u); **phase A (10-30)**; /loop /3to1 running
 - **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0133Z:** moe **2.075** (305), decode **1.7196** (403), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
-- **In flight:** decode check **e9c076e5** (t256xl cold-iso gate); mstack audit (Opus) -> moe check; GPUs 1 and 4 idle; **xlres** (GPU 3: consume2 XL trim + barrier-free run-end exchange, campaign/xlres; xlncu null 0211Z).
+- **In flight:** decode check **e9c076e5** (t256xl cold-iso gate); moe check **3bf503c3** (mstack: t1xl + ms_align + ea_combine); GPUs 1 and 4 idle; **xlres** (GPU 3: consume2 XL trim + barrier-free run-end exchange, campaign/xlres; xlncu null 0211Z).
 - **Next:** decode T=256 still routes master (one round > 0.98), so a T=256 decode diag or retune comes next if the scored PATH agrees; port t1xl/hhxl to decode if they qualify on moe.
 - **Riders waiting for a carrier:** moe t1xl (campaign/t1xl d5a52fbc, ~+0.2-0.3%), prefill S2 (~+1%), T=256 ea_combine post-norm (x1.016, not bitwise), attention gate kernel (+ fold + dense_q stack).
 - **Window end:** one-shot reminder at 14:03Z (stop runner, clean nodejudge + venvs, remove /tmp/USER-hopper).
@@ -2776,3 +2776,7 @@ with the operator's go-ahead.
 - Node (GPU 4, consume-only, 3 replicates × 6 draws): XL at H-16 cuts the T=256 block 3.6-4.3%, every round ≤ 0.974, bitwise equal. No static split beats H-16 in every replicate. Per-round sd is ~0.0033 on decode vs ~0.0035 on moe. Decode times serial hot + cold, with cold ~47% of it, so it reads 0.976-0.978 and P(one of 10 rounds > 0.98) ≈ 0.86. moe forks the hot half and reads 0.965-0.969.
 - campaign/t256xl ebf0299f: the T=256 iso race times the cold half alone (as moe does); the layer veto is unchanged; the dead v5 build try is removed (999,631 B). nodejudge 13/13, prepare 121 s. Sized +0.2-0.4% headline. research/h100-t256xl-1030.md (7de22e6f); 346k tokens.
 - **Decode check e9c076e5** dispatched (attempt file on the branch, fd34667a): it asks whether T=256 routes XL on the judge and can land only by clearing the margin.
+
+## 2026-10-30 0232Z — mstack audit: go (no must-fix); moe check 3bf503c3 dispatched
+- Opus audit of master..mstack: rules clean (al/cp keyed on T only, nothing input-derived cached, no host sync in kernel_fn); ms_align traced line by line against the Triton kernel, edge cases all match, no races; no graph-lifetime UAF; fallbacks hold; prepare est. ~168 s on the judge. The low items were not applied (L1 arch env is already set by `_eae_start`, and a global write could race other threads' save/restore; L2 worst case ~280 s < 300; L3 optional). 169k tokens.
+- **moe check 3bf503c3** (campaign/mstack 5c7b1c65, attempt on the branch at 827fe3c2): t1xl + al + cp, sized +0.54-0.84%. Its main value is showing which riders route on the judge.
