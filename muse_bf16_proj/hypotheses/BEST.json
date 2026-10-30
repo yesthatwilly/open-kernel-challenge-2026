@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "83cf0c487f4a45bf",
- "check_job": "8c915678ba4f4b1b",
+ "job": "1cf07d64a107433e",
+ "check_job": "894a19e27e4c41fc",
  "mode": "submit",
- "speedup": 1.3104646445859827,
+ "speedup": 1.3181210926290736,
  "ci": [
-  1.2908076749171928,
-  1.3301216142547723
+  1.2983492762396376,
+  1.3378929090185097
  ],
- "score_us": 3686.326082857583,
- "commit": "3e577458e03a00e4981c544b7055cbca2fdf4808",
- "submission_blob": "18150a308974cc179ce4a84aa2bf03cde2e7364b",
- "slug": "ladder-bf1-sk2-fragment-regstream-m8-32",
- "master_slug": "ladder-bf1-sk2-fragment-regstream-m8-32",
- "master_job": "83cf0c487f4a45bf",
+ "score_us": 3664.913661585274,
+ "commit": "8f6c8d9246cdc04c7235f16eb973a2312fdc74d9",
+ "submission_blob": "13eede5f7bf46208b35a1722866f848b506c8b49",
+ "slug": "ladder-bf5-cutlass-pingpong-pooler-m256",
+ "master_slug": "ladder-bf5-cutlass-pingpong-pooler-m256",
+ "master_job": "1cf07d64a107433e",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T051140Z",
- "note": "registered by churn.py register-landing from okc status 83cf0c487f4a45bf"
+ "updated_at": "2026-10-30T095127Z",
+ "note": "registered by churn.py register-landing from okc status 1cf07d64a107433e"
 }
