@@ -1746,151 +1746,9 @@ def _block_size_m(num_tokens):
         if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
             break
     return min(block_size_m, MARLIN_BLOCK_SIZE_M_CAP)
-ALIGN_PAR_MIN_TOKENS = 33
 ALIGN_PAR_CHUNK = 512
 ALIGN_PAR_WARPS = 8
 ALIGN_PAR_BLK = 64
-ALIGN_PAR_TAG = "[align-parallel-large-t]"
-@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
-def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
-                           local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
-                           PAD_BLOCK: tl.constexpr, BLK: tl.constexpr, BSM: tl.constexpr,
-                           NUM_E: tl.constexpr):
-    pid = tl.program_id(0)
-    offs0 = tl.arange(0, CHUNK)
-    experts = tl.arange(0, NUM_E)
-
-    counts = tl.zeros([NUM_E], dtype=tl.int32)
-    for c in range(0, n, CHUNK):
-        offs = c + offs0
-        mask = offs < n
-        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-        local = ids - local_start
-        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
-        counts += tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
-    padded = (counts + BSM - 1) // BSM * BSM
-    seg_end = tl.cumsum(padded, axis=0)
-    seg_start = seg_end - padded
-    total = tl.sum(padded, axis=0)
-
-    if pid < local_count:
-        sel = experts == pid
-        my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
-        my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
-        my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
-        base = my_start
-        for c in range(0, n, CHUNK):
-            offs = c + offs0
-            mask = offs < n
-            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-            local = ids - local_start
-            match = (mask & (local == pid)).to(tl.int32)
-            rank = tl.cumsum(match, axis=0) - 1
-            tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
-            base += tl.sum(match, axis=0)
-        j = tl.arange(0, PAD_BLOCK)
-        tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
-                 mask=j < my_padded - my_count)
-        b0 = my_start // BSM
-        nb = my_padded // BSM
-        kb0 = tl.arange(0, BLK)
-        for k in range(0, nb, BLK):
-            kb = k + kb0
-            tl.store(block_experts_ptr + b0 + kb, tl.zeros([BLK], dtype=tl.int32) + pid, mask=kb < nb)
-    else:
-        for c in range(0, n, CHUNK):
-            offs = c + offs0
-            mask = offs < n
-            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-            local = ids - local_start
-            local = tl.where((local >= 0) & (local < local_count), local, -1)
-            tl.store(local_ids_ptr + offs, local, mask=mask)
-        for s in range(0, cap, CHUNK):
-            slots = s + offs0
-            tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
-                     mask=(slots >= total) & (slots < cap))
-        used_blocks = total // BSM
-        kb0 = tl.arange(0, BLK)
-        for k in range(0, n_blocks, BLK):
-            kb = k + kb0
-            tl.store(block_experts_ptr + kb, tl.zeros([BLK], dtype=tl.int32) - 1,
-                     mask=(kb >= used_blocks) & (kb < n_blocks))
-        tl.store(n_padded_ptr, total)
-def _align_parallel(topk_ids, local_start, local_count, block_size_m):
-    topk_ids = topk_ids.contiguous()
-    device = topk_ids.device
-    n = topk_ids.numel()
-    cap = n + local_count * (block_size_m - 1)
-    n_blocks = triton.cdiv(cap, block_size_m)
-    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
-    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
-    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
-    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
-    _align_parallel_kernel[(local_count + 1,)](
-        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
-        n_blocks, CHUNK=ALIGN_PAR_CHUNK, PAD_BLOCK=triton.next_power_of_2(block_size_m),
-        BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
-        num_warps=ALIGN_PAR_WARPS)
-    return local_ids, (sorted_ids, block_experts, n_padded)
-def _align_par_ref_view(sorted_ids, block_experts, n_padded, n, bsm):
-    sorted_ids = sorted_ids.cpu()
-    block_experts = block_experts.cpu()
-    used = min(int(n_padded.cpu()[0]) // bsm, block_experts.numel())
-    out = {}
-    for e in range(LOCAL_EXPERTS):
-        blocks = (block_experts[:used] == e).nonzero().flatten().tolist()
-        routes = []
-        for b in blocks:
-            seg = sorted_ids[b * bsm:(b + 1) * bsm]
-            routes += seg[seg < n].tolist()
-        out[e] = (sorted(routes), len(blocks))
-    return out
-def _align_par_setup(state, device):
-    state["align_par_ok"] = False
-    cases = mismatches = 0
-    try:
-        bsms = sorted({_block_size_m(t) for t in range(ALIGN_PAR_MIN_TOKENS, 1025)} | {8, 16})
-        for bsm in bsms:
-            for dt in (torch.int32, torch.int64):
-                _align_parallel(torch.zeros((ALIGN_PAR_MIN_TOKENS, TOP_K), dtype=dt, device=device),
-                                0, LOCAL_EXPERTS, bsm)
-        torch.cuda.synchronize()
-        gen = torch.Generator().manual_seed(20261024)
-        emap = state["bank"]["expert_map"]
-        for tokens in (33, 40, 57, 128, 256, 257):
-            for kind in ("random", "skewed", "remote_heavy"):
-                rows = []
-                for _ in range(tokens):
-                    if kind == "random":
-                        rows.append(torch.randperm(N_EXPERTS, generator=gen)[:TOP_K].tolist())
-                    elif kind == "skewed":
-                        hot = [0, 31, 5, 17]
-                        rest = [e for e in torch.randperm(N_EXPERTS, generator=gen).tolist() if e not in hot]
-                        rows.append(hot + rest[:TOP_K - 4])
-                    else:
-                        rest = torch.randperm(N_EXPERTS - LOCAL_EXPERTS, generator=gen)[:TOP_K - 1] + LOCAL_EXPERTS
-                        rows.append([int(torch.randint(0, LOCAL_EXPERTS, (1,), generator=gen))] + rest.tolist())
-                ids = torch.tensor(rows, dtype=torch.int32, device=device)
-                bsm = _block_size_m(tokens)
-                ref_local = emap[ids.long()].contiguous()
-                r_sorted, r_blocks, r_pad = moe_align_block_size(ref_local, bsm, N_EXPERTS)
-                n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(ids, 0, LOCAL_EXPERTS, bsm)
-                cases += 1
-                bad = not torch.equal(n_local, ref_local)
-                if not bad:
-                    bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), bsm)
-                           != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), bsm))
-                if bad:
-                    mismatches += 1
-                    print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={bsm}", flush=True)
-        torch.cuda.synchronize()
-        state["align_par_ok"] = mismatches == 0
-    except Exception as e:
-        print(f"{ALIGN_PAR_TAG} setup raised {e!r}", flush=True)
-        mismatches = max(mismatches, 1)
-        state["align_par_ok"] = False
-    print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}",
-          flush=True)
 def _dl_forward(ffn_input, local_start, dl, pdl=None, r_t=False, align=True, b12p=None, rx=None, fs=None):
     ext = _DL_EXT
     tokens = ffn_input.shape[0]
@@ -2524,429 +2382,6 @@ def _s3_paired_norm_gate(out, qkv, cfg):
         num_warps=1,
     )
     return o
-_SPLITKV_CHUNK = 1024
-_SPLITKV_CPP = r"""
-#include <torch/extension.h>
-void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
-                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
-                  double score_scale, int64_t max_chunks, int64_t grid);
-void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps);
-"""
-_SPLITKV_CUDA = r"""
-#include <torch/extension.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAException.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
-#include <cstdint>
-
-namespace {
-
-constexpr int D = 64;              // head dim
-constexpr int HQ = 16;             // query heads
-constexpr int HKV = 2;             // kv heads
-constexpr int G = HQ / HKV;        // queries per kv head (8)
-constexpr int ROW = HKV * D;       // bytes per cache row (page 1: both kv heads, 128)
-constexpr int CHUNK = 1024;        // tokens per work item
-constexpr int TILE = 64;           // tokens per pipeline tile
-constexpr int TILES = CHUNK / TILE;
-constexpr int STAGES = 4;
-constexpr int THREADS = 256;
-constexpr int WARPS = THREADS / 32;
-constexpr int MAXB = 64;
-constexpr int STAGE_BYTES = 2 * TILE * ROW;                  // K tile + V tile = 16 KB
-constexpr int RING_OFF = 0;
-constexpr int IDX_OFF = RING_OFF + STAGES * STAGE_BYTES;     // int32 [2][CHUNK]
-constexpr int Q_OFF = IDX_OFF + 2 * CHUNK * 4;               // e4m3 [2][HQ][D]
-constexpr int ACC_OFF = Q_OFF + 2 * HQ * D;                  // f32 [WARPS][G][D]
-constexpr int ML_OFF = ACC_OFF + WARPS * G * D * 4;          // f32 [WARPS][G][2]
-constexpr int SEQ_OFF = ML_OFF + WARPS * G * 2 * 4;          // int32 [MAXB]
-constexpr int PRE_OFF = SEQ_OFF + MAXB * 4;                  // int32 [MAXB + 1]
-constexpr int SMEM_A = PRE_OFF + (MAXB + 4) * 4;
-
-__device__ __forceinline__ uint32_t smem_u32(const void* p) {
-  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
-}
-__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int src_bytes) {
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
-}
-__device__ __forceinline__ void cp_async4(uint32_t dst, const void* src, int src_bytes) {
-  asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" :: "r"(dst), "l"(src), "r"(src_bytes) : "memory");
-}
-__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
-template <int N>
-__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
-
-// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
-__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
-  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
-      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
-      : "=r"(lo), "=r"(hi) : "r"(w));
-}
-__device__ __forceinline__ uint32_t pack_f16x2(float lo, float hi) {
-  __half2 h = __floats2half2_rn(lo, hi);  // .x (low half) = lo
-  return *reinterpret_cast<uint32_t*>(&h);
-}
-__device__ __forceinline__ float ex2(float x) {
-  float y;
-  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
-  return y;
-}
-// D = A B + D, m16n8k16, A row-major f16 (4 regs), B col-major f16 (2 regs), fp32 accumulate.
-__device__ __forceinline__ void mma16816(float (&c)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
-                                         uint32_t b0, uint32_t b1) {
-  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
-      : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
-      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
-}
-
-__global__ void __launch_bounds__(THREADS, 2)
-splitkv_attn_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D]
-                    const uint8_t* __restrict__ kc,         // e4m3 [rows, ROW]
-                    const uint8_t* __restrict__ vc,         // e4m3 [rows, ROW]
-                    const int* __restrict__ page_table, int64_t pt_stride,
-                    const int* __restrict__ seqlens, int B,
-                    const float* __restrict__ k_scale, float score_scale,
-                    float* __restrict__ ws_acc,             // f32 [B * max_chunks, HQ, D]
-                    float* __restrict__ ws_ml,              // f32 [B * max_chunks, 2, HQ]
-                    int max_chunks) {
-  extern __shared__ __align__(128) uint8_t smem[];
-  uint8_t* ring = smem + RING_OFF;
-  int* idx_s = reinterpret_cast<int*>(smem + IDX_OFF);
-  uint8_t* q_s = smem + Q_OFF;
-  float* acc_s = reinterpret_cast<float*>(smem + ACC_OFF);
-  float* ml_s = reinterpret_cast<float*>(smem + ML_OFF);
-  int* seq_s = reinterpret_cast<int*>(smem + SEQ_OFF);
-  int* pre_s = reinterpret_cast<int*>(smem + PRE_OFF);
-  const float NEG_INF = __int_as_float(0xff800000u);
-
-  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const int bx = blockIdx.x, gx = gridDim.x;
-  if (tid < B) seq_s[tid] = seqlens[tid];
-  __syncthreads();
-  if (tid == 0) {
-    int run = 0;
-    pre_s[0] = 0;
-    for (int b = 0; b < B; ++b) {
-      run += (seq_s[b] + CHUNK - 1) / CHUNK;
-      pre_s[b + 1] = run;
-    }
-  }
-  __syncthreads();
-  const int total = pre_s[B];
-  if (bx >= total) return;  // uniform over the CTA
-  const int nk = (total - bx + gx - 1) / gx;  // items of this CTA
-  const int N = nk * TILES;                   // tiles of this CTA, one flat pipeline
-  const float scale = score_scale * __ldg(k_scale);  // sm_scale * qk_scale_factor * log2(e) * k_scale
-
-  // Item k of this CTA -> (request, chunk, cache length).
-  auto item_of = [&](int k, int& b, int& chunk, int& seq) {
-    const int i = bx + k * gx;
-    int lo = 0;
-    while (lo + 1 < B && pre_s[lo + 1] <= i) ++lo;
-    b = lo;
-    chunk = i - pre_s[lo];
-    seq = seq_s[lo];
-  };
-  // Page indices and query of item k into buffer k & 1 (positions past the length zero-filled).
-  auto issue_meta = [&](int k) {
-    int b, chunk, seq;
-    item_of(k, b, chunk, seq);
-    const int buf = k & 1;
-    const int* prow = page_table + (int64_t)b * pt_stride;
-#pragma unroll
-    for (int j = 0; j < CHUNK / THREADS; ++j) {
-      const int e = tid + j * THREADS;
-      const int pos = chunk * CHUNK + e;
-      const bool ok = pos < seq;
-      cp_async4(smem_u32(idx_s + buf * CHUNK + e), ok ? prow + pos : prow, ok ? 4 : 0);
-    }
-    if (tid < HQ * D / 16)
-      cp_async16(smem_u32(q_s + buf * HQ * D + tid * 16), q + (int64_t)b * HQ * D + tid * 16, 16);
-  };
-  // Tile nn of the flat sequence into ring stage nn % STAGES: thread -> token tid / 4, 16-byte
-  // chunks 2 * (tid % 4) + {0, 1} of its K row and its V row, chunk c stored at c ^ (token % 8).
-  int ik = -1, ib = 0, ichunk = 0, iseq = 0;
-  auto issue_tile = [&](int nn) {
-    const int k = nn / TILES, t = nn % TILES;
-    if (k != ik) { ik = k; item_of(k, ib, ichunk, iseq); }
-    uint8_t* st = ring + (nn % STAGES) * STAGE_BYTES;
-    const int tt = tid >> 2;
-    const int e = t * TILE + tt;
-    const bool ok = ichunk * CHUNK + e < iseq;
-    const int64_t row = ok ? (int64_t)idx_s[(k & 1) * CHUNK + e] : 0;
-    const uint8_t* ks = kc + row * ROW;
-    const uint8_t* vs = vc + row * ROW;
-#pragma unroll
-    for (int j = 0; j < 2; ++j) {
-      const int c = (tid & 3) * 2 + j;
-      const int dst = tt * ROW + ((c ^ (tt & 7)) << 4);
-      cp_async16(smem_u32(st + dst), ks + c * 16, ok ? 16 : 0);
-      cp_async16(smem_u32(st + TILE * ROW + dst), vs + c * 16, ok ? 16 : 0);
-    }
-  };
-
-  // Prologue: item 0's meta (waited), then tiles 0 .. STAGES-2; item 1's meta rides tile 0's group.
-  issue_meta(0);
-  cp_commit();
-  cp_wait<0>();
-  __syncthreads();
-#pragma unroll
-  for (int j = 0; j < STAGES - 1; ++j) {
-    if (j < N) {
-      issue_tile(j);
-      if (j % TILES == 0 && j / TILES + 1 < nk) issue_meta(j / TILES + 1);
-    }
-    cp_commit();
-  }
-
-  const int g = warp & 1;             // kv head
-  const int slice = (warp >> 1) * 16; // token slice of each tile
-  const int quad = lane >> 2, qi = lane & 3;
-  uint32_t qa[4][2];
-  float m_i = NEG_INF, l_i = 0.f;
-  float acc[8][4];
-  int cb = 0, cchunk = 0, cseq = 0;
-
-  for (int n = 0; n < N; ++n) {
-    cp_wait<STAGES - 2>();  // tile n (and everything issued before it) has landed
-    __syncthreads();        // visible to all; every warp is done with tile n - 1's stage
-    {
-      const int nn = n + STAGES - 1;
-      if (nn < N) {
-        issue_tile(nn);
-        if (nn % TILES == 0 && nn / TILES + 1 < nk) issue_meta(nn / TILES + 1);
-      }
-      cp_commit();  // always, so the group count stays uniform
-    }
-    const int k = n / TILES, t = n % TILES;
-    if (t == 0) {
-      item_of(k, cb, cchunk, cseq);
-      // A operand for kstep s: row quad = query g * G + quad; k index 2 * qi + {0, 1} holds dims
-      // s * 16 + 4 * qi + {0, 1}, k index 8 + 2 * qi + {0, 1} holds dims s * 16 + 4 * qi + {2, 3}
-      // (K uses the same permutation, so the dot product is unchanged).
-      const uint8_t* qrow = q_s + (k & 1) * HQ * D + (g * G + quad) * D + qi * 4;
-#pragma unroll
-      for (int s = 0; s < 4; ++s)
-        e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
-      m_i = NEG_INF;
-      l_i = 0.f;
-#pragma unroll
-      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
-    }
-    const uint8_t* Ks = ring + (n % STAGES) * STAGE_BYTES;
-    const uint8_t* Vs = Ks + TILE * ROW;
-
-    // S = Q K^T over the warp's 16 tokens: n-block nb holds tokens slice + nb * 8 + (0..7).
-    float s[2][4];
-#pragma unroll
-    for (int nb = 0; nb < 2; ++nb) {
-      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
-      const int tt = slice + nb * 8 + quad;
-      const uint8_t* kr = Ks + tt * ROW + qi * 4;
-#pragma unroll
-      for (int ks = 0; ks < 4; ++ks) {
-        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
-        uint32_t b0, b1;
-        e4m3x4_to_f16x2x2(w, b0, b1);
-        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
-      }
-    }
-    // Row quad's scores at tokens slice + 2 * qi + {0, 1} (nb 0) and + 8 (nb 1).
-    const int pos0 = cchunk * CHUNK + t * TILE + slice + qi * 2;
-    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
-    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
-    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
-    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
-    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
-    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
-    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
-    const float m_new = fmaxf(m_i, mx);
-    const float m_use = m_new == NEG_INF ? 0.f : m_new;
-    const float alpha = ex2(m_i - m_use);
-    x0 = ex2(x0 - m_use);
-    x1 = ex2(x1 - m_use);
-    x2 = ex2(x2 - m_use);
-    x3 = ex2(x3 - m_use);
-    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);  // this lane's columns; quad-reduced at item end
-    m_i = m_new;
-#pragma unroll
-    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
-    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
-
-    // O += P V. B operand of dim-block nb: k = token slice + 2 * qi + {0, 1} (reg 0) and + 8
-    // (reg 1), column quad = dim quad * 8 + nb. Each lane reads 8 contiguous bytes per token.
-    const int tv = slice + qi * 2;
-    const int vlc = g * 4 + (quad >> 1);
-    const int voff = (quad & 1) * 8;
-    const uint2 v0 = *reinterpret_cast<const uint2*>(Vs + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
-    const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
-    const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
-    const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
-#pragma unroll
-    for (int hw = 0; hw < 2; ++hw) {
-      const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
-      const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
-      // Interleave the two tokens' bytes: byte 2j = token a dim j, byte 2j + 1 = token b dim j.
-      uint32_t r0[4], r1[4];
-      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
-      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
-      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
-      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
-#pragma unroll
-      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
-    }
-
-    if (t == TILES - 1) {
-      // Item end: merge the four warps of each kv head, store the item's partial.
-      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
-      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
-      const int rw = warp * G + quad;
-      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
-      float* ar = acc_s + rw * D;
-#pragma unroll
-      for (int nb = 0; nb < 8; ++nb) {
-        ar[(qi * 2) * 8 + nb] = acc[nb][0];
-        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
-      }
-      __syncthreads();
-      const int h = tid >> 4, d0 = (tid & 15) * 4;
-      const int hg = h / G, r = h % G;
-      float mw[4];
-      float M = NEG_INF;
-#pragma unroll
-      for (int j = 0; j < 4; ++j) { mw[j] = ml_s[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
-      const float Mu = M == NEG_INF ? 0.f : M;
-      float4 o = make_float4(0.f, 0.f, 0.f, 0.f);
-      float L = 0.f;
-#pragma unroll
-      for (int j = 0; j < 4; ++j) {
-        const int wr = (hg + 2 * j) * G + r;
-        const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
-        L += wt * ml_s[wr * 2 + 1];
-        const float4 a = *reinterpret_cast<const float4*>(acc_s + wr * D + d0);
-        o.x += wt * a.x; o.y += wt * a.y; o.z += wt * a.z; o.w += wt * a.w;
-      }
-      const int64_t slot = (int64_t)cb * max_chunks + cchunk;
-      *reinterpret_cast<float4*>(ws_acc + (slot * HQ + h) * D + d0) = o;
-      if ((tid & 15) == 0) { ws_ml[slot * 2 * HQ + h] = M; ws_ml[slot * 2 * HQ + HQ + h] = L; }
-    }
-  }
-  cp_wait<0>();  // the trailing groups are empty; drain anyway
-}
-
-__global__ void __launch_bounds__(128)
-splitkv_combine_kernel(const float* __restrict__ ws_acc, const float* __restrict__ ws_ml,
-                       const int* __restrict__ seqlens, const float* __restrict__ v_scale,
-                       const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
-                       __nv_bfloat16* __restrict__ out, int max_chunks, float eps) {
-  __shared__ float red_m[4];
-  __shared__ float red_l[4];
-  __shared__ float red_acc[4][D];
-  const float NEG_INF = __int_as_float(0xff800000u);
-  const int b = blockIdx.x, h = blockIdx.y;
-  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const int n = (seqlens[b] + CHUNK - 1) / CHUNK;
-  const int64_t base = (int64_t)b * max_chunks;
-
-  float M = NEG_INF;
-  for (int c = tid; c < n; c += 128) M = fmaxf(M, ws_ml[(base + c) * 2 * HQ + h]);
-#pragma unroll
-  for (int o = 16; o > 0; o >>= 1) M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, o));
-  if (lane == 0) red_m[warp] = M;
-  __syncthreads();
-  M = fmaxf(fmaxf(red_m[0], red_m[1]), fmaxf(red_m[2], red_m[3]));
-  const float Mu = M == NEG_INF ? 0.f : M;
-
-  float a0 = 0.f, a1 = 0.f, L = 0.f;
-#pragma unroll 4
-  for (int c = warp; c < n; c += 4) {
-    const int64_t sl = base + c;
-    const float m = ws_ml[sl * 2 * HQ + h];
-    const float wt = m == NEG_INF ? 0.f : ex2(m - Mu);  // empty partials weigh 0
-    L += wt * ws_ml[sl * 2 * HQ + HQ + h];
-    const float2 a = *reinterpret_cast<const float2*>(ws_acc + (sl * HQ + h) * D + lane * 2);
-    a0 += wt * a.x;
-    a1 += wt * a.y;
-  }
-  red_acc[warp][lane * 2] = a0;
-  red_acc[warp][lane * 2 + 1] = a1;
-  if (lane == 0) red_l[warp] = L;
-  __syncthreads();
-  if (warp == 0) {
-    float o0 = 0.f, o1 = 0.f, Ls = 0.f;
-#pragma unroll
-    for (int w = 0; w < 4; ++w) { o0 += red_acc[w][lane * 2]; o1 += red_acc[w][lane * 2 + 1]; Ls += red_l[w]; }
-    const float vs = __ldg(v_scale);
-    o0 = o0 / Ls * vs;
-    o1 = o1 / Ls * vs;
-    float ss = o0 * o0 + o1 * o1;
-#pragma unroll
-    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
-    const float r = 1.f / sqrtf(ss / D + eps);
-    const __nv_bfloat16* gp = qkv + (int64_t)b * qkv_stride + (HQ + 2 * HKV) * D + h * D + lane * 2;
-    const float g0 = __bfloat162float(gp[0]), g1 = __bfloat162float(gp[1]);
-    const float y0 = o0 * r / (1.f + expf(-g0));
-    const float y1 = o1 * r / (1.f + expf(-g1));
-    *reinterpret_cast<__nv_bfloat162*>(out + ((int64_t)b * HQ + h) * D + lane * 2) = __floats2bfloat162_rn(y0, y1);
-  }
-}
-
-}  // namespace
-
-void splitkv_attn(torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
-                  torch::Tensor cache_seqlens, torch::Tensor k_scale, torch::Tensor ws_acc, torch::Tensor ws_ml,
-                  double score_scale, int64_t max_chunks, int64_t grid) {
-  const int B = static_cast<int>(cache_seqlens.size(0));
-  TORCH_CHECK(B >= 1 && B <= MAXB, "splitkv_attn: batch out of range");
-  TORCH_CHECK(page_table.stride(1) == 1 && q.is_contiguous() && k_cache.is_contiguous() && v_cache.is_contiguous(),
-              "splitkv_attn: layout");
-  static bool attr_set = false;
-  if (!attr_set) {
-    C10_CUDA_CHECK(cudaFuncSetAttribute(splitkv_attn_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_A));
-    attr_set = true;
-  }
-  auto stream = at::cuda::getCurrentCUDAStream();
-  splitkv_attn_kernel<<<static_cast<unsigned>(grid), THREADS, SMEM_A, stream>>>(
-      reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
-      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), page_table.stride(0),
-      cache_seqlens.data_ptr<int>(), B, k_scale.data_ptr<float>(), static_cast<float>(score_scale),
-      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), static_cast<int>(max_chunks));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-
-void splitkv_combine(torch::Tensor ws_acc, torch::Tensor ws_ml, torch::Tensor cache_seqlens, torch::Tensor v_scale,
-                     torch::Tensor qkv, int64_t qkv_stride, torch::Tensor out, int64_t max_chunks, double eps) {
-  const int B = static_cast<int>(cache_seqlens.size(0));
-  auto stream = at::cuda::getCurrentCUDAStream();
-  splitkv_combine_kernel<<<dim3(B, HQ), 128, 0, stream>>>(
-      ws_acc.data_ptr<float>(), ws_ml.data_ptr<float>(), cache_seqlens.data_ptr<int>(), v_scale.data_ptr<float>(),
-      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), qkv_stride,
-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(max_chunks), static_cast<float>(eps));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-"""
-def _build_splitkv():
-    t0 = time.perf_counter()
-    try:
-        from torch.utils.cpp_extension import load_inline
-        ext = load_inline(
-            name="muse_full_decode_splitkv_v1",
-            cpp_sources=_SPLITKV_CPP,
-            cuda_sources=_SPLITKV_CUDA,
-            functions=["splitkv_attn", "splitkv_combine"],
-            extra_cuda_cflags=["-O3", "-arch=sm_90a", "-lineinfo"],
-            verbose=False,
-        )
-    except Exception as e:
-        print(f"[splitkv] load_inline failed after {time.perf_counter() - t0:.1f}s, master path kept: {e!r}",
-              flush=True)
-        return None
-    print(f"[splitkv] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
-    return ext
-_EXT = None
-_SPLITKV_GRID = None
 _SMS = {}
 def _sm_count(device) -> int:
     key = device.index if device.index is not None else torch.cuda.current_device()
@@ -2954,34 +2389,6 @@ def _sm_count(device) -> int:
     if n is None:
         n = _SMS[key] = torch.cuda.get_device_properties(key).multi_processor_count
     return n
-def _splitkv_gate(cfg) -> bool:
-    return (_EXT is not None and cfg["window"] == 0 and cfg["q_len"] == 1 and 1 < cfg["batch"] <= 64
-            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
-            and cfg["page_size"] == 1)
-def _splitkv_attn(data: Inputs, q: torch.Tensor):
-    cfg = data["config"]
-    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
-    device = q.device
-    page_table = data["page_table"]
-    max_chunks = -(-page_table.shape[1] // _SPLITKV_CHUNK)
-    ws_acc = torch.empty((batch * max_chunks, hq, d), dtype=torch.float32, device=device)
-    ws_ml = torch.empty((batch * max_chunks, 2, hq), dtype=torch.float32, device=device)
-    grid = _SPLITKV_GRID or 2 * _sm_count(device)
-    _EXT.splitkv_attn(q, data["k_cache"], data["v_cache"], page_table, data["cache_seqlens"], data["k_scale"],
-                      ws_acc, ws_ml, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, max_chunks, grid)
-    return ws_acc, ws_ml, max_chunks
-def _splitkv_combine(data: Inputs, qkv: torch.Tensor, ws_acc, ws_ml, max_chunks) -> torch.Tensor:
-    cfg = data["config"]
-    batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
-    out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=qkv.device)
-    _EXT.splitkv_combine(ws_acc, ws_ml, data["cache_seqlens"], data["v_scale"], qkv, qkv.stride(0), out,
-                         max_chunks, RMS_EPS)
-    return out
-def _full_decode_splitkv(data: Inputs, q: torch.Tensor, qkv: torch.Tensor) -> torch.Tensor:
-    return _splitkv_combine(data, qkv, *_splitkv_attn(data, q))
-if torch.cuda.is_available():
-    _EXT = _build_splitkv()
-_SPLITKV_CHECKED = False
 def _splitkv_synthetic(lens, kv_scale, gen, device):
     batch, hq, hkv, d = len(lens), 16, 2, 64
     max_pages = max(lens) + 37
@@ -3026,52 +2433,6 @@ def _splitkv_reference(data, q, qkv, lens):
     a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
     gate = qkv.float()[:, (hq + 2 * hkv) * d:].view(batch, hq, d)
     return (a * torch.sigmoid(gate)).reshape(batch, hq * d)
-def _splitkv_self_check(device) -> bool:
-    global _SPLITKV_GRID
-    lens5 = [9000, 1025, 70, 4097, 1023]
-    lens33 = [1 + (i * 977) % 5000 for i in range(33)]
-    lens33[5], lens33[6] = 1024, 2048
-    gen = torch.Generator(device=device).manual_seed(1234)
-    ok = True
-    try:
-        for lens, kv_scale, grid in ((lens5, 1.0, None), (lens5, 0.25, 3), (lens5, 1.0, 3), (lens33, 1.0, None)):
-            data, q, qkv = _splitkv_synthetic(lens, kv_scale, gen, device)
-            assert _splitkv_gate(data["config"])
-            _SPLITKV_GRID = grid
-            ws = _splitkv_attn(data, q)
-            torch.cuda.synchronize()
-            print(f"[splitkv] self-check kernel A (splitkv_attn) ok, B={len(lens)} grid={grid or 'device'}",
-                  flush=True)
-            out = _splitkv_combine(data, qkv, *ws)
-            torch.cuda.synchronize()
-            print(f"[splitkv] self-check kernel B (splitkv_combine) ok, B={len(lens)}", flush=True)
-            out = out.reshape(len(lens), -1).float()
-            ref = _splitkv_reference(data, q, qkv, lens)
-            err = float((out - ref).norm() / ref.norm())
-            finite = bool(torch.isfinite(out).all())
-            print(f"[splitkv] self-check B={len(lens)} kv_scale={kv_scale} grid={grid or 'device'}: "
-                  f"rel L2 {err:.2e}, finite {finite}", flush=True)
-            ok = ok and finite and err < 2e-2
-    except Exception as e:
-        print(f"[splitkv] self-check raised: {e!r}", flush=True)
-        ok = False
-    finally:
-        _SPLITKV_GRID = None
-    return ok
-def _splitkv_prepare(device):
-    global _EXT, _SPLITKV_CHECKED
-    if _SPLITKV_CHECKED:
-        return
-    if _EXT is None:
-        _SPLITKV_CHECKED = True
-        print("[splitkv] OFF: module not built, master FA3 path kept on every shape", flush=True)
-        return
-    _SPLITKV_CHECKED = True
-    if _splitkv_self_check(device):
-        print("[splitkv] ON: self-check passed: CUDA split-KV path on full decode, 1 < batch <= 64", flush=True)
-    else:
-        print("[splitkv] OFF: SELF-CHECK FAILED: CUDA split-KV path disabled, master FA3 path kept", flush=True)
-        _EXT = None
 _SK_CPP = r"""
 #include <torch/extension.h>
 #include <vector>
@@ -3685,7 +3046,7 @@ def _build_sk(name="muse_decode_sk_s3", extra=()):
             verbose=False,
         )
     except Exception as e:
-        _say(f"{_SK_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, FA3 / split-KV A+B kept: {e!r}")
+        _say(f"{_SK_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s, FA3 kept: {e!r}")
         return None
     finally:
         if prev is None:
@@ -3721,7 +3082,7 @@ def _sk_variant(cfg, sk) -> int:
     batch = cfg["batch"]
     if batch == 1:
         return 3 if sk["b1"] else -1
-    if 1 < batch <= _SK_MAXB and _splitkv_gate(cfg):
+    if 1 < batch <= _SK_MAXB:
         return 0 if sk["n"].get(_sk_batch_class(batch), False) else -1
     return -1
 SK_QKV_GATE_OFF = (16 + 2 * 2) * 64
@@ -3770,12 +3131,8 @@ def _sk_case(tag, variant, lens, kv_scale, grid, gen, device, sk, plant=None, mo
     torch.cuda.synchronize()
     _say(f"{_SK_TAG} {tag}: {_sk_vname(variant)} returned")
     err, finite = _sk_err(out, ref)
-    inc = ""
-    if variant == 0 and _EXT is not None:
-        e_inc, _ = _sk_err(_full_decode_splitkv(data, q, qkv), ref)
-        inc = f" (incumbent A+B {e_inc:.2e})"
     ok = finite and err < 2e-2
-    _say(f"{_SK_TAG} {tag}: rel L2 {err:.2e}{inc}, finite {finite} -> {'ok' if ok else 'FAIL'}")
+    _say(f"{_SK_TAG} {tag}: rel L2 {err:.2e}, finite {finite} -> {'ok' if ok else 'FAIL'}")
     return ok
 def _sk_agentic(rng, n, ctx):
     return [int(ctx * (1 + 0.075 * (2 * rng.random() - 1))) for _ in range(n)]
@@ -3860,22 +3217,17 @@ def _sk_select(batch, device, state, rng) -> "tuple[bool, str]":
     holder = {}
     def new():
         holder["n"] = _full_decode_sk(data, q, qkv, sk, variant)
-    if batch == 1:
-        gate = qkv[:, (16 + 4) * 64:]
-        cu = torch.tensor([0, 1], dtype=torch.int32, device=device)
-        def old():
-            o = flash_attn_with_kvcache(
-                q=q, k_cache=data["k_cache"], v_cache=data["v_cache"], page_table=data["page_table"],
-                cache_seqlens=data["cache_seqlens"], cu_seqlens_q=cu, max_seqlen_q=1,
-                softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
-                scheduler_metadata=None)
-            o = o[0] if isinstance(o, tuple) else o
-            holder["o"] = state["o_norm_gate"](o.reshape(1, 1024).to(torch.bfloat16), gate)
-        inc_name = "FA3 + combine + norm-gate"
-    else:
-        def old():
-            holder["o"] = _full_decode_splitkv(data, q, qkv)
-        inc_name = "splitkv A+B"
+    gate = qkv[:, (16 + 4) * 64:]
+    cu = torch.arange(batch + 1, dtype=torch.int32, device=device)
+    def old():
+        o = flash_attn_with_kvcache(
+            q=q, k_cache=data["k_cache"], v_cache=data["v_cache"], page_table=data["page_table"],
+            cache_seqlens=data["cache_seqlens"], cu_seqlens_q=cu, max_seqlen_q=1,
+            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True, window_size=(-1, -1),
+            scheduler_metadata=None)
+        o = o[0] if isinstance(o, tuple) else o
+        holder["o"] = state["o_norm_gate"](o.reshape(batch, 1024).to(torch.bfloat16), gate)
+    inc_name = "FA3 + combine + norm-gate"
     _say(f"{_SK_TAG} selector B={batch}: launching incumbent ({inc_name}) then {_sk_vname(variant)}, "
          f"lens {min(lens)}..{max(lens)}")
     old()
@@ -3885,7 +3237,7 @@ def _sk_select(batch, device, state, rng) -> "tuple[bool, str]":
     _say(f"{_SK_TAG} selector B={batch}: both returned")
     ref_n = holder["o"].reshape(batch, -1).float()
     err = float((holder["n"].reshape(batch, -1).float() - ref_n).norm() / ref_n.norm())
-    tol = 2e-2 if batch == 1 else 1e-2
+    tol = 2e-2
     if not (err < tol and bool(torch.isfinite(holder["n"]).all())):
         return False, f"new vs incumbent rel L2 {err:.2e} at ctx {ctx}"
     t_new, t_old = _sk_graph_time([new, old], device)
@@ -3984,9 +3336,6 @@ def _sk_validate(state, device) -> "tuple[dict | None, str | None]":
     decision = {"on": True, "b1": False, "n": {16: False, 32: False}, "msg": {}}
     for batch in (1, 16, 32):
         try:
-            if batch > 1 and _EXT is None:
-                decision["msg"][batch] = "incumbent split-KV A+B is off (no fallback for the gated range)"
-                continue
             win, msg = _sk_select(batch, device, state, rng)
         except Exception as e:
             win, msg = False, f"selector raised {e!r}"
@@ -4075,8 +3424,8 @@ def _sk_prepare(state, device, t_prepare0):
         return
     msg = decision["msg"]
     names = {"B=1": (decision["b1"], 1, "stream-K two-level ticket, grid = SM count", "FA3 + combine + norm-gate"),
-             "B<=23": (decision["n"][16], 16, "stream-K single-level ticket, grid 2 x SM", "splitkv A+B"),
-             "B>=24": (decision["n"][32], 32, "stream-K single-level ticket, grid 2 x SM", "splitkv A+B")}
+             "B<=23": (decision["n"][16], 16, "stream-K single-level ticket, grid 2 x SM", "FA3 paired"),
+             "B>=24": (decision["n"][32], 32, "stream-K single-level ticket, grid 2 x SM", "FA3 paired")}
     for what, (win, b, new_name, inc_name) in names.items():
         _say(f"PATH CHOSEN: full decode attention {what}: {new_name if win else inc_name + ' incumbent'} "
              f"[{msg.get(b, 'n/a')}] {tail}")
@@ -5687,9 +5036,9 @@ def _cb_u_fns(state, device, tokens):
 def _cb_cell_of(state, window, batch, length):
     cfg = {"window": window, "q_len": length, "batch": batch, "num_q_heads": 16, "num_kv_heads": 2, "head_dim": 64,
            "page_size": 1}
-    splitkv = _splitkv_gate(cfg)
-    paired = window == 0 and batch > 1 and not splitkv
-    return _s3_cell(cfg, _sk_variant(cfg, state.get("sk")) >= 0 or splitkv, paired)
+    sk_variant = _sk_variant(cfg, state.get("sk"))
+    paired = window == 0 and batch > 1 and sk_variant < 0
+    return _s3_cell(cfg, sk_variant >= 0, paired)
 def _cb_prepare_s2a(state, device, recs, t_prepare0):
     if state.get("dl") is None or state.get("dl3") is None or not _DL_S3:
         for rec in recs["S2a"].values():
@@ -7793,6 +7142,812 @@ def prepare(weights):
         return _prepare_main(weights, t_prepare0, whj)
     finally:
         _wh_join(whj, restore=True)
+_FVG_CPP = r"""
+#include <torch/extension.h>
+#include <vector>
+std::vector<int64_t> fvg_attr(int64_t mode);
+void fvg_launch(int64_t mode, torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+                torch::Tensor cache_seqlens, torch::Tensor qkv, torch::Tensor part_o, torch::Tensor part_ml,
+                torch::Tensor cnt, torch::Tensor out, double sc, double eps, int64_t grid, int64_t coop);
+"""
+_FVG_CUDA = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <cstdint>
+#include <vector>
+namespace {
+constexpr int D = 64;
+constexpr int HQ = 16;
+constexpr int HKV = 2;
+constexpr int ROW = 128;
+constexpr int TILE = 64;
+constexpr int THREADS = 256;
+constexpr int KV_STAGE = TILE * ROW;
+constexpr int STAGE = 2 * KV_STAGE;
+constexpr int MAXB = 64;
+constexpr int NS = 3;
+constexpr int MINB = 2;
+constexpr int FN = 3;
+constexpr long long SPIN_MAX = 1ll << 22;
+constexpr float NEG_INF = -__builtin_huge_valf();
+__device__ __forceinline__ uint32_t smem_u32(const void* p) { return (uint32_t)__cvta_generic_to_shared(p); }
+__device__ __forceinline__ void cp16(uint32_t dst, const void* src, int bytes) {
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(dst), "l"(src), "r"(bytes) : "memory");
+}
+__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
+template <int N>
+__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" ::"n"(N) : "memory"); }
+__device__ __forceinline__ float ex2(float x) {
+  float y;
+  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
+  return y;
+}
+__device__ __forceinline__ uint2 lds2(uint32_t a) {
+  uint2 v;
+  asm volatile("ld.shared.v2.u32 {%0, %1}, [%2];\n" : "=r"(v.x), "=r"(v.y) : "r"(a) : "memory");
+  return v;
+}
+__device__ __forceinline__ void sts1(uint32_t a, uint32_t v) {
+  asm volatile("st.shared.u32 [%0], %1;\n" ::"r"(a), "r"(v) : "memory");
+}
+__device__ __forceinline__ int cta_of(int x, int T, int G) {
+  return (int)(((int64_t)(x + 1) * G + T - 1) / T) - 1;
+}
+__device__ __forceinline__ uint64_t gdesc(uint32_t saddr, uint32_t lbo, uint32_t sbo) {
+  return (uint64_t)((saddr & 0x3FFFF) >> 4) | ((uint64_t)((lbo & 0x3FFFF) >> 4) << 16) |
+         ((uint64_t)((sbo & 0x3FFFF) >> 4) << 32) | (1ull << 62);
+}
+__device__ __forceinline__ void wg_fence() { asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory"); }
+__device__ __forceinline__ void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory"); }
+template <int N>
+__device__ __forceinline__ void wg_wait() { asm volatile("wgmma.wait_group.sync.aligned %0;\n" ::"n"(N) : "memory"); }
+__device__ __forceinline__ void fence_async() { asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory"); }
+__device__ __forceinline__ void named_bar(int id, int n) { asm volatile("bar.sync %0, %1;\n" ::"r"(id), "r"(n) : "memory"); }
+__device__ __forceinline__ void pin(float (&d)[32]) {
+#pragma unroll
+  for (int i = 0; i < 32; ++i) asm volatile("" : "+f"(d[i])::"memory");
+}
+__device__ __forceinline__ void wg_qk(float (&d)[32], const uint32_t* a, uint64_t desc, int acc) {
+  asm volatile(
+      "{\n.reg .pred p;\nsetp.ne.b32 p, %37, 0;\n"
+      "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, {%32, %33, %34, %35}, %36, p, 1, 1;\n}\n"
+      : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(acc));
+}
+__device__ __forceinline__ void wg_pv(float (&d)[32], const uint32_t* a, uint64_t desc) {
+  asm volatile(
+      "{\n.reg .pred p;\nsetp.ne.b32 p, %37, 0;\n"
+      "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, {%32, %33, %34, %35}, %36, p, 1, 1, 1;\n}\n"
+      : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(1));
+}
+__device__ __forceinline__ void wg_pv8(float (&d)[32], const uint32_t* a, uint64_t desc) {
+  asm volatile(
+      "{\n.reg .pred p;\nsetp.ne.b32 p, %37, 0;\n"
+      "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, {%32, %33, %34, %35}, %36, p, 1, 1;\n}\n"
+      : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(1));
+}
+__device__ __forceinline__ uint32_t pk8(uint32_t a, uint32_t b) {
+  uint32_t y;
+  asm("{.reg .b16 lo, hi;\ncvt.rn.satfinite.e4m3x2.f16x2 lo, %1;\ncvt.rn.satfinite.e4m3x2.f16x2 hi, %2;\nmov.b32 %0, {lo, hi};\n}\n"
+      : "=r"(y) : "r"(a), "r"(b));
+  return y;
+}
+__device__ __forceinline__ uint32_t e8x4(float a, float b, float c, float d) {
+  uint32_t y;
+  asm("{.reg .b16 lo, hi;\ncvt.rn.satfinite.e4m3x2.f32 lo, %2, %1;\ncvt.rn.satfinite.e4m3x2.f32 hi, %4, %3;\nmov.b32 %0, {lo, hi};\n}\n"
+      : "=r"(y) : "f"(a), "f"(b), "f"(c), "f"(d));
+  return y;
+}
+constexpr int VT_LBO = 128;
+constexpr int VT_SBO = 528;
+constexpr int VT_HEAD = 4224;
+static_assert(2 * 2 * VT_HEAD <= 2 * 2 * TILE * 128, "PV8 V^T double buffer fits fvg's f16 V buffer");
+__device__ __forceinline__ uint64_t ndesc(uint32_t saddr) {
+  return (uint64_t)((saddr & 0x3FFFF) >> 4) | ((uint64_t)(VT_LBO >> 4) << 16) | ((uint64_t)(VT_SBO >> 4) << 32);
+}
+__device__ __forceinline__ uint32_t h2u(float lo, float hi) {
+  __half2 h = __floats2half2_rn(lo, hi);
+  return *reinterpret_cast<uint32_t*>(&h);
+}
+__device__ __forceinline__ void e4m3x4_to_f16(uint32_t w, uint32_t& lo, uint32_t& hi) {
+  asm("{.reg .b16 a, b;\nmov.b32 {a, b}, %2;\ncvt.rn.f16x2.e4m3x2 %0, a;\ncvt.rn.f16x2.e4m3x2 %1, b;\n}\n"
+      : "=r"(lo), "=r"(hi) : "r"(w));
+}
+__device__ __forceinline__ uint32_t ex2h2(uint32_t x) {
+  uint32_t y;
+  asm("ex2.approx.f16x2 %0, %1;" : "=r"(y) : "r"(x));
+  return y;
+}
+__device__ __forceinline__ uint32_t hadd2u(uint32_t a, uint32_t b) {
+  uint32_t y;
+  asm("add.rn.f16x2 %0, %1, %2;" : "=r"(y) : "r"(a), "r"(b));
+  return y;
+}
+__device__ __forceinline__ float hsum2f(uint32_t a) {
+  __half2 h = *reinterpret_cast<__half2*>(&a);
+  float2 f = __half22float2(h);
+  return f.x + f.y;
+}
+struct SmemY {
+  static constexpr int RING = 0;
+  static constexpr int VB = NS * STAGE;
+  static constexpr int IDX = VB + 2 * 2 * TILE * 128;
+  static constexpr int TST = IDX + 2 * NS * TILE * 4;
+  static constexpr int LEN = TST + (MAXB + 2) * 4;
+  static constexpr int FLAG = LEN + MAXB * 4;
+  static constexpr int TINFO = FLAG + 16;
+  static constexpr int MAXT = 1024;
+  static constexpr int BYTES = TINFO + MAXT * 4 + 1024;
+};
+template <int MODE, bool PV8>
+__global__ void __launch_bounds__(THREADS, MINB)
+fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const uint8_t* __restrict__ vc,
+           const int* __restrict__ pt, const int* __restrict__ lens, int B, int W, float sc,
+           float* __restrict__ part_o, float2* __restrict__ part_ml, int* __restrict__ cnt,
+           const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride, float eps, __nv_bfloat16* __restrict__ out) {
+#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
+  using L = SmemY;
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  uint8_t* smem = smem_raw + ((1024 - (smem_u32(smem_raw) & 1023)) & 1023);
+  uint8_t* ring = smem + L::RING;
+  uint8_t* vbuf = smem + L::VB;
+  int* idx_s = reinterpret_cast<int*>(smem + L::IDX);
+  int* tst = reinterpret_cast<int*>(smem + L::TST);
+  int* len_s = reinterpret_cast<int*>(smem + L::LEN);
+  int* tinfo = reinterpret_cast<int*>(smem + L::TINFO);
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const int h = warp >> 2, wm = warp & 3, g = lane >> 2, qd = lane & 3;
+  const int G = gridDim.x;
+  if (warp == 0) {
+    const int n0 = lane < B ? lens[lane] : 0, n1 = lane + 32 < B ? lens[lane + 32] : 0;
+    int s0 = (n0 + TILE - 1) / TILE, s1 = (n1 + TILE - 1) / TILE;
+#pragma unroll
+    for (int o = 1; o < 32; o <<= 1) {
+      const int v0 = __shfl_up_sync(~0u, s0, o), v1 = __shfl_up_sync(~0u, s1, o);
+      if (lane >= o) { s0 += v0; s1 += v1; }
+    }
+    const int tot0 = __shfl_sync(~0u, s0, 31);
+    if (lane < B) { len_s[lane] = n0; tst[lane + 1] = s0; }
+    if (lane + 32 < B) { len_s[lane + 32] = n1; tst[lane + 33] = tot0 + s1; }
+    if (lane == 0) tst[0] = 0;
+  }
+  __syncthreads();
+  const int T = tst[B];
+  const int Ge = max(1, min(G, T));
+  const bool over = (T + Ge - 1) / Ge > L::MAXT;
+  if (over && tid == 0 && blockIdx.x == 0) atomicOr(cnt + 2, 2);
+  int t0 = 0, t1 = 0;
+  if (!over && (int)blockIdx.x < Ge) {
+    t0 = (int)((int64_t)blockIdx.x * T / Ge);
+    t1 = (int)((int64_t)(blockIdx.x + 1) * T / Ge);
+  }
+  const int vid = blockIdx.x;
+  if (t0 < t1) {
+  for (int k = tid; k < t1 - t0; k += THREADS) {
+    const int x = t0 + k;
+    int lo = 0, hi = B - 1;
+    while (lo < hi) {
+      const int mid = (lo + hi + 1) >> 1;
+      if (tst[mid] <= x) lo = mid; else hi = mid - 1;
+    }
+    const int j = x - tst[lo];
+    const int rel = min(len_s[lo] - j * TILE, 1023);
+    tinfo[k] = j | (rel << 16) | (lo << 26);
+  }
+  __syncthreads();
+  const int lc = tid & 7, kl0 = tid >> 3;
+  const uint32_t doff0 = kl0 * ROW + ((lc ^ (kl0 & 7)) << 4);
+  const uint32_t doff1 = (kl0 + 32) * ROW + ((lc ^ ((kl0 + 32) & 7)) << 4);
+  const uint32_t ring_u = smem_u32(ring), idx_u = smem_u32(idx_s);
+  const uint8_t* kbase = kc + lc * 16;
+  const uint8_t* vbase = vc + lc * 16;
+  auto issue_idx = [&](int y) {
+    if (MODE == 3) return;
+    if (tid < TILE / 4) {
+      const int e = tinfo[y - t0];
+      const int key0 = (e & 0xffff) * TILE + tid * 4;
+      const bool ok = key0 < W;
+      cp16(idx_u + ((y % (2 * NS)) * TILE + tid * 4) * 4,
+           ok ? (const void*)(pt + (int64_t)(e >> 26) * W + key0) : (const void*)pt, ok ? 16 : 0);
+    }
+  };
+  uint32_t cpd = ring_u + doff0;
+  const uint8_t* kbp = kbase;
+  const uint8_t* vbp = vbase;
+  static_assert(((32 * ROW) >> 4) % 8 == 0, "rows kl0 and kl0 + 32 share the swizzle phase");
+  auto issue_data = [&](int x) {
+    if (MODE == 3) return;
+    const uint32_t st = ring_u + (x % NS) * STAGE;
+    const int* ix = idx_s + (x % (2 * NS)) * TILE;
+    const int lim = (tinfo[x - t0] >> 16) & 1023;
+    const bool ok0 = kl0 < lim, ok1 = kl0 + 32 < lim;
+    const uint32_t p0 = ok0 ? (uint32_t)ix[kl0] : 0u, p1 = ok1 ? (uint32_t)ix[kl0 + 32] : 0u;
+    const uint32_t d0 = cpd + (st - ring_u);
+    cp16(d0, kbp + (size_t)p0 * ROW, ok0 ? 16 : 0);
+    cp16(d0 + KV_STAGE, vbp + (size_t)p0 * ROW, ok0 ? 16 : 0);
+    cp16(d0 + 32 * ROW, kbp + (size_t)p1 * ROW, ok1 ? 16 : 0);
+    cp16(d0 + 32 * ROW + KV_STAGE, vbp + (size_t)p1 * ROW, ok1 ? 16 : 0);
+  };
+  for (int y = t0; y < t0 + NS && y < t1; ++y) issue_idx(y);
+  cp_commit();
+  cp_wait<0>();
+  __syncthreads();
+  for (int x = t0; x < t0 + NS - 1; ++x) {
+    if (x < t1) issue_data(x);
+    if (x + NS < t1) issue_idx(x + NS);
+    cp_commit();
+  }
+  int segb = tinfo[0] >> 26;
+  float o[32], s[32];
+  float m0 = NEG_INF, m1 = NEG_INF, l0 = 0.f, l1 = 0.f;
+  uint32_t qa[8];
+#pragma unroll
+  for (int k = 0; k < 32; ++k) { o[k] = 0.f; s[k] = 0.f; }
+  auto load_q = [&](int b) {
+    if (MODE == 2 || MODE == 3) {
+#pragma unroll
+      for (int k = 0; k < 8; ++k) qa[k] = 0x30303030u + k;
+      return;
+    }
+    const uint8_t* qb = q + ((int64_t)b * 8 + 2 * wm) * HQ * D + (h * 8 + g) * D + 4 * qd;
+#pragma unroll
+    for (int st = 0; st < 2; ++st) {
+      qa[4 * st + 0] = __ldg(reinterpret_cast<const uint32_t*>(qb + 32 * st));
+      qa[4 * st + 1] = __ldg(reinterpret_cast<const uint32_t*>(qb + HQ * D + 32 * st));
+      qa[4 * st + 2] = __ldg(reinterpret_cast<const uint32_t*>(qb + 32 * st + 16));
+      qa[4 * st + 3] = __ldg(reinterpret_cast<const uint32_t*>(qb + HQ * D + 32 * st + 16));
+    }
+  };
+  auto finalize = [&](int b) {
+    if (MODE == 2) return;
+    float la = l0 + __shfl_xor_sync(~0u, l0, 1);
+    la += __shfl_xor_sync(~0u, la, 2);
+    float lb_ = l1 + __shfl_xor_sync(~0u, l1, 1);
+    lb_ += __shfl_xor_sync(~0u, lb_, 2);
+    const int slot = vid + b;
+    const int rA = h * 64 + (2 * wm) * 8 + g, rB = rA + 8;
+    float* pa = part_o + ((int64_t)slot * 128 + rA) * D + 2 * qd;
+    float* pb = part_o + ((int64_t)slot * 128 + rB) * D + 2 * qd;
+#pragma unroll
+    for (int jj = 0; jj < 8; ++jj) {
+      *reinterpret_cast<float2*>(pa + 8 * jj) = make_float2(o[4 * jj + 0], o[4 * jj + 1]);
+      *reinterpret_cast<float2*>(pb + 8 * jj) = make_float2(o[4 * jj + 2], o[4 * jj + 3]);
+    }
+    if (qd == 0) {
+      part_ml[(int64_t)slot * 128 + rA] = make_float2(m0, la);
+      part_ml[(int64_t)slot * 128 + rB] = make_float2(m1, lb_);
+    }
+  };
+  load_q(segb);
+  const int tl = tid & 127, vkey = tl >> 1, vfc = (tl & 1) * 2;
+  const uint32_t vsrc_off = KV_STAGE + vkey * ROW;
+  const uint32_t vs0 = (((4 * h + vfc) ^ (vkey & 7)) << 4), vs1 = (((4 * h + vfc + 1) ^ (vkey & 7)) << 4);
+  const uint32_t vd0 = vkey * 128 + (((2 * vfc) ^ (vkey & 7)) << 4), vd1 = vkey * 128 + (((2 * vfc + 1) ^ (vkey & 7)) << 4);
+  const uint32_t vd2 = vkey * 128 + (((2 * vfc + 2) ^ (vkey & 7)) << 4), vd3 = vkey * 128 + (((2 * vfc + 3) ^ (vkey & 7)) << 4);
+  const uint64_t dk0 = gdesc(ring_u + 64 * h, 16, 1024);
+  const uint64_t dv0 = PV8 ? ndesc(smem_u32(vbuf) + h * VT_HEAD) : gdesc(smem_u32(vbuf) + h * (TILE * 128), 128, 1024);
+  const int tc = tl >> 5, tq = (tl >> 3) & 3, tdg = tl & 7;
+  const uint32_t tsrc0 = KV_STAGE + (16 * tc + 2 * tq) * ROW + (tdg & 1) * 8;
+  const uint32_t tch = (uint32_t)(4 * h + (tdg >> 1));
+  const uint32_t tdst = h * VT_HEAD + tdg * VT_SBO + tc * VT_LBO + 4 * tq;
+  uint32_t vta = ring_u + tsrc0 + ((tch ^ (uint32_t)((2 * tq) & 7)) << 4);
+  uint32_t vtb = ring_u + tsrc0 + ROW + ((tch ^ (uint32_t)((2 * tq + 1) & 7)) << 4);
+  uint32_t vtd = smem_u32(vbuf) + tdst;
+  for (int i = t0; i < t1; ++i) {
+    if constexpr (PV8) asm volatile("" : "+r"(cpd), "+l"(kbp), "+l"(vbp), "+r"(vta), "+r"(vtb), "+r"(vtd));
+    cp_wait<NS - 2>();
+    if (FN & 1) fence_async();
+    __syncthreads();
+    {
+      const int x = i + NS - 1;
+      if (x < t1) issue_data(x);
+      const int y = i + 2 * NS - 1;
+      if (y < t1) issue_idx(y);
+      cp_commit();
+    }
+    const int e = tinfo[i - t0];
+    const int cb = e >> 26;
+    if (cb != segb) {
+      wg_wait<0>();
+      pin(o);
+      finalize(segb);
+#pragma unroll
+      for (int k = 0; k < 32; ++k) o[k] = 0.f;
+      m0 = m1 = NEG_INF;
+      l0 = l1 = 0.f;
+      load_q(cb);
+      segb = cb;
+    }
+    if (MODE != 2) {
+      const uint32_t slot = (uint32_t)(i % NS);
+      const uint64_t dk = dk0 + ((slot * STAGE) >> 4);
+      wg_fence();
+      pin(s);
+      wg_qk(s, qa, dk, 0);
+      wg_qk(s, qa + 4, dk + 2, 1);
+      wg_commit();
+      const uint32_t vbo = (uint32_t)(i & 1) * (PV8 ? 2 * VT_HEAD : 2 * TILE * 128);
+      if constexpr (PV8) {
+        const uint32_t so = slot * STAGE;
+        uint2 w[4];
+        w[0] = lds2(vta + so);
+        w[1] = lds2(vtb + so);
+        w[2] = lds2(vta + so + 8 * ROW);
+        w[3] = lds2(vtb + so + 8 * ROW);
+        const uint32_t vt = vtd + vbo;
+#pragma unroll
+        for (int hf = 0; hf < 2; ++hf) {
+          const uint32_t a0 = hf ? w[0].y : w[0].x, a1 = hf ? w[1].y : w[1].x;
+          const uint32_t a2 = hf ? w[2].y : w[2].x, a3 = hf ? w[3].y : w[3].x;
+          const uint32_t t0 = __byte_perm(a0, a1, 0x5140), t1 = __byte_perm(a0, a1, 0x7362);
+          const uint32_t t2 = __byte_perm(a2, a3, 0x5140), t3 = __byte_perm(a2, a3, 0x7362);
+          sts1(vt + (4 * hf + 0) * 16, __byte_perm(t0, t2, 0x5410));
+          sts1(vt + (4 * hf + 1) * 16, __byte_perm(t0, t2, 0x7632));
+          sts1(vt + (4 * hf + 2) * 16, __byte_perm(t1, t3, 0x5410));
+          sts1(vt + (4 * hf + 3) * 16, __byte_perm(t1, t3, 0x7632));
+        }
+      } else {
+        const uint8_t* vsrc = ring + slot * STAGE + vsrc_off;
+        uint8_t* vb = vbuf + vbo + h * (TILE * 128);
+        const uint4 a = *reinterpret_cast<const uint4*>(vsrc + vs0);
+        const uint4 c2 = *reinterpret_cast<const uint4*>(vsrc + vs1);
+        uint4 r0, r1, r2, r3;
+        e4m3x4_to_f16(a.x, r0.x, r0.y);
+        e4m3x4_to_f16(a.y, r0.z, r0.w);
+        e4m3x4_to_f16(a.z, r1.x, r1.y);
+        e4m3x4_to_f16(a.w, r1.z, r1.w);
+        e4m3x4_to_f16(c2.x, r2.x, r2.y);
+        e4m3x4_to_f16(c2.y, r2.z, r2.w);
+        e4m3x4_to_f16(c2.z, r3.x, r3.y);
+        e4m3x4_to_f16(c2.w, r3.z, r3.w);
+        *reinterpret_cast<uint4*>(vb + vd0) = r0;
+        *reinterpret_cast<uint4*>(vb + vd1) = r1;
+        *reinterpret_cast<uint4*>(vb + vd2) = r2;
+        *reinterpret_cast<uint4*>(vb + vd3) = r3;
+      }
+      if (FN & 2) fence_async();
+      named_bar(1 + h, 128);
+      wg_wait<0>();
+      pin(s);
+      pin(o);
+      const int rel = (e >> 16) & 1023;
+      if (rel < TILE + 8) {
+        const int lim0 = rel - 8 + 2 * wm, lim1 = lim0 + 1;
+#pragma unroll
+        for (int jn = 0; jn < 8; ++jn) {
+          const int key = jn * 8 + 2 * qd;
+          if (key > lim0) s[4 * jn + 0] = NEG_INF;
+          if (key + 1 > lim0) s[4 * jn + 1] = NEG_INF;
+          if (key > lim1) s[4 * jn + 2] = NEG_INF;
+          if (key + 1 > lim1) s[4 * jn + 3] = NEG_INF;
+        }
+      }
+      float r0m[8], r1m[8];
+#pragma unroll
+      for (int jn = 0; jn < 8; ++jn) {
+        r0m[jn] = fmaxf(s[4 * jn + 0], s[4 * jn + 1]);
+        r1m[jn] = fmaxf(s[4 * jn + 2], s[4 * jn + 3]);
+      }
+#pragma unroll
+      for (int w = 4; w >= 1; w >>= 1)
+#pragma unroll
+        for (int jn = 0; jn < w; ++jn) {
+          r0m[jn] = fmaxf(r0m[jn], r0m[jn + w]);
+          r1m[jn] = fmaxf(r1m[jn], r1m[jn + w]);
+        }
+      float x0 = r0m[0], x1 = r1m[0];
+      x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 1));
+      x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 2));
+      x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 1));
+      x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 2));
+      const float n0 = fmaxf(m0, x0 * sc), n1 = fmaxf(m1, x1 * sc);
+      const float u0 = n0 == NEG_INF ? 0.f : n0, u1 = n1 == NEG_INF ? 0.f : n1;
+      const bool moved = (n0 != m0) || (n1 != m1);
+      if (__any_sync(~0u, moved)) {
+        const float a0 = ex2(m0 - u0), a1 = ex2(m1 - u1);
+        l0 *= a0;
+        l1 *= a1;
+#pragma unroll
+        for (int jj = 0; jj < 8; ++jj) {
+          o[4 * jj + 0] *= a0;
+          o[4 * jj + 1] *= a0;
+          o[4 * jj + 2] *= a1;
+          o[4 * jj + 3] *= a1;
+        }
+      }
+      m0 = n0;
+      m1 = n1;
+      const float e0 = PV8 ? u0 - 8.f : u0, e1 = PV8 ? u1 - 8.f : u1;
+      float pe[32];
+#pragma unroll
+      for (int t = 0; t < 4; ++t) {
+#pragma unroll
+        for (int k = 0; k < 8; ++k) pe[8 * t + k] = ex2(fmaf(s[8 * t + k], sc, (k & 2) ? -e1 : -e0));
+      }
+      {
+        float a0 = 0.f, a1 = 0.f, b0 = 0.f, b1 = 0.f;
+#pragma unroll
+        for (int t = 0; t < 4; ++t) {
+          a0 += pe[8 * t + 0] + pe[8 * t + 1];
+          b0 += pe[8 * t + 4] + pe[8 * t + 5];
+          a1 += pe[8 * t + 2] + pe[8 * t + 3];
+          b1 += pe[8 * t + 6] + pe[8 * t + 7];
+        }
+        l0 += a0 + b0;
+        l1 += a1 + b1;
+      }
+      const uint64_t dv = dv0 + (vbo >> 4);
+      if constexpr (PV8) {
+        uint32_t pa[2][4];
+#pragma unroll
+        for (int kk = 0; kk < 2; ++kk) {
+          const float* q0 = pe + 16 * kk;
+          pa[kk][0] = e8x4(q0[0], q0[1], q0[4], q0[5]);
+          pa[kk][1] = e8x4(q0[2], q0[3], q0[6], q0[7]);
+          pa[kk][2] = e8x4(q0[8], q0[9], q0[12], q0[13]);
+          pa[kk][3] = e8x4(q0[10], q0[11], q0[14], q0[15]);
+        }
+        wg_fence();
+        pin(o);
+        wg_pv8(o, pa[0], dv);
+        wg_pv8(o, pa[1], dv + ((2 * VT_LBO) >> 4));
+        wg_commit();
+      } else {
+        wg_fence();
+        pin(o);
+        uint32_t pf[4][4];
+#pragma unroll
+        for (int t = 0; t < 4; ++t) {
+          pf[t][0] = h2u(pe[8 * t + 0], pe[8 * t + 1]);
+          pf[t][1] = h2u(pe[8 * t + 2], pe[8 * t + 3]);
+          pf[t][2] = h2u(pe[8 * t + 4], pe[8 * t + 5]);
+          pf[t][3] = h2u(pe[8 * t + 6], pe[8 * t + 7]);
+        }
+#pragma unroll
+        for (int t = 0; t < 4; ++t) wg_pv(o, pf[t], dv + t * 128);
+        wg_commit();
+      }
+    }
+  }
+  cp_wait<0>();
+  wg_wait<0>();
+  pin(o);
+  finalize(segb);
+  }
+  if (MODE == 1) {
+    int* gctl = cnt;
+    __threadfence();
+    __syncthreads();
+    if (tid == 0) {
+      atomicAdd(gctl + 0, 1);
+      long long spins = 0;
+      while (*reinterpret_cast<volatile int*>(gctl + 0) < G) {
+        __nanosleep(128);
+        if (++spins > SPIN_MAX) { atomicOr(gctl + 2, 1); break; }
+      }
+      __threadfence();
+    }
+    __syncthreads();
+    for (int it = blockIdx.x * 8 + warp; !over && it < B * 128; it += G * 8) {
+      const int b = it >> 7, row = it & 127;
+      const int cf = cta_of(tst[b], T, Ge), nseg = cta_of(tst[b + 1] - 1, T, Ge) - cf + 1, s0 = cf + b;
+      float M = NEG_INF;
+      for (int sg = lane; sg < nseg; sg += 32) M = fmaxf(M, __ldcg(part_ml + (int64_t)(s0 + sg) * 128 + row).x);
+#pragma unroll
+      for (int o_ = 16; o_ >= 1; o_ >>= 1) M = fmaxf(M, __shfl_xor_sync(~0u, M, o_));
+      float2 acc = make_float2(0.f, 0.f);
+      float Ls = 0.f;
+      for (int c0 = 0; c0 < nseg; c0 += 32) {
+        const int sg = c0 + lane;
+        float w = 0.f;
+        if (sg < nseg) {
+          const float2 ml = __ldcg(part_ml + (int64_t)(s0 + sg) * 128 + row);
+          w = ml.x == NEG_INF ? 0.f : ex2(ml.x - M);
+          Ls += w * ml.y;
+        }
+        const int n = min(32, nseg - c0);
+        const float* op = part_o + ((int64_t)(s0 + c0) * 128 + row) * D + 2 * lane;
+#pragma unroll 8
+        for (int kk = 0; kk < n; ++kk) {
+          const float wk = __shfl_sync(~0u, w, kk);
+          const float2 v = __ldcg(reinterpret_cast<const float2*>(op + (int64_t)kk * 128 * D));
+          acc.x += wk * v.x;
+          acc.y += wk * v.y;
+        }
+      }
+#pragma unroll
+      for (int o_ = 16; o_ >= 1; o_ >>= 1) Ls += __shfl_xor_sync(~0u, Ls, o_);
+      const float inv = 1.f / Ls;
+      const int hh = row >> 6, rr = row & 63, t = rr >> 3, gq = rr & 7;
+      const int head = hh * 8 + gq;
+      const int64_t tok = (int64_t)b * 8 + t;
+      const float x0 = acc.x * inv, x1 = acc.y * inv;
+      float ss = x0 * x0 + x1 * x1;
+#pragma unroll
+      for (int o_ = 16; o_ >= 1; o_ >>= 1) ss += __shfl_xor_sync(~0u, ss, o_);
+      const float r = 1.f / sqrtf(ss * (1.f / D) + eps);
+      const float2 gf = __bfloat1622float2(
+          reinterpret_cast<const __nv_bfloat162*>(qkv + tok * qkv_stride + (HQ + 2 * HKV) * D + head * D)[lane]);
+      const float y0 = x0 * r * (1.f / (1.f + expf(-gf.x))), y1 = x1 * r * (1.f / (1.f + expf(-gf.y)));
+      reinterpret_cast<__nv_bfloat162*>(out + (tok * HQ + head) * D)[lane] = __floats2bfloat162_rn(y0, y1);
+    }
+    __syncthreads();
+    if (tid == 0 && atomicAdd(gctl + 1, 1) == G - 1) {
+      gctl[0] = 0;
+      gctl[1] = 0;
+      __threadfence();
+    }
+  }
+#else
+  if (threadIdx.x == 0 && blockIdx.x == 0) atomicOr(cnt + 2, 4);
+#endif
+}
+constexpr int SMEM = SmemY::BYTES;
+using KFn = void (*)(const uint8_t*, const uint8_t*, const uint8_t*, const int*, const int*, int, int, float, float*,
+                     float2*, int*, const __nv_bfloat16*, int64_t, float, __nv_bfloat16*);
+KFn kfn(int64_t mode) {
+  switch (mode & 7) {
+    case 0: return fvg_kernel<0, false>;
+    case 1: return fvg_kernel<1, false>;
+    case 2: return fvg_kernel<2, false>;
+    case 3: return fvg_kernel<3, false>;
+    case 4: return fvg_kernel<0, true>;
+    case 5: return fvg_kernel<1, true>;
+    case 6: return fvg_kernel<2, true>;
+    default: return fvg_kernel<3, true>;
+  }
+}
+bool g_attr_set[8] = {false, false, false, false, false, false, false, false};
+void set_smem(int64_t mode) {
+  const int m = (int)(mode & 7);
+  if (!g_attr_set[m]) {
+    C10_CUDA_CHECK(cudaFuncSetAttribute((const void*)kfn(m), cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM));
+    g_attr_set[m] = true;
+  }
+}
+}
+std::vector<int64_t> fvg_attr(int64_t mode) {
+  set_smem(mode);
+  cudaFuncAttributes a;
+  C10_CUDA_CHECK(cudaFuncGetAttributes(&a, (const void*)kfn(mode)));
+  int occ = 0;
+  C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, (const void*)kfn(mode), THREADS, SMEM));
+  int dev = 0, sms = 0, coop = 0;
+  C10_CUDA_CHECK(cudaGetDevice(&dev));
+  C10_CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
+  C10_CUDA_CHECK(cudaDeviceGetAttribute(&coop, cudaDevAttrCooperativeLaunch, dev));
+  return {(int64_t)a.numRegs, (int64_t)a.localSizeBytes, (int64_t)SMEM, (int64_t)a.sharedSizeBytes, (int64_t)occ,
+          (int64_t)sms, (int64_t)coop};
+}
+void fvg_launch(int64_t mode, torch::Tensor q, torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor page_table,
+                torch::Tensor cache_seqlens, torch::Tensor qkv, torch::Tensor part_o, torch::Tensor part_ml,
+                torch::Tensor cnt, torch::Tensor out, double sc, double eps, int64_t grid, int64_t coop) {
+  const int64_t B = page_table.size(0);
+  TORCH_CHECK(B >= 1 && B <= MAXB, "fvg: batch");
+  TORCH_CHECK(q.is_contiguous() && q.element_size() == 1 && q.numel() == B * 8 * HQ * D, "fvg: q [B*8, 16, 64] e4m3");
+  for (const auto* c : {&k_cache, &v_cache})
+    TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
+                c->size(2) == HKV && c->size(3) == D, "fvg: cache layout (page 1, 2 kv heads, 64)");
+  TORCH_CHECK(page_table.scalar_type() == at::kInt && page_table.dim() == 2 && page_table.stride(1) == 1 &&
+              page_table.stride(0) == page_table.size(1) && page_table.size(1) % 4 == 0 &&
+              (reinterpret_cast<uintptr_t>(page_table.data_ptr()) & 15) == 0, "fvg: page table");
+  TORCH_CHECK(cache_seqlens.scalar_type() == at::kInt && cache_seqlens.is_contiguous() && cache_seqlens.numel() == B,
+              "fvg: cache_seqlens");
+  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.dim() == 2 && qkv.stride(1) == 1 && qkv.size(0) == B * 8 &&
+              qkv.stride(0) % 2 == 0, "fvg: qkv");
+  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.numel() == B * 8 * HQ * D, "fvg: out");
+  TORCH_CHECK(part_o.scalar_type() == at::kFloat && part_o.numel() >= (grid + B) * 128 * D &&
+              part_ml.scalar_type() == at::kFloat && part_ml.numel() >= (grid + B) * 128 * 2 &&
+              cnt.scalar_type() == at::kInt && cnt.numel() >= 4, "fvg: workspace");
+  set_smem(mode);
+  cudaLaunchConfig_t cfg = {};
+  cfg.gridDim = dim3(static_cast<unsigned>(grid), 1, 1);
+  cfg.blockDim = dim3(THREADS, 1, 1);
+  cfg.dynamicSmemBytes = SMEM;
+  cfg.stream = at::cuda::getCurrentCUDAStream();
+  cudaLaunchAttribute attr[1];
+  attr[0].id = cudaLaunchAttributeCooperative;
+  attr[0].val.cooperative = 1;
+  cfg.attrs = coop ? attr : nullptr;
+  cfg.numAttrs = coop ? 1 : 0;
+  C10_CUDA_CHECK(cudaLaunchKernelEx(
+      &cfg, kfn(mode), reinterpret_cast<const uint8_t*>(q.data_ptr()), reinterpret_cast<const uint8_t*>(k_cache.data_ptr()),
+      reinterpret_cast<const uint8_t*>(v_cache.data_ptr()), page_table.data_ptr<int>(), cache_seqlens.data_ptr<int>(),
+      static_cast<int>(B), static_cast<int>(page_table.size(1)), static_cast<float>(sc), part_o.data_ptr<float>(),
+      reinterpret_cast<float2*>(part_ml.data_ptr<float>()), cnt.data_ptr<int>(),
+      reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
+      static_cast<float>(eps), reinterpret_cast<__nv_bfloat16*>(out.data_ptr())));
+}
+"""
+FVG_TAG = "[dc-fvg]"
+FVG_W = 86008
+FVG_ARMS = {"fvg": 1, "fvg8": 5}
+FVG_MARGIN = 1.01
+FVG_DEADLINE_S = 250.0
+_FVG = {"ext": None, "err": None, "s": None, "th": None, "g": 0, "coop": 1, "buf": {}}
+def _fvg_build_worker():
+    t0 = time.perf_counter()
+    try:
+        from torch.utils.cpp_extension import load_inline
+        _FVG["ext"] = load_inline(name="muse_decode_fvg_v1", cpp_sources=_FVG_CPP, cuda_sources=_FVG_CUDA,
+                                  functions=["fvg_attr", "fvg_launch"], verbose=False,
+                                  extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++20", "-gencode=arch=compute_90a,code=sm_90a"])
+    except BaseException as e:
+        _FVG["err"] = f"{type(e).__name__}: {str(e)[-600:]}"
+    _FVG["s"] = time.perf_counter() - t0
+if torch.cuda.is_available():
+    import threading as _fvg_threading
+    _FVG["th"] = _fvg_threading.Thread(target=_fvg_build_worker, name="dc-fvg-build", daemon=True)
+    _FVG["th"].start()
+def _fvg_ok(cfg, data):
+    pt = data["page_table"]
+    b, w = pt.shape
+    return (cfg["window"] == 0 and not cfg["rope_theta"] and cfg["q_len"] == 8 and cfg["num_q_heads"] == 16
+            and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64 and cfg["page_size"] == 1 and cfg["kv_scale"] == 1.0
+            and w % 4 == 0 and pt.stride(0) == w and pt.stride(1) == 1 and data["k_cache"].is_contiguous()
+            and data["v_cache"].is_contiguous() and _FVG["g"] > 0 and -(-(b * -(-w // 64)) // _FVG["g"]) <= 1024)
+def _fvg_attn(data, qkv, state, mode):
+    cfg = data["config"]
+    q = _s3_pre_attention(data, qkv, state, False)
+    out = torch.empty((cfg["tokens"], 1024), dtype=torch.bfloat16, device=qkv.device)
+    po, pm, cnt = _FVG["buf"][cfg["batch"]]
+    _FVG["ext"].fvg_launch(mode, q, data["k_cache"], data["v_cache"], data["page_table"], data["cache_seqlens"], qkv, po,
+                           pm, cnt, out, cfg["sm_scale"] * cfg["qk_scale_factor"] * LOG2E, RMS_EPS, _FVG["g"],
+                           _FVG["coop"])
+    return out
+def _fvg_input(state, device, gen, b):
+    lens = [int(80000 * (1 + 0.075 * (2 * float(torch.rand((), generator=gen, device=device)) - 1))) for _ in range(b)]
+    lens[0] = FVG_W - 8
+    data = _cb_data(state, device, gen, 0, b, 8, lens, 1.0)
+    pt = torch.full((b, FVG_W), -1, dtype=torch.int32, device=device)
+    pt[:, :data["page_table"].shape[1]] = data["page_table"]
+    data["page_table"] = pt
+    ls, _load = _ead_busiest(data, state)
+    data["local_start"] = torch.tensor([ls], dtype=torch.int32, device=device)
+    return data
+def _fvg_ref(data, qkv):
+    cfg = data["config"]
+    L, tok = 8, cfg["tokens"]
+    q = qkv[:, :1024].double().view(tok, 16, 64)
+    q = (q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + RMS_EPS)).float().to(FP8).double() * cfg["qk_scale_factor"]
+    kf, vf, outs = data["k_cache"].view(-1, 2, 64), data["v_cache"].view(-1, 2, 64), []
+    for b, tot in enumerate(data["cache_seqlens"].tolist()):
+        rows = data["page_table"][b, :tot].long()
+        s_ = torch.einsum("lkgd,nkd->lkgn", q[b * L:(b + 1) * L].view(L, 2, 8, 64), kf[rows].double()) * cfg["sm_scale"]
+        m = torch.arange(tot, device=q.device)[None, :] > (tot - L + torch.arange(L, device=q.device))[:, None]
+        outs.append(torch.einsum("lkgn,nkd->lkgd", torch.softmax(s_.masked_fill(m[:, None, None, :], float("-inf")), -1),
+                                 vf[rows].double()).reshape(L, 16, 64))
+    a = torch.cat(outs)
+    a = a * torch.rsqrt(a.pow(2).mean(-1, keepdim=True) + RMS_EPS)
+    return (a * torch.sigmoid(qkv[:, 1280:].double().view(tok, 16, 64))).reshape(tok, 1024)
+def _fvg_clean(b):
+    return int(_FVG["buf"][b][2][:3].abs().sum()) == 0
+def _fvg_row(state, device, b):
+    gen = torch.Generator(device=device)
+    gen.manual_seed(20261130 + b)
+    fv = state["fvg"]
+    per, keep, worst = {}, [], {}
+    names = list(FVG_ARMS)
+    for rep in range(2):
+        fv.pop(b, None)
+        data = _fvg_input(state, device, gen, b)
+        if not _fvg_ok(data["config"], data):
+            return None, f"shape gate refuses the judge-shaped input (page table {tuple(data['page_table'].shape)})"
+        s_in = data["stream"].clone()
+        scores = _cb_router_scores(_dl3_clone_data(data), state)
+        d_ref = _dl3_clone_data(data)
+        qkv = _dsa_gemm("qkv_gate", d_ref["attn_input"], state["dense"]["qkv_gate"], state)
+        a_inc = _attn_core(d_ref, state).double()
+        r8 = _fvg_ref(d_ref, qkv)
+        e_inc = _rel_l2(a_inc, r8)
+        d_ref = _dl3_clone_data(data)
+        ref = kernel_fn(d_ref, state)
+        for nm in names:
+            fv[b] = FVG_ARMS[nm]
+            d_got = _dl3_clone_data(data)
+            e_a = _rel_l2(_attn_core(d_got, state).double(), r8)
+            worst[f"attn {nm}/inc"] = max(worst.get(f"attn {nm}/inc", 0), e_a / max(e_inc, 1e-9))
+            d_got = _dl3_clone_data(data)
+            got = kernel_fn(d_got, state)
+            torch.cuda.synchronize()
+            _ok, msg = _dsa_cmp_layer(got, ref, d_got, d_ref, s_in, scores, int(data["local_start"][0]), worst)
+            ok = ("finite True" in msg and e_a <= 1.1 * e_inc + 1e-3 and worst["hidden"] <= 0.05 and worst["update"] <= 0.05
+                  and worst["k_gap"] == 0 and worst["v_gap"] == 0 and worst["tokens_rerouted"] <= b * 2 and _fvg_clean(b))
+            if not ok:
+                fv.pop(b, None)
+                return None, (f"{nm} check input {rep}: attn vs fp64 {e_a:.2e} (inc {e_inc:.2e}); {msg[:200]} "
+                              f"(counters clean {_fvg_clean(b)})")
+        graphs = {}
+        for nm in ["incumbent"] + names:
+            if nm == "incumbent":
+                fv.pop(b, None)
+            else:
+                fv[b] = FVG_ARMS[nm]
+            graphs[nm], out = _rt_graph(lambda: kernel_fn(data, state))
+            keep.append(out)
+        fv.pop(b, None)
+        keep.append(graphs)
+        per[f"v{b}f layer input {rep}"] = _rt_time(graphs, device)
+        if not _fvg_clean(b):
+            return None, "counters not clean after the timed replays"
+    win, wx, _rl = _rt_select(per, "incumbent", names, margin=FVG_MARGIN, tight=FVG_MARGIN)
+    allr = [r for rounds in per.values() for r in rounds]
+    mean = {n: sum(_rt_stats(r[n])[0] for r in allr) / len(allr) for n in ["incumbent"] + names}
+    msg = (f"layer us inc/" + "/".join(names) + " " + "/".join(f"{mean[n]:.1f}" for n in ["incumbent"] + names)
+           + "; worst " + ", ".join(f"{n} x{wx[n]:.3f}" for n in names) + f" (>= {FVG_MARGIN} every round); check "
+           + ", ".join(f"{k} {v:.2g}" if isinstance(v, float) else f"{k} {v}" for k, v in worst.items()))
+    return (None if win is None else FVG_ARMS[win]), msg
+def _fvg_setup(state, device, t_prepare0):
+    state["fvg"] = {}
+    out, route = [], {}
+    try:
+        th = _FVG["th"]
+        if th is None:
+            raise RuntimeError("build never started")
+        th.join(timeout=max(0.0, FVG_DEADLINE_S - 60.0 - (time.perf_counter() - t_prepare0)))
+        if th.is_alive() or _FVG["ext"] is None:
+            raise RuntimeError(f"build {'not joined' if th.is_alive() else 'failed'}: {str(_FVG['err'])[:300]}")
+        ext = _FVG["ext"]
+        a = {m: [int(x) for x in ext.fvg_attr(m)] for m in FVG_ARMS.values()}
+        regs, local, _sm, _st, occ, sms, coop = a[1]
+        out.append(f"{FVG_TAG} build {_FVG['s']:.1f} s (bg from import); attrs regs/local/occ "
+                   + ", ".join(f"m{m} {x[0]}/{x[1]}/{x[4]}" for m, x in a.items()) + f"; {sms} SMs, coop {coop}")
+        if any(x[4] < 2 or x[1] != 0 for x in a.values()) or not coop:
+            raise RuntimeError("occupancy < 2, spill or no cooperative launch")
+        _FVG["g"] = 2 * sms
+        for b in (16, 32):
+            _FVG["buf"][b] = (torch.empty((_FVG["g"] + b) * 128 * 64, dtype=torch.float32, device=device),
+                              torch.empty((_FVG["g"] + b) * 128 * 2, dtype=torch.float32, device=device),
+                              torch.zeros(16, dtype=torch.int32, device=device))
+        gen = torch.Generator(device=device)
+        gen.manual_seed(20261129)
+        data = _cb_data(state, device, gen, 0, 16, 8, [300] * 16, 1.0)
+        data["page_table"] = torch.cat([data["page_table"], torch.full((16, 4 - data["page_table"].shape[1] % 4), -1,
+                                        dtype=torch.int32, device=device)], 1)
+        state["fvg"][16] = 1
+        try:
+            g, _o = _rt_graph(lambda: kernel_fn(data, state))
+            g.replay()
+            torch.cuda.synchronize()
+            del g
+        except Exception as e:
+            _FVG["coop"] = 0
+            out.append(f"{FVG_TAG} cooperative launch not capturable ({str(e)[:120]!r}): plain launch")
+        finally:
+            state["fvg"].pop(16, None)
+            _FVG["buf"][16][2].zero_()
+            torch.cuda.synchronize()
+        for b in (16, 32):
+            if time.perf_counter() - t_prepare0 > FVG_DEADLINE_S:
+                out.append(f"{FVG_TAG} v{b}f: deadline, incumbent")
+                continue
+            try:
+                m, msg = _fvg_row(state, device, b)
+            except Exception as e:
+                m, msg = None, f"raised {str(e)[:200]!r}"
+            finally:
+                state["fvg"].pop(b, None)
+                _FVG["buf"][b][2].zero_()
+                torch.cuda.synchronize()
+            if m:
+                route[b] = m
+            out.append(f"{FVG_TAG} v{b}f: {msg}"[:600])
+    except Exception as e:
+        out.append(f"{FVG_TAG} incumbent kept: {str(e)[:400]}")
+    state["fvg"] = dict(route)
+    for b in (16, 32):
+        out.append(f"{FVG_TAG} PATH CHOSEN v{b}f full verify attention: "
+                   + (f"fvg_kernel<1{', PV8' if route[b] & 4 else ''}> (mode {route[b]}, grid {_FVG['g']}, coop "
+                      f"{_FVG['coop']}, fused norm-gate)" if b in route else "incumbent (decode's current route)"))
+    for line in out:
+        print(line, flush=True)
+    return out
 def _prepare_main(weights, t_prepare0, whj):
     device = weights["qkv_gate"].device
     router = weights["router"]
@@ -7836,9 +7991,7 @@ def _prepare_main(weights, t_prepare0, whj):
     del freqs
     state["dl"] = _dl_setup(weights, state)
     _dl3_setup_bc(state, device)
-    _align_par_setup(state, device)
     state["w2_mode"] = "master"  # compliance: SGLang reduces split-K in FP32 (use_atomic_add=False), never BF16 atomics
-    _splitkv_prepare(device)
     _sk_prepare(state, device, t_prepare0)
     _dl3_finish(state, device)
     _skw_setup(state, device)
@@ -7884,6 +8037,7 @@ def _prepare_main(weights, t_prepare0, whj):
         paths += _sfk_gate(state, device, t_prepare0)
     eal = _eae_phase(state, weights, device, t_prepare0, eaej) if eaej is not None else []
     paths += _dc0f_gate(state, device, t_prepare0)
+    paths += _fvg_setup(state, device, t_prepare0)
     print("[campaign] ===== FINAL PATHS =====", flush=True)
     for line in paths:
         print(line[:200], flush=True)
@@ -7901,86 +8055,13 @@ def _prepare_main(weights, t_prepare0, whj):
         print(line[:330], flush=True)
     print(f"[campaign] prepare at {time.perf_counter() - t_prepare0:.1f} s", flush=True)
     return state
-W2_ATOMIC_TOL = 2e-2
-W2_JUNK = 100.0
-W2_TAG = "[w2-atomic]"
-def _w2_atomic_self_check(state, device):
-    mode, reason = "master", "no candidate passed"
-    dl = state.get("dl")
-    try:
-        if dl is None:
-            reason = "dense chain off: T=1 uses master's align path, not covered"
-            raise RuntimeError(reason)
-        gen = torch.Generator(device=device)
-        gen.manual_seed(20261025)
-        ok = {"atomic": True, "atomic_zero": True}
-        worst = {"atomic": 0.0, "atomic_zero": 0.0}
-        err = {}
-        n_remote = n_local = 0
-        for trial in range(12):
-            ls_val = (0, 32, 96, 224, 160, 64)[trial % 6]
-            ls = torch.tensor([ls_val], dtype=torch.int32, device=device)
-            ei = torch.randn((1, D_EXPERT), device=device, generator=gen).to(torch.bfloat16)
-            lg = (torch.randn((1, N_EXPERTS), device=device, generator=gen) * 4.0)
-            k_local = 1 + trial % 4
-            idx = (torch.randperm(LOCAL_EXPERTS, device=device, generator=gen)[:k_local] + ls_val) % N_EXPERTS
-            lg[0, idx] = 30.0
-            lg = lg.contiguous()
-            xn, (tw, ids, lids, align) = _dl_route(ei, lg, ls, dl)
-            torch.cuda.synchronize()
-            nl = int((lids >= 0).sum())
-            n_local += nl
-            n_remote += TOP_K - nl
-            print(f"{W2_TAG} trial {trial}: master w2 launch (local slots {nl})", flush=True)
-            ref = _experts(xn, tw, lids, state, align=align, w2_mode="master", w2_fill=W2_JUNK).float()
-            torch.cuda.synchronize()
-            print(f"{W2_TAG} trial {trial}: master w2 done", flush=True)
-            for cand in ("atomic", "atomic_zero"):
-                if not ok[cand]:
-                    continue
-                try:
-                    print(f"{W2_TAG} trial {trial}: {cand} w2 launch", flush=True)
-                    out = _experts(xn, tw, lids, state, align=align, w2_mode=cand, w2_fill=W2_JUNK).float()
-                    torch.cuda.synchronize()
-                    print(f"{W2_TAG} trial {trial}: {cand} w2 done", flush=True)
-                    rel = float((out - ref).norm() / ref.norm().clamp_min(1e-12)) if bool(ref.abs().sum() > 0) \
-                        else float(out.abs().max())
-                    if not (bool(torch.isfinite(out).all()) and rel <= W2_ATOMIC_TOL):
-                        ok[cand] = False
-                        err[cand] = f"trial {trial} rel-L2 {rel:.3g}"
-                    worst[cand] = max(worst[cand], rel)
-                except Exception as e:
-                    ok[cand] = False
-                    err[cand] = f"trial {trial} {type(e).__name__}: {str(e)[:200]}"
-        print(f"{W2_TAG} self-check slots: local {n_local} remote {n_remote}", flush=True)
-        if n_local == 0 or n_remote == 0:
-            raise RuntimeError(f"self-check lacked local ({n_local}) or remote ({n_remote}) routes")
-        for cand in ("atomic", "atomic_zero"):
-            if ok[cand]:
-                mode, reason = cand, f"worst rel-L2 vs master {worst[cand]:.3g}"
-                break
-        else:
-            reason = "; ".join(f"{k} failed ({v})" for k, v in err.items())
-    except Exception as e:
-        mode = "master"
-        reason = f"self-check error {type(e).__name__}: {str(e)[:200]}"
-    if dl is not None:
-        torch.cuda.synchronize()
-        dl["cnt_r"].zero_()
-    print(f"{W2_TAG} PATH CHOSEN = {'MASTER' if mode == 'master' else mode.upper()} w2 at T=1 ({reason}); "
-          f"use_atomic_add={mode != 'master'} use_fp32_reduce=True memset in path: {mode == 'atomic_zero'}; "
-          "T>1 MASTER", flush=True)
-    return mode
 def _expert_dispatch(topk_ids, topk_weights, local_start, num_tokens, state):
     shifted = (topk_ids - local_start) % N_EXPERTS
     tw = topk_weights.to(torch.float32).contiguous()
-    if num_tokens >= ALIGN_PAR_MIN_TOKENS and state.get("align_par_ok", False):
-        local_ids, align = _align_parallel(shifted, 0, LOCAL_EXPERTS, _block_size_m(num_tokens))
-        return local_ids, tw, align
     local_ids = state["bank"]["expert_map"][shifted].contiguous()
     align = moe_align_block_size(local_ids, _block_size_m(num_tokens), N_EXPERTS)
     return local_ids, tw, align
-def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mode=None, w2_fill=None):
+def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mode=None):
     bank = state["bank"]
     num_tokens, size_k = x.shape
     size_n = bank["size_n"]
@@ -7988,10 +8069,6 @@ def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mod
     block_size_m = _block_size_m(num_tokens)
     if dispatch is not None:
         local_ids, topk_weights, (sorted_ids, block_experts, n_padded) = dispatch
-    elif align is None and num_tokens >= ALIGN_PAR_MIN_TOKENS and state.get("align_par_ok", False):
-        topk_weights = topk_weights.to(torch.float32).contiguous()
-        local_ids, (sorted_ids, block_experts, n_padded) = _align_parallel(
-            topk_ids, 0, LOCAL_EXPERTS, block_size_m)
     elif align is None:
         local_ids = bank["expert_map"][topk_ids].contiguous()
         topk_weights = topk_weights.to(torch.float32).contiguous()
@@ -8017,8 +8094,6 @@ def _experts(x, topk_weights, topk_ids, state, align=None, dispatch=None, w2_mod
         sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
         size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
     silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
-    if w2_fill is not None:
-        cache3.fill_(w2_fill)
     if w2_common is not common and w2_mode == "atomic_zero":
         cache3.zero_()
     y = moe_wna16_marlin_gemm(
@@ -8062,17 +8137,19 @@ def _master_pair_q(q, tokens, hq, hkv, d):
     return q_attn
 def _attn_route(cfg, state):
     batch, hkv = cfg["batch"], cfg["num_kv_heads"]
-    splitkv = _splitkv_gate(cfg)
     sk_variant = _sk_variant(cfg, state.get("sk"))
-    paired = cfg["window"] == 0 and batch > 1 and hkv % 2 == 0 and not splitkv
-    cell = _s3_cell(cfg, sk_variant >= 0 or splitkv, paired)
+    paired = cfg["window"] == 0 and batch > 1 and hkv % 2 == 0 and sk_variant < 0
+    cell = _s3_cell(cfg, sk_variant >= 0, paired)
     use_s3 = cell is not None and state["s3"][cell]
-    return use_s3, cell, splitkv, sk_variant, paired
+    return use_s3, cell, sk_variant, paired
 def _attn_core(data, state):
     cfg = data["config"]
     batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
     hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
     qkv = _dsa_gemm("qkv_gate", data["attn_input"], state["dense"]["qkv_gate"], state)
+    fm = state.get("fvg", {}).get(batch)
+    if fm and _fvg_ok(cfg, data):
+        return _fvg_attn(data, qkv, state, fm)
     skw_route = _skw_route(cfg, state)
     if skw_route is not None:
         return _skw_attention(data, qkv, state, skw_route)
@@ -8085,7 +8162,7 @@ def _attn_core(data, state):
     k_cache, v_cache = data["k_cache"], data["v_cache"]
     scaled = cfg["kv_scale"] != 1.0
     window = cfg["window"]
-    use_s3, _cell, splitkv, sk_variant, paired = _attn_route(cfg, state)
+    use_s3, _cell, sk_variant, paired = _attn_route(cfg, state)
     if use_s3:
         q8 = _s3_pre_attention(data, qkv, state, paired)
         q = None
@@ -8095,9 +8172,6 @@ def _attn_core(data, state):
     if sk_variant >= 0:
         q_fp8 = q8 if use_s3 else q.view(tokens, hq, d).to(FP8).contiguous()
         return _full_decode_sk(data, q_fp8, qkv, state["sk"], sk_variant).reshape(tokens, hq * d)
-    if splitkv:
-        q_fp8 = q8 if use_s3 else q.view(tokens, hq, d).to(FP8).contiguous()
-        return _full_decode_splitkv(data, q_fp8, qkv).reshape(tokens, hq * d)
     if paired:
         g, s = hq // hkv, hkv // 2
         pages, page_size = k_cache.shape[0], k_cache.shape[1]
@@ -13643,15 +13717,14 @@ def _swapab_route_ok(layer: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
             and x.dtype == torch.bfloat16 and x.stride(1) == 1
             and w.dim() == 2 and tuple(w.shape) == (n, k) and w.dtype == torch.bfloat16
             and w.stride(1) == 1)
-def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int,
-                    report: bool = False) -> torch.Tensor:
+def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int) -> torch.Tensor:
     n, k, split_k, block_k, _ = SWAPAB_CFG[layer]
     m = x.shape[0]
     out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
     if ws is None:
         ws, cnt = out, out
     grid = (n // SWAPAB_BLOCK_W, split_k)
-    compiled = _bf16_swapab_kernel[grid](
+    _bf16_swapab_kernel[grid](
         x, w, out, ws, cnt,
         m,
         x.stride(0), w.stride(0), out.stride(0),
@@ -13659,16 +13732,6 @@ def _swapab_forward(layer: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
         BLOCK_W=SWAPAB_BLOCK_W, BLOCK_T=SWAPAB_BLOCK_T, BLOCK_K=block_k,
         num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
     )
-    if report:
-        try:
-            ptx = compiled.asm["ptx"]
-            print(f"[swapab] layer={layer} m={m} N={n} K={k} SPLIT_K={split_k} BLOCK_K={block_k} "
-                  f"stages={num_stages}: n_regs={getattr(compiled, 'n_regs', '?')} "
-                  f"n_spills={getattr(compiled, 'n_spills', '?')} "
-                  f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
-                  f"cp.async={ptx.count('cp.async')}", flush=True)
-        except Exception as e:
-            print(f"[swapab] layer={layer}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
     return out
 def _swapab_buffers(state: dict, layer: str):
     if layer == "pooler":
@@ -13704,24 +13767,14 @@ def _swapab16_route_ok(key: str, x: torch.Tensor, w: torch.Tensor, cfg) -> bool:
     if key == "unpooler_slice":
         return w.shape[0] >= n and w.shape[1] == k
     return tuple(w.shape) == (n, k)
-def _print_ptx_counts(tag: str, compiled) -> None:
-    try:
-        ptx = compiled.asm["ptx"]
-        print(f"{tag}: n_regs={getattr(compiled, 'n_regs', '?')} "
-              f"n_spills={getattr(compiled, 'n_spills', '?')} "
-              f"wgmma={ptx.count('wgmma.mma_async')} mma.sync={ptx.count('mma.sync')} "
-              f"cp.async={ptx.count('cp.async')}", flush=True)
-    except Exception as e:
-        print(f"{tag}: diagnostics unavailable ({type(e).__name__}: {e})", flush=True)
-def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int,
-                      report: bool = False) -> torch.Tensor:
+def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_stages: int) -> torch.Tensor:
     n, k, split_k, block_k, _ = SWAPAB16_CFG[key]
     m = x.shape[0]
     out = torch.empty((m, n), dtype=torch.bfloat16, device=x.device)
     if ws is None:
         ws, cnt = out, out
     grid = (n // SWAPAB_BLOCK_W, split_k)
-    compiled = _bf16_swapab_kernel[grid](
+    _bf16_swapab_kernel[grid](
         x, w, out, ws, cnt,
         m,
         x.stride(0), w.stride(0), out.stride(0),
@@ -13729,9 +13782,6 @@ def _swapab16_forward(key: str, x: torch.Tensor, w: torch.Tensor, ws, cnt, num_s
         BLOCK_W=SWAPAB_BLOCK_W, BLOCK_T=SWAPAB16_BLOCK_T, BLOCK_K=block_k,
         num_warps=SWAPAB_NUM_WARPS, num_stages=num_stages,
     )
-    if report:
-        _print_ptx_counts(f"[swapab16] {key} m={m} N={n} K={k} SPLIT_K={split_k} "
-                          f"BLOCK_K={block_k} stages={num_stages}", compiled)
     return out
 def _swapab16_buffers(state: dict, key: str):
     if key in ("pooler", "qkv_gate", "unpooler_slice"):
@@ -13804,27 +13854,27 @@ def _dsa_compile(dsa, layer, w, big, device, gen):
         ms = list(range(SWAPAB_MIN_M, SWAPAB_MAX_M + 1))
         stages = SWAPAB_CFG[layer][4]
         ws, cnt = _swapab_buffers(dsa, layer)
-        def run(x, st, report=False):
-            return _swapab_forward(layer, x, w, ws, cnt, st, report=report)
+        def run(x, st):
+            return _swapab_forward(layer, x, w, ws, cnt, st)
     else:
         key, book = _dsa_key16(layer, w), dsa["swapab16_stages"]
         ms = list(range(DSA_T_LO[layer], SWAPAB16_MAX_M + 1))
         stages = SWAPAB16_CFG[key][4]
         ws, cnt = _swapab16_buffers(dsa, key)
-        def run(x, st, report=False):
-            return _swapab16_forward(key, x, w, ws, cnt, st, report=report)
+        def run(x, st):
+            return _swapab16_forward(key, x, w, ws, cnt, st)
     label = f"{layer} B{SWAPAB_BLOCK_T if big else SWAPAB16_BLOCK_T}"
     t0 = time.perf_counter()
     x = torch.randn((ms[-1], k), generator=gen, device=device).to(torch.bfloat16)
     print(f"{DSA_TAG} launching {label} (compile, m={ms[-1]}, {stages} stages)", flush=True)
     try:
-        run(x, stages, report=True)
+        run(x, stages)
         torch.cuda.synchronize()
     except _OutOfResources as e:
         print(f"{DSA_TAG} {label}: {stages} stages OutOfResources ({str(e)[:160]}); retrying at "
               f"{SWAPAB_FALLBACK_STAGES}", flush=True)
         stages = SWAPAB_FALLBACK_STAGES
-        run(x, stages, report=True)
+        run(x, stages)
         torch.cuda.synchronize()
     for m in ms[:-1]:
         run(torch.randn((m, k), generator=gen, device=device).to(torch.bfloat16), stages)
@@ -16696,7 +16746,6 @@ def _t128_setup(state, device, t_prepare0):
         pc = [c for c in cs if c in T128_PIN.get(t, ())]
         say(f"{T128_TAG} PATH CHOSEN T={t}: " + (f"CELLS {'+'.join(cs)}" if cs else f"INCUMBENT ({why[t]})")
             + (f" ({'+'.join(pc)} PINNED)" if pc else ""))
-    say(f"{T128_TAG} Q3: judged v16 / v32 rows vs 7ceab934 (expect -4..-8 / -3..-6 us); {time.perf_counter() - t0:.1f} s")
     return out
 CAMPAIGN_B12P = True
 B12P_TAG = "[b12p]"
@@ -19264,10 +19313,7 @@ def _w6p_setup(state, device, t_prepare0):
         pick = f"Triton BN64 incumbent ({why})"
     return [f"{W6P_TAG} ===== W6P SUMMARY (setup {time.perf_counter() - t0:.1f} s; prepare at "
             f"{time.perf_counter() - t_prepare0:.1f} s) =====", q2, *lines, *q1,
-            _w6p_say(f"{W6P_TAG} PATH CHOSEN d1s sliding attention (B=1, q_len 1): {pick}"), clean,
-            f"{W6P_TAG} kill: attn < {W6P_ATTN_MARGIN} vs best Triton in any round, layer < {W6P_LAYER_MARGIN}, or a "
-            f"check miss -> BN64; port killed if judged d1s gains < 1.0 us vs its own SGLang time",
-            f"{W6P_TAG} expected: judged d1s -1.0..-2.5 us (attention side x1.10-1.25), every other row 0"]
+            _w6p_say(f"{W6P_TAG} PATH CHOSEN d1s sliding attention (B=1, q_len 1): {pick}"), clean]
 CAMPAIGN_EAE = True
 EAE_TAG = "[ea-enc]"
 EAE_JOIN_S = 220.0
