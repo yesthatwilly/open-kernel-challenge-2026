@@ -91,6 +91,122 @@ import triton.language as tl
 from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
 
 
+# --- (14) BF5 build, started first (campaign 2026-10-30-public-ladder rung BF5; one mechanism; user-requested) -------
+# The pooler at m = 256 on a CUTLASS sm90 TMA warp-specialized PINGPONG GEMM with the persistent tile scheduler,
+# swap-AB (D^T[4096, m] = W[4096, 8192] x^T: A = W row-major, B = x as a K x m column-major matrix, D column-major =
+# out [m, 4096] row-major), BF16 in / out, FP32 accumulate, tile 128 (W rows) x 64 (tokens) x 64 (k), cluster 1x1.
+# Design re-implemented after github.com/alygg77/okc-muse-spark-kernels@6cae49a kernels/muse_bf16_proj.py (CUTLASS
+# route); no code copied: the type composition is CUTLASS's documented CollectiveBuilder pattern. The templates come
+# from the CUTLASS headers that ship in the image (FlashInfer's bundled copy; the rules allow building on CUTLASS).
+# The module compiles in a background thread started here, while the other units build (about 60 s alone); prepare()
+# joins it with a deadline. The arch flags are passed explicitly (-gencode sm_90a), so this build never reads or
+# writes TORCH_CUDA_ARCH_LIST, which the main-thread builders set and restore. Any failure: the cell stays off.
+import threading  # noqa: E402
+
+BF5_EXT_NAME = "muse_bf16_bf5_cutlass_pp_v1"
+BF5_FLAG = "bf5_pooler256_ok"
+BF5_M_LO, BF5_M_HI, BF5_RACE_M = 256, 256, 256   # exactly m = 256 (the scored verify_32 shape): at m 129 / 200 the
+BF5_CHECK_MS = (256,)                              # 64-token tiles pad and lost 1.43x / 1.13x on the H100
+
+BF5_JOIN_DEADLINE_S = 200.0      # prepare waits for the build at most until this long after state A's build began
+_BF5 = {"ext": None, "s": None, "why": "not started", "t0": time.perf_counter()}
+_BF5_SUM = []
+
+_BF5_CPP = r"""
+#include <torch/extension.h>
+int64_t bf5_ws(torch::Tensor W, torch::Tensor x, torch::Tensor out);
+void bf5_run(torch::Tensor W, torch::Tensor x, torch::Tensor out, torch::Tensor ws);
+"""
+
+_BF5_CUDA = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <cutlass/cutlass.h>
+#include <cute/tensor.hpp>
+#include <cutlass/gemm/device/gemm_universal_adapter.h>
+#include <cutlass/gemm/collective/collective_builder.hpp>
+#include <cutlass/epilogue/collective/collective_builder.hpp>
+#include <cutlass/gemm/kernel/gemm_universal.hpp>
+#include <cutlass/util/packed_stride.hpp>
+using namespace cute;
+namespace {
+using EA = cutlass::bfloat16_t; using LA = cutlass::layout::RowMajor;      // W [N, K], K-major
+using EB = cutlass::bfloat16_t; using LB = cutlass::layout::ColumnMajor;   // x [m, K] seen as K x m column-major
+using EC = cutlass::bfloat16_t; using LC = cutlass::layout::ColumnMajor;   // D [N, m] column-major = out [m, N]
+using Tile = Shape<_128, _64, _64>;
+using Cluster = Shape<_1, _1, _1>;
+using Epi = typename cutlass::epilogue::collective::CollectiveBuilder<cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
+    Tile, Cluster, cutlass::epilogue::collective::EpilogueTileAuto, float, float, EC, LC, 8, EC, LC, 8,
+    cutlass::epilogue::TmaWarpSpecialized>::CollectiveOp;
+using Main = typename cutlass::gemm::collective::CollectiveBuilder<cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
+    EA, LA, 8, EB, LB, 8, float, Tile, Cluster,
+    cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(sizeof(typename Epi::SharedStorage))>,
+    cutlass::gemm::KernelTmaWarpSpecializedPingpong>::CollectiveOp;
+using Kern = cutlass::gemm::kernel::GemmUniversal<Shape<int, int, int, int>, Main, Epi, cutlass::gemm::PersistentScheduler>;
+using Gemm = cutlass::gemm::device::GemmUniversalAdapter<Kern>;
+
+typename Gemm::Arguments bf5_args(const torch::Tensor& W, const torch::Tensor& x, torch::Tensor& out) {
+  TORCH_CHECK(W.dtype() == torch::kBFloat16 && x.dtype() == torch::kBFloat16 && out.dtype() == torch::kBFloat16
+              && W.is_contiguous() && x.is_contiguous() && out.is_contiguous() && W.size(1) == x.size(1)
+              && out.size(0) == x.size(0) && out.size(1) == W.size(0), "bf5: shapes / dtypes / layout");
+  const int N = (int)W.size(0), K = (int)W.size(1), M = (int)x.size(0);
+  auto sA = cutlass::make_cute_packed_stride(typename Gemm::GemmKernel::StrideA{}, cute::make_shape(N, K, 1));
+  auto sB = cutlass::make_cute_packed_stride(typename Gemm::GemmKernel::StrideB{}, cute::make_shape(M, K, 1));
+  auto sC = cutlass::make_cute_packed_stride(typename Gemm::GemmKernel::StrideC{}, cute::make_shape(N, M, 1));
+  return typename Gemm::Arguments{cutlass::gemm::GemmUniversalMode::kGemm, {N, M, K, 1},
+      {reinterpret_cast<const EA*>(W.data_ptr()), sA, reinterpret_cast<const EB*>(x.data_ptr()), sB},
+      {{1.f, 0.f}, reinterpret_cast<EC*>(out.data_ptr()), sC, reinterpret_cast<EC*>(out.data_ptr()), sC}};
+}
+}  // namespace
+
+int64_t bf5_ws(torch::Tensor W, torch::Tensor x, torch::Tensor out) {
+  auto a = bf5_args(W, x, out);
+  TORCH_CHECK(Gemm::can_implement(a) == cutlass::Status::kSuccess, "bf5: can_implement");
+  return (int64_t)Gemm::get_workspace_size(a);
+}
+
+void bf5_run(torch::Tensor W, torch::Tensor x, torch::Tensor out, torch::Tensor ws) {
+  auto a = bf5_args(W, x, out);
+  TORCH_CHECK((size_t)ws.numel() >= Gemm::get_workspace_size(a), "bf5: workspace");
+  Gemm g;
+  const cudaStream_t st = at::cuda::getCurrentCUDAStream();
+  TORCH_CHECK(g.initialize(a, ws.numel() ? ws.data_ptr() : nullptr, st) == cutlass::Status::kSuccess, "bf5: initialize");
+  TORCH_CHECK(g.run(st) == cutlass::Status::kSuccess, "bf5: run");
+}
+"""
+
+
+def _bf5_build_bg() -> None:
+    """Background thread body: compile the CUTLASS module (never raises; the result and reason land in _BF5)."""
+    t0 = time.perf_counter()
+    try:
+        import importlib.util
+        from torch.utils import cpp_extension
+        spec = importlib.util.find_spec("flashinfer")
+        if spec is None or spec.origin is None:
+            raise RuntimeError("flashinfer (CUTLASS headers) not found")
+        root = os.path.join(os.path.dirname(spec.origin), "data", "cutlass")
+        inc = [os.path.join(root, "include"), os.path.join(root, "tools", "util", "include")]
+        if not os.path.isfile(os.path.join(inc[0], "cutlass", "gemm", "collective", "collective_builder.hpp")):
+            raise RuntimeError(f"CUTLASS headers missing under {root}")
+        _BF5["ext"] = cpp_extension.load_inline(
+            name=BF5_EXT_NAME, cpp_sources=_BF5_CPP, cuda_sources=_BF5_CUDA, functions=["bf5_ws", "bf5_run"],
+            extra_include_paths=inc, verbose=False,
+            extra_cuda_cflags=["-O3", "-std=c++20", "--expt-relaxed-constexpr", "-DNDEBUG",
+                               "-gencode=arch=compute_90a,code=sm_90a"])
+        _BF5["why"] = ""
+    except Exception as e:
+        _BF5["why"] = f"build failed: {type(e).__name__}: {str(e).splitlines()[-1][-200:] if str(e) else ''}"
+    _BF5["s"] = time.perf_counter() - t0
+
+
+_BF5_THREAD = None
+if torch.cuda.is_available():
+    _BF5["why"] = "building"
+    _BF5_THREAD = threading.Thread(target=_bf5_build_bg, name="bf5-cutlass-build", daemon=True)
+    _BF5_THREAD.start()
+
+
 class Weights(TypedDict):
     qkv_gate: torch.Tensor  # bfloat16 [2304, 8192]
     o: torch.Tensor         # bfloat16 [8192, 1024]
@@ -6090,6 +6206,124 @@ def _bf1_summary(prepare_s: float) -> None:
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + BF1_FLAGS   # section (13)'s cells join the A/B check and the FINAL FLAGS line
 
 
+# --- (14) BF5 cell (the build is near the top of the file): pooler m = 256 on the CUTLASS pingpong GEMM -------------
+def _bf5_route_ok(x: torch.Tensor, cfg, state: dict) -> bool:
+    """Pooler cell: the prepare()-set flag, the built module, cfg m in BF5_M_LO..BF5_M_HI, n / k the pooler's, x a
+    contiguous 16 B aligned bf16 [m, k]. cfg, shapes and state only, never input values."""
+    if state.get(BF5_FLAG) is not True or _BF5["ext"] is None:
+        return False
+    m = cfg["m"]
+    return (BF5_M_LO <= m <= BF5_M_HI and cfg["n"] == POOLER_N and cfg["k"] == POOLER_K and x.dim() == 2
+            and x.shape[0] == m and x.shape[1] == POOLER_K and x.dtype == torch.bfloat16 and x.is_contiguous()
+            and x.data_ptr() % 16 == 0)
+
+
+def _bf5_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
+    """ONE launch: out[m, 4096] = x @ W.T (CUTLASS pingpong, swap-AB, FP32 accumulate, one BF16 rounding)."""
+    out = torch.empty((x.shape[0], POOLER_N), dtype=torch.bfloat16, device=x.device)
+    _BF5["ext"].bf5_run(state["pooler"], x, out, state["bf5_ws"])
+    return out
+
+
+def _bf5_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (14). Sets BF5_FLAG (False unless every step passes) and the state's workspace. flags None (state A):
+    join the build thread by BF5_JOIN_DEADLINE_S, can_implement + workspace query, _cell_check at BF5_CHECK_MS (fp64
+    rel L2, probe row, repeat bit-identity), BF1_ROUNDS read-flush _cell_gate rounds of kernel_fn with the flag on vs
+    off (off = today's route, torch.mm NN), _bf1_rule, and a torch.profiler assertion of exactly one CUTLASS kernel.
+    flags a dict (the A/B check's second state): its own workspace if the flag is on. Never raises."""
+    state[BF5_FLAG] = False
+    dev = state["router"].device
+    if flags is not None:
+        if flags.get(BF5_FLAG) and _BF5["ext"] is not None:
+            try:
+                x = torch.empty((BF5_RACE_M, POOLER_K), dtype=torch.bfloat16, device=dev)
+                o = torch.empty((BF5_RACE_M, POOLER_N), dtype=torch.bfloat16, device=dev)
+                state["bf5_ws"] = torch.empty(int(_BF5["ext"].bf5_ws(state["pooler"], x, o)), dtype=torch.uint8,
+                                              device=dev)
+                state[BF5_FLAG] = True
+            except Exception as e:
+                print(f"[bf5] second state: workspace raised {type(e).__name__}: {e}; cell off", flush=True)
+        return
+    _BF5_SUM.clear()
+    t0 = time.perf_counter()
+    why, rounds, rule, eq = "", [], None, []
+    try:
+        if _BF5_THREAD is not None and _BF5_THREAD.is_alive():
+            _BF5_THREAD.join(max(0.0, BF5_JOIN_DEADLINE_S - (time.perf_counter() - t_start)))
+        if _BF5["ext"] is None:
+            raise RuntimeError(_BF5["why"] if (_BF5_THREAD is None or not _BF5_THREAD.is_alive())
+                               else f"build not done {time.perf_counter() - t_start:.0f}s into the state build")
+        w = state["pooler"]
+        N, K = POOLER_N, POOLER_K
+        x = torch.empty((BF5_RACE_M, K), dtype=torch.bfloat16, device=dev)
+        o = torch.empty((BF5_RACE_M, N), dtype=torch.bfloat16, device=dev)
+        state["bf5_ws"] = torch.empty(int(_BF5["ext"].bf5_ws(w, x, o)), dtype=torch.uint8, device=dev)
+        st_a = dict(state)
+        st_a[BF5_FLAG] = True
+        for m in BF5_CHECK_MS:
+            cfg = {"m": m, "n": N, "k": K, "layer": "pooler"}
+            if not _bf5_route_ok(torch.empty((m, K), dtype=torch.bfloat16, device=dev), cfg, st_a):
+                raise RuntimeError(f"route check failed at m={m}")
+            fn = (lambda xx, m=m: kernel_fn({"x": xx, "config": {"m": m, "n": N, "k": K, "layer": "pooler"}}, st_a))
+            bad = _cell_check(f"bf5 pooler m={m}", fn, w, m, N, K)
+            if bad:
+                raise RuntimeError(f"m={m}: {bad}")
+            xr = torch.randn((m, K), device=dev, dtype=torch.float32).to(torch.bfloat16)
+            a = fn(xr)
+            b = kernel_fn({"x": xr, "config": cfg}, state)
+            torch.cuda.synchronize()
+            eq.append(f"m{m} {float((a.view(torch.int16) == b.view(torch.int16)).float().mean()):.4f}")
+        for rnd in range(BF1_ROUNDS):
+            st = {}
+            _cell_gate(f"bf5 pooler {BF5_M_LO}-{BF5_M_HI} r{rnd + 1}", "pooler", BF5_RACE_M, N, K, BF5_FLAG, state,
+                       flush_mode="read", stats=st,
+                       route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+            rounds.append(st)
+        rule = _bf1_rule(rounds)
+        if not rule[0]:
+            why = rule[1]
+        else:
+            data = {"x": torch.randn((BF5_RACE_M, K), device=dev, dtype=torch.float32).to(torch.bfloat16),
+                    "config": {"m": BF5_RACE_M, "n": N, "k": K, "layer": "pooler"}}
+            try:
+                names = _cell_kernels(lambda: kernel_fn(data, st_a))
+                if not (len(names) == 1 and "cutlass" in names[0].lower()):
+                    why = f"profiled kernels {names}: expected exactly one CUTLASS kernel"
+            except Exception as e:
+                why = f"profiler unavailable ({type(e).__name__}: {str(e)[-120:]})"
+        if not why:
+            state[BF5_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps today's route
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[BF5_FLAG] = False
+    if not state[BF5_FLAG]:
+        state.pop("bf5_ws", None)
+    r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                     f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+    if rule is not None:
+        r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+    b = _BF5["s"]
+    _BF5_SUM.append(f"[bf5] build {'n/a' if b is None else f'{b:.1f}s'} (background thread); bit-equal to today's "
+                    f"route: {' '.join(eq) or '-'}")
+    _BF5_SUM.append(f"[bf5] pooler m{BF5_M_LO}-{BF5_M_HI}@{BF5_RACE_M} cur/bf5 us: {r_txt or 'not timed'} -> "
+                    + ("ROUTE" if state[BF5_FLAG] else f"NO-ROUTE ({why[:120]})")
+                    + f" {time.perf_counter() - t0:.1f}s")
+    _decision(f"PATH CHOSEN bf5 pooler m={BF5_M_LO}..{BF5_M_HI}: " + ("CUTLASS pingpong" if state[BF5_FLAG] else
+              "current route") + (f" [pooled {rule[2]:.3f}]" if rule is not None else "")
+              + ("" if state[BF5_FLAG] else f"; {why[:160]}"))
+    torch.cuda.synchronize()
+
+
+def _bf5_summary(prepare_s: float) -> None:
+    print(f"[bf5] SUMMARY prepare {prepare_s:.1f}s ({BF5_EXT_NAME}); route at pooled <= {BF1_POOLED_MAX}, rounds <= "
+          f"{BF1_ROUND_MAX}; rounds as current/bf5=ratio", flush=True)
+    for line in _BF5_SUM:
+        print(line[:300], flush=True)
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (BF5_FLAG,)   # section (14)'s cell joins the A/B check and the FINAL FLAGS line
+
+
 def _prepare_state(weights: Weights, flags=None) -> dict:
     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
@@ -6203,6 +6437,9 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         # (13) BF1: fragment-ordered BF16 stream at m = 8..32 (own flags), raced against every incumbent above.
         _bf1_prepare(state, t_all)
         t = tick("bf1 cells (repack + checks + 3 read-flush rounds + profile)", t)
+        # (14) BF5: pooler m = 256 on the CUTLASS pingpong GEMM (own flag), raced against today's NN route.
+        _bf5_prepare(state, t_all)
+        t = tick("bf5 cell (join build + checks + 3 read-flush rounds + profile)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
@@ -6219,7 +6456,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         _b12m_prepare(state, t_all, flags=flags)
         _lt_prepare(state, flags=flags)
         _bf1_prepare(state, t_all, flags=flags)
-        t = tick("bulk / lt / bf1 per-state buffers (flags inherited)", t)
+        _bf5_prepare(state, t_all, flags=flags)
+        t = tick("bulk / lt / bf1 / bf5 per-state buffers (flags inherited)", t)
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
     return state
@@ -6237,6 +6475,8 @@ def _ab_component(layer: str, m: int, st=None) -> str:
     """Which stacked component serves this cell ("" = master's path, nothing to switch off). Each
     new cell maps to its OWN flag, so a miss there cannot switch off nn_ok or any other cell. A
     bulk12 cell that is on in st serves its m == 1 cell ahead of the raw bulk cell."""
+    if st is not None and layer == "pooler" and BF5_M_LO <= m <= BF5_M_HI and st.get(BF5_FLAG) is True:
+        return BF5_FLAG   # section (14): a miss turns off only this cell (nn_p256_ok, its fallback, stays)
     bf1_key = _bf1_cell(layer, m)
     if st is not None and bf1_key is not None and st.get(BF1_CELLS[bf1_key][1]) is True:
         return BF1_CELLS[bf1_key][1]   # section (13): a miss turns off only this bf1 cell
@@ -6387,6 +6627,7 @@ def prepare(weights: Weights) -> dict:
     _DECISION_LINES.clear()
     _b12m_summary(time.perf_counter() - t0)   # section (12)'s <= 2 KB block, the very last lines of prepare()
     _bf1_summary(time.perf_counter() - t0)    # section (13)'s block, after it
+    _bf5_summary(time.perf_counter() - t0)    # section (14)'s block, last
     return state
 
 
@@ -6426,6 +6667,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         ws, cnt = _swapab_buffers(state, layer)
         return _swapab_forward(layer, x, state[layer], ws, cnt, state["swapab_stages"][layer])
     if layer != "router":
+        if layer == "pooler" and _bf5_route_ok(x, cfg, state):   # section (14): m == 256, CUTLASS pingpong
+            return _bf5_forward(x, state)
         if layer == "pooler" and _khalf_route_ok(x, cfg, state):   # m == 128: bmm fp32 K-halves + add-cast
             return _khalf_forward(x, state)
         if (layer in NN_GATED_LAYERS and cfg["n"] == state[layer + "_t"].shape[1]
