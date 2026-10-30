@@ -1589,7 +1589,7 @@ OUNS_GATE_MS = (1, 8)
 OUNS_FLUSH_BYTES = 256 * 1024 * 1024
 OUNS_GATE_REPS = 41
 OUNS_MIN_WIN = 1.02
-OUNS_EXT_NAME = "muse_bf16_unpool_slice_cluster_v3"
+OUNS_EXT_NAME = "muse_bf16_unpool_slice_cluster_v4"
 
 _OUNS_CPP = r"""
 #include <torch/extension.h>
@@ -1672,7 +1672,7 @@ struct Cfg {
 };
 
 // out[m, n] bf16 = x[m, KPER*CL] @ w[:n, :KPER*CL]^T. Grid = (n / ROWS) * CL CTAs, cluster dim CL.
-template <int NT, int ROWS, int KPER, int CL, int NG>
+template <int NT, int ROWS, int KPER, int CL, int NG, bool PUSH>
 __global__ void __launch_bounds__(256, 2)
 ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
            const __nv_bfloat16* __restrict__ w, int64_t stride_w,
@@ -1706,6 +1706,7 @@ ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
     }
     cp_commit();
   }
+  if constexpr (PUSH) asm volatile("barrier.cluster.arrive.relaxed.aligned;\n" ::: "memory");   // BF4d phase 1
 
   float acc[C::TPW][C::NB][4];
 #pragma unroll
@@ -1765,6 +1766,38 @@ ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
     __syncthreads();
   }
 
+  if constexpr (PUSH) {
+    // BF4d: every CTA is running (phase 1); each pushes its m x PR partial into rank 0's receive buffer [CL][NT][PR];
+    // phase 2 releases the pushes; ranks 1..CL-1 exit; rank 0 alone waits (acquire) and reduces every row from local
+    // smem in rank order 0..CL-1 with the same float4 adds and bf16 rounding as the pull path below (bitwise).
+    float* RV = reinterpret_cast<float*>(smem + C::SMEM);
+    asm volatile("barrier.cluster.wait.aligned;\n" ::: "memory");
+    const uint32_t r0 = map_rank(smem_u32(RV + rank * NT * C::PR), 0u);
+    const float4* part4 = reinterpret_cast<const float4*>(part);
+    for (int idx = tid; idx < m * C::PR / 4; idx += C::THREADS) {
+      const float4 v = part4[idx];
+      asm volatile("st.shared::cluster.v4.f32 [%0], {%1,%2,%3,%4};\n"
+                   :: "r"(r0 + 16u * idx), "f"(v.x), "f"(v.y), "f"(v.z), "f"(v.w) : "memory");
+    }
+    asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
+    if (rank != 0) return;
+    asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
+    constexpr int R4 = ROWS / 4;
+    for (int idx = tid; idx < m * R4; idx += C::THREADS) {
+      const int t = idx / R4, j = idx % R4;
+      float4 s = make_float4(0.f, 0.f, 0.f, 0.f);
+#pragma unroll
+      for (int r = 0; r < CL; ++r) {
+        const float4 v = *reinterpret_cast<const float4*>(RV + (r * NT + t) * C::PR + j * 4);
+        s.x += v.x; s.y += v.y; s.z += v.z; s.w += v.w;
+      }
+      __nv_bfloat162 lo = __floats2bfloat162_rn(s.x, s.y), hi = __floats2bfloat162_rn(s.z, s.w);
+      uint2 pk;
+      pk.x = *reinterpret_cast<uint32_t*>(&lo);
+      pk.y = *reinterpret_cast<uint32_t*>(&hi);
+      *reinterpret_cast<uint2*>(out + (int64_t)t * stride_o + n0 + j * 4) = pk;
+    }
+  } else {
   cluster_arrive();  // release: this CTA's partial is visible cluster-wide
   cluster_wait();    // acquire: all CL partials are visible
 
@@ -1789,17 +1822,19 @@ ouns_kernel(const __nv_bfloat16* __restrict__ x, int64_t stride_x,
 
   cluster_arrive();  // nobody exits while another CTA may still read its shared memory
   cluster_wait();
+  }
 #endif
 }
 
-template <int NT, int ROWS, int KPER, int CL, int NG>
+template <int NT, int ROWS, int KPER, int CL, int NG, bool PUSH = false>
 struct Inst {
   using C = Cfg<NT, ROWS, KPER, CL, NG>;
+  static constexpr int SMEM_T = C::SMEM + (PUSH ? CL * NT * C::PR * 4 : 0);   // BF4d: rank 0's receive buffer
   static void prep() {
     static bool done = false;
     if (!done) {
-      C10_CUDA_CHECK(cudaFuncSetAttribute(ouns_kernel<NT, ROWS, KPER, CL, NG>,
-                                          cudaFuncAttributeMaxDynamicSharedMemorySize, C::SMEM));
+      C10_CUDA_CHECK(cudaFuncSetAttribute(ouns_kernel<NT, ROWS, KPER, CL, NG, PUSH>,
+                                          cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_T));
       done = true;
     }
   }
@@ -1807,7 +1842,7 @@ struct Inst {
     cudaLaunchConfig_t cfg = {};
     cfg.gridDim = dim3(static_cast<unsigned>((n / ROWS) * CL), 1, 1);
     cfg.blockDim = dim3(C::THREADS, 1, 1);
-    cfg.dynamicSmemBytes = C::SMEM;
+    cfg.dynamicSmemBytes = SMEM_T;
     cfg.stream = stream;
     attr[0].id = cudaLaunchAttributeClusterDimension;
     attr[0].val.clusterDim.x = CL;
@@ -1823,7 +1858,7 @@ struct Inst {
     cudaLaunchAttribute attr[1];
     cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
     C10_CUDA_CHECK(cudaLaunchKernelEx(
-        &cfg, ouns_kernel<NT, ROWS, KPER, CL, NG>,
+        &cfg, ouns_kernel<NT, ROWS, KPER, CL, NG, PUSH>,
         reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), (int64_t)x.stride(0),
         reinterpret_cast<const __nv_bfloat16*>(w.data_ptr()), (int64_t)w.stride(0),
         reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), (int64_t)out.stride(0), (int)x.size(0)));
@@ -1834,16 +1869,16 @@ struct Inst {
     cudaLaunchAttribute attr[1];
     cudaLaunchConfig_t cfg = config(n, at::cuda::getCurrentCUDAStream(), attr);
     int clusters = 0;
-    C10_CUDA_CHECK(cudaOccupancyMaxActiveClusters(&clusters, ouns_kernel<NT, ROWS, KPER, CL, NG>, &cfg));
+    C10_CUDA_CHECK(cudaOccupancyMaxActiveClusters(&clusters, ouns_kernel<NT, ROWS, KPER, CL, NG, PUSH>, &cfg));
     return clusters;
   }
   static std::string attrs() {
     prep();
     cudaFuncAttributes a;
-    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, ouns_kernel<NT, ROWS, KPER, CL, NG>));
+    C10_CUDA_CHECK(cudaFuncGetAttributes(&a, ouns_kernel<NT, ROWS, KPER, CL, NG, PUSH>));
     return "NT=" + std::to_string(NT) + " ROWS=" + std::to_string(ROWS) + " CL=" + std::to_string(CL) +
            " regs=" + std::to_string(a.numRegs) + " local(spill)=" + std::to_string(a.localSizeBytes) +
-           " static_smem=" + std::to_string(a.sharedSizeBytes) + " dyn_smem=" + std::to_string(C::SMEM) +
+           " static_smem=" + std::to_string(a.sharedSizeBytes) + " dyn_smem=" + std::to_string(SMEM_T) + " push=" + std::to_string((int)PUSH) +
            " max_threads=" + std::to_string(a.maxThreadsPerBlock);
   }
 };
@@ -1854,6 +1889,8 @@ bool dispatch(int64_t cl, int64_t m, F&& f) {
   if (m < 1 || m > 8) return false;
   if (cl == 8) { f(Inst<8, 64, 512, 8, 4>{}, 1024, 4096); return true; }
   if (cl == 4) { f(Inst<8, 32, 1024, 4, 4>{}, 1024, 4096); return true; }
+  if (cl == 108) { f(Inst<8, 64, 512, 8, 4, true>{}, 1024, 4096); return true; }   // BF4d push reduce (cl + 100)
+  if (cl == 104) { f(Inst<8, 32, 1024, 4, 4, true>{}, 1024, 4096); return true; }
   return false;
 }
 
@@ -6527,6 +6564,536 @@ def _rv_prepare(state: dict, t_start: float, flags=None) -> None:
 NEW_CELL_FLAGS = NEW_CELL_FLAGS + (RV_FLAG,)   # section (15)'s cell joins the A/B check and the FINAL FLAGS line
 
 
+# --- (16) BF4c-2: router m = 2..8 with hi/lo prepacked in mma A-fragment order, loaded straight to registers --------
+# Rung BF4c-2 of campaign 2026-10-30-public-ladder (hypothesis ladder-bf4c2-router-m8-fragment-regload). ONE change to
+# router_kernel<8,8> (section (8)): its grid (128 CTAs, clusters of 8), tiling, x path (cp.async smem + ldmatrix), mma
+# order and fixed-order warp / DSMEM reduce are kept; the hi / lo A operands no longer go cp.async -> smem -> ldmatrix
+# but come from a lossless prepare()-time permutation of router_hi / router_lo into the exact per-lane ldmatrix.x4
+# fragments, one 16 B ld.global.nc per lane per (k16 step, 8-column group), all issued first. Same BF16 hi + lo values,
+# same FP32 accumulation, same order: the output is bitwise today's route (checked in prepare). Structure idea after the
+# public m <= 16 router (github.com/alygg77/okc-muse-spark-kernels@6cae49a kernels/muse_bf16_proj.py, rsmall),
+# re-implemented on our own kernel; no code from that file or its sources.
+FK_FLAG = "router_fk_ok"
+FKP_FLAG = "router_fkp_ok"     # BF4c-3: section (16) with the push reduce (stacked on FK_FLAG, raced vs it)
+FKP_STRESS = 64                 # prepare: bitwise push == pull over this many launches per checked m
+FK_M_LO, FK_M_HI, FK_RACE_M = 2, 8, 8
+FK_CHECK_MS = (2, 5, 8)
+FK_ROUNDS = 3                    # read-flush _cell_gate rounds, judged by _bf1_rule (pooled <= 0.97, rounds <= 0.99)
+FK_EXT_NAME = "muse_bf16_router_fk_m8_v2"
+_FK_SUM = []
+
+_FK_CPP = r"""
+#include <torch/extension.h>
+#include <vector>
+std::vector<int64_t> router_fk(torch::Tensor x, torch::Tensor wp, torch::Tensor out, bool query, bool push);
+"""
+
+_FK_CUDA = r"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda_bf16.h>
+#include <cstdint>
+#include <vector>
+
+namespace {
+constexpr int THREADS = 128, NWARP = 4, N_OUT = 256, K_TOT = 8192, CS = 8, NT = 8;
+constexpr int KC = K_TOT / CS, QK = KC / NWARP, COLS = 16, G = 2, RB = KC * 2, SUB_K = 64, NSUB = QK / SUB_K;
+constexpr int NST = QK / 16, NCTA = (N_OUT / COLS) * CS, NTILE = NT / 8;
+constexpr int X_BYTES = NT * RB, P_BYTES = COLS * NT * 4, WP_BYTES = NWARP * COLS * NT * 4;
+constexpr int SMEM = X_BYTES + P_BYTES + WP_BYTES;
+constexpr int R_BYTES = CS * COLS * NT * 4;   // BF4c-3 push: rank 0's receive buffer [rank][col][tok]
+template <bool PUSH> constexpr int smem_of() { return PUSH ? SMEM + R_BYTES : SMEM; }
+__device__ __forceinline__ void st_peer(uint32_t a, float v) {
+  asm volatile("st.shared::cluster.f32 [%0], %1;\n" :: "r"(a), "f"(v) : "memory");
+}
+
+__device__ __forceinline__ uint32_t smem_u32(const void* p) { return static_cast<uint32_t>(__cvta_generic_to_shared(p)); }
+__device__ __forceinline__ void cp_async16(uint32_t dst, const void* src, int n) {
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" :: "r"(dst), "l"(src), "r"(n) : "memory");
+}
+__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::: "memory"); }
+template <int N> __device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" :: "n"(N) : "memory"); }
+__device__ __forceinline__ void cp_wait_dyn(int n) {
+  switch (n) { case 3: cp_wait<3>(); break; case 2: cp_wait<2>(); break; case 1: cp_wait<1>(); break; default: cp_wait<0>(); }
+}
+__device__ __forceinline__ void ldsm_x4(uint32_t (&r)[4], uint32_t a) {
+  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a) : "memory");
+}
+__device__ __forceinline__ int4 ld_nc(const int4* p) {
+  int4 v;
+  asm volatile("ld.global.nc.L1::no_allocate.v4.s32 {%0,%1,%2,%3}, [%4];\n"
+               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p));
+  return v;
+}
+__device__ __forceinline__ void mma_bf16(float (&c)[4], const int4& a, uint32_t b0, uint32_t b1) {
+  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
+               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+               : "r"(a.x), "r"(a.y), "r"(a.z), "r"(a.w), "r"(b0), "r"(b1));
+}
+__device__ __forceinline__ void csync() {
+  asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
+  asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
+}
+__device__ __forceinline__ float ld_peer(uint32_t a, uint32_t rank) {
+  uint32_t r;
+  asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r) : "r"(a), "r"(rank));
+  float v;
+  asm volatile("ld.shared::cluster.f32 %0, [%1];\n" : "=f"(v) : "r"(r) : "memory");
+  return v;
+}
+
+template <bool PUSH>
+__global__ void __launch_bounds__(THREADS, 1)
+router_fk_kernel(const __nv_bfloat16* __restrict__ x, int64_t sx, const int4* __restrict__ wp, float* __restrict__ out, int m) {
+  extern __shared__ __align__(128) uint8_t smem[];
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const int rank = blockIdx.x % CS, tile = blockIdx.x / CS;
+  const int col0 = tile * COLS, kbase = rank * KC, kw = warp * QK;
+  const uint32_t xs_u = smem_u32(smem);
+  float* P = reinterpret_cast<float*>(smem + X_BYTES);
+  float* WP = reinterpret_cast<float*>(smem + X_BYTES + P_BYTES);
+  // weights: this warp's 16 k16 steps x 2 groups of A fragments, straight to registers, all issued first
+  const int4* wb = wp + (int64_t)((tile * CS + rank) * NWARP + warp) * (NST * G * 32) + lane;
+  int4 wf[NST][G];
+#pragma unroll
+  for (int st = 0; st < NST; ++st)
+#pragma unroll
+    for (int g = 0; g < G; ++g) wf[st][g] = ld_nc(wb + (st * G + g) * 32);
+  // x: today's path (this warp's K quarter, XOR-swizzled smem, one commit group per 64 K)
+#pragma unroll
+  for (int s = 0; s < NSUB; ++s) {
+    const int k0 = kw + s * SUB_K;
+#pragma unroll
+    for (int j = 0; j < NT * 8 / 32; ++j) {
+      const int idx = j * 32 + lane, tok = idx >> 3, c = idx & 7;
+      const bool ok = tok < m;
+      const __nv_bfloat16* src = ok ? (x + (int64_t)tok * sx + kbase + k0 + c * 8) : x;
+      cp_async16(xs_u + tok * RB + ((k0 / 8 + (c ^ (tok & 7))) << 4), src, ok ? 16 : 0);
+    }
+    cp_commit();
+  }
+  if constexpr (PUSH) asm volatile("barrier.cluster.arrive.relaxed.aligned;\n" ::: "memory");   // phase 1 (non-blocking)
+  float acc[G][NTILE][4];
+#pragma unroll
+  for (int g = 0; g < G; ++g)
+#pragma unroll
+    for (int t = 0; t < NTILE; ++t)
+#pragma unroll
+      for (int e = 0; e < 4; ++e) acc[g][t][e] = 0.f;
+  const int xr = lane & 7, xq = lane >> 3;
+#pragma unroll
+  for (int s = 0; s < NSUB; ++s) {
+    cp_wait_dyn(NSUB - 1 - s);
+    __syncwarp();
+#pragma unroll
+    for (int kp = 0; kp < SUB_K / 32; ++kp) {
+      const int cbase = (kw + s * SUB_K) / 8 + kp * 4;
+      uint32_t b[NTILE][4];
+#pragma unroll
+      for (int t = 0; t < NTILE; ++t) ldsm_x4(b[t], xs_u + (t * 8 + xr) * RB + (((cbase + xq) ^ xr) << 4));
+#pragma unroll
+      for (int h = 0; h < 2; ++h) {
+        const int st = (s * (SUB_K / 32) + kp) * 2 + h;
+#pragma unroll
+        for (int g = 0; g < G; ++g)
+#pragma unroll
+          for (int t = 0; t < NTILE; ++t) mma_bf16(acc[g][t], wf[st][g], b[t][2 * h], b[t][2 * h + 1]);
+      }
+    }
+  }
+  // epilogue: today's fixed orders (hi + lo per column, warps 0..3, ranks 0..7)
+#pragma unroll
+  for (int g = 0; g < G; ++g)
+#pragma unroll
+    for (int t = 0; t < NTILE; ++t) {
+      const int col = g * 8 + (lane >> 2), tk = t * 8 + (lane & 3) * 2;
+      WP[(warp * COLS + col) * NT + tk] = acc[g][t][0] + acc[g][t][2];
+      WP[(warp * COLS + col) * NT + tk + 1] = acc[g][t][1] + acc[g][t][3];
+    }
+  __syncthreads();
+  if constexpr (PUSH) {
+    // BF4c-3: every CTA of the cluster is running (phase 1), then each pushes its partial straight into rank 0's
+    // receive buffer; phase 2 releases the pushes; ranks 1..7 exit, rank 0 alone waits (acquire) and sums each
+    // output over ranks 0..7 in that order from local smem: the same values and order as the pull path below.
+    float* RV = reinterpret_cast<float*>(smem + SMEM);
+    asm volatile("barrier.cluster.wait.aligned;\n" ::: "memory");
+    uint32_t r0;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;\n" : "=r"(r0) : "r"(smem_u32(RV + rank * COLS * NT)), "r"(0));
+    for (int e = tid; e < COLS * NT; e += THREADS) {
+      float s = WP[e];
+#pragma unroll
+      for (int w = 1; w < NWARP; ++w) s += WP[w * COLS * NT + e];
+      st_peer(r0 + 4u * e, s);
+    }
+    asm volatile("barrier.cluster.arrive.release.aligned;\n" ::: "memory");
+    if (rank != 0) return;
+    asm volatile("barrier.cluster.wait.acquire.aligned;\n" ::: "memory");
+    for (int e = tid; e < COLS * NT; e += THREADS) {
+      const int col = e / NT, tok = e % NT;
+      if (tok < m) {
+        float s = 0.f;
+#pragma unroll
+        for (int q = 0; q < CS; ++q) s += RV[q * COLS * NT + e];
+        out[(int64_t)tok * N_OUT + col0 + col] = s;
+      }
+    }
+  } else {
+  for (int e = tid; e < COLS * NT; e += THREADS) {
+    float s = WP[e];
+#pragma unroll
+    for (int w = 1; w < NWARP; ++w) s += WP[w * COLS * NT + e];
+    P[e] = s;
+  }
+  __syncthreads();
+  const int cj = tid / NT, tok = tid % NT;
+  const bool mine = tid < 2 * NT && tok < m;
+  csync();
+  if (mine) {
+    const uint32_t loc = smem_u32(P + (2 * rank + cj) * NT + tok);
+    float s = 0.f;
+#pragma unroll
+    for (int q = 0; q < CS; ++q) s += ld_peer(loc, q);
+    out[(int64_t)tok * N_OUT + col0 + 2 * rank + cj] = s;
+  }
+  csync();
+  }
+}
+
+template <bool PUSH>
+std::vector<int64_t> fk_run(torch::Tensor x, torch::Tensor wp, torch::Tensor out, bool query) {
+  static bool done = false;
+  if (!done) {
+    C10_CUDA_CHECK(cudaFuncSetAttribute(router_fk_kernel<PUSH>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                        smem_of<PUSH>()));
+    done = true;
+  }
+  cudaLaunchConfig_t cfg = {};
+  cfg.gridDim = dim3(NCTA);
+  cfg.blockDim = dim3(THREADS);
+  cfg.dynamicSmemBytes = smem_of<PUSH>();
+  cfg.stream = at::cuda::getCurrentCUDAStream();
+  cudaLaunchAttribute at[1];
+  at[0].id = cudaLaunchAttributeClusterDimension;
+  at[0].val.clusterDim.x = CS;
+  at[0].val.clusterDim.y = 1;
+  at[0].val.clusterDim.z = 1;
+  cfg.attrs = at;
+  cfg.numAttrs = 1;
+  if (query) {
+    cudaFuncAttributes fa;
+    C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, router_fk_kernel<PUSH>));
+    int n = -1;
+    if (cudaOccupancyMaxActiveClusters(&n, router_fk_kernel<PUSH>, &cfg) != cudaSuccess) { (void)cudaGetLastError(); n = -1; }
+    return {fa.numRegs, (int64_t)fa.localSizeBytes, (int64_t)smem_of<PUSH>(), n};
+  }
+  C10_CUDA_CHECK(cudaLaunchKernelEx(&cfg, router_fk_kernel<PUSH>, reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()),
+                                    (int64_t)x.stride(0), reinterpret_cast<const int4*>(wp.data_ptr()),
+                                    out.data_ptr<float>(), (int)x.size(0)));
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return {};
+}
+}  // namespace
+
+std::vector<int64_t> router_fk(torch::Tensor x, torch::Tensor wp, torch::Tensor out, bool query, bool push) {
+  if (query) return push ? fk_run<true>(x, wp, out, true) : fk_run<false>(x, wp, out, true);
+  const int64_t m = x.size(0);
+  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.dim() == 2 && m >= 1 && m <= NT && x.size(1) == K_TOT &&
+              x.stride(1) == 1 && (m == 1 || x.stride(0) % 8 == 0) && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0,
+              "router_fk: x");
+  TORCH_CHECK(wp.scalar_type() == at::kBFloat16 && wp.is_contiguous() && wp.numel() == 2LL * N_OUT * K_TOT &&
+              reinterpret_cast<uintptr_t>(wp.data_ptr()) % 16 == 0, "router_fk: packed weight");
+  TORCH_CHECK(out.scalar_type() == at::kFloat && out.is_contiguous() && out.size(0) == m && out.size(1) == N_OUT, "router_fk: out");
+  return push ? fk_run<true>(x, wp, out, false) : fk_run<false>(x, wp, out, false);
+}
+"""
+
+
+def _build_router_fk():
+    """Compile section (16)'s module once per process, at import; arch list pinned to 9.0a around the build. Any
+    failure keeps router_kernel<8,8>."""
+    t0 = time.perf_counter()
+    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
+    try:
+        from torch.utils.cpp_extension import load_inline
+        ext = load_inline(name=FK_EXT_NAME, cpp_sources=_FK_CPP, cuda_sources=_FK_CUDA, functions=["router_fk"],
+                          extra_cuda_cflags=["-O3", "-lineinfo"], verbose=False)
+    except Exception as e:
+        print(f"[fk] load_inline failed after {time.perf_counter() - t0:.1f}s, router_kernel<8,8> kept: {e!r}", flush=True)
+        return None
+    finally:
+        if prev is None:
+            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
+        else:
+            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
+    print(f"[fk] load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
+    return ext
+
+
+_FK_EXT = _build_router_fk() if torch.cuda.is_available() else None
+
+
+def _fk_pack(hi: torch.Tensor, lo: torch.Tensor) -> torch.Tensor:
+    """Lossless permutation of router_hi / router_lo [256, 8192] bf16 into the kernel's fragment order: element
+    [tile, rank, warp, st, g, lane, reg, pair] = (hi, lo, hi, lo)[reg] at row tile*16 + 8 g + lane // 4 and
+    k = rank*1024 + warp*256 + st*16 + 8 (reg // 2) + 2 (lane % 4) + pair (the ldmatrix.x4 registers of section (8))."""
+    def v(t):
+        return t.reshape(16, 2, 8, 8, 4, 16, 2, 4, 2)    # tile g r rank warp st khalf q pair
+    t = torch.stack([v(hi), v(lo)], dim=-1)             # ... khalf q pair which
+    return t.permute(0, 3, 4, 5, 1, 2, 7, 6, 9, 8).contiguous().reshape(-1)
+
+
+def _fk_route(x: torch.Tensor, cfg, state: dict) -> bool:
+    """True when section (16) serves this call: flag, cfg, shapes, dtype, strides and alignment only."""
+    if state.get(FK_FLAG) is not True or x.dim() != 2 or "router_fk_w" not in state:
+        return False
+    m = x.shape[0]
+    return (FK_M_LO <= m <= FK_M_HI and cfg["m"] == m and cfg["n"] == ROUTER_N and cfg["k"] == ROUTER_K
+            and x.shape[1] == ROUTER_K and x.dtype == torch.bfloat16 and x.is_cuda and x.stride(1) == 1
+            and x.stride(0) % 8 == 0 and x.data_ptr() % 16 == 0)
+
+
+def _fk_forward(x: torch.Tensor, state: dict) -> torch.Tensor:
+    """x bf16 [2..8, 8192] @ (hi + lo).T -> fp32 [m, 256]: ONE cluster launch, no memset."""
+    out = torch.empty((x.shape[0], ROUTER_N), dtype=torch.float32, device=x.device)
+    _FK_EXT.router_fk(x, state["router_fk_w"], out, False, state.get(FKP_FLAG) is True)
+    return out
+
+
+def _fk_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (16). Sets state[FK_FLAG] (False unless every step passes) and state["router_fk_w"]. flags None (state
+    A): needs router_cluster_ok (the incumbent it must equal); pack + losslessness check; regs / spill / co-resident
+    clusters; at FK_CHECK_MS _cell_check through kernel_fn AND bitwise equality with _router_cluster_forward;
+    FK_ROUNDS read-flush _cell_gate rounds at FK_RACE_M, _bf1_rule, a profiler assert of one router_fk_kernel.
+    flags a dict (the A/B check's second state): its own pack if the flag is on. Never raises."""
+    state[FK_FLAG] = False
+    state[FKP_FLAG] = False
+    if flags is not None:
+        if flags.get(FK_FLAG) and _FK_EXT is not None:
+            try:
+                state["router_fk_w"] = _fk_pack(state["router_hi"], state["router_lo"])
+                state[FK_FLAG] = True
+                state[FKP_FLAG] = bool(flags.get(FKP_FLAG, False))
+            except Exception as e:
+                print(f"[fk] second state: pack raised {type(e).__name__}: {e}; cell off", flush=True)
+        return
+    _FK_SUM.clear()
+    if _FK_EXT is None:
+        _FK_SUM.append("[fk] no module (build failed or no GPU): router_kernel<8,8> at m = 2..8")
+        return
+    t0 = time.perf_counter()
+    why, rounds, rule = "", [], None
+    try:
+        if t0 - t_start > BF1_START_DEADLINE_S:
+            raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+        if not state.get("router_cluster_ok"):
+            raise RuntimeError("router_cluster_ok is off: no incumbent kernel to race / equal")
+        hi, lo = state["router_hi"], state["router_lo"]
+        wp = _fk_pack(hi, lo)
+        if not torch.equal(wp.sort().values, torch.cat([hi.reshape(-1), lo.reshape(-1)]).sort().values):
+            raise RuntimeError("pack is not a permutation of hi / lo")
+        state["router_fk_w"] = wp
+        dev = wp.device
+        info = [int(v) for v in _FK_EXT.router_fk(torch.zeros((FK_RACE_M, ROUTER_K), dtype=torch.bfloat16, device=dev),
+                                                  wp, torch.empty((FK_RACE_M, ROUTER_N), dtype=torch.float32,
+                                                                  device=dev), True, False)]
+        print(f"[fk] router_fk_kernel regs={info[0]} spill={info[1]} B smem={info[2]} B max clusters={info[3]}", flush=True)
+        if info[1] != 0 or info[3] < 16:
+            raise RuntimeError(f"spill {info[1]} B / max active clusters {info[3]} < 16")
+        st_a = dict(state)
+        st_a[FK_FLAG] = True
+        g = torch.Generator(device=dev)
+        g.manual_seed(13579)
+        for m in FK_CHECK_MS:
+            cfg = {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}
+            if not _fk_route(torch.empty((m, ROUTER_K), dtype=torch.bfloat16, device=dev), cfg, st_a):
+                raise RuntimeError(f"route check failed at m={m}")
+            fn = (lambda xx, cfg=cfg: kernel_fn({"x": xx, "config": cfg}, st_a))
+            bad = _cell_check(f"fk router m={m}", fn, state["router"], m, ROUTER_N, ROUTER_K, rel_bound=2e-5)
+            if bad:
+                raise RuntimeError(f"m={m}: {bad}")
+            for _ in range(2):
+                xr = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
+                a, b = fn(xr), _router_cluster_forward(xr, state)
+                torch.cuda.synchronize()
+                if not torch.equal(a, b):
+                    raise RuntimeError(f"m={m}: not bitwise router_kernel<8,8>")
+        for rnd in range(FK_ROUNDS):
+            st = {}
+            _cell_gate(f"fk router m={FK_RACE_M} r{rnd + 1}", "router", FK_RACE_M, ROUTER_N, ROUTER_K, FK_FLAG, state,
+                       flush_mode="read", stats=st,
+                       route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+            rounds.append(st)
+        rule = _bf1_rule(rounds)
+        if not rule[0]:
+            why = rule[1]
+        else:
+            data = {"x": torch.randn((FK_RACE_M, ROUTER_K), device=dev, dtype=torch.float32).to(torch.bfloat16),
+                    "config": {"m": FK_RACE_M, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}}
+            try:
+                names = _cell_kernels(lambda: kernel_fn(data, st_a))
+                if not (len(names) == 1 and "router_fk_kernel" in names[0]):
+                    why = f"profiled kernels {names}: expected exactly one router_fk_kernel"
+            except Exception as e:
+                why = f"profiler unavailable ({type(e).__name__}: {str(e)[-120:]})"
+        if not why:
+            state[FK_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps router_kernel<8,8>
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[FK_FLAG] = False
+    if not state[FK_FLAG]:
+        state.pop("router_fk_w", None)
+    r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                     f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+    if rule is not None:
+        r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+    _FK_SUM.append(f"[fk] router m{FK_RACE_M} inc/fk us: {r_txt or 'not timed'} -> "
+                   + ("ROUTE" if state[FK_FLAG] else f"NO-ROUTE ({why[:100]})") + f" {time.perf_counter() - t0:.1f}s")
+    _decision(f"PATH CHOSEN fk router m={FK_M_LO}..{FK_M_HI}: " + ("router_fk_kernel" if state[FK_FLAG] else "incumbent")
+              + (f" [pooled {rule[2]:.3f}]" if rule is not None else "") + ("" if state[FK_FLAG] else f"; {why[:160]}"))
+    if state[FK_FLAG]:
+        _fkp_prepare(state, t_start)
+    torch.cuda.synchronize()
+
+
+def _fkp_prepare(state: dict, t_start: float) -> None:
+    """BF4c-3 (state A, FK_FLAG on): the push-reduce instance of router_fk_kernel. regs / spill / clusters gate;
+    bitwise equal to the pull instance at FK_CHECK_MS over FKP_STRESS launches each (a missing or early-read push
+    would show as a mismatch); FK_ROUNDS read-flush _cell_gate rounds of kernel_fn with FKP_FLAG on vs off (both on
+    section (16)), _bf1_rule. Sets state[FKP_FLAG]. Never raises."""
+    t0 = time.perf_counter()
+    why, rounds, rule = "", [], None
+    try:
+        if t0 - t_start > BF1_START_DEADLINE_S:
+            raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+        dev = state["router_fk_w"].device
+        info = [int(v) for v in _FK_EXT.router_fk(torch.zeros((FK_RACE_M, ROUTER_K), dtype=torch.bfloat16, device=dev),
+                                                  state["router_fk_w"], torch.empty((FK_RACE_M, ROUTER_N),
+                                                  dtype=torch.float32, device=dev), True, True)]
+        print(f"[fkp] router_fk_kernel<push> regs={info[0]} spill={info[1]} B smem={info[2]} B max clusters={info[3]}",
+              flush=True)
+        if info[1] != 0 or info[3] < 16:
+            raise RuntimeError(f"spill {info[1]} B / max active clusters {info[3]} < 16")
+        st_p = dict(state)
+        st_p[FKP_FLAG] = True
+        st_q = dict(state)
+        st_q[FKP_FLAG] = False
+        g = torch.Generator(device=dev)
+        g.manual_seed(24680)
+        for m in FK_CHECK_MS:
+            cfg = {"m": m, "n": ROUTER_N, "k": ROUTER_K, "layer": "router"}
+            xr = torch.randn((m, ROUTER_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
+            ref = kernel_fn({"x": xr, "config": cfg}, st_q)
+            outs = [kernel_fn({"x": xr, "config": cfg}, st_p) for _ in range(FKP_STRESS)]
+            torch.cuda.synchronize()
+            nbad = sum(0 if torch.equal(o, ref) else 1 for o in outs)
+            print(f"[fkp] m={m}: {FKP_STRESS - nbad}/{FKP_STRESS} launches bitwise the pull reduce", flush=True)
+            if nbad:
+                raise RuntimeError(f"m={m}: {nbad}/{FKP_STRESS} launches differ from the pull reduce")
+        for rnd in range(FK_ROUNDS):
+            st = {}
+            _cell_gate(f"fkp router m={FK_RACE_M} r{rnd + 1}", "router", FK_RACE_M, ROUTER_N, ROUTER_K, FKP_FLAG,
+                       state, flush_mode="read", stats=st,
+                       route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+            rounds.append(st)
+        rule = _bf1_rule(rounds)
+        if not rule[0]:
+            why = rule[1]
+        else:
+            state[FKP_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps the pull reduce
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[FKP_FLAG] = False
+    r_txt = " ".join(f"r{i + 1} {r['master']['net']:.2f}/{r['cand']['net']:.2f}="
+                     f"{r['cand']['net'] / r['master']['net']:.3f}" for i, r in enumerate(rounds))
+    if rule is not None:
+        r_txt += f" | pooled {rule[2]:.3f} iqr{rule[4]:.2f}/{rule[3]:.2f}"
+    _FK_SUM.append(f"[fkp] router m{FK_RACE_M} pull/push us: {r_txt or 'not timed'} -> "
+                   + ("ROUTE" if state[FKP_FLAG] else f"NO-ROUTE ({why[:100]})") + f" {time.perf_counter() - t0:.1f}s")
+    _decision(f"PATH CHOSEN fkp router m={FK_M_LO}..{FK_M_HI}: " + ("push reduce" if state[FKP_FLAG] else "pull reduce")
+              + (f" [pooled {rule[2]:.3f}]" if rule is not None else "") + ("" if state[FKP_FLAG] else f"; {why[:160]}"))
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (FK_FLAG, FKP_FLAG)   # section (16)'s cells join the A/B check and FINAL FLAGS
+
+
+# --- (17) BF4d: section (7)'s ouns kernel with BF4c-3's push reduce (own flag), raced vs its pull reduce ------------
+# Rung BF4d of campaign 2026-10-30-public-ladder (hypothesis ladder-bf4d-ouns-push-reduce). The PUSH instances live in
+# section (7)'s module (cl + 100 selects them); everything but the cross-rank reduce is the routed ouns kernel, and the
+# reduce keeps its values and order, so the output is bitwise today's ouns.
+OUNSP_FLAG = "ouns_push_ok"
+OUNSP_GATE_MS = (1, 8)
+OUNSP_STRESS = 64
+_OUNSP_SUM = []
+
+
+def _ounsp_prepare(state: dict, t_start: float, flags=None) -> None:
+    """Section (17). flags None (state A): only if ouns routed (state["ouns_cl"] > 0): attrs / co-resident clusters
+    of the push instance, bitwise equality with the pull instance over OUNSP_STRESS launches at each OUNS_CHECK_MS m,
+    then for each m in OUNSP_GATE_MS FK_ROUNDS read-flush _cell_gate rounds of kernel_fn with the flag on vs off,
+    _bf1_rule on each; route iff both pass. flags a dict: inherit. Never raises."""
+    state[OUNSP_FLAG] = False
+    if flags is not None:
+        state[OUNSP_FLAG] = bool(flags.get(OUNSP_FLAG, False)) and bool(state.get("ouns_cl"))
+        return
+    _OUNSP_SUM.clear()
+    t0 = time.perf_counter()
+    why, txt = "", []
+    try:
+        cl = int(state.get("ouns_cl") or 0)
+        if not cl or _OUNS_EXT is None:
+            raise RuntimeError("ouns not routed: nothing to push")
+        if t0 - t_start > BF1_START_DEADLINE_S:
+            raise RuntimeError(f"skipped: deadline ({t0 - t_start:.0f}s > {BF1_START_DEADLINE_S:.0f}s)")
+        print(f"[ounsp] cl={cl} push: {_OUNS_EXT.ouns_attrs(cl + 100)}", flush=True)
+        have = int(_OUNS_EXT.ouns_occupancy(cl + 100))
+        if have < OUNS_CLUSTERS_NEEDED[cl]:
+            raise RuntimeError(f"push instance co-resident clusters {have} < {OUNS_CLUSTERS_NEEDED[cl]}")
+        w = state["unpooler"]
+        dev = w.device
+        g = torch.Generator(device=dev)
+        g.manual_seed(97531)
+        for m in OUNS_CHECK_MS:
+            xr = torch.randn((m, OUNS_K), device=dev, dtype=torch.float32, generator=g).to(torch.bfloat16)
+            ref = _ouns_forward(xr, w, cl)
+            outs = [_ouns_forward(xr, w, cl + 100) for _ in range(OUNSP_STRESS)]
+            torch.cuda.synchronize()
+            nbad = sum(0 if torch.equal(o, ref) else 1 for o in outs)
+            print(f"[ounsp] m={m}: {OUNSP_STRESS - nbad}/{OUNSP_STRESS} launches bitwise the pull reduce", flush=True)
+            if nbad:
+                raise RuntimeError(f"m={m}: {nbad}/{OUNSP_STRESS} launches differ from the pull reduce")
+        for m in OUNSP_GATE_MS:
+            rounds = []
+            for rnd in range(FK_ROUNDS):
+                st = {}
+                _cell_gate(f"ounsp unpooler m={m} r{rnd + 1}", "unpooler", m, OUNS_N, OUNS_K, OUNSP_FLAG, state,
+                           flush_mode="read", stats=st,
+                           route_txt=f"route if pooled <= {BF1_POOLED_MAX}, rounds <= {BF1_ROUND_MAX}, IQR")
+                rounds.append(st)
+            rule = _bf1_rule(rounds)
+            txt.append(f"m{m} " + " ".join(f"{r['cand']['net'] / r['master']['net']:.3f}" for r in rounds)
+                       + f" pooled {rule[2]:.3f}")
+            if not rule[0]:
+                why = f"m={m}: {rule[1]}"
+                break
+        if not why:
+            state[OUNSP_FLAG] = True
+    except Exception as e:   # never raises: any surprise keeps the pull reduce
+        why = f"{type(e).__name__}: {str(e)[-200:]}"
+        state[OUNSP_FLAG] = False
+    _OUNSP_SUM.append(f"[ounsp] unpooler slice push/pull: {' | '.join(txt) or 'not timed'} -> "
+                      + ("ROUTE" if state[OUNSP_FLAG] else f"NO-ROUTE ({why[:100]})")
+                      + f" {time.perf_counter() - t0:.1f}s")
+    _decision("PATH CHOSEN ounsp unpooler m<=8: " + ("push reduce" if state[OUNSP_FLAG] else "pull reduce")
+              + ("" if state[OUNSP_FLAG] else f"; {why[:160]}"))
+    torch.cuda.synchronize()
+
+
+NEW_CELL_FLAGS = NEW_CELL_FLAGS + (OUNSP_FLAG,)   # section (17)'s cell joins the A/B check and the FINAL FLAGS line
+
+
 def _prepare_state(weights: Weights, flags=None) -> dict:
     """Build one state. flags None: run the router-cluster and unpooler-cluster self-checks and the
     unpooler gate (the state the judge keeps). flags a dict: the second state of the prepare()-time
@@ -6646,6 +7213,12 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         # (15) BF4: router m == 1 FP32 row GEMV (own flag), raced against today's m == 1 route.
         _rv_prepare(state, t_all)
         t = tick("rv router m=1 cell (check + 3 read-flush rounds + profile)", t)
+        # (16) BF4c-2: router m = 2..8 fragment-ordered register-direct hi/lo (own flag), raced vs router_kernel<8,8>.
+        _fk_prepare(state, t_all)
+        t = tick("fk router m=2..8 cell (pack + checks + 3 read-flush rounds + profile)", t)
+        # (17) BF4d: ouns push reduce (own flag), raced vs the routed ouns pull reduce.
+        _ounsp_prepare(state, t_all)
+        t = tick("ounsp unpooler m<=8 push (stress + 2 x 3 read-flush rounds)", t)
     else:
         state["ouns_cl"] = flags["ouns_cl"]
         state["router_cluster_ok"] = flags["router_cluster_ok"]
@@ -6664,6 +7237,8 @@ def _prepare_state(weights: Weights, flags=None) -> dict:
         _bf1_prepare(state, t_all, flags=flags)
         _bf5_prepare(state, t_all, flags=flags)
         _rv_prepare(state, t_all, flags=flags)
+        _fk_prepare(state, t_all, flags=flags)
+        _ounsp_prepare(state, t_all, flags=flags)
         t = tick("bulk / lt / bf1 / bf5 per-state buffers (flags inherited)", t)
     print(f"[prepare-time] state build ({'A' if flags is None else 'B'}) total: "
           f"{time.perf_counter() - t_all:.2f}s", flush=True)
@@ -6700,10 +7275,16 @@ def _ab_component(layer: str, m: int, st=None) -> str:
         return LT_FLAG
     if st is not None and layer == "router" and m == 1 and st.get(RV_FLAG) is True:
         return RV_FLAG   # section (15): a miss turns off only this cell
+    if st is not None and layer == "router" and FK_M_LO <= m <= FK_M_HI and st.get(FKP_FLAG) is True:
+        return FKP_FLAG   # BF4c-3: a miss turns off only the push reduce
+    if st is not None and layer == "router" and FK_M_LO <= m <= FK_M_HI and st.get(FK_FLAG) is True:
+        return FK_FLAG   # section (16): a miss turns off only this cell
     if layer == "router" and m <= ROUTER_CLUSTER_MAX_M:
         return "router_cluster_ok"
     if st is not None and layer == "router" and _router_pdl_flag(m) and st.get(_router_pdl_flag(m)):
         return _router_pdl_flag(m)   # m > 8 R-PDL cell: a miss turns off only that class's flag
+    if st is not None and layer == "unpooler" and m <= OUNS_MAX_M and st.get(OUNSP_FLAG) is True:
+        return OUNSP_FLAG   # section (17): a miss turns off only the push reduce
     if layer == "unpooler" and m <= OUNS_MAX_M:
         return "ouns_cl"
     if layer in NN_GATED_LAYERS and NN_GATED_MIN_M <= m <= NN_GATED_MAX_M:
@@ -6839,6 +7420,10 @@ def prepare(weights: Weights) -> dict:
     _bf5_summary(time.perf_counter() - t0)    # section (14)'s block, last
     for line in _RV_SUM:                      # section (15)'s line, after it
         print(line[:300], flush=True)
+    for line in _FK_SUM:                      # section (16)'s line, last
+        print(line[:300], flush=True)
+    for line in _OUNSP_SUM:                   # section (17)'s line
+        print(line[:300], flush=True)
     return state
 
 
@@ -6848,7 +7433,7 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
     # Shape gate (cfg layer / m / n and shape preconditions only; never on input values). Every
     # dispatch flag (ouns_cl, router_cluster_ok, nn_ok) is read from `state`.
     if layer == "unpooler" and _ouns_route_ok(x, state["unpooler"], cfg, state):
-        return _ouns_forward(x, state["unpooler"], state["ouns_cl"])
+        return _ouns_forward(x, state["unpooler"], state["ouns_cl"] + (100 if state.get(OUNSP_FLAG) is True else 0))
     bf1_ci = _bf1_route(layer, x, cfg, state)   # section (13): pooler / unpooler / qkv_gate / o, m = 8..32, per cell flag
     if bf1_ci is not None:
         return _bf1_forward(layer, x, state, bf1_ci)
@@ -6894,6 +7479,8 @@ def kernel_fn(data: Inputs, state: dict) -> torch.Tensor:
         return _bf16_gemm_dispatch_impl(x, state[layer][: cfg["n"]], None)
     if _rv_route(x, cfg, state):   # section (15): m == 1 FP32 row GEMV, own flag
         return _rv_forward(x, state)
+    if _fk_route(x, cfg, state):   # section (16): m = 2..8 fragment-ordered hi/lo, own flag
+        return _fk_forward(x, state)
     if _router_cluster_route(x, cfg, state):   # 1 <= m <= 8, n == 256: one launch, no memset
         return _router_cluster_forward(x, state)
     hi, lo = state["router_hi"], state["router_lo"]
