@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "89d3505130b443ea",
- "check_job": "e9975aa166ca4340",
+ "job": "3d3e844c7dab46c2",
+ "check_job": "9acab0181e774ed0",
  "mode": "submit",
- "speedup": 1.3212946931706766,
+ "speedup": 1.3327025731713515,
  "ci": [
-  1.3014752727731165,
-  1.3411141135682367
+  1.3127120345737813,
+  1.3526931117689216
  ],
- "score_us": 3656.1109531195157,
- "commit": "82918a108a7f1478ff7979dd1351dfdb5be49369",
- "submission_blob": "7112f416c0b6cfd3597fc53b301e1764124212bb",
- "slug": "ladder-bf4-router-m1-fp32-row-gemv",
- "master_slug": "ladder-bf4-router-m1-fp32-row-gemv",
- "master_job": "89d3505130b443ea",
+ "score_us": 3624.8147915738155,
+ "commit": "deb95a01b15d5956d1177f077ff56b1a968cd8c9",
+ "submission_blob": "e1fcd1843e6b8db5ff839aa626b0be119727fea6",
+ "slug": "ladder-bf4d-ouns-push-reduce",
+ "master_slug": "ladder-bf4d-ouns-push-reduce",
+ "master_job": "3d3e844c7dab46c2",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T124232Z",
- "note": "registered by churn.py register-landing from okc status 89d3505130b443ea"
+ "updated_at": "2026-10-30T133521Z",
+ "note": "registered by churn.py register-landing from okc status 3d3e844c7dab46c2"
 }
