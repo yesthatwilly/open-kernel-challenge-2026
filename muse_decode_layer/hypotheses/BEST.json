@@ -1,17 +1,17 @@
 {
  "problem": "muse_decode_layer",
- "job": "9263781bc2a040e9",
+ "job": "beaed2ad8eb541bf",
  "check_job": "9263781bc2a040e9",
- "mode": "check",
- "speedup": 1.7468462935547873,
+ "mode": "submit",
+ "speedup": 1.7196001543289197,
  "ci": [
-  1.7206435991514655,
-  1.7730489879581088
+  1.6938061520139858,
+  1.7453941566438533
  ],
- "score_us": 12949.22173946299,
+ "score_us": 13154.395190681787,
  "commit": "787c0eaca685efd830abd7a04700941e4542793f",
  "submission_blob": "58cec976bd10d2fe4cbf513e93436ea3a0a2bc8f",
  "slug": "engine-a-xl-arms-t1-t256",
  "result": "muse_decode_layer/hypotheses/done/gain/engine-a-xl-arms-t1-t256.result.json",
- "updated_at": "2026-10-30T012159Z"
+ "updated_at": "2026-10-30T013315Z"
 }

@@ -44,4 +44,4 @@ py_compile: OK (__pycache__ removed)
 medium
 
 ## Result (after the run)
-(pending)
+Promotion passed: 1.7196x [1.6938,1.7454], board: {"rank": 403, "team": "yesthatwilly", "speedup": 1.7196, "first": false, "ahead": 402, "to_first": 1.406}
