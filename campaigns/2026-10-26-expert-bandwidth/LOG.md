@@ -2723,3 +2723,7 @@ with the operator's go-ahead.
 - moe engine-a XL arms (scope cut: post-norm swap dropped): own '4xl' module, pdl bit 16384, 8-row _eae_info; node GPU 1: builds 37 s each, prepare 131 s, XL 92-94 regs lmem 0 occ 2, exact at every class; XL/E 0.995-0.997 on the node (H100 HBM wall, as with E4/E5); judge **73156455**.
 - The 0020Z cleanup removed worktrees that 38 takemyjob probe symlinks point into (eb-s1a, eb-x1, eb-eac, eb-l3, eb-l4, eb-fc, eb-x1v6, eb-pin2), which broke `hopper-probe build` for every lane (the XL builder worked around it). Recreated those 8 worktrees from their campaign branches (they were clean when removed): 0 broken links; /home 5.7 GB free. Lesson in memory.
 - prefill stack check 2c9af73f in flight.
+
+## 2026-10-30 0047Z — prefill stack 2c9af73f: 1.5720 (flat); RS2 spills on the judge's ptxas -> no route
+- RS2 probe on the judge: 168 regs, spill 80/36 B (the node's cu130 build was spill-free) -> gated off; S2 routed at low again (S2/A5b .927, guard .963). The run equals S2 alone (2 reads now: 1.5678, 1.5720). RS2 [refuted] on the judge toolchain. Prefill's expert-block riders are exhausted for now; S2 stays [shelf] (~+1%, invisible in one run).
+- moe XL check 73156455 in flight.
