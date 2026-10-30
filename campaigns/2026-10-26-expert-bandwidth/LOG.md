@@ -149,8 +149,8 @@ append-only, newest last.
 
 ## Now
 
-- updated: 2026-10-30T0309Z (date -u); **phase A (10-30)**; /loop /3to1 running
-- **User steers in force:** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
+- updated: 2026-10-30T0311Z (date -u); **phase A (10-30)**; /loop /3to1 running
+- **User steers in force:** **"stop making new things. run whatevers running. finish it out" (10-30 0311Z): no new lanes or checks; harvest the five running lanes only.** expert block first ("stay focused on expert block", 10-29 22:40Z); H100 open to >= 10-30 ~12:40-14:00Z on gpunode06 GPUs 1/3/4/5/6 (never 0/2/7), subagents run gpunode06 themselves (owner allow rules 22:55Z), as many lanes as tokens allow; openclaw watches idle GPUs every 30 min.
 - **Boards 10-30 0248Z:** moe **2.0793** (315), decode **1.7225** (409), prefill **1.572** (237), bf16 **1.284** (531), attention 1.634 (599).
 - **In flight:** **relay** (GPU 1: hot w2 before stream-K cold w2 to fill the 8.3 us tail; ufsrung closed 0309Z), **ufs** (GPU 4: persistent cold-schedule prototype), **hhcc** (GPU 5: hot-half concurrent dequant), **d128** (GPU 6: decode T=128 expert anatomy); **dxl** (GPU 3: moe riders -> decode on t256xl, T=1 XL first); xlres held as a moe rider (027e33b7).
 - **Next:** decode scored 7c7524a6 -> land if > 1.7196. xlres riders go on the new moe master (mstack landed c5e2d8d4) and decode once they qualify. Ports to decode wait on size: decode is 999,631 B. Check-vs-scored drift was ~1.7% twice tonight, so size checks with that in mind.
@@ -2820,3 +2820,7 @@ with the operator's go-ahead.
 - 4 runs on GPU 1 (nsys GPU metrics at 50/200 kHz, a non-PDL combine arm, per-CTA globaltimer/smid), judge route forced. The four kernels run as a packed relay (cold w13 -> hot w13 -> cold w2 -> hot w2). Empty-SM time is 0.9-1.2 us, cold-tail half-SM blocking 2.2-2.6 us (panel predicted 10-15), the hot w2 last-wave tail **8.3 us**, no hand-off drains, launch gaps 0.28 us. Align+gather 3.9 and combine 2.1 sit outside UFS. -> [refuted] moe CLAIMS for UFS as an idle filler. 313k tokens.
 - UFS's busy fixed-cost cut (~-8..-12 us) is still open; the ufs lane on GPU 4 measures it and was told so.
 - **relay** (GPU 1): reorder the relay so the coarse hot w2 runs before the fine-grained stream-K cold w2, which then fills the 8.3 us hot tail; >= 5 us judge-scaled -> a raced route change on campaign/relay.
+
+## 2026-10-30 0311Z — **user steer: "stop making new things. run whatevers running. finish it out"**
+- No new lanes, hypotheses, workflows or checks. The five running H100 lanes finish: relay (GPU 1), dxl (GPU 3), ufs (GPU 4), hhcc (GPU 5), d128 (GPU 6). Each is harvested into the LOG and CLAIMS as it reports. A GPU freed by a finished lane stays idle.
+- If a lane ends with a check-ready branch, it is logged and reported to the user, not dispatched (a check would be new work).
