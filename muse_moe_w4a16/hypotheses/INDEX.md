@@ -1,6 +1,6 @@
 # muse_moe_w4a16 hypotheses
 
-Regenerated 2026-10-30T000048Z. Best: 2.0201x [1.9898,2.0504] job `24f183ff300949f2` (submit)
+Regenerated 2026-10-30T002716Z. Best: 2.0352x [2.0047,2.0657] job `575820c989c8412b` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -98,6 +98,7 @@ Regenerated 2026-10-30T000048Z. Best: 2.0201x [1.9898,2.0504] job `24f183ff30094
 | 2026-10-29T215527Z | engine-a-a4b-a5b-encodings-race | primary | Engine A dequant (dq2) in ea4x/v4x/ea6 kernels at T=1..32 and the T=128/256 cold half | done/gain | gain | 2.0646 | [2.034,2.096] | 702f1004b45f4bfa | check | done | proceed | 0/4 |
 | 2026-10-29T235440Z | eae-cold-iso-keepalive-fix | primary | prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs | done/neutral | neutral | 2.0469 | [2.016,2.080] | 582bb33467dc4663 | check |  | proceed | 0/1 |
 | 2026-10-30T000046Z | eae-cold-iso-keepalive-fix-cf | confirm→eae-cold-iso-keepalive-fix | prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs | queue | queued |  |  |  |  |  | proceed |  |
+| 2026-10-30T000244Z | t128-hybrid-eacombine-judge-race | primary | moe T=128 expert block: forked hot/cold hybrid (wh5ds hot + E5 cold) with ea_combine tail vs plain Engine A E5 | done/neutral | neutral | 2.0421 | [2.011,2.073] | 4c5032bc57be4cf5 | check |  | proceed | 0/2 |
 
 ## Held
 
