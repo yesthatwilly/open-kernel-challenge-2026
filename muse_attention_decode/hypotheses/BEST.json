@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "62a818bfa8964dac",
- "check_job": "1cd27f58344c4b9b",
+ "job": "9e6d3d1fa805495f",
+ "check_job": "aea46cb2e2ca40e2",
  "mode": "submit",
- "speedup": 1.804888028905732,
+ "speedup": 1.8264499823036233,
  "ci": [
-  1.777814708472146,
-  1.8319613493393179
+  1.799053232569069,
+  1.8538467320381775
  ],
- "score_us": 2086.7222451929238,
- "commit": "d5f1175b6111163a0e7938757566eb0d8e6e3c28",
- "submission_blob": "24589a716bdb8d30a86d48212ad666315556824b",
- "slug": "ladder-attu1-at3b-at8c",
- "master_slug": "ladder-attu1-at3b-at8c",
- "master_job": "62a818bfa8964dac",
+ "score_us": 2062.0876763620577,
+ "commit": "524fd3b6d4c9119a3687d1e3a0a21a77957d143c",
+ "submission_blob": "3de7a9456c01a825e445f9500a45caa3b0ce6bd7",
+ "slug": "rl-at8f-entry-hoist",
+ "master_slug": "rl-at8f-entry-hoist",
+ "master_job": "9e6d3d1fa805495f",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T135138Z",
- "note": "registered by churn.py register-landing from okc status 62a818bfa8964dac"
+ "updated_at": "2026-10-30T152854Z",
+ "note": "registered by churn.py register-landing from okc status 9e6d3d1fa805495f"
 }
