@@ -1,6 +1,6 @@
 # muse_prefill_layer hypotheses
 
-Regenerated 2026-10-29T235820Z. Best: 1.5721x [1.5485,1.5957] job `9f93484606cd4f9e` (submit)
+Regenerated 2026-10-30T004727Z. Best: 1.5721x [1.5485,1.5957] job `9f93484606cd4f9e` (submit)
 
 | created | slug | kind | area | where | outcome | speedup | CI | job | mode | promotion | review | expected hit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -114,6 +114,7 @@ Regenerated 2026-10-29T235820Z. Best: 1.5721x [1.5485,1.5957] job `9f93484606cd4
 | 2026-10-29T175301Z | experts-rega-dq2-dequant-cost-diag | primary | w13 + w2 expert GEMMs (rega dq_stage instruction cost: prepare-only diag of cheaper exact dequants, gated route) | done/gain | gain | 1.5556 | [1.532,1.579] | 835e1a443a604eb2 | check | done | proceed | 3/3 |
 | 2026-10-29T191222Z | experts-rega-a5b-desc-splitcommit | primary | experts rega tile dq_stage / consumer stage loop (w13, w2) | done/gain | gain | 1.5792 | [1.556,1.603] | da80fdb9bed749a3 | check | done | proceed | 0/3 |
 | 2026-10-29T233056Z | experts-rega-low-2cta-a5b | primary | experts rega tile at the LOW class (turn_1): occupancy / tile shape | done/neutral | neutral | 1.5678 | [1.544,1.591] | 074a0e02f4e94efd | check |  | proceed | 0/3 |
+| 2026-10-30T002745Z | rega-s2-low-rs2-high-stack | primary | experts rega tile: S2 2-CTA at low + RS2 (wait<1> per group) at high, both on A5b+D+SC | done/neutral | neutral | 1.5720 | [1.548,1.596] | 2c9af73f6b0f4e1b | check |  | proceed | 0/3 |
 
 ## Held
 

@@ -1,6 +1,6 @@
 # muse_moe_w4a16 findings
 
-Regenerated 2026-10-30T002716Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
+Regenerated 2026-10-30T004727Z by `churn.py index`. Read this before writing a hypothesis for muse_moe_w4a16.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -19,6 +19,7 @@ Regenerated 2026-10-30T002716Z by `churn.py index`. Read this before writing a h
 - [shelf] T=16/32 per-SM tail: a stable late-CTA set not explained by work (static stream-K split); tail rebalancing v4xm (static SM map) / v4xq (dynamic pool) / per-slot split | rows: load=decode_* load=verify_1 load=verify_16 | evidence: t32r check 0069fec443e14507 MID [SLOT POS]: the late set is the co-resident slot (P_split 0.99, P_young 1.00: warp-scheduler age priority), per-SM rates not stable across draws (X_D +0.06); ceiling H(Dbal) 3.07% but static cv 0.08%, dynamic 0.08%, slot rider 0.79% (x0.8 < 1.25); 1 CTA/SM slower (R132 0.943/0.897) | board: 1.952 | blob: 691018b5 | reopen: a mechanism that changes intra-SM CTA priority or fuses the two co-resident CTAs' work (not a rebalance) | 2026-10-29 campaign (re-measure: measured on 1.9520, best now 2.0352)
 - [shelf] combine fused into the v4x w2 epilogue at T=8..32 | rows: load=decode_16 load=decode_32 load=verify_1 | evidence: combine 2.6-2.9 us of the critical path at T16/32, shares w13 65-66 / w2 31-32 / combine 2% (research/h100-t32-1029.md Q3); <= ~0.8% headline over decode_16+32, <= ~1.5% if verify_1/16 capture in full | board: 1.9521 | blob: 691018b5 | reopen: stacked with another gain to >= 2.5% | 2026-10-29 screen (re-measure: measured on 1.9521, best now 2.0352)
 - [shelf] Engine A E4XL/E5XL: ldmatrix.x4 B preload + trimmed per-record loop (address math hoisted out of the record loop) on top of the landed E4/E5 encodings; bit-exact | rows: load=decode_8, load=decode_16, load=decode_32, load=verify_16, load=verify_32 | evidence: H100 ea-enc2 (takemyjob hopper/ea-enc2-1029 04306fa; runs 20261029-155901/160207-gpunode06; research/h100-ea-enc2-1029.md), 9 replicates/row: consume-only routed/new E4XL T8-32 1.014-1.047, T128 1.012-1.028, T256 1.029-1.042; E5XL T256 1.039-1.055; normal mode 0.97-1.03 (H100 HBM wall); SASS per record 617 -> 566 issued; also at T256 E5 alone beats E4 consume-only by 1.0-2.6% though master routes E4 there | board: 2.0201 | blob: c6e41c9a | reopen: ride in the next moe/decode Engine A candidate as extra raced arms (XL), ~+1-2% per row expected on the judge | 2026-10-29 h100
+- [shelf] moe T=128 forked H-16 hybrid (wh5ds hot + E5 cold) with ea_combine tail (gon), raced on the judge's own draws (t128-hybrid-eacombine-judge-race) | rows: load=verify_16 | evidence: check 4c5032bc57be4cf5 2.0421 (board 2.0352; flat, plain kept): FIRST judge read of the T=128 hybrid below 1: mean gon/m 0.963 over 12 raw draws (9 win; 0.898-0.989), tolerance 12/12; losers are small hot sets: d8 1 hot expert 24 routes 1.070 (veto), d2 74 routes 1.010, d9 57 routes 1.023; node said 0.913 | board: 2.0352 | blob: d80df5ec | reopen: route on the mean alone (worst-draw veto off) or with a device-side hot-route gate that costs < 1% (the node's gate cost ~4%); worth ~+0.5% headline at most | 2026-10-30 churn
 
 ### unresolved
 
@@ -274,4 +275,5 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - queue: wg2-stream-k-tail-floor-g-over-r [w13 marlin + silu-mul + w2 marlin] p3 hold
 - queue: cmbf-combine-fused-w2-epilogue-t8-32-cf [post-expert norm+combine] p1 queued
 - queue: eae-cold-iso-keepalive-fix-cf [prepare-only correctness: [ea-enc] T=256 cold-half iso timing graphs] p1 queued
+- running: engine-a-xl-arms-t256-postnorm-stack [moe expert block: Engine A XL dequant arms (all classes) + T=256 ea_combine replacing the post-norm weighted sum] p1 running
 - 21 stale holds expired to `done/expired/` (not run)

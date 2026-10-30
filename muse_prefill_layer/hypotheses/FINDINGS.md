@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-30T000048Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-30T004727Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -127,6 +127,9 @@ Diagnosis of 2026-10-25T203436Z, written on board 1.4677 (today 1.5721): histori
 
 ### experts rega tile dq_stage / consumer stage loop (w13, w2)
 - **experts-rega-a5b-desc-splitcommit** → gain (gain), 1.5792x — gained on full first_turn. Stack the H100-validated A5b+D+SC form on master's landed A3 rega dequant (muse_prefill_layer/submission.py master 1b14174f, the rega dq module from experts-reg
+
+### experts rega tile: S2 2-CTA at low + RS2 (wait<1> per group) at high, both on A5b+D+SC
+- **rega-s2-low-rs2-high-stack** → neutral (within-ci), 1.5720x — lost on full first_turn. Stack two shelved, bit-exact rega arms in master's per-class dq race (prefill master = A5b+D+SC, 1.5721): (1) S2, the 2-CTA/SM low-class tile from experts-rega-
 
 ### launch overhead: PDL chain across the expert block (_norm_gather_kernel -> rega w13 -> rega w2)
 - **experts-rega-pdl-chain-gather-w13-w2** → neutral (within-ci), 1.4622x, mechanism flat 0/4 — no shape moved outside noise. DIAGNOSIS action 4. Built on master (blob f4751fc0); independent of the mc2 line. Prefill has no programmatic dependent launch (griddepcontrol appears 0 times i
@@ -333,6 +336,7 @@ Rewrite stages are exempt: a slow early stage is not a dead end. Neutrals whose 
 - **experts-rega-low-kpair-four-consumer-wgs** [w13 + w2 expert GEMMs at 200 < T <= 1024 (rega low class, turn_1): K-pair rega kernel, four consumer warpgroups in one CTA splitting each stage's two 64-k records over master's full 128-route slab] neutral, within-ci: GOAL: the ~10% TLP effect that two CTAs/SM showed at the low class (V64 occ2 0.887x vs its
 - **experts-rega-stage-antiphase-ordered-issue** [w13 + w2 expert GEMMs (rega consumer schedule: ordered wgmma issue / stage anti-phase of master's two consumer warpgroups), low / high / ft classes] neutral, within-ci: Consumer schedule only: FA3-style ordered anti-phase of master's TWO existing consumer war
 - **experts-rega-low-2cta-a5b** [experts rega tile at the LOW class (turn_1): occupancy / tile shape] neutral, within-ci: Add a low-class-only arm to master's rega dq module: the H100-validated SC-2CTA tile from 
+- **rega-s2-low-rs2-high-stack** [experts rega tile: S2 2-CTA at low + RS2 (wait<1> per group) at high, both on A5b+D+SC] neutral, within-ci: Stack two shelved, bit-exact rega arms in master's per-class dq race (prefill master = A5b
 - **fa3-contiguous-kv-gather** [FA3 call] regression, regression: Replace the paged FA3 call with a contiguous one; everything before and after stays the pa
 - **experts-marlin-block-m-local-rows** [w13 marlin + w2 marlin (block_size_m pick)] regression, regression: Change only the block_size_m pick in _experts (muse_prefill_layer/submission.py). The pari
 
