@@ -1,19 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "4e386647edd845f7",
+ "job": "c86e75a8e0bc4594",
+ "check_job": "fefe31b8de02492b",
  "mode": "submit",
- "speedup": 1.6339575246416982,
+ "speedup": 1.676407378279887,
  "ci": [
-  1.6094481617720726,
-  1.6584668875113235
+  1.6512612676056886,
+  1.7093722355483418
  ],
- "score_us": 2305.01707859627,
- "commit": "26498226d86d00463a052d170384d55fbb91659f",
- "submission_blob": "2eb03f76ceefa9bf81e28616ced3b33be3a70443",
- "slug": "sliding-verify-s2b-b17-32-bar103",
+ "score_us": 2246.649620371208,
+ "commit": "5071a7620164374af7d4bdd5727c3f39dd78f463",
+ "submission_blob": "6a686abee54a0de41642e14f1c65816608f82447",
+ "slug": "ladder-at7c-fp32-rowsum-compliance",
+ "master_slug": "ladder-at7c-fp32-rowsum-compliance",
+ "master_job": "c86e75a8e0bc4594",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-28T171015Z",
- "master_slug": "sliding-verify-s2b-b17-32-bar103",
- "master_job": "4e386647edd845f7",
- "note": "registered by hand 2026-10-27: s2b with the B=17..32 gate bar lowered to 1.03 (B=2..16 stays 1.05); branch hyp/attn-sw17-bar103; check 4e695fa0 1.6129; landed on master."
+ "updated_at": "2026-10-30T073205Z",
+ "note": "registered by churn.py register-landing from okc status c86e75a8e0bc4594"
 }
