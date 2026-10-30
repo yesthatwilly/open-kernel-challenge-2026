@@ -1,6 +1,6 @@
 # muse_prefill_layer findings
 
-Regenerated 2026-10-30T004727Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
+Regenerated 2026-10-30T005201Z by `churn.py index`. Read this before writing a hypothesis for muse_prefill_layer.
 
 ## Claims (from CLAIMS.md, newest per mechanism; tag meanings at the top of CLAIMS.md)
 
@@ -56,6 +56,7 @@ Regenerated 2026-10-30T004727Z by `churn.py index`. Read this before writing a h
 - [refuted] pf-rega-low-stream: low-class rega dequant/wgmma register ring (wait<1>) + cp.async.bulk.prefetch.L2 weight prefetch | rows: load=turn_1 | evidence: check 6edf1cb002bf42b9 1.493 (master routed): best arm P8 cold gm x1.075 SLOWER, gate missed; attrs 168 regs 0 local | board: 1.5008 | blob: c63801e7 | reopen: a ring that ptxas does not serialize (check SASS for C7510/C7512) | 2026-10-28 campaign
 - [refuted] rega low class K-pair: four consumer warpgroups split each stage's two 64-k records over one 128-route slab (experts-rega-low-kpair-four-consumer-wgs), stagger 0 and 1 | rows: load=turn_1, load=turn_4 | evidence: check bbca0105449c4217 [rega-kp]: -Werror probe clean (no C7510/C7512), r96 l0 o1, accuracy x0.70-0.74 of master's error; low T=753 kp/master w13 x1.110-1.140, w2 x1.104-1.120 (pop/random, cold/warm, both staggers within 0.003); high T=3012 x1.087-1.133; gate kept master in both classes. More WGs at 112 regs + smem split-K reduction loses 10-14% against the super-serial gap (cb22e610) | board: 1.5008 | blob: c63801e7 | reopen: - | 2026-10-29 churn
 - [refuted] rega stage anti-phase via ordered wgmma issue between master's two consumer WGs (experts-rega-stage-antiphase-ordered-issue); closes dequant/MMA overlap levers on the current rega tile | rows: load=turn_1, load=turn_4, load=first_turn | evidence: check 17d3fdf1a6594d33 [rega-ap]: -Werror clean, r168 l0, bit-exact (torch.equal) all classes; anti-phase FORMED (retire skew 0.44-0.47 of the stage period at N128, the dominant bucket; 0.18-0.20 at N16-64); yet ap/master pop x1.159-1.164 low, x1.066-1.096 high, x1.102-1.109 ft (w13 and w2 both slower); with K-pair (bbca0105, x1.09-1.14) and ping-pong (CLAIMS:44): the super-serial gap of cb22e610 is not recoverable by overlap; likely per-SMSP dequant/MMA contention (issue slots, register file, smem) rather than idle latency | board: 1.5008 | blob: c63801e7 | reopen: a rega tile that changes the per-SMSP dequant/MMA co-issue cost (e.g. dequant moved off the consumer warps, or a cheaper dequant) | 2026-10-29 churn
+- [refuted] RS2 (wait<1> every group on the A5b+D+SC 1-CTA 168-reg tile) at high class | rows: load=turn_4 | evidence: check 2c9af73f6b0f4e1b 1.5720 (flat): the judge's ptxas build of RS2 spills (regs 168/168, spill 80/36 B; no C7510-C7514), so the probe gate blocked its route; the node (rgx3) built it spill-free. S2 routed at low again (S2/A5b .927, guard .963) | board: 1.5721 | blob: 7569df17 | reopen: an RS2 form that holds 168 regs with 0 spill on the judge's toolchain (e.g. fewer live A fragments under wait<1>) | 2026-10-30 churn
 
 ### superseded
 
