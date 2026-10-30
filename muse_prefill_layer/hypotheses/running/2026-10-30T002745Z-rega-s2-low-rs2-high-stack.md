@@ -50,7 +50,7 @@ review_at: 2026-10-30T003004Z
 review_companions: null
 review_best: 1.5721154841318719
 review_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
-stage: implemented
+stage: dispatched
 claimed_at: 2026-10-30T003004Z
 base_sha: 7feca0ccdd2513dfd07fd00241f638b1889fb77c
 base_blob: 7569df17e62ecfb6ecf85d12e2033c6611fcaade
@@ -67,6 +67,8 @@ submission_blob: 32261c5ec0f77dc39d8534fbe2a2cf911409e466
 lint_warnings: 125
 attempt_file: 2026-10-30T003722Z-check-rega-s2-low-rs2-high-stack.md
 prepared_at: 2026-10-30T003722Z
+job: 2c9af73f6b0f4e1b
+dispatched_at: 2026-10-30T003735Z
 ---
 
 # rega-s2-low-rs2-high-stack
