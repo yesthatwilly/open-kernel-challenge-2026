@@ -13802,7 +13802,6 @@ DSA_START_DEADLINE_S = 225.0
 DSA_BUILD_DEADLINE_S = 245.0
 DSA_GATE_DEADLINE_S = 255.0
 DSA_COPY_DEADLINE_S = 270.0
-DSA_COPY_CHECK = False  # containment: this check's 2nd state hit a sticky illegal access (scored cb182920)
 DSA_PIN = {("unpooler", 16): False, ("qkv_gate", 32): True, ("o", 32): True}
 def _dsa_class(tokens):
     return next(c for c in DSA_CLASSES if tokens <= c)
@@ -14222,8 +14221,6 @@ def _dsa_setup(state, device, t_prepare0):
                 for cls in DSA_CLASSES:
                     miss(final[cls], cls, "copy check skipped: deadline")
                 say(f"{DSA_TAG} copy check: skipped: deadline -> master for every T")
-            elif not DSA_COPY_CHECK:
-                say(f"{DSA_TAG} copy check: off (containment); eager gemm + layer checks stand")
             else:
                 ok, line = _dsa_copy_check(state, device)
                 say(line)
