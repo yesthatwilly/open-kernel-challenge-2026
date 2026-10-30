@@ -2702,3 +2702,7 @@ with the operator's go-ahead.
 ## 2026-10-30 0003Z — EPF closed at T=1 (x1.09 slower, bit-exact); phase-A builds minted
 - research/h100-epf-1029.md (takemyjob hopper/epf-1029 248fb26; GPU 6). EPF streams faster per expert (9.1 vs 10.65 us) but pays 11.1 vs 4.1 us fixed; break-even only at n4-5; in consume-only the per-expert rates are equal. [refuted] (EPF's [shelf] closes).
 - Minted (user-requested): decode engine-a-xl-arms-t1-t256 (XL arms aimed at the T=256/T=1 near-misses) and moe t128-hybrid-eacombine-judge-race (mean-over-judge-draws race, worst-draw veto). Reviews running. GPUs free: 1, 3, 4, 5, 6.
+
+## 2026-10-30 0007Z — **moe 2.035 LANDED with the use-after-free fix** (scored 575820c9 [2.005, 2.066])
+- The fixed bytes (986a2bad, master f2b510f5) are now moe's best run, so the final reruns rerun code without the [ea-enc] prepare UAF; no withdrawal needed. register-landing done (BEST.json 575820c9).
+- Decode XL arms held as a rider (review: T=1 has no XL arm, ~+0.3-0.6%, 6 KB size headroom). moe T=128 hybrid race being built (review: gate gon on fp32 tolerance, not bitwise; old [hybrid-moe] T=128 gate off; p ~0.25).

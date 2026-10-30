@@ -31,3 +31,4 @@ Root cause and node validation: research/h100-eae-crash-1029.md (branch hyp/muse
 Check 582bb334 read 2.0469 vs the board 2.0201 (+1.33%); the scored run puts the fixed (use-after-free-free) bytes on the board ahead of the final reruns (technical-rules:112, :135).
 
 ## Result (after the run)
+- job `575820c989c8412b` (submit), passed True; speedup 2.0352x, 95% CI [2.0047, 2.0657] vs board 2.0201 (24f183ff): the fixed bytes are now the moe best run (register-landing).
