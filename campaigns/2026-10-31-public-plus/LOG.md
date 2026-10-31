@@ -332,6 +332,17 @@
 - **20:53Z diag build workflow wf_ba98ae2b-a7e** (task wk4bcz6pd): DEC-DX1 (decode), BF-DX2 then BF-DX1 (bf16), same
   build -> audit -> diag-ready marker flow; worktrees `.worktrees/diag-{dec,bf}`. Reserves: 1 decode (if DEC-DX1's A/A
   > 1%), 1 bf16.
+- **20:56Z sk2fix checks harvested** (`sk2fix-1031-decode.md`, `sk2fix-1031-bf16.md`, RESULTS.tsv, runs/):
+  - **D0FIX: KILL** by the pre-registered rule. 2.1923 / 2.1866, mean 2.18945 < 2.19 (by 0.0006); d1s 69.68 > 69.6 and
+    v1s 109.47 > 107.9. ET3FIX (same fences) reads d1s/v1s inside the caps, and tonight's DC5L reads were also low, so
+    the H200 fence cost is not separable from tonight's level in 4 reads (all 4 fenced reads 2.1898 vs DPP 2.2138).
+    Not scored. Landing is now a user decision (PENDING_USER). CLAIMS [unresolved].
+  - **ET3FIX: KILL.** 2.1978 / 2.1826. The gated d16f b1 edge never went live (3.4 / 3.5 us; needs >= 6.5); Z = +0.19 us.
+    Knowledge: vs same-night D0FIX, d16f busy-moe-attn is ~-0.95 us and d16f b2 rose to 9.1 / 5.9 us, so some edge ran
+    early. CLAIMS [refuted] (reopen only with a placement whose gated edge goes live).
+  - **BF16FIX: GO.** 1.5510 / 1.5434, mean 1.5472 >= 1.525, 0 row breaches over 30 rows. **20:59Z scored run
+    d1f5f46c** (BF16FIX-score.py, public-plus b9454673). A read below the 1.5657 board is HOLD for the user.
+- Quota at 21:00Z (checks / runs): bf16 14/8, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
