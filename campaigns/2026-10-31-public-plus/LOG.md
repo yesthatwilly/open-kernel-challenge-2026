@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T14:58Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; ET3 HELD (race)
+## Now (2026-10-31T16:10Z) — /3to1; phase B: LATENT RACE found in master decode, fix workflow running
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -151,6 +151,19 @@
   A0 2.4369, so the patch costs about 8%; PP got back 1.6%. The agent breaks the tax into its parts and proposes cheaper
   implementations of the FA3 ruling that stay exactly compliant. This is the largest known pool and tomorrow's
   phase-A candidate.
+- **16:05Z ET3 root cause found; master decode carries the race latently** (campaign/et3-rc 70eb047a).
+  - Mechanism: sk2 consumers arrive on the ring slot's EMPTY mbarrier (:8000-8003) while the tile nt=3 shared loads
+    are still outstanding. The async-proxy refill (stage s+5) can land first, so tile 3 is multiplied with the next
+    stage's weights. Same pattern in skinny T=1 (:7222) and the fused router (:8070).
+  - Master never failed (100k+ replays incl. stall injection). ET3's unpooler@16 early trigger exposes it (35/16000).
+  - Fix: fence.proxy.async.shared::cta before each hand-back. D0FIX and ET3FIX (all 3 edges) are both 0/16000.
+  - The cuBLAS-workspace lead is ruled out for decode (no cuBLAS in the T<=32 chain; graft Lt has its own workspace).
+  - CLAIMS: unresolved line (latent race), reopen once D0FIX lands.
+  - **16:10Z workflow wf_411829f6-5cd** (complete, then independent audit; GPUs 1/3). It fences the GLE router sites
+    (:13403/:13471), runs a SASS scan of all instantiations, scans bf16/attn/moe/prefill for the same pattern
+    (bf16 first: the sk2 code comes from it), measures speed, and builds the D0FIX/ET3FIX (+BF16FIX) arms.
+  - Plan: on PASS, 2 D0FIX checks, then a scored run and land (correctness comes before speed; landing it is right
+    even at a small speed cost). ET3FIX gets 2 checks under the LEVERS-1031b rule.
 - **~15:55Z user: "go after the prefill compliance tax too".** Prefill compliance-tax design agent launched (effort max,
   H100 GPUs 4/5/6, branch campaign/pf-tax). Public 1.8167 vs our P2 1.7741 / scored 1.7836, a tax of about 1.8-2.4%
   (rounded-P denominator only). Same brief as attention: break it down, find exactly compliant cheaper forms, measure.
