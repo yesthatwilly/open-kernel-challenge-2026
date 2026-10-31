@@ -354,6 +354,35 @@
 - **~21:04Z the user (AskUserQuestion): "Land it (robustness)" for BF16FIX.** 21:05Z LANDED on master 8d0df028:
   `muse_bf16_proj/submission.py` = BF16FIX-score.py (scored d1f5f46c 1.5522; checks 754e0c9d / a3aa275b);
   register-landing --force (BEST.json now this run; the leaderboard entry stays 109f577b 1.5657). CLAIMS [landed].
+- **21:07Z LANDED on master ce08a099: decode D0FIX** (scored 545b80bb **2.1817** [2.149, 2.214]; checks 2.1923 /
+  2.1866). register-landing --force (BEST.json now this run; the leaderboard entry stays 9d726d84 2.2220). CLAIMS
+  [landed]. All decode builds from here sit on D0FIX.
+- **~21:06Z the user: "can you try to finish up whatever is in flight."** No new launches. In flight: diag builds
+  wf_725f652d-a70 (moe DX2+DX3 -> DX1, prefill D1, attention D1+D3 -> D2) and wf_ba98ae2b-a7e (DEC-DX1, BF-DX2 ->
+  BF-DX1); each check is dispatched on its audit PASS until 23:40Z, then harvested against its GAPMAP rule.
+- **Phase-A plan for 11-01 (written 21:08Z; tonight's diagnostic reads fill in the gates)**
+  - **Bases on master:** decode D0FIX (ce08a099), attention C5L (c5990d50), bf16 BF16FIX (8d0df028), moe M1a, prefill
+    P2. Any new ring hand-back keeps the D0FIX fence (decode CLAIMS:116).
+  - **Gate method (GAPMAP-1031b §5):** decode gates use pooled paired per-row ratios of the rows a change touches; the
+    headline is a no-harm guard unless the expected effect is above ~1.5%. Identical code moves rows 2-3% between job
+    pairs.
+  - **Build 1 — DS1 (decode, rows d1s d1f v1s v1f):** the T<=8 dense chain at the H200 stream rate, with bf16's cgemv
+    family as donor. Design panel at effort max (GAPMAP-1031b §2 Build 1: kernel per edge, the qkv->attention FP32
+    partials interface, the exact router inside the pooler stream, PDL pre-wait loads, one layout for T=1 and T=8).
+    M0 = tonight's DEC-DX1: GO if cgemv qkv is >= 1.5 us faster standalone; PIVOT if the in-chain penalty is >= 1.5 us;
+    else KILL. M1 = T=1 qkv only (judge qkv kernel <= 8.5 us in both reads, pooled d1s/d1f >= +2%). Value +1.64%
+    central, p 0.45.
+  - **Build 2 — moe C1 (testbed), decode port after moe's own GO:** precondition tonight's moe DX2 r(d1) < 1.10.
+    M0 microbenchmark (<= 3 h): >= 1.25x weights/us over TINY/TINY2/MID at N = 1/8/16 (KILL < 1.15x). Decode port
+    gate: pooled d1s, v1s, d16s ratios each >= +1% over 2 reads.
+  - **Build 3 — conditional on tonight's reads:** S1-M1 (T<=8 FFN tail as one epoch-counter kernel) if DEC-DX1(c)
+    passes the S1-M0 rule; else D12 (shared 12-bit m=128 GEMM, bf16 first) if BF-DX2 passes S <= 0.80 and D <= 1.10;
+    else DS1 M2/M3.
+  - **Phase B:** attention S3 (flat-row end of kernel: per-request last-arriver finalize, then cost-weighted partition;
+    M0 stamps gate, plus tonight's #3 intercept a >= 8 us), then S2 (B=1 latency path, gated by #5). Prefill S1
+    only if the user grants it a phase-A slot (default no) and PF-D1's prize is >= 75 us at t1s and t4s.
+  - **Open user decisions:** prefill S1 phase-A slot; prefill exp-split precision ruling (PENDING_USER).
+  - **Tonight's answers:** see the diag harvest bullets below as they land (each names the GAPMAP rule it fired).
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under

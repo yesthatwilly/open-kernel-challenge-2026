@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "9d726d84649e4f9e",
- "check_job": "f078d6732d2547bc",
+ "job": "545b80bb25904f3e",
+ "check_job": "0bd3ae2a5bf546eb",
  "mode": "submit",
- "speedup": 2.222007018965285,
+ "speedup": 2.1817223816922757,
  "ci": [
-  2.1886769136808057,
-  2.255337124249764
+  2.1489965459668916,
+  2.21444821741766
  ],
- "score_us": 10180.120857824078,
- "commit": "36584c5c53ee464e15e25f80b7d3fb9c64f04448",
- "submission_blob": "68ee84cb633160112ac66d9d05d490fa9a36cb6e",
- "slug": "dpp-softmax-turns",
- "master_slug": "dpp-softmax-turns",
- "master_job": "9d726d84649e4f9e",
+ "score_us": 10368.092746270644,
+ "commit": "ce08a099be7620eb79a385b5f795b58d2b5a5dc4",
+ "submission_blob": "93c8012fcc9f7a9e54a81906f04526172090ac63",
+ "slug": "d0fix-sk2-ring-war",
+ "master_slug": "d0fix-sk2-ring-war",
+ "master_job": "545b80bb25904f3e",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T115259Z",
- "note": "checks eb4e07ad 2.1826, f078d673 2.2367; scored 2.2220 vs 2.1793 (+2.0%); attn_kernel<8,true,0> v16f 109.8 / v32f 200.5 us (D0 116.1-118.1 / 209.0-212.0)"
+ "updated_at": "2026-10-31T210659Z",
+ "note": "robustness landing by user ruling 10-31 ~21:01Z ('if d0fix improves the robustness of the kernel, keep it'); scored 2.1817 is below the leaderboard's best scored run 9d726d84 2.2220, which stays the board entry"
 }
