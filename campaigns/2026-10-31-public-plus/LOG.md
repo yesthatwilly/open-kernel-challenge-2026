@@ -134,7 +134,13 @@
   - CLAIMS: unresolved line added (decode). Reopen once the root cause is found and fixed, followed by an independent audit.
 - **15:00Z root-cause agent launched** (background, effort high, gpunode06 GPU 1/3, branch campaign/et3-rc). Q1 asks first
   whether master's landed decode carries a latent form of the race.
-- **Next:** harvest the root-cause agent (phase B). If it finds and fixes the cause, the fixed
+- **15:25Z swap-AB lesson applied to the foundation** (user asked whether anything there needs learning). The bug:
+  torch shares one cuBLAS workspace across graph captures, so destroying one graph can leave live graphs writing
+  freed memory (LESSONS, eb66b591; fixed by `_rt_cap` in bf25b827). That fix was on our old decode line, which D0
+  replaced, so it never reached the public files. Master decode and bf16 both capture graphs and call torch matmul.
+  - Forwarded to the root-cause agent as a lead for both master decode exposure and the ET3 race.
+  - New agent: bf16 exposure audit (moe/prefill spot check), GPUs 4/5/6, fix on campaign/bf16-ws only if exposed.
+- **Next:** harvest both agents (phase B). If it finds and fixes the cause, the fixed
   ET3 gets an independent audit, then checks in phase C. Phase C (18Z): spend the remaining checks. Tomorrow's
   phase-A plan is due in the LOG by about 23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
