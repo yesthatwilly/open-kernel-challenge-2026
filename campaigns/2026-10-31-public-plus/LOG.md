@@ -237,7 +237,7 @@
   - What it is: the decode port of C5L, the same way DPP ported PP. PP gave attention +1.6% and DPP gave decode +2.0%.
   - Generator: mk_decode_c5l.py. Arms: DC5L on master, plus DC5LF on D0FIX, whichever base lands first.
   - Goal: decode checks tonight if attention C5L reads GO.
-- **~18:45Z, the user asked: "are these all the leads you have? no more h100 work? how do we go forward from ehre".**
+- **Shortly before 19:06Z, the user asked: "are these all the leads you have? no more h100 work? how do we go forward from ehre".**
   - The leaderboard gap to 10th place: attention +17.7% (2.4729 vs 2.910), prefill +12.8%, moe +8.5%, decode +6.9%,
     bf16 +2.3%. Today's lever rounds only tuned inside the public kernels.
   - Offered a gap map; the user (AskUserQuestion) chose **"Now, top 3 gaps only"**.
