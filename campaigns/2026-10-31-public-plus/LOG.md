@@ -237,6 +237,17 @@
   - What it is: the decode port of C5L, the same way DPP ported PP. PP gave attention +1.6% and DPP gave decode +2.0%.
   - Generator: mk_decode_c5l.py. Arms: DC5L on master, plus DC5LF on D0FIX, whichever base lands first.
   - Goal: decode checks tonight if attention C5L reads GO.
+- **~18:45Z, the user asked: "are these all the leads you have? no more h100 work? how do we go forward from ehre".**
+  - The leaderboard gap to 10th place: attention +17.7% (2.4729 vs 2.910), prefill +12.8%, moe +8.5%, decode +6.9%,
+    bf16 +2.3%. Today's lever rounds only tuned inside the public kernels.
+  - Offered a gap map; the user (AskUserQuestion) chose **"Now, top 3 gaps only"**.
+  - **Gap-map workflow wf_a3de48ce-c2f** (task w7xx5jphg): attention, prefill and moe finders at effort max (GPUs
+    6/4/3, shared), then a max judge. Output: GAPMAP-1031.md, with per-row judge time vs H200 floor, structural
+    candidates, the compliant ceiling vs 10th place, and <= 6 H200 diag-check designs for tonight's spare checks.
+    Timebox 21:45Z. It feeds tomorrow's phase-A plan.
+  - Decode and bf16 get a second wave once the landings are in.
+  - The user's paste showed the dead session's 3 workflows "paused" there; all 3 were continued here, and the user was
+    told not to resume them in the old session (duplicate writers on the same worktrees).
 - Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
   checks.
 - **Next:**
