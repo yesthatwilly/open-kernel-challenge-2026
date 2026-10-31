@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "14cec6846e404ea3",
- "check_job": "ac0335f9bc614f65",
+ "job": "1280e6f2120a4fbd",
+ "check_job": "9499367892524ea7",
  "mode": "submit",
- "speedup": 2.472891092815014,
+ "speedup": 2.4879619494386187,
  "ci": [
-  2.435797726422789,
-  2.523334830501987
+  2.4506425201970394,
+  2.5356986393572494
  ],
- "score_us": 1523.0351271606687,
- "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
- "submission_blob": "67d27a22e6e72a58a436579dbaf0164f3b443875",
- "slug": "pp-softmax-turns",
- "master_slug": "pp-softmax-turns",
- "master_job": "14cec6846e404ea3",
+ "score_us": 1513.8093252792007,
+ "commit": "c5990d5073fc35cbde89835010387363cf683640",
+ "submission_blob": "c728c55a4568dc7e94c1128e09848248b5c60ce8",
+ "slug": "landing-1280e6f2",
+ "master_slug": "landing-1280e6f2",
+ "master_job": "1280e6f2120a4fbd",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T104303Z",
- "note": "checks ac0335f9 2.5236, d933848f 2.4515; scored 2.4729 vs 2.4337 (+1.6%); bit-identical to A0 under fixed split plans"
+ "updated_at": "2026-10-31T194910Z",
+ "note": "registered by churn.py register-landing from okc status 1280e6f2120a4fbd"
 }

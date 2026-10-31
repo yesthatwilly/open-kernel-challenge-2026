@@ -262,6 +262,20 @@
   - **DC5L checks** 390a1cd4 (r1) and f632199e (r2), on the master base for an early transfer read. GO needs v16f <= 107.1
     and v32f <= 196.5 in both reads, and a headline mean >= 2.2000.
   - On GO, the scored run is DC5LF (DC5L on D0FIX), after D0FIX lands and DC5LF has its own check.
+- **19:41Z C5L checks: GO.** Reads 2.5040 / 2.5419 (mean 2.5229, +2.0%). v16f 106.7/105.3 us and v32f 195.8/193.0 us,
+  against board 113.7/207.3; every other row is inside its limit. The H100 cold gain of -0.6 us became -7..-14 us on
+  the judge, the same amplification as PP.
+- **19:45Z LANDED on master: attention C5L 2.4880** (scored 1280e6f2 [2.451, 2.536]; was 2.4729, so +0.6%; master
+  c5990d50; register-landing done). The scored read came in 1.4% under the check mean, which is inside the ±1.5% noise.
+- **19:41Z DC5L checks: KILL** (pre-registered headline floor). Reads 2.1778 / 2.1892 (mean 2.1835 < 2.1887).
+  - **Knowledge:** the judge profile shows the flat q8 kernel 3.4 / 4.2 us faster (105.3/106.1, 194.4/197.2 vs DPP
+    109.0/109.2, 200.3/199.6), but the graph-replay rows did not move: v16f 337.2/337.6 (DPP 337-342) and v32f
+    492.3/491.7 (DPP 482-496).
+  - So in decode's graph chain, the attention kernel's saving does not reach the row time. Attention is overlapped or
+    followed by a PDL wait.
+  - CLAIMS line: unresolved. Reopen only after an H100 graph-mode nsys of the v16f/v32f critical path. This feeds the
+    decode gap map.
+  - DC5LF is not checked.
 - Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
   checks.
 - **Next:**
