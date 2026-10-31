@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "dfb318ee06b842f7",
- "check_job": "82c6bac9fa004878",
+ "job": "63d0785130904bd1",
+ "check_job": "476d3ff11ba34347",
  "mode": "submit",
- "speedup": 1.698879317075986,
+ "speedup": 1.7030453658729507,
  "ci": [
-  1.673396127319846,
-  1.7243625068321256
+  1.6774996853848565,
+  1.7285910463610448
  ],
- "score_us": 13314.83629981014,
- "commit": "d07539aed500a8c444c25f7554aac396a61ec467",
- "submission_blob": "b5f84e27502be2bf9062256dda009b862efd6807",
- "slug": "ladder-dc-at7e-port",
- "master_slug": "ladder-dc-at7e-port",
- "master_job": "dfb318ee06b842f7",
+ "score_us": 13282.265084233522,
+ "commit": "bf25b82798f962c13006ca5cd860186c3e66d600",
+ "submission_blob": "c6bb62a6a588d4c40bc100444d01e91aa7681d6c",
+ "slug": "swapab-root",
+ "master_slug": "swapab-root",
+ "master_job": "63d0785130904bd1",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T092856Z",
- "note": "registered by churn.py register-landing from okc status dfb318ee06b842f7"
+ "updated_at": "2026-10-31T072844Z",
+ "note": "fix/swapab-root c4fcd162; removes cb182920 illegal-access hazard; 1.6989->1.703"
 }
