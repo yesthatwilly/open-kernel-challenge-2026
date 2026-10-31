@@ -140,6 +140,13 @@
   replaced, so it never reached the public files. Master decode and bf16 both capture graphs and call torch matmul.
   - Forwarded to the root-cause agent as a lead for both master decode exposure and the ET3 race.
   - New agent: bf16 exposure audit (moe/prefill spot check), GPUs 4/5/6, fix on campaign/bf16-ws only if exposed.
+- **~16Z bf16 workspace audit: NOT EXPOSED** (bf16, moe, prefill; no fix, no branch).
+  - bf16: the only live prepare capture is `_iv_choose` (:4410), with no cuBLAS. Its graphs are destroyed together
+    after their replays, and `_KLargeLt` owns its own workspace.
+  - H100 GPU 6: 2 allocator modes x 12 prepares x 43 shapes = 1032 checks each, 0 failures and 0 faults. 263
+    captures, none containing cuBLAS.
+  - moe: the capture is diag-only (`DIAG=False`). prefill: no captures. Both verdicts are from reading the code.
+  - Unverified: prefill SIDE_STREAM pooling (:404), compute-sanitizer, H200.
 - **15:40Z scheduling-lever finder** (effort max, H100 GPU 5/6) for prefill and bf16, the two problems unchanged today.
   Only scheduling-class levers are in scope (the class that transferred). "None" is an accepted answer.
 - No file is check-worthy right now. ET3 is held, B4 is too small on its own, and re-rolling identical bytes is not allowed.
