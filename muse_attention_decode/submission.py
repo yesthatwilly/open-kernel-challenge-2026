@@ -1375,8 +1375,8 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
   const int slice = (warp >> 1) * 16; // token slice of each tile
   const int quad = lane >> 2, qi = lane & 3;
   uint32_t qa[4][2];
-  float m_i = NEG_INF, l_i = 0.f;
-  float acc[8][4];
+  float m_i[2] = {NEG_INF, NEG_INF}, l_i[2] = {0.f, 0.f};  // F2b: queries 2*qi, 2*qi+1
+  float acc[4][4];  // F2b: O^T, rows = dims 8*quad + 2*mb (+1), cols = queries 2*qi (+1)
   int c_b = find_req(t0);
   bool seg_head = false;  // the current segment began at its request's first tile
 
@@ -1403,48 +1403,63 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
 #pragma unroll
       for (int s = 0; s < 4; ++s)
         e4m3x4_to_f16x2x2(*reinterpret_cast<const uint32_t*>(qrow + s * 16), qa[s][0], qa[s][1]);
-      m_i = NEG_INF;
-      l_i = 0.f;
+      m_i[0] = m_i[1] = NEG_INF;
+      l_i[0] = l_i[1] = 0.f;
 #pragma unroll
-      for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
+      for (int mb = 0; mb < 4; ++mb) acc[mb][0] = acc[mb][1] = acc[mb][2] = acc[mb][3] = 0.f;
     }
     const uint8_t* Ks = ring + st * STAGE_BYTES;
     const uint8_t* Vs = Ks + TILE * ROW;
 
-    float s[2][4];
-#pragma unroll
-    for (int nb = 0; nb < 2; ++nb) {
-      s[nb][0] = s[nb][1] = s[nb][2] = s[nb][3] = 0.f;
-      const int tt = slice + nb * 8 + quad;
-      const uint8_t* kr = Ks + tt * ROW + qi * 4;
+    // F2b: S^T = K Q^T. A = K (rows = keys slice + quad, slice + quad + 8; k = dims, the same 4-byte loads as
+    // master), B = Q^T (k = dims, n = query quad: master's qa fragments unchanged). C: s[0] = (key quad, query 2qi),
+    // s[1] = (key quad, query 2qi+1), s[2] / s[3] = key quad + 8.
+    float s[4] = {0.f, 0.f, 0.f, 0.f};
+    {
+      const int ta = slice + quad, tb = ta + 8;
+      const uint8_t* kra = Ks + ta * ROW + qi * 4;
+      const uint8_t* krb = Ks + tb * ROW + qi * 4;
 #pragma unroll
       for (int ks = 0; ks < 4; ++ks) {
-        const uint32_t w = *reinterpret_cast<const uint32_t*>(kr + (((g * 4 + ks) ^ (tt & 7)) << 4));
-        uint32_t b0, b1;
-        e4m3x4_to_f16x2x2(w, b0, b1);
-        mma16816(s[nb], qa[ks][0], 0u, qa[ks][1], 0u, b0, b1);
+        const uint32_t wa = *reinterpret_cast<const uint32_t*>(kra + (((g * 4 + ks) ^ (ta & 7)) << 4));
+        const uint32_t wb = *reinterpret_cast<const uint32_t*>(krb + (((g * 4 + ks) ^ (tb & 7)) << 4));
+        uint32_t a0, a1, a2, a3;
+        e4m3x4_to_f16x2x2(wa, a0, a2);
+        e4m3x4_to_f16x2x2(wb, a1, a3);
+        mma16816(s, a0, a1, a2, a3, qa[ks][0], qa[ks][1]);
       }
     }
-    const int pos0 = lt * TILE + slice + qi * 2;
-    float x0 = pos0 < cseq ? s[0][0] * scale : NEG_INF;
-    float x1 = pos0 + 1 < cseq ? s[0][1] * scale : NEG_INF;
-    float x2 = pos0 + 8 < cseq ? s[1][0] * scale : NEG_INF;
-    float x3 = pos0 + 9 < cseq ? s[1][1] * scale : NEG_INF;
-    float mx = fmaxf(fmaxf(x0, x1), fmaxf(x2, x3));
-    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
-    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
-    const float m_new = fmaxf(m_i, mx);
-    const float m_use = m_new == NEG_INF ? 0.f : m_new;
-    const float alpha = ex2(m_i - m_use);
-    x0 = ex2(x0 - m_use);
-    x1 = ex2(x1 - m_use);
-    x2 = ex2(x2 - m_use);
-    x3 = ex2(x3 - m_use);
-    l_i = l_i * alpha + (x0 + x1) + (x2 + x3);
-    m_i = m_new;
+    const int posa = lt * TILE + slice + quad;
+    float x0 = posa < cseq ? s[0] * scale : NEG_INF;
+    float x1 = posa < cseq ? s[1] * scale : NEG_INF;
+    float x2 = posa + 8 < cseq ? s[2] * scale : NEG_INF;
+    float x3 = posa + 8 < cseq ? s[3] * scale : NEG_INF;
+    float mx0 = fmaxf(x0, x2), mx1 = fmaxf(x1, x3);
 #pragma unroll
-    for (int nb = 0; nb < 8; ++nb) { acc[nb][0] *= alpha; acc[nb][1] *= alpha; }
-    const uint32_t pa0 = pack_f16x2(x0, x1), pa2 = pack_f16x2(x2, x3);
+    for (int o = 4; o < 32; o <<= 1) {
+      mx0 = fmaxf(mx0, __shfl_xor_sync(0xffffffffu, mx0, o));
+      mx1 = fmaxf(mx1, __shfl_xor_sync(0xffffffffu, mx1, o));
+    }
+    const float mn0 = fmaxf(m_i[0], mx0), mn1 = fmaxf(m_i[1], mx1);
+    const float mu0 = mn0 == NEG_INF ? 0.f : mn0, mu1 = mn1 == NEG_INF ? 0.f : mn1;
+    const float al0 = ex2(m_i[0] - mu0), al1 = ex2(m_i[1] - mu1);
+    x0 = ex2(x0 - mu0);
+    x2 = ex2(x2 - mu0);
+    x1 = ex2(x1 - mu1);
+    x3 = ex2(x3 - mu1);
+    l_i[0] = l_i[0] * al0 + (x0 + x2);
+    l_i[1] = l_i[1] * al1 + (x1 + x3);
+    m_i[0] = mn0;
+    m_i[1] = mn1;
+#pragma unroll
+    for (int mb = 0; mb < 4; ++mb) { acc[mb][0] *= al0; acc[mb][1] *= al1; acc[mb][2] *= al0; acc[mb][3] *= al1; }
+    // P^T as the B fragment (k = keys 2qi, 2qi+1 | 2qi+8, 2qi+9; n = query quad): transpose each 8x8 f16 block.
+    uint32_t pb0, pb1;
+    {
+      const uint32_t p0 = pack_f16x2(x0, x1), p1 = pack_f16x2(x2, x3);
+      asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;" : "=r"(pb0) : "r"(p0));
+      asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;" : "=r"(pb1) : "r"(p1));
+    }
 
     const int tv = slice + qi * 2;
     const int vlc = g * 4 + (quad >> 1);
@@ -1453,30 +1468,34 @@ splitkv_attn_sk_kernel(const uint8_t* __restrict__ q,          // e4m3 [B, HQ, D
     const uint2 v1 = *reinterpret_cast<const uint2*>(Vs + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
     const uint2 v8 = *reinterpret_cast<const uint2*>(Vs + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
     const uint2 v9 = *reinterpret_cast<const uint2*>(Vs + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
+    // F2b: O^T += V^T P^T. A = V^T: MMA block mb, row quad = dim 8*quad + 2*mb, row quad + 8 = dim 8*quad + 2*mb + 1;
+    // k = keys 2qi, 2qi+1 (a0 / a1) and 2qi+8, 2qi+9 (a2 / a3): master's four 8-byte V loads, regrouped.
 #pragma unroll
     for (int hw = 0; hw < 2; ++hw) {
       const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
       const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
-      uint32_t r0[4], r1[4];
-      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0[0], r0[1]);
-      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0[2], r0[3]);
-      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1[0], r1[1]);
-      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1[2], r1[3]);
-#pragma unroll
-      for (int j = 0; j < 4; ++j) mma16816(acc[hw * 4 + j], pa0, 0u, pa2, 0u, r0[j], r1[j]);
+      uint32_t A0[4], A1[4];  // mb = 2hw, 2hw + 1
+      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), A0[0], A0[1]);
+      e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), A1[0], A1[1]);
+      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), A0[2], A0[3]);
+      e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), A1[2], A1[3]);
+      mma16816(acc[2 * hw], A0[0], A0[1], A0[2], A0[3], pb0, pb1);
+      mma16816(acc[2 * hw + 1], A1[0], A1[1], A1[2], A1[3], pb0, pb1);
     }
 
     if (n == N - 1 || lt == nt_b - 1) {
       // Segment end (uniform over the CTA): merge the four warps of each kv head in smem.
-      l_i += __shfl_xor_sync(0xffffffffu, l_i, 1);
-      l_i += __shfl_xor_sync(0xffffffffu, l_i, 2);
-      const int rw = warp * G + quad;
-      if (qi == 0) { ml_s[rw * 2] = m_i; ml_s[rw * 2 + 1] = l_i; }
-      float* ar = acc_s + rw * D;
 #pragma unroll
-      for (int nb = 0; nb < 8; ++nb) {
-        ar[(qi * 2) * 8 + nb] = acc[nb][0];
-        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
+      for (int j = 0; j < 2; ++j) {
+        float l = l_i[j];
+        l += __shfl_xor_sync(0xffffffffu, l, 4);
+        l += __shfl_xor_sync(0xffffffffu, l, 8);
+        l += __shfl_xor_sync(0xffffffffu, l, 16);
+        const int rw = warp * G + 2 * qi + j;
+        if (quad == 0) { ml_s[rw * 2] = m_i[j]; ml_s[rw * 2 + 1] = l; }
+        float* ar = acc_s + rw * D + 8 * quad;
+#pragma unroll
+        for (int mb = 0; mb < 4; ++mb) { ar[2 * mb] = acc[mb][j]; ar[2 * mb + 1] = acc[mb][2 + j]; }
       }
       __syncthreads();
       const int h = tid >> 4, d0 = (tid & 15) * 4;
@@ -1835,6 +1854,8 @@ def kernel_fn(data: Inputs) -> torch.Tensor:
     # Sliding decode at every batch (config-only predicate): the whole step in one fused launch.
     # Every other shape (sliding verify, every full layer) keeps the path below.
     if cfg["window"] and cfg["q_len"] == 1:
+        if _SLIDE_S4 and _slide_s4_gate(cfg):  # import-time flag, config-only: S4 AT8 WIDE B=17..32, 256 keys/CTA
+            return _slide_s4_forward(data)
         if _sd_gate(cfg):  # import-time frozen route table, config-only predicate: [pre-attn + sk window] pair
             return _sliding_decode_sk(data)
         if _SLIDE_AT8 and _slide_at8_gate(cfg):  # import-time flag, config-only: AT8 split-KV atomic merge, B=2..16
@@ -5147,8 +5168,8 @@ def _slide_launch(ext, data: Inputs, c: int, ph: bool = False) -> torch.Tensor:
 def _slide_forward(data: Inputs, c: int) -> torch.Tensor:
     """The gated path: the module that passed for cluster size c (C=16 serves B=1 only; PERHEAD there when
     the import-time flag is set)."""
-    if _SLIDE_AT2 and c == 16:  # AT2 (import-time flag, B=1 only)
-        return _slide_at2_launch(_SLIDE_AT2_MOD, data)
+    if _SLIDE_AT2 and c == 16:  # AT2 (import-time flag, B=1 only); S2's kernel when its race routed it
+        return _slide_at2_launch(_SLIDE_AT2_MOD, data, s2=_SLIDE_S2_B1)
     if _SLIDE_PH and c == 16:
         return _slide_launch(_SLIDE_PH_MOD, data, 16, True)
     return _slide_launch(_SLIDE_MOD[c], data, c)
@@ -6039,6 +6060,623 @@ sliding_at3_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restri
 }
 #endif  // SLIDE_FP8QK (AT3)
 
+// ---- S2 (campaign arch-mirror lane 2, bundle S2: sliding decode B=1..16): AT2 / AT8's split-KV, fixed-reference red
+// merge, R11 guard and last-CTA self-reset finalize, rebuilt with three compile-time parts:
+//   NW = 4 (part ac): 4 warps; warp = one kv head x half of the CTA's 16-key tiles (tile t belongs to half (t >> 1) & 1),
+//     the two halves of a head merge pairwise through their own shared-memory buffer (one named barrier per head), and
+//     only the half-0 warp of each head issues the reds. NW = 8: AT2's roles (warp = kv head x quarter, t & 3) and its
+//     8-warp staged merge, unchanged.
+//   UNPAD (part b): QK^T computed transposed, S^T = K Q^T: A = the tile's 16 keys (m16n8k32 e4m3, no zero rows),
+//     B = the head's 8 E4M3 queries; P^T is moved into the PV B operand with movmatrix.trans, and O^T = V^T P^T (A = V^T,
+//     16 dims x 16 keys) takes 4 m16n8k16 per tile instead of 8 half-zero ones. Same products, same per-chunk FP32
+//     accumulation, same online softmax per (head, tile).
+//   RING (part e, WIDE only): every page index of the CTA is loaded first, then one cp.async group per 64-key stage;
+//     the tile loop waits stage by stage (stage s is attended while s + 1 .. land). AT8 waits for all keys at once.
+//     At <= NS * SK = 384 keys per CTA every stage has its own ring rows, so no slot is refilled.
+#if SLIDE_FP8QK
+constexpr int S2_STG = 64;                                  // keys per RING stage
+constexpr int S2_MAXST = NS * SK / S2_STG;                  // 6
+constexpr int S2_PAIR = 4 * 32 * 16 + 32 * 16;              // per kv head: 4 float4 acc + 1 float4 (m, l) per lane
+constexpr int S2_SMEM4 = SMEM_BYTES + HKV * S2_PAIR;        // NW = 4: the ring + the two pair buffers
+
+__device__ __forceinline__ uint32_t s2_trans(uint32_t x) {
+  uint32_t y;
+  asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;" : "=r"(y) : "r"(x));
+  return y;
+}
+__device__ __forceinline__ void s2_wait(int pending) {  // cp.async.wait_group takes an immediate
+  switch (pending) {
+    case 0: asm volatile("cp.async.wait_group 0;\n" ::: "memory"); break;
+    case 1: asm volatile("cp.async.wait_group 1;\n" ::: "memory"); break;
+    case 2: asm volatile("cp.async.wait_group 2;\n" ::: "memory"); break;
+    case 3: asm volatile("cp.async.wait_group 3;\n" ::: "memory"); break;
+    case 4: asm volatile("cp.async.wait_group 4;\n" ::: "memory"); break;
+    default: asm volatile("cp.async.wait_group 5;\n" ::: "memory"); break;
+  }
+}
+__device__ __forceinline__ void s2_bar(int id, int n) { asm volatile("bar.sync %0, %1;" :: "r"(id), "r"(n) : "memory"); }
+
+// Key e (0 .. n_old) of the CTA -> its ring row: slot e / SK, row e % SK, 16-byte chunk c stored at c ^ (row % 8).
+__device__ __forceinline__ void s2_copy_key(uint8_t* smem, const uint8_t* kc, const uint8_t* vc, int e, int pidx, int c) {
+  const int r = e & (SK - 1);
+  const int dst = (e / SK) * SLOT + r * ROW + ((c ^ (r & 7)) << 4);
+  const int64_t row = static_cast<int64_t>(pidx);
+  cp_async16(smem_u32(smem + K_OFF + dst), kc + row * ROW + c * 16);
+  cp_async16(smem_u32(smem + V_OFF + dst), vc + row * ROW + c * 16);
+}
+// Rows n_old .. round16(n_old) - 1 of the ring (the last tile's tail) set to zero: P = 0 there must not meet NaN bytes.
+template <int THR>
+__device__ __forceinline__ void s2_zero_tail(uint8_t* smem, int n_old, int tid) {
+  const int rpad = (n_old + 15) & ~15;
+  for (int x = tid; x < (rpad - n_old) * 16; x += THR) {
+    const int e = n_old + (x >> 4), part = x & 15;
+    *reinterpret_cast<uint4*>(smem + (part < 8 ? K_OFF : V_OFF) + (e / SK) * SLOT + (e & (SK - 1)) * ROW +
+                              (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
+  }
+}
+// One ring slot (keys s * SK ..) with THR threads: thread -> keys tid / 8 + (THR / 8) i, chunk tid % 8; indices first.
+template <int THR>
+__device__ __forceinline__ void s2_gather_slot(uint8_t* smem, const uint8_t* kc, const uint8_t* vc, const int* prow,
+                                               int s, int n_old, int tid) {
+  constexpr int NI = SK * 8 / THR, STEP = THR / 8;
+  int idx[NI];
+#pragma unroll
+  for (int i = 0; i < NI; ++i) {
+    const int e = s * SK + (tid >> 3) + STEP * i;
+    idx[i] = e < n_old ? __ldg(prow + e) : 0;
+  }
+#pragma unroll
+  for (int i = 0; i < NI; ++i) {
+    const int e = s * SK + (tid >> 3) + STEP * i;
+    if (e < n_old) s2_copy_key(smem, kc, vc, e, idx[i], tid & 7);
+  }
+}
+
+// UNPAD tile at buffer rows tb .. tb + 15: lane state = heads 2 qi, 2 qi + 1 of kv head g (m, l per head; l is this
+// lane's partial, quad-reduced at the end) and O^T rows dims quad * 8 + 2 mb + (c >> 1), column head 2 qi + (c & 1).
+__device__ __forceinline__ void s2_tile_u(const uint8_t* Kb, const uint8_t* Vb, int tb, int nvalid, int kp0,
+                                          const uint32_t (&qa)[QKS][4], int g, int quad, int qi, float scale,
+                                          int p_row, int low, float (&m)[2], float (&l)[2], float (&acc)[4][4]) {
+  const float NEG_INF = __int_as_float(0xff800000u);
+  const int r0 = tb + quad, r1 = r0 + 8;
+  const uint8_t* k0 = Kb + r0 * ROW + qi * 4;
+  const uint8_t* k1 = Kb + r1 * ROW + qi * 4;
+  const int sw = r0 & 7;  // == r1 & 7
+  float s[4] = {0.f, 0.f, 0.f, 0.f};
+#pragma unroll
+  for (int ks = 0; ks < 2; ++ks) {
+    const int c0 = g * 4 + 2 * ks;
+    mma16832(s, ld32(k0 + ((c0 ^ sw) << 4)), ld32(k1 + ((c0 ^ sw) << 4)), ld32(k0 + (((c0 + 1) ^ sw) << 4)),
+             ld32(k1 + (((c0 + 1) ^ sw) << 4)), qa[ks][0], qa[ks][2]);
+  }
+  // s[0] / s[1]: key r0, heads 2 qi / 2 qi + 1; s[2] / s[3]: key r1
+  const int kpa = kp0 + r0, kpb = kp0 + r1;
+  const bool oka = r0 < nvalid && kpa <= p_row && kpa >= low;
+  const bool okb = r1 < nvalid && kpb <= p_row && kpb >= low;
+  float x[4];
+  x[0] = oka ? s[0] * scale : NEG_INF;
+  x[1] = oka ? s[1] * scale : NEG_INF;
+  x[2] = okb ? s[2] * scale : NEG_INF;
+  x[3] = okb ? s[3] * scale : NEG_INF;
+  float al[2];
+#pragma unroll
+  for (int j = 0; j < 2; ++j) {
+    float mx = fmaxf(x[j], x[2 + j]);
+    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 4));
+    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 8));
+    mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 16));
+    const float mn = fmaxf(m[j], mx);
+    const float mu = mn == NEG_INF ? 0.f : mn;
+    al[j] = ex2(m[j] - mu);
+    x[j] = ex2(x[j] - mu);
+    x[2 + j] = ex2(x[2 + j] - mu);
+    l[j] = l[j] * al[j] + (x[j] + x[2 + j]);
+    m[j] = mn;
+  }
+#pragma unroll
+  for (int mb = 0; mb < 4; ++mb) {
+    acc[mb][0] *= al[0];
+    acc[mb][1] *= al[1];
+    acc[mb][2] *= al[0];
+    acc[mb][3] *= al[1];
+  }
+  // P as an m8n8 [key][head] f16 fragment per 8-key half; transposed it is the B fragment [key][head = quad]
+  const uint32_t pb0 = s2_trans(pack_f16x2(x[0], x[1]));
+  const uint32_t pb1 = s2_trans(pack_f16x2(x[2], x[3]));
+  const int tv = tb + qi * 2;
+  const int vlc = g * 4 + (quad >> 1);
+  const int voff = (quad & 1) * 8;
+  const uint2 v0 = *reinterpret_cast<const uint2*>(Vb + tv * ROW + ((vlc ^ (tv & 7)) << 4) + voff);
+  const uint2 v1 = *reinterpret_cast<const uint2*>(Vb + (tv + 1) * ROW + ((vlc ^ ((tv + 1) & 7)) << 4) + voff);
+  const uint2 v8 = *reinterpret_cast<const uint2*>(Vb + (tv + 8) * ROW + ((vlc ^ ((tv + 8) & 7)) << 4) + voff);
+  const uint2 v9 = *reinterpret_cast<const uint2*>(Vb + (tv + 9) * ROW + ((vlc ^ ((tv + 9) & 7)) << 4) + voff);
+#pragma unroll
+  for (int hw = 0; hw < 2; ++hw) {
+    const uint32_t w0 = hw ? v0.y : v0.x, w1 = hw ? v1.y : v1.x;
+    const uint32_t w8 = hw ? v8.y : v8.x, w9 = hw ? v9.y : v9.x;
+    uint32_t r0v[4], r1v[4];  // [j]: dim quad * 8 + 4 hw + j, keys (2 qi, 2 qi + 1) / (+ 8, + 9)
+    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x5140), r0v[0], r0v[1]);
+    e4m3x4_to_f16x2x2(__byte_perm(w0, w1, 0x7362), r0v[2], r0v[3]);
+    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x5140), r1v[0], r1v[1]);
+    e4m3x4_to_f16x2x2(__byte_perm(w8, w9, 0x7362), r1v[2], r1v[3]);
+    mma16816(acc[2 * hw], r0v[0], r0v[1], r1v[0], r1v[1], pb0, pb1);
+    mma16816(acc[2 * hw + 1], r0v[2], r0v[3], r1v[2], r1v[3], pb0, pb1);
+  }
+}
+
+// The merged row partial (o: 16 dims in 4 float4 at dims dd[k] .. + 3, l, m) -> red into the workspace, or the R11 slot.
+__device__ __forceinline__ void s2_emit(float* wsb, float* fbb, int* ticket, int b, int split, int h, const int (&dd)[4],
+                                        const float4 (&o)[4], float L, float M, bool lead, float guard_hi, int nk) {
+  if (M >= AT2_GUARD_LO && M <= guard_hi) {
+    const float w = ex2(M - AT2_REF);
+#pragma unroll
+    for (int k = 0; k < 4; ++k)
+      if (k < nk) at2_red4(wsb + h * D + dd[k], o[k].x * w, o[k].y * w, o[k].z * w, o[k].w * w);
+    if (lead) at2_red1(wsb + HQ * D + h, L * w);
+  } else {
+    float* sl = fbb + (split * HQ + h) * AT2_SLOT;
+#pragma unroll
+    for (int k = 0; k < 4; ++k)
+      if (k < nk) *reinterpret_cast<float4*>(sl + dd[k]) = o[k];
+    if (lead) { sl[D] = M; sl[D + 1] = L; atomicAdd(ticket + 2 * b + 1, 1); }
+  }
+}
+
+template <int NW, bool UNPAD, bool WIDE, bool RING, bool SPEC>
+__global__ void __launch_bounds__(NW * 32, 2)
+sliding_s2_kernel(const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
+                  const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
+                  const int* __restrict__ seq_lens, const int* __restrict__ page_table, int64_t pt_stride,
+                  const float* __restrict__ inv_freq, const float* __restrict__ k_scale_p,
+                  const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc,
+                  __nv_bfloat16* __restrict__ out, float* ws, float* fb, int* ticket, int nsplit, int window,
+                  float q_scale, float score_scale, float eps, float guard_hi, int tile, int spec) {
+  static_assert(NW == 8 || NW == 4, "S2: 8 or 4 warps");
+  static_assert(!SPEC || (!WIDE && !RING), "S2d: length speculation is the single-tile (tile 64) path only");
+  constexpr int THR = NW * 32;
+  constexpr int QPW = HQ / NW;   // query heads prepared per warp
+  constexpr int FR = HQ * D / 4 / THR;  // finalize float4 chunks per thread
+  extern __shared__ __align__(128) uint8_t smem[];
+  uint8_t* XK = smem + XK_OFF;
+  uint8_t* XV = smem + XV_OFF;
+  uint8_t* Qs = smem + Q_OFF;
+  __shared__ int last_cta_s;
+  const float NEG_INF = __int_as_float(0xff800000u);
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const int b = static_cast<int>(blockIdx.x) / nsplit;
+  const int split = static_cast<int>(blockIdx.x) % nsplit;
+  const bool last = split == nsplit - 1;
+  // AT8F: the seq_lens-independent loads first
+  const float fr = inv_freq[lane];
+  const float pos = static_cast<float>(positions[b]);
+  __nv_bfloat162 qx[QPW];
+#pragma unroll
+  for (int i = 0; i < QPW; ++i)
+    qx[i] = *reinterpret_cast<const __nv_bfloat162*>(qkv + static_cast<int64_t>(b) * qkv_stride + (warp + i * NW) * D +
+                                                     2 * lane);
+  __nv_bfloat162 kvx = __float2bfloat162_rn(0.f);
+  int64_t loc_e = 0;
+  if (last && warp < 2 * HKV) {
+    kvx = *reinterpret_cast<const __nv_bfloat162*>(
+        qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (warp >= HKV ? HKV : 0) + warp % HKV) * D + 2 * lane);
+    loc_e = cache_loc[b];
+  }
+  const int ctile = WIDE ? tile : AT2_TILE;
+  // S2d (length speculation; host-gated to B = 1, page 1, q_len 1, tile 64): `spec` = page_table.size(1) - 1 is the
+  // length the caller's layout implies (reference.py builds the row exactly seq_len + q_len wide at a fixed length).
+  // The real length load and this CTA's page-index loads from the speculative range go out together; the compare comes
+  // before any index is used as an address and before any softmax work. On a miss the range and the indices are
+  // recomputed from the real length (nothing global written yet), so every later use sees the real length and the
+  // output equals the non-speculative kernel's. Speculative positions are < spec < page_table.size(1): in bounds.
+  constexpr int SNI = SK * 8 / (NW * 32);   // keys per thread in the one 64-key slot (NW 8: SK / 32)
+  int sidx[SNI];
+  int seq, lo, start, n_old;
+  const int* prow;
+  if (SPEC) {
+    const int real = seq_lens[b];
+    seq = spec;
+    lo = max(0, seq - (window - 1));
+    start = lo + split * ctile;
+    n_old = max(0, min(ctile, seq - start));
+    prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
+#pragma unroll
+    for (int i = 0; i < SNI; ++i) {
+      const int e = (tid >> 3) + NW * 4 * i;
+      sidx[i] = e < n_old ? __ldg(prow + e) : 0;
+    }
+    if (real != spec) {  // miss: re-run the range and the index loads with the real length
+      seq = real;
+      lo = max(0, seq - (window - 1));
+      start = lo + split * ctile;
+      n_old = max(0, min(ctile, seq - start));
+      prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
+#pragma unroll
+      for (int i = 0; i < SNI; ++i) {
+        const int e = (tid >> 3) + NW * 4 * i;
+        sidx[i] = e < n_old ? __ldg(prow + e) : 0;
+      }
+    }
+  } else {
+    seq = seq_lens[b];
+    lo = max(0, seq - (window - 1));
+    start = lo + split * ctile;
+    n_old = max(0, min(ctile, seq - start));
+    prow = page_table + static_cast<int64_t>(b) * pt_stride + start;
+  }
+  __nv_bfloat162 pg[FR][2];
+#pragma unroll
+  for (int f = 0; f < FR; ++f) pg[f][0] = pg[f][1] = __float2bfloat162_rn(0.f);
+  if (WIDE) {
+#pragma unroll
+    for (int f = 0; f < FR; ++f) {
+      const int c = tid + f * THR;
+      const __nv_bfloat162* gq = reinterpret_cast<const __nv_bfloat162*>(
+          qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D + (c >> 4) * D + (c & 15) * 4);
+      pg[f][0] = gq[0];
+      pg[f][1] = gq[1];
+    }
+  } else if (tid == 0 && split < HQ * D * 2 / 128) {
+    asm volatile("prefetch.global.L2 [%0];" :: "l"(qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + 2 * HKV) * D +
+                                                    split * 64));
+  }
+  int nst = 0;
+  if (RING) {
+    constexpr int TPS = S2_STG * 8 / THR;  // keys per thread per stage
+    nst = (n_old + S2_STG - 1) / S2_STG;
+    int idx[S2_MAXST][TPS];
+#pragma unroll
+    for (int st = 0; st < S2_MAXST; ++st)
+#pragma unroll
+      for (int i = 0; i < TPS; ++i) {
+        const int e = st * S2_STG + (tid >> 3) + (THR / 8) * i;
+        idx[st][i] = e < n_old ? __ldg(prow + e) : 0;
+      }
+#pragma unroll
+    for (int st = 0; st < S2_MAXST; ++st) {
+      if (st < nst) {
+#pragma unroll
+        for (int i = 0; i < TPS; ++i) {
+          const int e = st * S2_STG + (tid >> 3) + (THR / 8) * i;
+          if (e < n_old) s2_copy_key(smem, kc, vc, e, idx[st][i], tid & 7);
+        }
+        cp_commit();
+      }
+    }
+    s2_zero_tail<THR>(smem, n_old, tid);
+  } else if (NW == 8) {  // AT2 / AT8's gather, unchanged
+    int idx[SK / 32];
+    if (WIDE) {
+      for (int s = 0; s * SK < n_old; ++s) {
+        load_idx<false>(idx, prow, s, n_old, tid);
+        issue_sub<false>(smem, kc, vc, idx, s, n_old, tid, 0);
+      }
+    } else {
+      if (SPEC) {
+#pragma unroll
+        for (int i = 0; i < SK / 32; ++i) idx[i] = sidx[i];
+      } else {
+        load_idx<false>(idx, prow, 0, n_old, tid);
+      }
+      if (n_old > 0) issue_sub<false>(smem, kc, vc, idx, 0, n_old, tid, 0);
+    }
+    cp_commit();
+  } else if (SPEC) {  // 128 threads, one slot (n_old <= 64), indices already verified
+#pragma unroll
+    for (int i = 0; i < SNI; ++i) {
+      const int e = (tid >> 3) + NW * 4 * i;
+      if (e < n_old) s2_copy_key(smem, kc, vc, e, sidx[i], tid & 7);
+    }
+    cp_commit();
+    s2_zero_tail<THR>(smem, n_old, tid);
+  } else {  // the same single group with 128 threads
+    for (int s = 0; s * SK < n_old; ++s) s2_gather_slot<THR>(smem, kc, vc, prow, s, n_old, tid);
+    cp_commit();
+    s2_zero_tail<THR>(smem, n_old, tid);
+  }
+#pragma unroll
+  for (int i = 0; i < QPW; ++i) {
+    const int h = warp + i * NW;
+    const __nv_bfloat162 x2 = qx[i];
+    float xe = __low2float(x2), xo = __high2float(x2);
+    float ss = xe * xe + xo * xo;
+#pragma unroll
+    for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+    const float r = 1.f / sqrtf(ss / D + eps);
+    xe *= r;
+    xo *= r;
+    float sn, cs;
+    sincosf(pos * fr, &sn, &cs);
+    const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
+    *reinterpret_cast<uint16_t*>(Qs + h * D + 2 * lane) = f32x2_to_e4m3x2(ye * q_scale, yo * q_scale);
+  }
+  if (last) {
+    for (int x = tid; x < 15 * 16; x += THR) {
+      const int r = 1 + (x >> 4), part = x & 15;
+      *reinterpret_cast<uint4*>((part < 8 ? XK : XV) + r * ROW + (part & 7) * 16) = make_uint4(0u, 0u, 0u, 0u);
+    }
+    const float ksc = __ldg(k_scale_p), vsc = __ldg(v_scale_p);
+    for (int u = warp; u < 2 * HKV; u += NW) {
+      const bool isv = u >= HKV;
+      const int g = u % HKV;
+      const __nv_bfloat162 x2 = u == warp ? kvx : *reinterpret_cast<const __nv_bfloat162*>(
+          qkv + static_cast<int64_t>(b) * qkv_stride + (HQ + (isv ? HKV : 0) + g) * D + 2 * lane);
+      float xe = __low2float(x2), xo = __high2float(x2);
+      uint16_t packed;
+      if (!isv) {
+        float ss = xe * xe + xo * xo;
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+        const float r = 1.f / sqrtf(ss / D + eps);
+        xe *= r;
+        xo *= r;
+        float sn, cs;
+        sincosf(pos * fr, &sn, &cs);
+        const float ye = xe * cs - xo * sn, yo = xe * sn + xo * cs;
+        packed = f32x2_to_e4m3x2(ye / ksc, yo / ksc);
+      } else {
+        packed = f32x2_to_e4m3x2(xe / vsc, xo / vsc);
+      }
+      const int64_t loc = u == warp ? loc_e : cache_loc[b];
+      *reinterpret_cast<uint16_t*>((isv ? vc : kc) + loc * ROW + g * D + 2 * lane) = packed;
+      *reinterpret_cast<uint16_t*>((isv ? XV : XK) + g * D + 2 * lane) = packed;
+    }
+  }
+  __syncthreads();
+
+  const int quad = lane >> 2, qi = lane & 3;
+  const int g = warp & 1, sub = warp >> 1;
+  const int qra = g * G + quad;
+  uint32_t qa[QKS][4];
+#pragma unroll
+  for (int ks = 0; ks < 2; ++ks) {
+    const uint8_t* pa = Qs + qra * D + ks * 32 + qi * 4;
+    qa[ks][0] = ld32(pa);
+    qa[ks][2] = ld32(pa + 16);
+    qa[ks][1] = qa[ks][3] = 0u;
+  }
+  const float scale = score_scale * __ldg(k_scale_p);
+  const int p_row = seq;
+  const int low = p_row - (window - 1);
+  float m_a = NEG_INF, l_a = 0.f;  // !UNPAD: row g * 8 + quad
+  float acc[8][4];                  // !UNPAD: [nb][c < 2] = dim (2 qi + c) * 8 + nb
+  float mu[2] = {NEG_INF, NEG_INF}, lu[2] = {0.f, 0.f};
+  float acc4[4][4];                 // UNPAD: [mb][c], see s2_tile_u
+#pragma unroll
+  for (int nb = 0; nb < 8; ++nb) acc[nb][0] = acc[nb][1] = acc[nb][2] = acc[nb][3] = 0.f;
+#pragma unroll
+  for (int mb = 0; mb < 4; ++mb) acc4[mb][0] = acc4[mb][1] = acc4[mb][2] = acc4[mb][3] = 0.f;
+  auto attend = [&](const uint8_t* Kb, const uint8_t* Vb, int tb, int nvalid, int kp0) {
+    if constexpr (UNPAD) {
+      s2_tile_u(Kb, Vb, tb, nvalid, kp0, qa, g, quad, qi, scale, p_row, low, mu, lu, acc4);
+    } else {
+      attend_tile(Kb, Vb, tb, nvalid, kp0, qa, g, quad, qi, scale, p_row, low, m_a, l_a, acc);
+    }
+  };
+  auto owns = [&](int t) { return NW == 8 ? (t & 3) == sub : ((t >> 1) & 1) == sub; };
+  const int nt = (n_old + 15) >> 4;
+  if (RING) {
+#pragma unroll 1
+    for (int st = 0; st < nst; ++st) {
+      s2_wait(nst - 1 - st);
+      __syncthreads();
+#pragma unroll
+      for (int u = 0; u < S2_STG / 16; ++u) {
+        const int t = st * (S2_STG / 16) + u;
+        if (t < nt && owns(t)) {
+          const int sl = t >> 3;
+          attend(smem + K_OFF + sl * SLOT, smem + V_OFF + sl * SLOT, (t & 7) * 16, n_old - sl * SK, start + sl * SK);
+        }
+      }
+    }
+  } else {
+    cp_wait_all();
+    __syncthreads();
+#pragma unroll 1
+    for (int t = 0; t < nt; ++t) {
+      if (owns(t)) {
+        const int sl = t >> 3;
+        attend(smem + K_OFF + sl * SLOT, smem + V_OFF + sl * SLOT, (t & 7) * 16, n_old - sl * SK, start + sl * SK);
+      }
+    }
+  }
+  if (last && owns(nt)) attend(XK, XV, 0, 1, seq);
+  if constexpr (UNPAD) {
+#pragma unroll
+    for (int j = 0; j < 2; ++j) {
+      lu[j] += __shfl_xor_sync(0xffffffffu, lu[j], 4);
+      lu[j] += __shfl_xor_sync(0xffffffffu, lu[j], 8);
+      lu[j] += __shfl_xor_sync(0xffffffffu, lu[j], 16);
+    }
+  } else {
+    l_a += __shfl_xor_sync(0xffffffffu, l_a, 1);
+    l_a += __shfl_xor_sync(0xffffffffu, l_a, 2);
+  }
+  float* wsb = ws + static_cast<int64_t>(b) * AT2_WS;
+  float* fbb = fb + static_cast<int64_t>(b) * AT2_FB;
+
+  if constexpr (NW == 8) {
+    __syncthreads();
+    float* stg_acc = reinterpret_cast<float*>(smem + STG_ACC);
+    float* stg_ml = reinterpret_cast<float*>(smem + STG_ML);
+    if constexpr (UNPAD) {
+#pragma unroll
+      for (int j = 0; j < 2; ++j) {
+        const int rw = warp * G + 2 * qi + j;
+        if (quad == 0) { stg_ml[rw * 2] = mu[j]; stg_ml[rw * 2 + 1] = lu[j]; }
+        float* ar = stg_acc + rw * D + quad * 8;
+#pragma unroll
+        for (int mb = 0; mb < 4; ++mb) { ar[2 * mb] = acc4[mb][j]; ar[2 * mb + 1] = acc4[mb][2 + j]; }
+      }
+    } else {
+      const int rw = warp * G + quad;
+      if (qi == 0) { stg_ml[rw * 2] = m_a; stg_ml[rw * 2 + 1] = l_a; }
+      float* ar = stg_acc + rw * D;
+#pragma unroll
+      for (int nb = 0; nb < 8; ++nb) {
+        ar[(qi * 2) * 8 + nb] = acc[nb][0];
+        ar[(qi * 2 + 1) * 8 + nb] = acc[nb][1];
+      }
+    }
+    __syncthreads();
+    // AT2's merge: row h = tid / 16, dims d0 .. d0 + 3, over the 4 tile warps of kv head h / G
+    const int h = tid >> 4, d0 = (tid & 15) * 4;
+    const int hg = h / G, r = h % G;
+    float mw[4];
+    float M = NEG_INF;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) { mw[j] = stg_ml[((hg + 2 * j) * G + r) * 2]; M = fmaxf(M, mw[j]); }
+    const float Mu = M == NEG_INF ? 0.f : M;
+    float4 o[4];
+    o[0] = make_float4(0.f, 0.f, 0.f, 0.f);
+    float Ls = 0.f;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      const int wr = (hg + 2 * j) * G + r;
+      const float wt = mw[j] == NEG_INF ? 0.f : ex2(mw[j] - Mu);
+      Ls += wt * stg_ml[wr * 2 + 1];
+      const float4 a = *reinterpret_cast<const float4*>(stg_acc + wr * D + d0);
+      o[0].x += wt * a.x; o[0].y += wt * a.y; o[0].z += wt * a.z; o[0].w += wt * a.w;
+    }
+    const int dd[4] = {d0, 0, 0, 0};
+    if (M != NEG_INF) s2_emit(wsb, fbb, ticket, b, split, h, dd, o, Ls, M, (tid & 15) == 0, guard_hi, 1);
+  } else {
+    // pairwise key-half merge: half 1 parks its lane state in its head's buffer, half 0 merges it lane by lane (same
+    // lane = same rows and dims) and issues the reds
+    float4* pb = reinterpret_cast<float4*>(smem + SMEM_BYTES + g * S2_PAIR);
+    float4 mine[4];
+    float4 ml;
+    if constexpr (UNPAD) {
+#pragma unroll
+      for (int k = 0; k < 4; ++k) mine[k] = make_float4(acc4[k][0], acc4[k][1], acc4[k][2], acc4[k][3]);
+      ml = make_float4(mu[0], mu[1], lu[0], lu[1]);
+    } else {
+#pragma unroll
+      for (int k = 0; k < 4; ++k) {  // k = 2 c + nbh: dims (2 qi + c) * 8 + 4 nbh .. + 3
+        const int c = k >> 1, n0 = (k & 1) * 4;
+        mine[k] = make_float4(acc[n0][c], acc[n0 + 1][c], acc[n0 + 2][c], acc[n0 + 3][c]);
+      }
+      ml = make_float4(m_a, NEG_INF, l_a, 0.f);
+    }
+    if (sub == 1) {
+#pragma unroll
+      for (int k = 0; k < 4; ++k) pb[k * 32 + lane] = mine[k];
+      pb[4 * 32 + lane] = ml;
+    }
+    s2_bar(1 + g, 64);
+    if (sub == 0) {
+      float4 th[4];
+#pragma unroll
+      for (int k = 0; k < 4; ++k) th[k] = pb[k * 32 + lane];
+      const float4 tml = pb[4 * 32 + lane];
+      const float ma[2] = {ml.x, ml.y}, la[2] = {ml.z, ml.w}, mt[2] = {tml.x, tml.y}, lt[2] = {tml.z, tml.w};
+      float w0[2], w1[2], Mr[2], Lr[2];
+#pragma unroll
+      for (int j = 0; j < 2; ++j) {
+        Mr[j] = fmaxf(ma[j], mt[j]);
+        const float Mu = Mr[j] == NEG_INF ? 0.f : Mr[j];
+        w0[j] = ma[j] == NEG_INF ? 0.f : ex2(ma[j] - Mu);
+        w1[j] = mt[j] == NEG_INF ? 0.f : ex2(mt[j] - Mu);
+        Lr[j] = w0[j] * la[j] + w1[j] * lt[j];
+      }
+      if constexpr (UNPAD) {
+        // head j = 2 qi + j: dims quad * 8 + 2 mb (mine[mb] .x / .y by head) and + 1 (.z / .w)
+#pragma unroll
+        for (int j = 0; j < 2; ++j) {
+          float v[8];
+#pragma unroll
+          for (int mb = 0; mb < 4; ++mb) {
+            const float* a = reinterpret_cast<const float*>(&mine[mb]);
+            const float* t = reinterpret_cast<const float*>(&th[mb]);
+            v[2 * mb] = w0[j] * a[j] + w1[j] * t[j];
+            v[2 * mb + 1] = w0[j] * a[2 + j] + w1[j] * t[2 + j];
+          }
+          float4 o[4];
+          o[0] = make_float4(v[0], v[1], v[2], v[3]);
+          o[1] = make_float4(v[4], v[5], v[6], v[7]);
+          const int dd[4] = {quad * 8, quad * 8 + 4, 0, 0};
+          if (Mr[j] != NEG_INF)
+            s2_emit(wsb, fbb, ticket, b, split, g * G + 2 * qi + j, dd, o, Lr[j], Mr[j], quad == 0, guard_hi, 2);
+        }
+      } else {
+        float4 o[4];
+#pragma unroll
+        for (int k = 0; k < 4; ++k)
+          o[k] = make_float4(w0[0] * mine[k].x + w1[0] * th[k].x, w0[0] * mine[k].y + w1[0] * th[k].y,
+                             w0[0] * mine[k].z + w1[0] * th[k].z, w0[0] * mine[k].w + w1[0] * th[k].w);
+        const int dd[4] = {(2 * qi) * 8, (2 * qi) * 8 + 4, (2 * qi + 1) * 8, (2 * qi + 1) * 8 + 4};
+        if (Mr[0] != NEG_INF) s2_emit(wsb, fbb, ticket, b, split, g * G + quad, dd, o, Lr[0], Mr[0], qi == 0, guard_hi, 4);
+      }
+    }
+  }
+  asm volatile("fence.acq_rel.gpu;" ::: "memory");
+  __syncthreads();
+  if (tid == 0) {
+    int old;
+    asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(old) : "l"(ticket + 2 * b) : "memory");
+    last_cta_s = old == nsplit - 1;
+  }
+  __syncthreads();
+  if (!last_cta_s) return;
+
+  // ---- finalize (last CTA of the request): AT2's, FR float4 chunks per thread (chunk c: row c / 16, dims (c % 16) * 4)
+  const int nfb = __ldcg(ticket + 2 * b + 1);
+  const float vs = __ldg(v_scale_p);
+#pragma unroll
+  for (int f = 0; f < FR; ++f) {
+    const int c = tid + f * THR;
+    const int h = c >> 4, d0 = (c & 15) * 4;
+    float4 a = __ldcg(reinterpret_cast<const float4*>(wsb + h * D + d0));
+    float L = __ldcg(wsb + HQ * D + h);
+    float Mt = L > 0.f ? AT2_REF : NEG_INF;
+    for (int s = 0; nfb > 0 && s < nsplit; ++s) {
+      float* sl = fbb + (s * HQ + h) * AT2_SLOT;
+      const float m = __ldcg(sl + D);
+      if (m != NEG_INF) {
+        const float l = __ldcg(sl + D + 1);
+        const float4 x = __ldcg(reinterpret_cast<const float4*>(sl + d0));
+        const float Mn = fmaxf(Mt, m);
+        const float f1 = Mt == NEG_INF ? 0.f : ex2(Mt - Mn), f2 = ex2(m - Mn);
+        a.x = a.x * f1 + x.x * f2; a.y = a.y * f1 + x.y * f2; a.z = a.z * f1 + x.z * f2; a.w = a.w * f1 + x.w * f2;
+        L = L * f1 + l * f2;
+        Mt = Mn;
+      }
+    }
+    const float fsc = vs / L;
+    a.x *= fsc; a.y *= fsc; a.z *= fsc; a.w *= fsc;
+    float ss = a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w;
+#pragma unroll
+    for (int x = 8; x > 0; x >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, x);
+    const float rr = 1.f / sqrtf(ss / D + eps);
+    const int64_t t = static_cast<int64_t>(b);
+    const __nv_bfloat162* gp = reinterpret_cast<const __nv_bfloat162*>(
+        qkv + t * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
+    const __nv_bfloat162 g01 = WIDE ? pg[f][0] : gp[0], g23 = WIDE ? pg[f][1] : gp[1];
+    const float y0 = a.x * rr / (1.f + expf(-__low2float(g01)));
+    const float y1 = a.y * rr / (1.f + expf(-__high2float(g01)));
+    const float y2 = a.z * rr / (1.f + expf(-__low2float(g23)));
+    const float y3 = a.w * rr / (1.f + expf(-__high2float(g23)));
+    __nv_bfloat162* op = reinterpret_cast<__nv_bfloat162*>(out + (t * HQ + h) * D + d0);
+    op[0] = __floats2bfloat162_rn(y0, y1);
+    op[1] = __floats2bfloat162_rn(y2, y3);
+  }
+  __syncthreads();  // every thread of every row has read L and the slots
+#pragma unroll
+  for (int f = 0; f < FR; ++f) {
+    const int c = tid + f * THR;
+    const int h = c >> 4, d0 = (c & 15) * 4;
+    __stcg(reinterpret_cast<float4*>(wsb + h * D + d0), make_float4(0.f, 0.f, 0.f, 0.f));
+    if ((c & 15) == 0) {
+      __stcg(wsb + HQ * D + h, 0.f);
+      for (int s = 0; nfb > 0 && s < nsplit; ++s) {
+        float* sl = fbb + (s * HQ + h) * AT2_SLOT;
+        if (__ldcg(sl + D) != NEG_INF) __stcg(sl + D, NEG_INF);
+      }
+    }
+  }
+  if (tid == 0) { ticket[2 * b] = 0; ticket[2 * b + 1] = 0; }
+}
+#endif  // SLIDE_FP8QK (S2)
+
 """
 
 _SLIDE_AT2_HOST = r"""
@@ -6170,6 +6808,114 @@ void slide_at2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor ca
       static_cast<float>(guard_hi), static_cast<int>(tile));
   C10_CUDA_CHECK(cudaGetLastError());
 }
+
+// ---- S2 host. variant bits: 1 = part ac (4 warps, pairwise merge), 2 = part b (UNPAD), 4 = part e (RING, WIDE only).
+// The submission instantiates only the routed variant (2 = part b; ac and e lost on the H100, research/am-s2.md); the
+// probe defines S2_ALL for every part alone / leave-one-out.
+#if SLIDE_FP8QK
+template <int V, bool W>
+struct S2K {
+  static constexpr int NW = (V & 1) ? 4 : 8;
+  static constexpr bool RG = W && (V & 4) != 0;
+  static constexpr int SM = NW == 4 ? S2_SMEM4 : SMEM_BYTES;
+  static constexpr bool SP = !W && (V & 8) != 0;
+  static void attrs(int64_t* p) {
+    auto k = sliding_s2_kernel<NW, (V & 2) != 0, W, RG, SP>;
+    C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, SM));
+    cudaFuncAttributes fa;
+    C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(k)));
+    int occ = 0;
+    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, k, NW * 32, SM));
+    p[0] = fa.numRegs;
+    p[1] = static_cast<int64_t>(fa.localSizeBytes);
+    p[2] = occ;
+    p[3] = fa.binaryVersion;
+  }
+  template <typename... A>
+  static void launch(unsigned grid, A... a) {
+    sliding_s2_kernel<NW, (V & 2) != 0, W, RG, SP><<<grid, NW * 32, SM, at::cuda::getCurrentCUDAStream()>>>(a...);
+  }
+};
+#ifdef S2_ALL
+#define S2_FOR_EACH(X) X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11)
+#else
+#define S2_FOR_EACH(X) X(2) X(10)
+#endif
+#endif  // SLIDE_FP8QK
+
+// int64 CPU [8 variants][2: tile 64, WIDE][regs, local, occupancy, binaryVersion]; zeros = not instantiated
+torch::Tensor slide_s2_setup() {
+  torch::Tensor t = torch::zeros({128}, torch::dtype(torch::kLong));
+#if SLIDE_FP8QK
+  int64_t* p = t.data_ptr<int64_t>();
+#define S2_ATTR(V) S2K<((V) & 11), false>::attrs(p + (V) * 8); S2K<(V), true>::attrs(p + (V) * 8 + 4);
+  S2_FOR_EACH(S2_ATTR)
+#undef S2_ATTR
+#endif
+  return t;
+}
+
+// S2: slide_at2_attn's contract (same buffers, same self-reset state, tile 64 = AT2's split, else WIDE) + variant.
+void slide_s2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                   torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                   torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
+                   torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
+                   double eps, double guard_hi, int64_t tile, int64_t variant) {
+#if SLIDE_FP8QK
+  const int64_t B = seq_lens.size(0);
+  TORCH_CHECK(B >= 1 && B <= 64, "slide_s2_attn: batch out of range");
+  TORCH_CHECK(window >= 2 && window <= 2048, "slide_s2_attn: window must be in [2, 2048]");
+  TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && qkv.dim() == 2 && qkv.size(0) == B &&
+              qkv.size(1) >= (2 * HQ + 2 * HKV) * D && qkv.stride(1) == 1, "slide_s2_attn: qkv layout (decode)");
+  TORCH_CHECK(out.scalar_type() == at::kBFloat16 && out.is_contiguous() && out.numel() == B * HQ * D,
+              "slide_s2_attn: out layout");
+  TORCH_CHECK(positions.scalar_type() == at::kLong && positions.is_contiguous() && positions.numel() == B &&
+              cache_loc.scalar_type() == at::kLong && cache_loc.is_contiguous() && cache_loc.numel() == B,
+              "slide_s2_attn: positions / cache_loc");
+  TORCH_CHECK(seq_lens.scalar_type() == at::kInt && seq_lens.is_contiguous() &&
+              page_table.scalar_type() == at::kInt && page_table.dim() == 2 && page_table.size(0) == B &&
+              page_table.stride(1) == 1, "slide_s2_attn: seq_lens / page_table");
+  TORCH_CHECK(inv_freq.scalar_type() == at::kFloat && inv_freq.is_contiguous() && inv_freq.numel() == D / 2,
+              "slide_s2_attn: inv_freq");
+  TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat, "slide_s2_attn: scales");
+  for (const auto* c : {&k_cache, &v_cache})
+    TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
+                c->size(2) == HKV && c->size(3) == D, "slide_s2_attn: cache layout (page 1, 2 kv heads, 64)");
+  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.is_contiguous() && ws.numel() >= B * AT2_WS, "slide_s2_attn: ws");
+  TORCH_CHECK(fb.scalar_type() == at::kFloat && fb.is_contiguous() && fb.numel() >= B * AT2_FB, "slide_s2_attn: fb");
+  TORCH_CHECK(ticket.scalar_type() == at::kInt && ticket.is_contiguous() && ticket.numel() >= 2 * B,
+              "slide_s2_attn: ticket");
+  TORCH_CHECK(tile >= 16 && tile <= NS * SK && tile % 16 == 0, "slide_s2_attn: tile");
+  const int nsplit = static_cast<int>((window - 1 + tile - 1) / tile);
+  TORCH_CHECK(nsplit <= AT2_MAXSPLIT, "slide_s2_attn: splits");
+  const bool wide = tile != AT2_TILE;
+  const unsigned grid = static_cast<unsigned>(B * nsplit);
+  // S2d gate (shapes only): length speculation runs on B = 1 at tile 64 (the single-tile path); q_len 1 and page 1 are
+  // this launcher's contract (decode qkv rows, cache page dim 1, checked above). Elsewhere the d bit is dropped and the
+  // non-speculative kernel runs. spec = the length the page-table width implies (width - q_len), always < width.
+  const bool spec_on = (variant & 8) != 0 && !wide && B == 1 && page_table.size(1) >= 1;
+  const int64_t vx = spec_on ? variant : (variant & 7);
+  const int spec = spec_on ? static_cast<int>(page_table.size(1) - 1) : 0;
+  bool done = false;
+#define S2_ARGS reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)), \
+      positions.data_ptr<int64_t>(), cache_loc.data_ptr<int64_t>(), seq_lens.data_ptr<int>(), \
+      page_table.data_ptr<int>(), static_cast<int64_t>(page_table.stride(0)), inv_freq.data_ptr<float>(), \
+      k_scale.data_ptr<float>(), v_scale.data_ptr<float>(), reinterpret_cast<uint8_t*>(k_cache.data_ptr()), \
+      reinterpret_cast<uint8_t*>(v_cache.data_ptr()), reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), \
+      ws.data_ptr<float>(), fb.data_ptr<float>(), ticket.data_ptr<int>(), nsplit, static_cast<int>(window), \
+      static_cast<float>(q_scale), static_cast<float>(score_scale), static_cast<float>(eps), \
+      static_cast<float>(guard_hi), static_cast<int>(tile), spec
+#define S2_CASE(V) if (!done && vx == (V)) { \
+    if (wide) S2K<(V), true>::launch(grid, S2_ARGS); else S2K<((V) & 11), false>::launch(grid, S2_ARGS); done = true; }
+  S2_FOR_EACH(S2_CASE)
+#undef S2_CASE
+#undef S2_ARGS
+  TORCH_CHECK(done, "slide_s2_attn: variant not built");
+  C10_CUDA_CHECK(cudaGetLastError());
+#else
+  TORCH_CHECK(false, "slide_s2_attn: the f16qk build has no S2 kernel");
+#endif
+}
 """
 
 # arch-mirror S1 (bundle S1, sliding verify B=1): the single-launch q_len-8 split kernel, compiled into the AT2 module.
@@ -6205,6 +6951,12 @@ constexpr int S1_SMEM = S1_SMEM_USED + 1024;              // slack: the base is 
 constexpr int S1_TK = 8;                                   // COOP ticket ints per request: arrivals, generation,
                                                            // fallback count [2] (by generation parity), spin error
 static_assert(S1_K_OFF % 1024 == 0 && S1_V_OFF % 1024 == 0 && S1_VT_OFF % 1024 == 0, "swizzle atoms");
+#ifdef S1_PHASES  // probe builds only: thread 0 per CTA, [32]: globaltimer stamps 0..14, SM id 15, clock64 16..30
+__device__ unsigned long long s1_ph[64 * 32];
+#define S1_PH(i, dep) do { if (tid == 0) { unsigned long long t_, c_; asm volatile("mov.u64 %0, %%globaltimer;\n\tmov.u64 %1, %%clock64;" : "=l"(t_), "=l"(c_) : "r"(dep) : "memory"); s1_ph[blockIdx.x * 32 + (i)] = t_; s1_ph[blockIdx.x * 32 + 16 + (i)] = c_; } } while (0)
+#else
+#define S1_PH(i, dep) do { } while (0)
+#endif
 
 __device__ __forceinline__ uint32_t s1_qaddr(int row, int byte) {  // swizzled byte offset in a [*][ROW] tile
   return row * ROW + ((((byte >> 4) ^ (row & 7))) << 4) + (byte & 15);
@@ -6320,6 +7072,29 @@ __device__ __forceinline__ void s1_norm_rope(const uint4 (&x)[4], const float2* 
   o[1] = make_uint4(ob[4], ob[5], ob[6], ob[7]);
 }
 
+// y / d for a fixed d with rd = __frcp_rn(d): RN(y rd), one FMA residual, one FMA correction = the IEEE quotient for
+// every finite result (Markstein); a non-finite result (overflow, d = 0 or denormal) takes IEEE division.
+__device__ __forceinline__ float s1_div(float y, float d, float rd) {
+  const float q = y * rd;
+  const float q1 = fmaf(fmaf(-q, d, y), rd, q);
+  if (!(fabsf(q1) <= 3.402823466e38f)) return y / d;
+  return q == 0.f ? q : q1;
+}
+__device__ __forceinline__ void s1_ldg4(uint4& v, const __nv_bfloat16* p) {  // input rows: read-only, issue order kept
+  asm volatile("ld.global.nc.v4.u32 {%0, %1, %2, %3}, [%4];" : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p)
+               : "memory");
+}
+__device__ __forceinline__ int s1_ldi(const int* p) {
+  int v;
+  asm volatile("ld.global.nc.s32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
+  return v;
+}
+__device__ __forceinline__ void s1_bf4(uint2 w, float* v) {  // 4 bf16 -> 4 floats
+  const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&w.x));
+  const float2 c = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&w.y));
+  v[0] = a.x; v[1] = a.y; v[2] = c.x; v[3] = c.y;
+}
+
 // AT3's merge of one row (the fallback count pointer explicit).
 template <int RR>
 __device__ __forceinline__ void s1_merge_row(float* wsb, float* fbb, int* fbc, int split, int row, int qi,
@@ -6372,6 +7147,8 @@ __device__ __forceinline__ void s1_wg_merge_row(float* wsb, float* fbb, int* fbc
   }
 }
 // Finalize one row-slice element: thread (row r, dims d0 .. d0 + 3); the 16 threads of a row are lanes 16k..16k+15.
+// NC workspace copies (W2): summed here, all zeroed.
+template <int NC>
 __device__ __forceinline__ void s1_fin(const float* wsb, float* wsw, float* fbb, int nsplit, int nfb, int r, int d0,
                                        uint2 gq, float vsc, float eps, __nv_bfloat16* op, bool active) {
   const float NEG_INF = __int_as_float(0xff800000u);
@@ -6380,6 +7157,15 @@ __device__ __forceinline__ void s1_fin(const float* wsb, float* wsw, float* fbb,
   if (active) {
     at3_ld4(a, wsb + r * D + d0);
     at3_ld1(L, wsb + AT3_ROWS * D + r);
+#pragma unroll
+    for (int c = 1; c < NC; ++c) {
+      float4 a2;
+      float L2;
+      at3_ld4(a2, wsb + c * AT3_WS + r * D + d0);
+      at3_ld1(L2, wsb + c * AT3_WS + AT3_ROWS * D + r);
+      a.x += a2.x; a.y += a2.y; a.z += a2.z; a.w += a2.w;
+      L += L2;
+    }
     if (nfb > 0) {
       float Mt = L > 0.f ? AT2_REF : NEG_INF;
       for (int s = 0; s < nsplit; ++s) {
@@ -6416,9 +7202,12 @@ __device__ __forceinline__ void s1_fin(const float* wsb, float* wsw, float* fbb,
   if (active) *reinterpret_cast<uint2*>(op) = ov;
   __syncwarp();  // the row's 16 threads have read its slots before thread 0 of the row clears them
   if (!active) return;
-  __stcg(reinterpret_cast<float4*>(wsw + r * D + d0), make_float4(0.f, 0.f, 0.f, 0.f));
+#pragma unroll
+  for (int c = 0; c < NC; ++c)
+    __stcg(reinterpret_cast<float4*>(wsw + c * AT3_WS + r * D + d0), make_float4(0.f, 0.f, 0.f, 0.f));
   if (d0 == 0) {
-    __stcg(wsw + AT3_ROWS * D + r, 0.f);
+#pragma unroll
+    for (int c = 0; c < NC; ++c) __stcg(wsw + c * AT3_WS + AT3_ROWS * D + r, 0.f);
     for (int s = 0; nfb > 0 && s < nsplit; ++s) {
       float* sl = fbb + (s * AT3_ROWS + r) * AT2_SLOT;
       if (__ldcg(sl + D) != NEG_INF) __stcg(sl + D, NEG_INF);
@@ -6426,7 +7215,9 @@ __device__ __forceinline__ void s1_fin(const float* wsb, float* wsw, float* fbb,
   }
 }
 
-template <bool WG, bool PREP, bool COOP>
+// Stage 2 bits (V): 8 = LEAN (B2: lean prep, needs WG + PREP), 16 = WS2 (2 workspace copies), 32 = RL (release
+// chain: self-resetting arrival counter, COOP only).
+template <int V>
 __global__ void __launch_bounds__(THREADS, 2)
 sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restrict__ qkv, int64_t qkv_stride,
                   const int64_t* __restrict__ positions, const int64_t* __restrict__ cache_loc,
@@ -6435,6 +7226,10 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
                   const float* __restrict__ v_scale_p, uint8_t* kc, uint8_t* vc, __nv_bfloat16* __restrict__ out,
                   float* ws, float* fb, int* ticket, int nsplit, int window, float score_scale, float eps,
                   float guard_hi, int rope) {
+  constexpr bool COOP = (V & 1) != 0, PREP = (V & 2) != 0, WG = (V & 4) != 0, LEAN = (V & 8) != 0;
+  constexpr bool RL = (V & 32) != 0 && COOP;
+  constexpr int WSN = (V & 16) ? 2 : 1;
+  static_assert(!LEAN || (WG && PREP), "LEAN needs WG + PREP");
   extern __shared__ __align__(1024) uint8_t s1_raw[];
   uint8_t* smem = s1_raw + ((1024u - (smem_u32(s1_raw) & 1023u)) & 1023u);
   uint8_t* Ks = smem + S1_K_OFF;
@@ -6445,10 +7240,15 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
   __shared__ int s1_gen_s;
   const float NEG_INF = __int_as_float(0xff800000u);
   const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  S1_PH(0, tid);
+#ifdef S1_PHASES
+  if (tid == 0) { int sm_; asm volatile("mov.u32 %0, %%smid;" : "=r"(sm_)); s1_ph[blockIdx.x * 32 + 15] = sm_; }
+#endif
   const int b = static_cast<int>(blockIdx.x) / nsplit;
   const int split = static_cast<int>(blockIdx.x) % nsplit;
   int* tkb = ticket + (COOP ? S1_TK : 4) * b;
-  float* wsb = ws + static_cast<int64_t>(b) * AT3_WS;
+  float* wsb = ws + static_cast<int64_t>(b) * AT3_WS * WSN;
+  float* wsr = wsb + (split % WSN) * AT3_WS;  // this split's workspace copy (merge target)
   float* fbb = fb + static_cast<int64_t>(b) * nsplit * AT3_ROWS * AT2_SLOT;
 
   // ---- entry: every load that does not depend on the length.
@@ -6458,7 +7258,12 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
   uint4 qx[4], nx[4];
   float pos = 0.f, fr = 0.f;
   int64_t nloc = 0;
-  if (PREP) {
+  uint2 qx2[2][4];                         // LEAN: raw query fragments, rows (token r, head hA + rr), dims 16 j + 4 tig
+  uint4 nx8 = make_uint4(0u, 0u, 0u, 0u);  // LEAN: the owner CTA's raw new-row chunk (row tid / 8, dims 8 (tid % 8) ..)
+  int64_t nloc8 = 0;
+  bool owns = false;
+  uint32_t qL[2][4];                       // LEAN: the warpgroup's E4M3 query A fragments
+  if (PREP && !LEAN) {
     const int qr = tid >> 1, hf = tid & 1;
     const uint4* src = reinterpret_cast<const uint4*>(
         qkv + (static_cast<int64_t>(b) * AT3_L + (qr >> 4)) * qkv_stride + (qr & 15) * D + 32 * hf);
@@ -6493,6 +7298,7 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
   const int start = lo + split * S1_TILE;
   const int n_k = max(0, min(S1_TILE, cs - start));
   const int n_old = PREP ? max(0, min(n_k, S - start)) : n_k;
+  S1_PH(1, cs);
   if (!COOP && tid < AT3_L * HQ * D * 2 / 128 && tid % nsplit == split)
     asm volatile("prefetch.global.L2 [%0];" :: "l"(qkv + (static_cast<int64_t>(b) * AT3_L + (tid >> 4)) * qkv_stride +
                                                     (HQ + 2 * HKV) * D + (tid & 15) * 64));
@@ -6503,7 +7309,25 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
 #pragma unroll
     for (int i = 0; i < 2; ++i) {
       const int e = (tid >> 3) + 32 * i;
-      idx[i] = e < n_old ? __ldg(prow + e) : 0;
+      idx[i] = e < n_old ? (LEAN ? s1_ldi(prow + e) : __ldg(prow + e)) : 0;
+    }
+    if (LEAN) {  // B2 (i): the raw rows go out after the page indices (they must not queue ahead of the index chain)
+      const int g = warp >> 2, w = warp & 3, r = lane >> 2, tig = lane & 3;
+      const __nv_bfloat16* qrow =
+          qkv + (static_cast<int64_t>(b) * AT3_L + r) * qkv_stride + (g * G + 2 * w) * D + 4 * tig;
+#pragma unroll
+      for (int rr = 0; rr < 2; ++rr)
+#pragma unroll
+        for (int j = 0; j < 4; ++j) at3_ldg2(qx2[rr][j], qrow + rr * D + 16 * j);
+      owns = n_k > 0 && start < S + AT3_L && start + n_k > S;  // CTA-uniform: holds one of the new keys
+      if (owns) {
+        const int nr = tid >> 3, t = (nr & 15) >> 1;
+        s1_ldg4(nx8, qkv + (static_cast<int64_t>(b) * AT3_L + t) * qkv_stride +
+                         (HQ + (nr >> 4) * HKV + (nr & 1)) * D + 8 * (tid & 7));
+        nloc8 = cache_loc[static_cast<int64_t>(b) * AT3_L + t];
+      }
+      pos = static_cast<float>(positions[static_cast<int64_t>(b) * AT3_L + (tid >> 5)]);
+      fr = inv_freq[tid & 31];
     }
 #pragma unroll
     for (int i = 0; i < 2; ++i) {
@@ -6516,6 +7340,7 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
       }
     }
     cp_commit();
+    S1_PH(2, tid);
     const int pad = WG ? S1_TILE : ((n_k + 15) & ~15);  // rows past the range: zero (P = 0 must not meet NaN bytes)
     for (int x = tid; x < (pad - n_k) * 16; x += THREADS) {
       const int r = n_k + (x >> 4), part = x & 15;
@@ -6531,6 +7356,76 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
     }
     __syncthreads();
     const int hf = tid & 1;
+    if (LEAN) {
+      if (owns) {  // B2 (ii): new K rows (threads 0..127) / V rows (128..255), 8 dims per thread, row = 8 lanes
+        const int nr = tid >> 3, c8 = tid & 7, isv = nr >> 4, t = (nr & 15) >> 1, kh = nr & 1;
+        float v[8];
+        s1_bf4(make_uint2(nx8.x, nx8.y), v);
+        s1_bf4(make_uint2(nx8.z, nx8.w), v + 4);
+        if (!isv) {  // warp-uniform: RMS norm + interleaved RoPE
+          float ss = 0.f;
+#pragma unroll
+          for (int i = 0; i < 8; ++i) ss += v[i] * v[i];
+          ss += __shfl_xor_sync(0xffffffffu, ss, 1);
+          ss += __shfl_xor_sync(0xffffffffu, ss, 2);
+          ss += __shfl_xor_sync(0xffffffffu, ss, 4);
+          const float rn = 1.f / sqrtf(ss / D + eps);
+#pragma unroll
+          for (int i = 0; i < 8; ++i) v[i] *= rn;
+          if (rope) {
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+              const float2 cs2 = rt[t * (D / 2) + 4 * c8 + i];
+              const float xe = v[2 * i], xo = v[2 * i + 1];
+              v[2 * i] = xe * cs2.x - xo * cs2.y;
+              v[2 * i + 1] = xe * cs2.y + xo * cs2.x;
+            }
+          }
+        }
+        const float dv = __ldg(isv ? v_scale_p : k_scale_p), rd = __frcp_rn(dv);
+#pragma unroll
+        for (int i = 0; i < 8; ++i) v[i] = s1_div(v[i], dv, rd);
+        const uint2 o = make_uint2(s1_e4m3x4(v[0], v[1], v[2], v[3]), s1_e4m3x4(v[4], v[5], v[6], v[7]));
+        const int e = S + t - start;
+        if (e >= 0 && e < n_k) {  // this CTA owns key S + t: patch its tile row, write the cache row
+          const int byte = 64 * kh + 8 * c8;
+          *reinterpret_cast<uint2*>((isv ? Vs : Ks) + s1_qaddr(e, byte)) = o;
+          *reinterpret_cast<uint2*>((isv ? vc : kc) + nloc8 * ROW + byte) = o;
+        }
+      }
+      {  // B2 (iii): the warpgroup's own head, its 64 rows, straight into its A fragments (quad = one row pair)
+        const int r = lane >> 2, tig = lane & 3;
+#pragma unroll
+        for (int rr = 0; rr < 2; ++rr) {
+          float v[16];
+#pragma unroll
+          for (int j = 0; j < 4; ++j) s1_bf4(qx2[rr][j], v + 4 * j);
+          float ss = 0.f;
+#pragma unroll
+          for (int i = 0; i < 16; ++i) ss += v[i] * v[i];
+          ss += __shfl_xor_sync(0xffffffffu, ss, 1);
+          ss += __shfl_xor_sync(0xffffffffu, ss, 2);
+          const float rn = 1.f / sqrtf(ss / D + eps);
+#pragma unroll
+          for (int j = 0; j < 4; ++j) {
+            float y[4];
+#pragma unroll
+            for (int u = 0; u < 2; ++u) {
+              const float xe = v[4 * j + 2 * u] * rn, xo = v[4 * j + 2 * u + 1] * rn;
+              if (rope) {
+                const float2 cs2 = rt[r * (D / 2) + 8 * j + 2 * tig + u];
+                y[2 * u] = xe * cs2.x - xo * cs2.y;
+                y[2 * u + 1] = xe * cs2.y + xo * cs2.x;
+              } else {
+                y[2 * u] = xe;
+                y[2 * u + 1] = xo;
+              }
+            }
+            qL[j >> 1][rr + 2 * (j & 1)] = s1_e4m3x4(y[0], y[1], y[2], y[3]);
+          }
+        }
+      }
+    } else {
     {
       const int qr = tid >> 1, t = qr >> 4, h = qr & 15;
       uint4 o[2];
@@ -6555,11 +7450,14 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
         reinterpret_cast<uint4*>(dst)[1] = o[1];
       }
     }
+    }  // !LEAN
   }
+  S1_PH(3, tid);
   const float scale = score_scale * __ldg(k_scale_p);
   cp_wait_all();
   if (WG) s1_fence_proxy();  // cp.async + patch stores (generic proxy) -> wgmma reads (async proxy)
   __syncthreads();
+  S1_PH(4, tid);
   const int gen0 = COOP ? s1_gen_s : 0;
   int* fbc = COOP ? tkb + 2 + (gen0 & 1) : tkb + 1;
 
@@ -6601,15 +7499,21 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
     l0 += __shfl_xor_sync(0xffffffffu, l0, 2);
     l1 += __shfl_xor_sync(0xffffffffu, l1, 1);
     l1 += __shfl_xor_sync(0xffffffffu, l1, 2);
-    s1_merge_row<0>(wsb, fbb, fbc, split, j0 * HQ + g * G + quad, qi, m0, l0, acc, guard_hi);
-    s1_merge_row<1>(wsb, fbb, fbc, split, j1 * HQ + g * G + quad, qi, m1, l1, acc, guard_hi);
+    s1_merge_row<0>(wsr, fbb, fbc, split, j0 * HQ + g * G + quad, qi, m0, l0, acc, guard_hi);
+    s1_merge_row<1>(wsr, fbb, fbc, split, j1 * HQ + g * G + quad, qi, m1, l1, acc, guard_hi);
+    S1_PH(7, tid);
   } else {
     // ---- (a) warpgroup g = kv head g; warp w: rows (token r, head hA) and (token r, head hA + 1)
     const int g = warp >> 2, w = warp & 3, tw = tid & 127;
     const int r = lane >> 2, tig = lane & 3;
     const int hA = g * G + 2 * w;
     uint32_t qa[2][4];
-    if (PREP) {
+    if (LEAN) {
+#pragma unroll
+      for (int kk = 0; kk < 2; ++kk)
+#pragma unroll
+        for (int i = 0; i < 4; ++i) qa[kk][i] = qL[kk][i];
+    } else if (PREP) {
       const int ra = r * G + 2 * w;
 #pragma unroll
       for (int kk = 0; kk < 2; ++kk) {
@@ -6668,6 +7572,7 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
     }
     s1_wg_wait();
     s1_fence_acc(sacc);
+    S1_PH(5, __float_as_int(sacc[0]));
     // mask (edge CTAs only): key ct = 8 nb + 2 tig + e at start + ct is valid for token r iff ct < n_k and
     // p - (window - 1) <= key <= p, p = S + r.
     const bool interior = n_k == S1_TILE && start + S1_TILE - 1 <= S && start >= S + (AT3_L - 1) - (window - 1);
@@ -6727,6 +7632,7 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
     s1_wgmma(oacc, pa[1], s1_desc(vt_u + 32, 512, 2), 1);
     s1_wg_commit_wait();
     s1_fence_acc(oacc);
+    S1_PH(6, __float_as_int(oacc[0]));
     sumA += __shfl_xor_sync(0xffffffffu, sumA, 1);
     sumA += __shfl_xor_sync(0xffffffffu, sumA, 2);
     sumB += __shfl_xor_sync(0xffffffffu, sumB, 1);
@@ -6739,8 +7645,9 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
       oB[2 * nd] = oacc[4 * nd + 2];
       oB[2 * nd + 1] = oacc[4 * nd + 3];
     }
-    s1_wg_merge_row(wsb, fbb, fbc, split, r * HQ + hA, tig, mxA, vA, sumA, oA, guard_hi);
-    s1_wg_merge_row(wsb, fbb, fbc, split, r * HQ + hA + 1, tig, mxB, vB, sumB, oB, guard_hi);
+    s1_wg_merge_row(wsr, fbb, fbc, split, r * HQ + hA, tig, mxA, vA, sumA, oA, guard_hi);
+    s1_wg_merge_row(wsr, fbb, fbc, split, r * HQ + hA + 1, tig, mxB, vB, sumB, oB, guard_hi);
+    S1_PH(7, tid);
   }
 
   if (!COOP) {
@@ -6762,14 +7669,15 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
     }
     __syncthreads();
     const int tk = s1_tk_s;
-    if (tk < 0) return;
+    S1_PH(8, tk);
+    if (tk < 0) { S1_PH(9, tk); return; }
     const int h = tid >> 4, d0 = (tid & 15) * 4;
     const int r = tk * HQ + h;
     uint2 gq;
     int nfb;
     at3_ldg2(gq, qkv + (static_cast<int64_t>(b) * AT3_L + tk) * qkv_stride + (HQ + 2 * HKV) * D + h * D + d0);
     asm volatile("ld.global.cg.s32 %0, [%1];" : "=r"(nfb) : "l"(tkb + 1) : "memory");
-    s1_fin(wsb, wsb, fbb, nsplit, nfb, r, d0, gq, __ldg(v_scale_p), eps,
+    s1_fin<WSN>(wsb, wsb, fbb, nsplit, nfb, r, d0, gq, __ldg(v_scale_p), eps,
            out + ((static_cast<int64_t>(b) * AT3_L + tk) * HQ + h) * D + d0, true);
     __syncthreads();
     if (tid == 0) {
@@ -6777,18 +7685,30 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
       asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(d) : "l"(tkb + 2) : "memory");
       if (d == AT3_L - 1) { tkb[0] = 0; tkb[1] = 0; tkb[2] = 0; }
     }
+    S1_PH(9, tid);
     return;
   } else {
     // ---- (c) one arrival per CTA; the last resets the counter and the next launch's fallback count and bumps the
     // generation; the others wait for it; then every CTA finalizes its own rows [r0, r1).
     __syncthreads();
+    S1_PH(10, tid);
     if (tid == 0) {
       int old;
-      asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(old) : "l"(tkb) : "memory");
+      if (RL)  // the counter wraps to 0 on the last arrival: nothing to store before the release below
+        asm volatile("atom.acq_rel.gpu.global.inc.u32 %0, [%1], %2;" : "=r"(old) : "l"(tkb), "r"(nsplit - 1) : "memory");
+      else
+        asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], 1;" : "=r"(old) : "l"(tkb) : "memory");
+      S1_PH(11, old);
+#ifdef S1_PHASES
+      s1_ph[blockIdx.x * 32 + 14] = old;
+#endif
       if (old == nsplit - 1) {
-        tkb[0] = 0;
-        tkb[2 + ((gen0 + 1) & 1)] = 0;
+        if (!RL) {
+          tkb[0] = 0;
+          tkb[2 + ((gen0 + 1) & 1)] = 0;
+        }
         asm volatile("st.release.gpu.global.s32 [%0], %1;" :: "l"(tkb + 1), "r"(gen0 + 1) : "memory");
+        if (RL) tkb[2 + ((gen0 + 1) & 1)] = 0;  // the next launch's fallback count, off the release chain
       } else {
         long long spins = 0;
         int seen = gen0;
@@ -6797,9 +7717,11 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
           if (++spins > (1ll << 22)) { atomicOr(tkb + 4, 1); break; }
         }
       }
+      S1_PH(12, tid);
     }
     __syncthreads();
-    if (r0 >= r1) return;
+    S1_PH(8, tid);
+    if (r0 >= r1) { S1_PH(9, tid); return; }
     int nfb;
     asm volatile("ld.global.cg.s32 %0, [%1];" : "=r"(nfb) : "l"(fbc) : "memory");
     const float vsc = __ldg(v_scale_p);
@@ -6811,71 +7733,87 @@ sliding_s1_kernel(const uint8_t* __restrict__ q8, const __nv_bfloat16* __restric
       if (base != r0 && active)
         at3_ldg2(gq, qkv + (static_cast<int64_t>(b) * AT3_L + (r >> 4)) * qkv_stride + (HQ + 2 * HKV) * D +
                          (r & 15) * D + d0);
-      s1_fin(wsb, wsb, fbb, nsplit, nfb, r, d0, gq, vsc, eps,
+      s1_fin<WSN>(wsb, wsb, fbb, nsplit, nfb, r, d0, gq, vsc, eps,
              out + ((static_cast<int64_t>(b) * AT3_L + (r >> 4)) * HQ + (r & 15)) * D + d0, active);
     }
+    S1_PH(9, tid);
   }
 }
 #endif  // SLIDE_FP8QK (S1)
 """
 
 _SLIDE_S1_HOST = r"""
-// ---- S1 host. variant bits: 4 = WG (a), 2 = PREP (b), 1 = COOP (c). Built instantiations: 7 (a + b + c) and its
-// residency fallback 6 (a + b, AT3b's finalize); S1_ALL_ARMS (measurement builds) adds all eight.
+// ---- S1 host. variant bits: 1 = COOP (c), 2 = PREP (b), 4 = WG (a), 8 = LEAN (B2), 16 = WS2 (W2), 32 = RL.
+// Built: S1_PROD_V and its residency fallback S1_PROD_V & ~33 (no COOP, no RL); S1_ALL_ARMS (measurement builds)
+// adds the stage-2 arms.
 #if SLIDE_FP8QK
-static int s1_occ[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+#ifndef S1_PROD_V
+#define S1_PROD_V 31
+#endif
+static int s1_occ[64] = {0};
 static int s1_sms = 0;
+#ifdef S1_ALL_ARMS
+#define S1_ARM_LIST(X) X(7) X(6) X(15) X(14) X(23) X(22) X(31) X(30) X(39) X(47) X(55) X(63)
+#else
+#define S1_ARM_LIST(X)
+#endif
 
 static bool s1_built(int v) {
-#ifdef S1_ALL_ARMS
-  return v >= 0 && v < 8;
-#else
-  return v == 7 || v == 6;
-#endif
+  if (v == S1_PROD_V || v == (S1_PROD_V & ~33)) return true;
+#define S1_IS(n) if (v == (n)) return true;
+  S1_ARM_LIST(S1_IS)
+#undef S1_IS
+  return false;
 }
 
-template <bool WG, bool PREP, bool COOP>
+template <int V>
 void s1_attrs_into(int64_t* p) {
-  auto k = sliding_s1_kernel<WG, PREP, COOP>;
+  auto k = sliding_s1_kernel<V>;
   C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, S1_SMEM));
   cudaFuncAttributes fa;
   C10_CUDA_CHECK(cudaFuncGetAttributes(&fa, reinterpret_cast<const void*>(k)));
   int occ = 0;
   C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, k, THREADS, S1_SMEM));
-  p[0] = fa.numRegs;
-  p[1] = static_cast<int64_t>(fa.localSizeBytes);
-  p[2] = occ;
-  p[3] = fa.binaryVersion;
-  s1_occ[(WG ? 4 : 0) + (PREP ? 2 : 0) + (COOP ? 1 : 0)] = occ;
+  p[4 * V + 0] = fa.numRegs;
+  p[4 * V + 1] = static_cast<int64_t>(fa.localSizeBytes);
+  p[4 * V + 2] = occ;
+  p[4 * V + 3] = fa.binaryVersion;
+  s1_occ[V] = occ;
 }
 #endif
 
-// int64 CPU [8 variants][regs, local bytes, CTAs/SM, binaryVersion] (zeros where not built), then [32] = SM count.
+// int64 CPU [64 variants][regs, local bytes, CTAs/SM, binaryVersion] (zeros where not built), then [256] = SM count,
+// [257] = the production variant.
 torch::Tensor slide_s1_setup() {
-  torch::Tensor t = torch::zeros({33}, torch::dtype(torch::kLong));
+  torch::Tensor t = torch::zeros({258}, torch::dtype(torch::kLong));
 #if SLIDE_FP8QK
   int64_t* p = t.data_ptr<int64_t>();
   int dev = 0;
   C10_CUDA_CHECK(cudaGetDevice(&dev));
   C10_CUDA_CHECK(cudaDeviceGetAttribute(&s1_sms, cudaDevAttrMultiProcessorCount, dev));
-#ifdef S1_ALL_ARMS
-  s1_attrs_into<false, false, false>(p + 0);
-  s1_attrs_into<false, false, true>(p + 4);
-  s1_attrs_into<false, true, false>(p + 8);
-  s1_attrs_into<false, true, true>(p + 12);
-  s1_attrs_into<true, false, false>(p + 16);
-  s1_attrs_into<true, false, true>(p + 20);
-#endif
-  s1_attrs_into<true, true, false>(p + 24);
-  s1_attrs_into<true, true, true>(p + 28);
-  p[32] = s1_sms;
+#define S1_ATTR(n) s1_attrs_into<n>(p);
+  S1_ARM_LIST(S1_ATTR)
+#undef S1_ATTR
+  s1_attrs_into<S1_PROD_V>(p);
+  s1_attrs_into<(S1_PROD_V & ~33)>(p);
+  p[256] = s1_sms;
+  p[257] = S1_PROD_V;
 #endif
   return t;
 }
+#ifdef S1_PHASES
+torch::Tensor slide_s1_phases() {
+  torch::Tensor t = torch::zeros({64 * 32}, torch::dtype(torch::kLong));
+  C10_CUDA_CHECK(cudaMemcpyFromSymbol(t.data_ptr<int64_t>(), s1_ph, sizeof(unsigned long long) * 64 * 32));
+  torch::Tensor z = torch::zeros({64 * 32}, torch::dtype(torch::kLong));
+  C10_CUDA_CHECK(cudaMemcpyToSymbol(s1_ph, z.data_ptr<int64_t>(), sizeof(unsigned long long) * 64 * 32));
+  return t;
+}
+#endif
 
 // S1: sliding verify (q_len 8). q8 e4m3 [B * 8, HQ, D] (variants without PREP; ignored with PREP); qkv bf16 [B * 8,
 // >= (2 HQ + 2 HKV) D]; positions / cache_loc int64 [B * 8] and inv_freq f32 [D / 2] (PREP); out bf16 [B, 8, HQ * D].
-// ws f32 [B][AT3_WS] zero, fb f32 [B][nsplit][128][AT2_SLOT] -inf, ticket int32 [8 B] zero: all returned to that state
+// ws f32 [B][AT3_WS x (2 with WS2)] zero, fb f32 [B][nsplit][128][AT2_SLOT] -inf, ticket int32 [8 B] zero: all returned to that state
 // by the kernel. A COOP variant whose grid the occupancy check cannot prove resident runs as its non-COOP twin.
 // Returns the variant launched.
 int64_t slide_s1_attn(torch::Tensor q8, torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc,
@@ -6885,7 +7823,7 @@ int64_t slide_s1_attn(torch::Tensor q8, torch::Tensor qkv, torch::Tensor positio
                       double score_scale, double eps, double guard_hi, int64_t variant, int64_t rope) {
 #if SLIDE_FP8QK
   const int64_t B = cache_seqlens.size(0);
-  TORCH_CHECK(s1_built(static_cast<int>(variant)), "slide_s1_attn: variant not built");
+  TORCH_CHECK(variant >= 0 && variant < 64 && s1_built(static_cast<int>(variant)), "slide_s1_attn: variant not built");
   TORCH_CHECK(s1_sms > 0, "slide_s1_attn: call slide_s1_setup first");
   TORCH_CHECK(B >= 1 && B <= 64, "slide_s1_attn: batch out of range");
   TORCH_CHECK(window >= 2 && window <= 2048, "slide_s1_attn: window must be in [2, 2048]");
@@ -6912,30 +7850,24 @@ int64_t slide_s1_attn(torch::Tensor q8, torch::Tensor qkv, torch::Tensor positio
     TORCH_CHECK(c->is_contiguous() && c->element_size() == 1 && c->dim() == 4 && c->size(1) == 1 &&
                 c->size(2) == HKV && c->size(3) == D, "slide_s1_attn: cache layout (page 1, 2 kv heads, 64)");
   const int nsplit = static_cast<int>((window - 1 + AT3_L + S1_TILE - 1) / S1_TILE);
-  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.is_contiguous() && ws.numel() >= B * AT3_WS, "slide_s1_attn: ws");
+  TORCH_CHECK(ws.scalar_type() == at::kFloat && ws.is_contiguous() && ws.numel() >= B * AT3_WS * ((variant & 16) ? 2 : 1),
+              "slide_s1_attn: ws");
   TORCH_CHECK(fb.scalar_type() == at::kFloat && fb.is_contiguous() && fb.numel() >= B * nsplit * AT3_ROWS * AT2_SLOT,
               "slide_s1_attn: fb");
   TORCH_CHECK(ticket.scalar_type() == at::kInt && ticket.is_contiguous() && ticket.numel() >= S1_TK * B,
               "slide_s1_attn: ticket");
   int v = static_cast<int>(variant);
   // (c)'s residency gate: every CTA of the grid must be co-resident (CTAs/SM from the occupancy API x SMs)
-  if ((v & 1) && !(s1_occ[v] > 0 && static_cast<int64_t>(s1_occ[v]) * s1_sms >= B * nsplit)) v &= ~1;
+  if ((v & 1) && !(s1_occ[v] > 0 && static_cast<int64_t>(s1_occ[v]) * s1_sms >= B * nsplit)) v &= ~33;
   TORCH_CHECK((v & 1) || nsplit >= AT3_L, "slide_s1_attn: fewer splits than finalizers");
   TORCH_CHECK(s1_built(v), "slide_s1_attn: fallback variant not built");
-  decltype(&sliding_s1_kernel<true, true, true>) k = nullptr;
-  switch (v) {
-#ifdef S1_ALL_ARMS
-    case 0: k = sliding_s1_kernel<false, false, false>; break;
-    case 1: k = sliding_s1_kernel<false, false, true>; break;
-    case 2: k = sliding_s1_kernel<false, true, false>; break;
-    case 3: k = sliding_s1_kernel<false, true, true>; break;
-    case 4: k = sliding_s1_kernel<true, false, false>; break;
-    case 5: k = sliding_s1_kernel<true, false, true>; break;
-#endif
-    case 6: k = sliding_s1_kernel<true, true, false>; break;
-    case 7: k = sliding_s1_kernel<true, true, true>; break;
-    default: TORCH_CHECK(false, "slide_s1_attn: variant");
-  }
+  decltype(&sliding_s1_kernel<7>) k = nullptr;
+  if (v == S1_PROD_V) k = sliding_s1_kernel<S1_PROD_V>;
+  else if (v == (S1_PROD_V & ~33)) k = sliding_s1_kernel<(S1_PROD_V & ~33)>;
+#define S1_PICK(n) else if (v == (n)) k = sliding_s1_kernel<n>;
+  S1_ARM_LIST(S1_PICK)
+#undef S1_PICK
+  TORCH_CHECK(k != nullptr, "slide_s1_attn: variant");
   k<<<static_cast<unsigned>(B * nsplit), THREADS, S1_SMEM, at::cuda::getCurrentCUDAStream()>>>(
       prep ? nullptr : reinterpret_cast<const uint8_t*>(q8.data_ptr()),
       reinterpret_cast<const __nv_bfloat16*>(qkv.data_ptr()), static_cast<int64_t>(qkv.stride(0)),
@@ -6972,6 +7904,12 @@ int64_t slide_s1_attn(torch::Tensor q8, torch::Tensor qkv, torch::Tensor positio
                       torch::Tensor k_scale, torch::Tensor v_scale, torch::Tensor k_cache, torch::Tensor v_cache,
                       torch::Tensor out, torch::Tensor ws, torch::Tensor fb, torch::Tensor ticket, int64_t window,
                       double score_scale, double eps, double guard_hi, int64_t variant, int64_t rope);
+torch::Tensor slide_s2_setup();
+void slide_s2_attn(torch::Tensor qkv, torch::Tensor positions, torch::Tensor cache_loc, torch::Tensor seq_lens,
+                   torch::Tensor page_table, torch::Tensor inv_freq, torch::Tensor k_scale, torch::Tensor v_scale,
+                   torch::Tensor k_cache, torch::Tensor v_cache, torch::Tensor out, torch::Tensor ws,
+                   torch::Tensor fb, torch::Tensor ticket, int64_t window, double q_scale, double score_scale,
+                   double eps, double guard_hi, int64_t tile, int64_t variant);
 """
 _SLIDE_AT2_ANCHOR = "template <bool PH>\nint occupancy_of(int C) {"
 
@@ -6999,7 +7937,7 @@ def _slide_at2_guard_hi(window: int) -> float:
 
 def _build_slide_at2(fp8qk: bool):
     tag = ("fp8qk" if fp8qk else "f16qk") + "+AT2"
-    name = "muse_sliding_at2_v3" + ("" if fp8qk else "_f16qk")
+    name = "muse_sliding_at2_v4" + ("" if fp8qk else "_f16qk")
     t0 = time.perf_counter()
     prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
     os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
@@ -7009,7 +7947,7 @@ def _build_slide_at2(fp8qk: bool):
             name=name, cpp_sources=_SLIDE_AT2_CPP,
             cuda_sources=f"#define SLIDE_FP8QK {int(fp8qk)}\n" + _slide_at2_source(),
             functions=["slide_ph_setup", "slide_ph_attn", "slide_at2_setup", "slide_at2_attn", "slide_at3_attn",
-                       "slide_s1_setup", "slide_s1_attn"],
+                       "slide_s1_setup", "slide_s1_attn", "slide_s2_setup", "slide_s2_attn"],
             extra_cuda_cflags=["-O3", "-lineinfo"], verbose=False)
     except Exception as e:
         print(f"[slide-at2] load_inline ({tag}) module {name} FAILED after {time.perf_counter() - t0:.1f}s: "
@@ -7039,18 +7977,21 @@ def _slide_at2_clean(bufs) -> bool:
             and bool(torch.isneginf(m).all()))
 
 
-def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None, tile=64) -> torch.Tensor:
+def _slide_at2_launch(ext, data: Inputs, bufs=None, guard_hi=None, tile=64, s2=False) -> torch.Tensor:
     cfg = data["config"]
     batch, hq, d = cfg["batch"], cfg["num_q_heads"], cfg["head_dim"]
     qkv = data["qkv"].reshape(batch, -1)
     out = torch.empty((batch, 1, hq * d), dtype=torch.bfloat16, device=qkv.device)
     ws, fb, ticket = bufs if bufs is not None else _SLIDE_AT2_BUF
-    ext.slide_at2_attn(
-        qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
-        _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
-        data["k_cache"], data["v_cache"], out, ws, fb, ticket,
-        cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS,
-        _slide_at2_guard_hi(cfg["window"]) if guard_hi is None else guard_hi, tile)
+    args = (qkv, data["positions"], data["cache_loc"], data["seq_lens"], data["page_table"],
+            _inv_freq(cfg["rope_theta"], d, qkv.device), data["k_scale"], data["v_scale"],
+            data["k_cache"], data["v_cache"], out, ws, fb, ticket,
+            cfg["window"], cfg["qk_scale_factor"], cfg["sm_scale"] * LOG2E, RMS_EPS,
+            _slide_at2_guard_hi(cfg["window"]) if guard_hi is None else guard_hi, tile)
+    if s2:  # S2 (arch-mirror bundle S2): same contract and buffers, the 4-warp unpadded kernel
+        ext.slide_s2_attn(*args, _SLIDE_S2_VARIANT)
+    else:
+        ext.slide_at2_attn(*args)
     return out
 
 
@@ -7202,7 +8143,8 @@ def _slide_at8_gate(cfg) -> bool:
 
 
 def _slide_at8_forward(data: Inputs) -> torch.Tensor:
-    return _slide_at2_launch(_SLIDE_AT8_MOD, data, _SLIDE_AT8_BUF, None, _SLIDE_AT8_TILES[data["config"]["batch"]])
+    return _slide_at2_launch(_SLIDE_AT8_MOD, data, _SLIDE_AT8_BUF, None, _SLIDE_AT8_TILES[data["config"]["batch"]],
+                             s2=_SLIDE_S2_WIDE)
 
 
 def _slide_at8_bufs(dev):
@@ -7314,6 +8256,133 @@ def _slide_at8_init() -> "str | None":
     if ratio < _SLIDE_AT8_GATE:
         return f"timing gate: master {t_tri:.2f} us vs AT8 {t_at8:.2f} us ({ratio:.3f}x < {_SLIDE_AT8_GATE:.2f}x)"
     return None
+
+
+# ---------------------------------------------------------------------------------------------
+# S2 (campaign 2026-10-31-arch-mirror lane 2, bundle S2: sliding decode B=1..16). sliding_s2_kernel (AT2's module) keeps
+# AT2 / AT8's split, buffers, fixed-reference red merge, R11 guard and last-CTA self-reset finalize, and changes the CTA:
+# 4 warps (warp = kv head x half of the CTA's 16-key tiles, pairwise smem merge, half-0 warp issues the reds), QK^T and
+# PV unpadded (S^T = K Q^T, O^T = V^T P^T; no zero MMA rows), and at > 64 keys per CTA one cp.async group per 64-key stage
+# with every page index loaded first. It serves exactly AT2's (B=1) and AT8's (B=2..16) shapes, in place of their kernel,
+# and only where it passed its checks and won an interleaved cold-L2 race against that kernel by >= _SLIDE_S2_GATE;
+# otherwise AT2 / AT8 run unchanged. Import time only.
+# ---------------------------------------------------------------------------------------------
+_SLIDE_S2_B1 = False    # import-time flag: S2's kernel in place of AT2's at B=1
+_SLIDE_S2_WIDE = False  # import-time flag: S2's kernel in place of AT8's at B=2..16
+_SLIDE_S2_VARIANT = 10  # part b + part d (length speculation, B = 1 only; WIDE drops the d bit -> 2). ac and e were
+                        # refuted by the H100 arms run (am-s2.md); S2_FOR_EACH builds only 2 and 10
+_SLIDE_S2_GATE = 1.03
+_SLIDE_S2_DEADLINE = 60.0
+
+
+def _slide_s2_init() -> "tuple[str | None, str | None]":
+    """S2 after the AT2 / AT8 phases (their module). Per range (B=1 needs AT2 routed, B=2..16 needs AT8 routed):
+    (1) attributes (sm_90, <= 32 B local, >= 1 CTA/SM); (2) eager self-check vs the FP32 reference (< 2e-2) and vs the
+    kernel it replaces on cloned caches (< 1e-2), new cache rows byte-equal to that kernel's, workspace clean after every
+    launch, R11 guard forced and mixed; (3) the two-state graph-replay check through kernel_fn with the flag
+    provisionally on; (4) interleaved cold-L2 graph replays [replaced kernel] vs [S2] (B=1 x 80000; B=16 x 80000),
+    routed at >= _SLIDE_S2_GATE. Returns (why not B=1, why not B=2..16); None = routed."""
+    global _SLIDE_S2_B1, _SLIDE_S2_WIDE
+    if _SLIDE_AT2_EXT is None:
+        return "AT2 module not built", "AT2 module not built"
+    ext, tag, _ = _SLIDE_AT2_EXT
+    if tag != "fp8qk":
+        return "f16qk module (no S2 kernel)", "f16qk module (no S2 kernel)"
+    a = [int(x) for x in ext.slide_s2_setup()][_SLIDE_S2_VARIANT * 8:_SLIDE_S2_VARIANT * 8 + 8]
+    print(f"[slide-s2] sliding_s2_kernel v{_SLIDE_S2_VARIANT}: tile 64 {a[0]} regs, {a[1]} B local, {a[2]} CTAs/SM, "
+          f"bin {a[3]}; WIDE {a[4]} regs, {a[5]} B local, {a[6]} CTAs/SM, bin {a[7]}", flush=True)
+    dev = torch.device("cuda")
+    gen = torch.Generator(device="cuda").manual_seed(4321)
+    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)
+    whys = []
+    for wide in (False, True):
+        regs, local, occ, binv = a[4 * wide:4 * wide + 4]
+        on = _SLIDE_AT8 if wide else _SLIDE_AT2
+        if not on:
+            whys.append(("AT8" if wide else "AT2") + " not routed")
+            continue
+        if binv != 90 or local > 32 or occ < 1:
+            whys.append(f"attrs: binaryVersion {binv}, local {local} B, {occ} CTAs/SM")
+            continue
+        bufs = _slide_at8_bufs(dev) if wide else _slide_at2_bufs(dev)
+        cases = list(_SLIDE_AT8_CASES) if wide else [([n], 0.25) for n in _SLIDE_AT2_LENS] + [([2049], 1.0)]
+        if not wide:  # S2d: every B=1 case again on the layout where speculation hits (width = length + 1)
+            cases += [(lens, kv, lens[0] + 1) for lens, kv in cases]
+        why = None
+        for case in cases:
+            lens, kv_scale = case[0], case[1]
+            tile = _SLIDE_AT8_TILES[len(lens)] if wide else 64
+            data = _slide_synthetic(lens, 1, kv_scale, gen, dev, max_pages=case[2] if len(case) > 2 else None)
+            idata = dict(data)
+            idata["k_cache"], idata["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
+            out_i = _slide_at2_launch(ext, idata, bufs, None, tile).clone()
+            torch.cuda.synchronize()
+            outs = {}
+            for arm, gh in (("s2", None), ("forced", -1e30), ("mixed", 24.0)):
+                outs[arm] = _slide_at2_launch(ext, data, bufs, gh, tile, s2=True).clone()
+                torch.cuda.synchronize()
+                if not _slide_at2_clean(bufs):
+                    why = f"self-check {arm} B={len(lens)}: workspace not clean"
+                    break
+            if why is not None:
+                break
+            ref = _slide_reference(data, lens)
+            loc = data["cache_loc"]
+            ok = all(bool((m.view(-1, 2, 64)[loc].view(torch.uint8) == i.view(-1, 2, 64)[loc].view(torch.uint8)).all())
+                     for m, i in ((data["k_cache"], idata["k_cache"]), (data["v_cache"], idata["v_cache"])))
+            parts = []
+            for arm, o in outs.items():
+                err, finite = _rel_l2(o, ref)
+                err_i, _ = _rel_l2(o, out_i.float())
+                ok = ok and finite and err < 2e-2 and err_i < 1e-2
+                parts.append(f"{arm} vs fp32 {err:.2e} vs replaced {err_i:.2e}")
+            print(f"[slide-s2] self-check B={len(lens)} tile {tile} kv_scale {kv_scale:g} width "
+                  f"{data['page_table'].shape[1]}: {'; '.join(parts)} -> "
+                  f"{'ok' if ok else 'FAIL'}", flush=True)
+            del data, idata
+            if not ok:
+                why = f"self-check failed at B={len(lens)} kv_scale {kv_scale:g}"
+                break
+        if why is None:
+            if wide:
+                _SLIDE_S2_WIDE = True  # provisional, import time only
+            else:
+                _SLIDE_S2_B1 = True
+            try:
+                base = [2049 + 97 * i for i in range(16)] if wide else [2049]
+                sets = _alt_sets(base)
+                mp = max(max(x) for x in sets) + 1 + (29 if wide else 0)  # S2d: B=1 mixes hits and misses
+                why = _alt_check(f"[slide-s2] replay S2 B={len(base)}",
+                                 lambda l: _slide_synthetic(l, 1, 0.25, gen, dev, max_pages=mp), _slide_reference, sets,
+                                 gate=_slide_at8_gate if wide else _slide_gate)
+            finally:
+                _SLIDE_S2_WIDE = _SLIDE_S2_WIDE and not wide
+                _SLIDE_S2_B1 = _SLIDE_S2_B1 and wide
+        if why is None:
+            lens = [80000 - 997 * i for i in range(16)] if wide else [80000]
+            data = _slide_synthetic(lens, 1, 1.0, gen, dev, max_pages=None if wide else lens[0] + 1)
+            tile = _SLIDE_AT8_TILES[len(lens)] if wide else 64
+            t_old, t_s2 = _interleaved_us([lambda: _slide_at2_launch(ext, data, bufs, None, tile),
+                                           lambda: _slide_at2_launch(ext, data, bufs, None, tile, s2=True)],
+                                          flush, reps=31)
+            ratio = t_old / t_s2 if t_s2 > 0 else 0.0
+            clean = _slide_at2_clean(bufs)
+            print(f"[slide-gate] S2-vs-{'AT8' if wide else 'AT2'} B={len(lens)} x 80000: [{'AT8' if wide else 'AT2'}] "
+                  f"{t_old:.2f} us, [S2] {t_s2:.2f} us -> {ratio:.3f}x, workspace clean {clean}", flush=True)
+            del data
+            if not clean:
+                why = "workspace not clean after the timing"
+            elif ratio < _SLIDE_S2_GATE:
+                why = f"timing gate: {t_old:.2f} us vs S2 {t_s2:.2f} us ({ratio:.3f}x < {_SLIDE_S2_GATE:.2f}x)"
+        whys.append(why)
+        if why is None:
+            if wide:
+                _SLIDE_S2_WIDE = True
+            else:
+                _SLIDE_S2_B1 = True
+    del flush
+    torch.cuda.empty_cache()
+    return whys[0], whys[1]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -7478,7 +8547,7 @@ def _slide_at3_init() -> "str | None":
 
 _SLIDE_S1 = False        # import-time flag: S1 routed at sliding verify B=1 (one launch, no pre-attention)
 _SLIDE_S1_BUF = None     # (ws, fb, ticket) for B=1: persistent, returned to zero / -inf / reset state by the kernel
-_SLIDE_S1_VARIANT = 7    # a + b + c (the launcher downgrades c to AT3b's finalize when residency is not proven)
+_SLIDE_S1_VARIANT = 31   # a + b + c + B2 + W2 (= S1_PROD_V; the launcher drops c (and RL) when residency is not proven)
 _SLIDE_S1_GATE = 1.03    # incumbent time / S1 time needed at B=1 x 80000 to route S1
 _SLIDE_S1_DEADLINE = 45.0  # s on the import clock the S1 phase (checks + race; the module is AT2's) may need
 
@@ -7491,7 +8560,7 @@ def _slide_s1_gate(cfg) -> bool:
 
 
 def _slide_s1_bufs(dev):
-    ws = torch.zeros(128 * 64 + 128, dtype=torch.float32, device=dev)
+    ws = torch.zeros((128 * 64 + 128) * (2 if _SLIDE_S1_VARIANT & 16 else 1), dtype=torch.float32, device=dev)
     fb = torch.full((_slide_at3_nsplit(_PS_WINDOW, 64) * 128 * 68,), float("-inf"), dtype=torch.float32, device=dev)
     ticket = torch.zeros(8, dtype=torch.int32, device=dev)  # [arrivals, generation, fallback count x 2, spin error]
     return ws, fb, ticket
@@ -7538,10 +8607,12 @@ def _slide_s1_init() -> "str | None":
         return "AT2 module not built"
     ext, tag, _ = _SLIDE_AT2_EXT
     attrs = [int(x) for x in ext.slide_s1_setup()]
-    for v in (7, 6):
+    if attrs[257] != _SLIDE_S1_VARIANT:
+        return f"S1 module built variant {attrs[257]}, expected {_SLIDE_S1_VARIANT}"
+    for v in (_SLIDE_S1_VARIANT, _SLIDE_S1_VARIANT & ~33):
         regs, local, occ, binv = attrs[4 * v:4 * v + 4]
         print(f"[slide-s1] {tag}: sliding_s1_kernel variant {v}: {regs} regs, {local} B local, {occ} CTAs/SM, "
-              f"binaryVersion {binv}; {attrs[32]} SMs", flush=True)
+              f"binaryVersion {binv}; {attrs[256]} SMs", flush=True)
         if binv != 90 or local > 32 or occ < 1:
             return f"S1 attrs (variant {v}): binaryVersion {binv}, local {local} B, {occ} CTAs/SM"
     dev = torch.device("cuda")
@@ -7617,6 +8688,7 @@ def _slide_init():
     cluster size that cannot run its largest batch in one wave, canary + self-check the rest, and
     print the path chosen per batch class."""
     global _SLIDE_PH, _SLIDE_PH_MOD, _SLIDE_AT2, _SLIDE_AT2_MOD, _SLIDE_AT2_BUF, _SLIDE_AT8, _SLIDE_AT8_MOD, _SLIDE_AT8_BUF
+    global _SLIDE_S2_B1, _SLIDE_S2_WIDE
     global _SLIDE_AT3, _SLIDE_AT3_MOD, _SLIDE_AT3_BUF, _SLIDE_S1, _SLIDE_S1_BUF
     try:
         cap = tuple(torch.cuda.get_device_capability())
@@ -7725,6 +8797,22 @@ def _slide_init():
     _SLIDE_AT8 = why_at8 is None
     if not _SLIDE_AT8:
         _SLIDE_AT8_MOD, _SLIDE_AT8_BUF = None, None
+    _SLIDE_S2_B1 = _SLIDE_S2_WIDE = False
+    now = time.perf_counter() - _IMPORT_T0
+    if not (_SLIDE_AT2 or _SLIDE_AT8):
+        why_s2 = ("neither AT2 nor AT8 routed",) * 2
+    elif now + _SLIDE_S2_DEADLINE > _IMPORT_BUDGET_S:  # the file's import-clock rule: start only if it can finish
+        why_s2 = (f"skipped: import clock {now:.0f} s + {_SLIDE_S2_DEADLINE:.0f} s > {_IMPORT_BUDGET_S:.0f} s",) * 2
+    else:
+        try:
+            why_s2 = _slide_s2_init()
+        except Exception as e:
+            _SLIDE_S2_B1 = _SLIDE_S2_WIDE = False
+            why_s2 = (f"S2 setup raised {e!r}",) * 2
+        print(f"[slide-s2] phase S2: {time.perf_counter() - _IMPORT_T0 - now:.1f} s (import clock now "
+              f"{time.perf_counter() - _IMPORT_T0:.0f} s)", flush=True)
+    _say(f"[slide] PATH CHOSEN: sliding B=1 S2 {'ON (in place of the AT2 kernel)' if _SLIDE_S2_B1 else 'OFF (' + str(why_s2[0]) + ')'}")
+    _say(f"[slide] PATH CHOSEN: sliding B=2..16 S2 {'ON (in place of the AT8 kernel)' if _SLIDE_S2_WIDE else 'OFF (' + str(why_s2[1]) + ')'}")
     _SLIDE_AT3 = False
     now = time.perf_counter() - _IMPORT_T0
     if _SLIDE_AT2_EXT is None:
@@ -7791,6 +8879,139 @@ def _slide_init():
 # Triton, after the candidate is picked). B = 1 and B = 2..16 keep master (cluster C=16 / Triton) without being timed.
 # The route table is filled once at import and frozen before kernel_fn can see it.
 # ---------------------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------------------
+# S4 (campaign 2026-10-31-arch-mirror bundle S4: sliding decode B=17..32). The AT8 WIDE kernel (AT2's module, our 8-warp
+# CTA, in-kernel prep, fixed-reference atomic merge + last-CTA finalize) at 256 keys per CTA (8 splits per request), in
+# place of the incumbent [pre-attn + sk window] pair, only where it passed its checks and won an interleaved cold-L2 race
+# against kernel_fn's real incumbent by >= _SLIDE_S4_GATE. Import time only; any failure keeps the incumbent exactly.
+# ---------------------------------------------------------------------------------------------
+_SLIDE_S4 = False        # import-time flag: AT8 WIDE routed at sliding decode B=17..32
+_SLIDE_S4_BUF = None     # (ws, fb, ticket) for B <= 32: persistent, self-resetting
+_SLIDE_S4_TILE = 256
+_SLIDE_S4_MINB, _SLIDE_S4_MAXB = 17, 32
+_SLIDE_S4_GATE = 1.03
+_SLIDE_S4_DEADLINE = 45.0
+_SLIDE_S4_CASES = (  # (lens, kv_scale): batches 17..32, empty / partial / full windows, tile edges
+    ([1, 2049] + [255 + 7 * i for i in range(15)], 0.25), ([2047 + 211 * i for i in range(24)], 1.0),
+    ([16 + 131 * i for i in range(32)], 0.25), ([80000 - 997 * i for i in range(32)], 1.0))
+
+
+def _slide_s4_gate(cfg) -> bool:
+    return (_SLIDE_S4 and cfg["q_len"] == 1 and 2 <= cfg["window"] <= 2048 and cfg["rope_theta"] != 0
+            and cfg["num_q_heads"] == 16 and cfg["num_kv_heads"] == 2 and cfg["head_dim"] == 64
+            and cfg["page_size"] == 1 and _SLIDE_S4_MINB <= cfg["batch"] <= _SLIDE_S4_MAXB)
+
+
+def _slide_s4_forward(data: Inputs) -> torch.Tensor:
+    return _slide_at2_launch(_SLIDE_AT2_EXT[0], data, _SLIDE_S4_BUF, None, _SLIDE_S4_TILE)
+
+
+def _slide_s4_bufs(dev):
+    n = _SLIDE_S4_MAXB
+    ws = torch.zeros(n * (16 * 64 + 16), dtype=torch.float32, device=dev)
+    fb = torch.full((n * 32 * 16 * 68,), float("-inf"), dtype=torch.float32, device=dev)
+    ticket = torch.zeros(2 * n, dtype=torch.int32, device=dev)
+    return ws, fb, ticket
+
+
+def _slide_s4_init() -> "str | None":
+    """(1) eager self-check over _SLIDE_S4_CASES at 256 keys/CTA (plain, R11 guard forced, mixed) vs the FP32 reference
+    (< 2e-2) and vs the incumbent kernel_fn on cloned caches (<= its error + 2e-2), new cache rows vs the incumbent's,
+    workspace clean after every launch; (2) the two-state graph-replay check through kernel_fn with the flag
+    provisionally on (B=32); (3) interleaved cold-L2 graph replays incumbent kernel_fn vs S4 at B=32 x 80000."""
+    global _SLIDE_S4, _SLIDE_S4_BUF
+    if _SLIDE_AT2_EXT is None:
+        return "AT2 module not built"
+    ext, tag = _SLIDE_AT2_EXT[0], _SLIDE_AT2_EXT[1]
+    dev = torch.device("cuda")
+    bufs = _slide_s4_bufs(dev)
+    gen = torch.Generator(device="cuda").manual_seed(97531)
+    tile = _SLIDE_S4_TILE
+    for lens, kv_scale in _SLIDE_S4_CASES:
+        data = _slide_synthetic(lens, 1, kv_scale, gen, dev)
+        idata = dict(data)
+        idata["k_cache"], idata["v_cache"] = data["k_cache"].clone(), data["v_cache"].clone()
+        out_i = kernel_fn(idata)
+        torch.cuda.synchronize()
+        outs = {}
+        for arm, gh in (("s4", None), ("forced", -1e30), ("mixed", 24.0)):
+            outs[arm] = _slide_at2_run(ext, data, f"S4 self-check {arm} {tag}", bufs, gh, tile)
+            if not _slide_at2_clean(bufs):
+                return f"S4 self-check {arm} B={len(lens)}: workspace not clean after the launch"
+        ref = _slide_reference(data, lens)
+        loc = data["cache_loc"]
+        ok = True
+        notes = []
+        for name, mine, inc in (("k", data["k_cache"], idata["k_cache"]), ("v", data["v_cache"], idata["v_cache"])):
+            a = mine.view(-1, 2, 64)[loc].float()
+            m = inc.view(-1, 2, 64)[loc].float()
+            rel = float((a - m).norm() / m.norm().clamp_min(1e-30))
+            notes.append(f"{name} rel {rel:.1e}")
+            ok = ok and rel < 1e-2
+        err_m, _ = _rel_l2(out_i, ref)
+        parts = []
+        for arm, o in outs.items():
+            err, finite = _rel_l2(o, ref)
+            err_i, _ = _rel_l2(o, out_i.float())
+            ok = ok and finite and err < 2e-2 and err_i <= err_m + 2e-2
+            parts.append(f"{arm} vs fp32 {err:.2e} vs incumbent {err_i:.2e}")
+        print(f"[slide-s4] self-check {tag} B={len(lens)} tile {tile} kv_scale {kv_scale:g} (incumbent vs fp32 "
+              f"{err_m:.2e}): {'; '.join(parts)}; cache vs incumbent {', '.join(notes)} -> {'ok' if ok else 'FAIL'}",
+              flush=True)
+        del data, idata
+        if not ok:
+            return f"S4 self-check failed at B={len(lens)} kv_scale {kv_scale:g}"
+    torch.cuda.empty_cache()
+    base = [2049 + 97 * i for i in range(32)]
+    sets = _alt_sets(base)
+    mp = max(max(x) for x in sets) + 1 + 29
+    _SLIDE_S4_BUF = bufs
+    _SLIDE_S4 = True  # provisional, import time only: kernel_fn must take the S4 route under test
+    try:
+        why = _alt_check("[slide-s4] replay S4 B=32",
+                         lambda l: _slide_synthetic(l, 1, 0.25, gen, dev, max_pages=mp), _slide_reference, sets,
+                         gate=_slide_s4_gate)
+    finally:
+        _SLIDE_S4 = False
+    if why is not None:
+        return why
+    if not _slide_at2_clean(bufs):
+        return "S4 workspace not clean after the replay check"
+    data = _slide_synthetic([80000 - 997 * i for i in range(32)], 1, 1.0, gen, dev)
+    flush = torch.empty(64 << 20, dtype=torch.float32, device=dev)
+    t_inc, t_s4 = _interleaved_us([lambda: kernel_fn(data),
+                                   lambda: _slide_at2_launch(ext, data, bufs, None, tile)], flush, reps=31)
+    ratio = t_inc / t_s4 if t_s4 > 0 else 0.0
+    clean = _slide_at2_clean(bufs)
+    print(f"[slide-gate] S4-vs-incumbent B=32 x 80000: [incumbent] {t_inc:.2f} us, [S4 AT8 WIDE 256] {t_s4:.2f} us -> "
+          f"{ratio:.3f}x, workspace clean {clean}", flush=True)
+    del data, flush
+    torch.cuda.empty_cache()
+    if not clean:
+        return "S4 workspace not clean after the timing"
+    if ratio < _SLIDE_S4_GATE:
+        return f"timing gate: incumbent {t_inc:.2f} us vs S4 {t_s4:.2f} us ({ratio:.3f}x < {_SLIDE_S4_GATE:.2f}x)"
+    return None
+
+
+def _slide_s4_setup():
+    global _SLIDE_S4, _SLIDE_S4_BUF
+    _SLIDE_S4 = False
+    now = time.perf_counter() - _IMPORT_T0
+    if now + _SLIDE_S4_DEADLINE > _IMPORT_BUDGET_S:
+        why = f"skipped: import clock {now:.0f} s + {_SLIDE_S4_DEADLINE:.0f} s > {_IMPORT_BUDGET_S:.0f} s"
+    else:
+        try:
+            why = _slide_s4_init()
+        except Exception as e:
+            why = f"S4 setup raised {e!r}"
+        print(f"[slide-s4] phase S4: {time.perf_counter() - _IMPORT_T0 - now:.1f} s", flush=True)
+    _SLIDE_S4 = why is None
+    if not _SLIDE_S4:
+        _SLIDE_S4_BUF = None
+    _say(f"[slide] PATH CHOSEN: sliding decode B=17..32 S4 {'ON: AT8 WIDE, 256 keys/CTA, in-kernel prep, atomic merge' if _SLIDE_S4 else 'OFF (' + why + ')'}")
+
 
 _SD_ROUTE = {}   # band (only 3 = B 17..32) -> (variant 6 | 7, grid spec); empty = sliding decode stays on master
 _SD_SPECS = ("p2", "p3", "p4", "p8", "sm", "2sm")
@@ -12328,15 +13549,14 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
           r1m[jn] = fmaxf(r1m[jn], r1m[jn + w]);
         }
       float x0 = r0m[0], x1 = r1m[0];
-      x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 1));
-      x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 2));
-      x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 1));
-      x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 2));
-      const float n0 = fmaxf(m0, x0 * sc), n1 = fmaxf(m1, x1 * sc);
-      const float u0 = n0 == NEG_INF ? 0.f : n0, u1 = n1 == NEG_INF ? 0.f : n1;
-      const bool moved = (n0 != m0) || (n1 != m1);
-      if (__any_sync(~0u, moved)) {
-        const float a0 = ex2(m0 - u0), a1 = ex2(m1 - u1);
+      if (__any_sync(~0u, (x0 * sc > m0) || (x1 * sc > m1))) {
+        x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 1));
+        x0 = fmaxf(x0, __shfl_xor_sync(~0u, x0, 2));
+        x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 1));
+        x1 = fmaxf(x1, __shfl_xor_sync(~0u, x1, 2));
+        const float n0 = fmaxf(m0, x0 * sc), n1 = fmaxf(m1, x1 * sc);
+        const float v0 = n0 == NEG_INF ? 0.f : n0, v1 = n1 == NEG_INF ? 0.f : n1;
+        const float a0 = ex2(m0 - v0), a1 = ex2(m1 - v1);
         l0 *= a0;
         l1 *= a1;
 #pragma unroll
@@ -12346,9 +13566,10 @@ fvg_kernel(const uint8_t* __restrict__ q, const uint8_t* __restrict__ kc, const 
           o[4 * jj + 2] *= a1;
           o[4 * jj + 3] *= a1;
         }
+        m0 = n0;
+        m1 = n1;
       }
-      m0 = n0;
-      m1 = n1;
+      const float u0 = m0 == NEG_INF ? 0.f : m0, u1 = m1 == NEG_INF ? 0.f : m1;
       // PV8: FA3's FP8 Max_offset 8 (P = 2^(x - max + 8) in (0, 256], so E4M3 keeps small weights normal); o and l
       // carry the same 2^8, which the combine's ratio cancels
       const float e0 = PV8 ? u0 - 8.f : u0, e1 = PV8 ? u1 - 8.f : u1;
@@ -13223,6 +14444,11 @@ if torch.cuda.is_available():
     except Exception as _e:  # never raise at import: sliding decode keeps master exactly
         _SD_ROUTE = MappingProxyType({})
         _say(f"PATH CHOSEN: sliding decode master (fallback: setup raised {_e!r})")
+    try:  # S4 after the sk route is final, so its race times kernel_fn's real incumbent
+        _slide_s4_setup()
+    except Exception as _e:
+        _SLIDE_S4 = False
+        _say(f"[slide] PATH CHOSEN: sliding decode B=17..32 S4 OFF (setup raised {_e!r})")
     # The two pieces run last (after every master build, PERHEAD included), on the import clock started at the top.
     # Piece A: the combo-b1 chain (never raises: _c320_setup freezes _C320_FN once, master V0 on any failure).
     try:
