@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "4db5f1395ced4b34",
- "check_job": "c05b8c33747940e7",
+ "job": "0ef88b074a4e4cd8",
+ "check_job": "5b75167625f94994",
  "mode": "submit",
- "speedup": 2.0045309607491792,
+ "speedup": 2.4336874789994405,
  "ci": [
-  1.9744629963379414,
-  2.0432375077020466
+  2.397182166814449,
+  2.4701927911844317
  ],
- "score_us": 1878.8934038675923,
- "commit": "c14cae66de6572feb76486fe76d628fd34bc0848",
- "submission_blob": "c3e0a58976878875e67066fd0746ad2de907533d",
- "slug": "uc-attn-union-s4-full",
- "master_slug": "uc-attn-union-s4-full",
- "master_job": "4db5f1395ced4b34",
+ "score_us": 1547.56928837405,
+ "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
+ "submission_blob": "67d27a22e6e72a58a436579dbaf0164f3b443875",
+ "slug": "adopt-public-c-a0",
+ "master_slug": "adopt-public-c-a0",
+ "master_job": "0ef88b074a4e4cd8",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T001256Z",
- "note": "union-confirm lane 1; uc/attn 07a5e7f1; 1.903->2.005; rank 479->406"
+ "updated_at": "2026-10-31T045942Z",
+ "note": "public-board adoption 10-31; old line at tag ours-final-1031"
 }

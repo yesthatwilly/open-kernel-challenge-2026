@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "7753d5c7031a4e72",
- "check_job": "ccf952b8789a4a6a",
+ "job": "109f577bcfaf4d8a",
+ "check_job": "a95479284a204d87",
  "mode": "submit",
- "speedup": 1.3425410263172954,
+ "speedup": 1.5657194463932134,
  "ci": [
-  1.322402910922536,
-  1.3626791417120547
+  1.5422336546973152,
+  1.5892052380891115
  ],
- "score_us": 3598.25130502812,
- "commit": "55149e2bd4e491f9134a31b5309d1330d80f6f4e",
- "submission_blob": "f6cf9245acf3b4a1c37523a57d0e0fb9cf03f73c",
- "slug": "ladder-bf4e-router-cluster-push-reduce",
- "master_slug": "ladder-bf4e-router-cluster-push-reduce",
- "master_job": "7753d5c7031a4e72",
+ "score_us": 3085.3547940074554,
+ "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
+ "submission_blob": "b8c0656555fa60de3e3ba54bd3a99afac2a385f7",
+ "slug": "adopt-public-bf16",
+ "master_slug": "adopt-public-bf16",
+ "master_job": "109f577bcfaf4d8a",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T135929Z",
- "note": "registered by churn.py register-landing from okc status 7753d5c7031a4e72"
+ "updated_at": "2026-10-31T045944Z",
+ "note": "public-board adoption 10-31; old line at tag ours-final-1031"
 }

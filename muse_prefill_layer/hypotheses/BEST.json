@@ -1,17 +1,20 @@
 {
  "problem": "muse_prefill_layer",
- "job": "9f93484606cd4f9e",
- "check_job": "da80fdb9bed749a3",
+ "job": "8b89517bd87544b6",
+ "check_job": "d114d2e8da984e8a",
  "mode": "submit",
- "speedup": 1.5721154841318719,
+ "speedup": 1.7835726617500103,
  "ci": [
-  1.5485337518698938,
-  1.5956972163938499
+  1.7568190718237602,
+  1.8103262516762602
  ],
- "score_us": 246422.03700062525,
- "commit": "d9c22d138d4f368d228d70fb6cf64f346accaac3",
- "submission_blob": "7569df17e62ecfb6ecf85d12e2033c6611fcaade",
- "slug": "experts-rega-a5b-desc-splitcommit",
- "result": "muse_prefill_layer/hypotheses/done/gain/experts-rega-a5b-desc-splitcommit.result.json",
- "updated_at": "2026-10-29T195416Z"
+ "score_us": 217206.68201983208,
+ "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
+ "submission_blob": "da0feea1cf96c1ab134735176fdb09b19ec50df2",
+ "slug": "adopt-public-c-p2",
+ "master_slug": "adopt-public-c-p2",
+ "master_job": "8b89517bd87544b6",
+ "result": "muse_prefill_layer/hypotheses/BEST.result.json",
+ "updated_at": "2026-10-31T045942Z",
+ "note": "public-board adoption 10-31; old line at tag ours-final-1031"
 }

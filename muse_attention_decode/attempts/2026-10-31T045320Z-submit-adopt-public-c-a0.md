@@ -22,4 +22,4 @@ The whole file is replaced by the public-based one. Line 2 is the attribution no
 Board = best scored run; one read can land anywhere in the ~0.5-1.2% A/A band.
 
 ## Result (after the run)
-- pending
+- **Passed**, scored. **Speedup 2.4337** [2.3972, 2.4702] on sfo3. Registered as BEST via churn.py register-landing.

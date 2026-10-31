@@ -17,6 +17,17 @@
 > - Our pre-adoption files are at tag `ours-final-1031`.
 > - **Superseded:** "public = target, never base", the arch-mirror clean-room, and public-plus "never on master".
 > - **Still binding:** okc-stay-compliant, the attempt gate and the rules checklist.
+> - **Scored, 10-31 ~05:10Z, now BEST:**
+>
+>   | problem | new board | old board |
+>   |---|---:|---:|
+>   | attention | **2.4337** | 2.005 |
+>   | prefill | **1.7836** | 1.5721 |
+>   | moe | **2.3670** | 2.100 |
+>   | bf16 | **1.5657** | 1.3425 |
+>
+>   Everything is idle after the foundation (user: "stop after foundation"). Decode D0 is "explore soon"; compliance
+>   is paramount.
 
 > **NEWEST USER STEER, 2026-10-27 ~00:07Z (standing until the challenge closes): THE 3:1 DAILY RHYTHM.** Full text:
 > `campaigns/DAILY-RHYTHM.md`; invoke `/3to1` (one tick) or `/loop /3to1`. It retires the 10-26 ~23:00Z STOP banner
