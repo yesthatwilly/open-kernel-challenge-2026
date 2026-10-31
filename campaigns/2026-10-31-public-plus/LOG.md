@@ -99,6 +99,10 @@
 - **11:22Z S6M KILLED:** 2.3640 / 2.3822 (mean 2.3731, under 2.3867); d32 128.67 / 124.53 against the 124.0 bar. The d16
   row runs code identical to master, yet read 94.9/96.8 against 91.3/91.9, so judge row noise is about 5% today. The
   S6 family is closed for moe (CLAIMS refuted). moe checks left: 12.
+- **11:25Z lever round 2, wf_c7b20f1e-b31** (task wt39bo22e): 3 effort-max finders (decode GPU 1, moe GPUs 3/4,
+  attention GPU 6) and a max judge. Briefed on today's transfer record: favour compute, issue, latency and launch
+  levers, with judge profiles as the primary evidence. Output: LEVERS-1031b.md, which feeds the rest of phase B and
+  tomorrow's phase A.
 - **Next:** the DPP audit, then 2 decode checks. Phase C (18Z): spend the remaining checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
