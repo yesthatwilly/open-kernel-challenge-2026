@@ -351,6 +351,9 @@
   okc-robustness-fixes-land.
 - **21:02Z BF16FIX scored d1f5f46c: 1.5522** [1.5289, 1.5755], below the 1.5657 board: **HOLD** (pure hardening; no
   forced failure shown in bf16). Landing asked of the user.
+- **~21:04Z the user (AskUserQuestion): "Land it (robustness)" for BF16FIX.** 21:05Z LANDED on master 8d0df028:
+  `muse_bf16_proj/submission.py` = BF16FIX-score.py (scored d1f5f46c 1.5522; checks 754e0c9d / a3aa275b);
+  register-landing --force (BEST.json now this run; the leaderboard entry stays 109f577b 1.5657). CLAIMS [landed].
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under

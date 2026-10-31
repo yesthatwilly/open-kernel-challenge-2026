@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "109f577bcfaf4d8a",
- "check_job": "a95479284a204d87",
+ "job": "d1f5f46c65fa466a",
+ "check_job": "754e0c9d91214186",
  "mode": "submit",
- "speedup": 1.5657194463932134,
+ "speedup": 1.5521937365000742,
  "ci": [
-  1.5422336546973152,
-  1.5892052380891115
+  1.5289108304525731,
+  1.5754766425475752
  ],
- "score_us": 3085.3547940074554,
- "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
- "submission_blob": "b8c0656555fa60de3e3ba54bd3a99afac2a385f7",
- "slug": "adopt-public-bf16",
- "master_slug": "adopt-public-bf16",
- "master_job": "109f577bcfaf4d8a",
+ "score_us": 3112.240364332748,
+ "commit": "8d0df028bfb304b4b1b70f5597157958ec2e599f",
+ "submission_blob": "41ab82c0a874015097a75199bc0e58215eaba41c",
+ "slug": "bf16fix-sk2-ring-war",
+ "master_slug": "bf16fix-sk2-ring-war",
+ "master_job": "d1f5f46c65fa466a",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T045944Z",
- "note": "public-board adoption 10-31; old line at tag ours-final-1031"
+ "updated_at": "2026-10-31T210512Z",
+ "note": "robustness landing by user ruling 10-31 ~21:04Z ('Land it (robustness)'); scored 1.5522 is below the leaderboard's best scored run 109f577b 1.5657, which stays the board entry"
 }
