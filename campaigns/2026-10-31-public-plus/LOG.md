@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T10:31Z) — /3to1 on the public foundation; phase B: 9 lever checks in flight
+## Now (2026-10-31T10:45Z) — /3to1 on the public foundation; phase B: PP scored run + build wf_514e7d34-141 in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -70,8 +70,23 @@
 - **Open note for the user, before any S6 scored submit:** the S6 gain depends on the generator's narrow scale range
   (bytes 0x5C..0x7E). Wide-scale weights fall back to the 8-bit layout, with no gain and no breakage. Default: score
   it if the gate passes, and say so in the landing report.
-- **Next:** harvest the 9 checks against their gates. Then score and land the winners. After that: the decode ports of
-  ATT-pp and S6, moe HF, decode cgemv.
+- **10:36Z, 9 checks harvested** (results are in the attempt files, b9d5cba5):
+  - **ATT PP: GO.** Reads 2.5236 and 2.4515 (mean 2.487, +2.2% over 2.4337). v16f 111.6/112.8 us, v32f 204.8/206.2 us.
+    - PPS also passed its gate rows (2.4529 / 2.4274), but PP is kept.
+    - Gate note: d1s mean 5.515 is +0.315 us over the stale 0ef88b07 base (5.20). Against the same-day A0 reads it is
+      +0.155, with identical SASS, so I treated it as noise. This is disclosed in the submit attempt.
+    - **Scored submit 14cec684** (PP-score.py, body = PP-r1).
+  - **S6: HOLD, not scored.** d32 is -2..-3% in 3/3 reads, but the headline mean is 2.3548 (-1.3%). v1 is +3..10% and
+    d16 +2..4%. The H100's uniform x1.020 did not transfer. CLAIMS line: unresolved.
+  - **BFR: KILL.** The H200 race kept coopB on the v16 pooler in both reads, a no-op. Headline 1.5533/1.5523 is under
+    1.5657. CLAIMS line: node-only.
+- **10:45Z build workflow wf_514e7d34-141** (task w8s1bc9rk; build and audit at high):
+  - DPP, the decode port of PP: re-review decode's #error-guarded OKC_TURN, or port PP's 3 edits (GPUs 5, 1);
+  - S6M, S6 only in the build(s) serving d32 (GPUs 3, 4);
+  - HF, the moe helper fence drop (GPU 6).
+  - Decode cgemv is left for phase C.
+- **Next:** on the PP result, land and register-landing if it beats 2.4337. Harvest wf_514e7d34-141, then run its
+  checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
