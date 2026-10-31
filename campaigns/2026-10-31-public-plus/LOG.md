@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T10:45Z) — /3to1 on the public foundation; phase B: PP scored run + build wf_514e7d34-141 in flight
+## Now (2026-10-31T10:45Z) — /3to1 on the public foundation; phase B: PP LANDED 2.4729; build wf_514e7d34-141 in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -85,8 +85,9 @@
   - S6M, S6 only in the build(s) serving d32 (GPUs 3, 4);
   - HF, the moe helper fence drop (GPU 6).
   - Decode cgemv is left for phase C.
-- **Next:** on the PP result, land and register-landing if it beats 2.4337. Harvest wf_514e7d34-141, then run its
-  checks.
+- **10:43Z LANDED on master: attention PP 2.4729** (scored 14cec684 [2.4358, 2.5233]; was 2.4337, so +1.6%).
+  register-landing is done. Rows: v16f 113.71, v32f 207.28.
+- **Next:** harvest wf_514e7d34-141 and run its checks. DPP's decode gate needs D0's same-day rows.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 

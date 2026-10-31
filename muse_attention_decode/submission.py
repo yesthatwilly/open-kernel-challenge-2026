@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31).
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31.
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -1853,6 +1853,9 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   // takes ~650-820 cycles for ~110 instructions; both warpgroups start each tile together on the same stage)
   
   int i_cur = 0, cnt2 = 0;   // F2: this warpgroup's claimed tile, and how many it has taken
+  if constexpr (WS) {   // [PP] softmax turns: barrier 5 + hk = this warpgroup's turn
+    if (hk == 1 && ntiles > 0) asm volatile("bar.arrive 5, 256;\n" ::: "memory");
+  }
   
   const int nit = ntiles;
   constexpr int UNR8 = WS ? 2 : 1;   // (pragma arguments are not macro-expanded;
@@ -1952,6 +1955,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     
     if constexpr (WS) {   // K (wgmma) and V (conversion) of the stage are consumed
       mbar_arrive(&S.empty[st]);
+      asm volatile("bar.sync %0, 256;\n" ::"r"(5 + hk) : "memory");   // [PP] my turn
     }
     
 
@@ -2022,6 +2026,8 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if constexpr (PK2) {
       packh(0);
       packh(1);
+      if (hk == 0 || jj + 1 < nit)   // [PP] the other's turn (none after warpgroup 1's last tile)
+        asm volatile("bar.arrive %0, 256;\n" ::"r"(5 + (hk ^ 1)) : "memory");
       lacc[0] += tlo; lacc[2] += thi;
       float* odk = &o[0][0][0];
 #pragma unroll

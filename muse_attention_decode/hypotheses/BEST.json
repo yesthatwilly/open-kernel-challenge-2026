@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "0ef88b074a4e4cd8",
- "check_job": "5b75167625f94994",
+ "job": "14cec6846e404ea3",
+ "check_job": "ac0335f9bc614f65",
  "mode": "submit",
- "speedup": 2.4336874789994405,
+ "speedup": 2.472891092815014,
  "ci": [
-  2.397182166814449,
-  2.4701927911844317
+  2.435797726422789,
+  2.523334830501987
  ],
- "score_us": 1547.56928837405,
+ "score_us": 1523.0351271606687,
  "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
  "submission_blob": "67d27a22e6e72a58a436579dbaf0164f3b443875",
- "slug": "adopt-public-c-a0",
- "master_slug": "adopt-public-c-a0",
- "master_job": "0ef88b074a4e4cd8",
+ "slug": "pp-softmax-turns",
+ "master_slug": "pp-softmax-turns",
+ "master_job": "14cec6846e404ea3",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T045942Z",
- "note": "public-board adoption 10-31; old line at tag ours-final-1031"
+ "updated_at": "2026-10-31T104303Z",
+ "note": "checks ac0335f9 2.5236, d933848f 2.4515; scored 2.4729 vs 2.4337 (+1.6%); bit-identical to A0 under fixed split plans"
 }
