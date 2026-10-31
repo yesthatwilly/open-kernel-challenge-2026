@@ -1,5 +1,5 @@
 # okc: problem=muse_decode_layer
-# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31).
+# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31.
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -2187,6 +2187,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if (hk == 1 && ntiles > 0) bar_arrive_n(5, 256);   // head 0 goes first
   }
   int i_cur = 0, cnt2 = 0;   // F2: this warpgroup's claimed tile, and how many it has taken
+  constexpr bool PPT = WS && PV8 && !S2 && !F2;   // [DPP] flat q8: softmax turns (barrier 5 + hk = my turn)
+  if constexpr (PPT) {
+    if (hk == 1 && ntiles > 0) asm volatile("bar.arrive 5, 256;\n" ::: "memory");
+  }
   if constexpr (F2) {
     if (tid == 0) { S.claim[0] = 0; S.claim[1] = 0; }
     csync<WS, NT>();   // the q staging (S.q8s) is complete for both streams; counters reset
@@ -2377,6 +2381,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if constexpr (WS) {   // K (wgmma) and V (conversion) of the stage are consumed
       if (OKC_XP_ARRALL || lane == 0) mbar_arrive(&S.empty[st]);
     }
+    if constexpr (PPT) asm volatile("bar.sync %0, 256;\n" ::"r"(5 + hk) : "memory");   // [DPP] my turn
     if constexpr (PTR) {   // the previous tile's PV is done with its V^T slot
       if (i >= 1 && lane == 0) mbar_arrive(&S.vte[(i - 1) & 1]);
     }
@@ -2449,6 +2454,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 #pragma unroll
       for (int kk = 0; kk < 2; ++kk) {   // each half of P goes to the tensor cores as soon as it is packed
         packh(kk);
+        if constexpr (PPT) {   // [DPP] after packh(1): the other's turn (none after warpgroup 1's last tile)
+          if (kk == 1 && (hk == 0 || jj + 1 < nit))
+            asm volatile("bar.arrive %0, 256;\n" ::"r"(5 + (hk ^ 1)) : "memory");
+        }
         float* od = &o[0][0][0];
         if constexpr (LSYNCN) {   // every warp's V^T for this tile written (and visible to the async proxy)
           if (kk == 0) {

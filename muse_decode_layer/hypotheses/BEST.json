@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "201db0b8c295487b",
- "check_job": "4b2adae23a3346ff",
+ "job": "9d726d84649e4f9e",
+ "check_job": "f078d6732d2547bc",
  "mode": "submit",
- "speedup": 2.179286240938651,
+ "speedup": 2.222007018965285,
  "ci": [
-  2.1465969473245714,
-  2.2119755345527308
+  2.1886769136808057,
+  2.255337124249764
  ],
- "score_us": 10379.68284067957,
- "commit": "bf25b82798f962c13006ca5cd860186c3e66d600",
- "submission_blob": "c6bb62a6a588d4c40bc100444d01e91aa7681d6c",
- "slug": "public-c-d0",
- "master_slug": "public-c-d0",
- "master_job": "201db0b8c295487b",
+ "score_us": 10180.120857824078,
+ "commit": "36584c5c53ee464e15e25f80b7d3fb9c64f04448",
+ "submission_blob": "68ee84cb633160112ac66d9d05d490fa9a36cb6e",
+ "slug": "dpp-softmax-turns",
+ "master_slug": "dpp-softmax-turns",
+ "master_job": "9d726d84649e4f9e",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T074351Z",
- "note": "foundation rebase of decode; replaces our line (1.703, tag ours-decode-1703-1031); checks 2.2060/2.1708"
+ "updated_at": "2026-10-31T115259Z",
+ "note": "checks eb4e07ad 2.1826, f078d673 2.2367; scored 2.2220 vs 2.1793 (+2.0%); attn_kernel<8,true,0> v16f 109.8 / v32f 200.5 us (D0 116.1-118.1 / 209.0-212.0)"
 }

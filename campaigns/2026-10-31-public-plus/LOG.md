@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T11:45Z) — /3to1 on the public foundation; phase B: DPP checks + lever round 2 in flight
+## Now (2026-10-31T11:45Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; lever round 2 in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -106,7 +106,13 @@
 - **11:44Z DPP audit PASS** (independent, GPU 5): barrier balance proven, no regressions against D0, no hangs. The
   kernel alone saves -2.26 / -2.67 us at v16f / v32f on the H100. **Checks eb4e07ad and f078d673** (gate in the
   attempt files, campaign/public-plus 90af4130).
-- **Next:** harvest DPP and lever round 2. Phase C (18Z): spend the remaining checks.
+- **11:48Z DPP GO:** reads 2.1826 / 2.2367. attn_kernel<8,true,0> v16f 109.0/109.2 us, v32f 200.3/199.6 us
+  (D0 116.1-118.1 / 209.0-212.0). The H200 amplified the H100 saving about 3-4x, as it did for attention PP.
+- **11:52Z LANDED on master: decode DPP 2.2220** (scored 9d726d84 [2.1887, 2.2553]; was 2.1793, so +2.0%).
+  register-landing is done.
+- **Lesson:** the turn-taking scheduling class transfers to the H200 with amplification (PP and DPP). Bandwidth, L2
+  and plan-race levers do not (DL2H, S6, S6M, BFR).
+- **Next:** harvest lever round 2 (wf_c7b20f1e-b31). Phase C (18Z): spend the remaining checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
