@@ -8,6 +8,15 @@
   - one builder plus one audit agent;
   - H100 correctness on gpunode06 GPUs 1/3/4/5/6.
   - Everything else stays stopped: M1-stack, A1/A2, D0 and the launch diet.
+- 04:29Z: 8 public-C checks in flight (check-only).
+  - A0 attention: 5b751676 (r1), 3ba805db (r2).
+  - P0 prefill: 04b9092b, cb644182.
+  - P1: b8b44f36, 253ff43c.
+  - P2: d114d2e8, c456c4b9.
+  - Builder: campaign/public-plus de7ef03f. Independent audit: PASS on A0, P0, P1 and P2.
+  - A0′ dropped: P reaches 432, above the user's P_max 256.
+  - R11 kept: robustness; the raw public file returns NaN on large logits.
+  - 2 of the 10 allowed checks are unused.
 - §13 done: KERNEL-COUNTS.md and the FINDINGS "Answer 10-31".
 - Adopting vjeux's attention and prefill as our base is the user's call, after public-C reads (PLAN §14).
 
