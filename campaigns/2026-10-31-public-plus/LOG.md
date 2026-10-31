@@ -340,9 +340,9 @@
   - **ET3FIX: KILL.** 2.1978 / 2.1826. The gated d16f b1 edge never went live (3.4 / 3.5 us; needs >= 6.5); Z = +0.19 us.
     Knowledge: vs same-night D0FIX, d16f busy-moe-attn is ~-0.95 us and d16f b2 rose to 9.1 / 5.9 us, so some edge ran
     early. CLAIMS [refuted] (reopen only with a placement whose gated edge goes live).
-  - **BF16FIX: GO.** 1.5510 / 1.5434, mean 1.5472 >= 1.525, 0 row breaches over 30 rows. **20:59Z scored run
+  - **BF16FIX: GO.** 1.5510 / 1.5434, mean 1.5472 >= 1.525, 0 row breaches over 30 rows. **20:58Z scored run
     d1f5f46c** (BF16FIX-score.py, public-plus b9454673). A read below the 1.5657 board is HOLD for the user.
-- Quota at 21:00Z (checks / runs): bf16 14/8, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
+- Quota at 20:59Z (checks / runs): bf16 14/8, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
