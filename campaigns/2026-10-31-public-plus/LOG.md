@@ -14,6 +14,21 @@
   - **A1**: attention W2 on A0, the phase-B rider.
   - Workflow wf_1c6314b7-81b (task wzlr8upqf), launched 06:10Z. Design runs at effort max; build and audit at high. GPUs: D0 1,3; M1 4,5; A1 6. Variant files go in `files/<p>/` on campaign/public-plus,
     rebased on master.
+- **07:33Z: phase-A workflow done** (6 agents, about 1.6M tokens).
+  - **D0 build and audit: PASS.**
+    - Independent checks on the H100: 24/24 scored rows, 13/13 TASK tests, 100/100 adversarial cases, 36/36 R11 cases.
+    - Speed: x0.997 against the public decode on the H100, so the judge estimate is about 2.16-2.20.
+    - The four tvm_ffi glue modules now use torch load_inline; that move costs nothing.
+    - Gray-area flags resolved in the attempt file: ctypes into cuBLASLt, `--use_fast_math` and the GLE T=1 pooler.
+  - **M1:** only M1a NOFENCE helps. d32 is x1.007 on the H100 and the headline about +0.1%, so it gets one read. The
+    M1s stack measured -0.5% and is not sent.
+  - **A1 / A1n4 (W2) KILLED:** v1s is 2-4% slower on the H100 (A0 already differs from our old base).
+- **07:34Z checks dispatched:**
+  - D0-r1 and D0-r2 (decode): de38cec7 and 4b2adae2, each mapped to its file in the attempt files on harvest.
+  - M1a-r1 (moe): eaf35636.
+- **Concurrent session:** union-confirm landed decode **1.7030** (63d07851, swap-AB root-cause fix, master eb66b591)
+  at 07:20Z on our old decode line. D0 is now measured against 1.7030. If D0 wins, it replaces that line on master
+  (foundation ruling); union-confirm's LOG must be told.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
