@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "47b125eebdd54157",
- "check_job": "70e499b955f145c7",
+ "job": "4db5f1395ced4b34",
+ "check_job": "c05b8c33747940e7",
  "mode": "submit",
- "speedup": 1.9027158518695668,
+ "speedup": 2.0045309607491792,
  "ci": [
-  1.8741751140915233,
-  1.9389703350481284
+  1.9744629963379414,
+  2.0432375077020466
  ],
- "score_us": 1979.4337637431865,
- "commit": "524fd3b6d4c9119a3687d1e3a0a21a77957d143c",
- "submission_blob": "3de7a9456c01a825e445f9500a45caa3b0ce6bd7",
- "slug": "am-s1-v1s",
- "master_slug": "am-s1-v1s",
- "master_job": "47b125eebdd54157",
+ "score_us": 1878.8934038675923,
+ "commit": "c14cae66de6572feb76486fe76d628fd34bc0848",
+ "submission_blob": "c3e0a58976878875e67066fd0746ad2de907533d",
+ "slug": "uc-attn-union-s4-full",
+ "master_slug": "uc-attn-union-s4-full",
+ "master_job": "4db5f1395ced4b34",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-10-30T222533Z",
- "note": "registered by churn.py register-landing from okc status 47b125eebdd54157"
+ "updated_at": "2026-10-31T001256Z",
+ "note": "union-confirm lane 1; uc/attn 07a5e7f1; 1.903->2.005; rank 479->406"
 }
