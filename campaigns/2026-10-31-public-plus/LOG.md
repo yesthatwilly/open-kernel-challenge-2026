@@ -96,7 +96,10 @@
     size bar: v16f -1.6..-1.95 us, v32f -1.9..-4.2 us. PP itself read -1.1/-1.4 us on the H100 and -5.4/-9 us on the
     judge, so the default is a judge read after an independent audit. Audit agent launched 11:20Z (GPU 5); 2 decode
     checks follow if it passes.
-- **Next:** harvest S6M; run the DPP audit, then its 2 checks. Phase C (18Z): spend the remaining checks.
+- **11:22Z S6M KILLED:** 2.3640 / 2.3822 (mean 2.3731, under 2.3867); d32 128.67 / 124.53 against the 124.0 bar. The d16
+  row runs code identical to master, yet read 94.9/96.8 against 91.3/91.9, so judge row noise is about 5% today. The
+  S6 family is closed for moe (CLAIMS refuted). moe checks left: 12.
+- **Next:** the DPP audit, then 2 decode checks. Phase C (18Z): spend the remaining checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
