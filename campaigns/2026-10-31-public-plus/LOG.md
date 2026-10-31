@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T13:05Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; ET3 build in flight
+## Now (2026-10-31T14:58Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; ET3 HELD (race)
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -122,8 +122,19 @@
   - Round 2 produced no phase-A-sized decode rewrite.
 - **13:05Z ET3 build and audit workflow wf_6852109b-c3c** (task w74sycqdq; builder GPU 1, auditor GPU 3). Then 2
   decode checks under the LEVERS-1031b rule.
-- **Next:** harvest ET3 and run its checks. Phase C (18Z): spend the remaining checks. Tomorrow's phase-A plan is due
-  in the LOG by about 23Z.
+- **14:55Z ET3 harvested: HELD, no checks sent** (wf_6852109b-c3c, 3 agents, 0.85M tokens).
+  - The independent audit FAILED the 3-edge build. The unpooler m=16 early trigger corrupts the unpooler's own output
+    Pu (cols ~7960-8191) in ~0.2% of graph replays with the graft b2c dependent. Up to 60 elements are off by
+    0.25-0.6x row rms, and about half reach s2. The judge's rel-L2 rule would not catch it. Ablation: qkv+o alone 0/8000.
+  - The fix round built a 2-edge variant (qkv m8/16 + o m8/16/32; branch 5de05a12): 0/16000 gross replays per row,
+    gate clean. Two reasons not to send it:
+    1. The race's root cause is unknown, and o m16 -> b1 uses the same dependent family. That makes its safety empirical
+       only, and compliance comes first.
+    2. The H100 GO is missed: d16s -1.67 us against the -2.0 bar (the unpooler edge carried most of d16s).
+  - CLAIMS: unresolved line added (decode). Reopen once the root cause is found and fixed, followed by an independent audit.
+- **Next:** one H100 root-cause agent on the unpooler@16 race (phase B). If it finds and fixes the cause, the fixed
+  ET3 gets an independent audit, then checks in phase C. Phase C (18Z): spend the remaining checks. Tomorrow's
+  phase-A plan is due in the LOG by about 23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
