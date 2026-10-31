@@ -12,7 +12,75 @@ Verifier caveats:
 
 ## Results so far
 
-No checks yet (see RESULTS.tsv).
+### 10-31 raw controls (B0 bf16, M0 moe), harvested 2026-10-31T00:48Z
+
+| problem | read 1 | read 2 | control mean | A/A headline spread | published 10-29 | our board | gap today |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| bf16 | a9547928 1.5365 (sfo3c) | 280a3622 1.5442 (sfo3) | **1.5403** | 0.50% | 1.5502 (-0.6%) | 1.3425 | x1.147 |
+| moe | b3510dcc 2.3648 (sfo3) | 99b14fed 2.3761 (sfo3c) | **2.3704** | 0.47% | 2.4015 (-1.3%) | 2.1000 | x1.129 |
+
+Per-row tables: `controls-bf16-1031.md`, `controls-moe-1031.md`. Raw records and judge profiles: `runs/`. Harvester:
+`harvest.py`.
+
+**What the controls establish:**
+- **Their published rows reproduce, as slightly high draws.** Use 1.54 (bf16) and 2.37 (moe) as same-day targets.
+- **Prepare time.** Their moe prepare ran in 164-167 s on the judge, not the 273-312 s their FACTS feared.
+- **Headline A/A spread is about 0.5%.** An arm needs about +0.5% headline to read in 2 checks.
+- **Per-row spread is large.** It reaches 6.3% (moe d16), 5.8% (moe v1) and 7.8-8.4% (bf16 router v1/v16, o v16).
+  A row-level claim needs rows with s_r < 2% or more reads.
+- **Today's public read is faster than our board row on every row of both problems.** The 0-of-68 finding holds
+  against same-day public times. The closest are bf16 unpooler v16 (1.002) and router d1 (1.011).
+- **Judge per-kernel view (first ever, public-exposed):**
+  - Their moe runs ONE kernel per row: `okc::moe_fused<false>` at T<=32, `<true>` (WGS) at T=128/256. Ours runs 3-4:
+    ea6/ea4x w13 + w2 + combine, plus wg at v32.
+  - Their bf16 rows run, in order: cgemv (m=1); sk2 (m=8..32); Nathen's cps (pooler m16); smallm2 (pooler m8); v18s
+    (o m8); rr_small (router m8/16); qb_kernel (qkv m128); ol/rl projections (o m128/256); cuBLASLt nvjet pins
+    (pooler/unpooler/qkv m128/256); rk (router m128/256).
+
+**Where today's gap sits** (ours BEST vs today's public mean, raw µs; share of the log gap, then the headline-equivalent):
+```
+== muse_moe_w4a16: log gap (ours BEST vs today public mean, raw us) 0.1099 = x1.116 over 6 loads
+            verify 16    theirs  176.74 ours  213.97  ratio 1.211  share  32.0% of gap  (~3.51% headline)
+            verify 32    theirs  211.65 ours  253.13  ratio 1.196  share  29.7% of gap  (~3.27% headline)
+            verify 1     theirs   65.56 ours   73.03  ratio 1.114  share  17.3% of gap  (~1.90% headline)
+            decode 32    theirs  124.83 ours  134.17  ratio 1.075  share  11.4% of gap  (~1.25% headline)
+            decode 16    theirs   94.38 ours   99.92  ratio 1.059  share   8.9% of gap  (~0.98% headline)
+            decode 1     theirs   25.55 ours   26.92  ratio 1.053  share   8.1% of gap  (~0.89% headline)
+== muse_bf16_proj: log gap (ours BEST vs today public mean, raw us) 0.1394 = x1.150 over 6 loads
+  pooler    decode 16    theirs   13.80 ours   17.97  ratio 1.302  share  10.4% of gap  (~1.45% headline)
+  unpooler  decode 32    theirs   14.40 ours   18.40  ratio 1.277  share   9.2% of gap  (~1.28% headline)
+  unpooler  decode 16    theirs   13.77 ours   17.35  ratio 1.260  share   8.9% of gap  (~1.25% headline)
+  qkv_gate  verify 1     theirs    9.19 ours   11.65  ratio 1.268  share   8.0% of gap  (~1.12% headline)
+  pooler    verify 1     theirs   13.65 ours   15.99  ratio 1.171  share   7.6% of gap  (~1.06% headline)
+  pooler    decode 32    theirs   15.11 ours   18.20  ratio 1.204  share   7.1% of gap  (~0.99% headline)
+  qkv_gate  decode 1     theirs    8.75 ours   10.53  ratio 1.204  share   6.2% of gap  (~0.87% headline)
+  qkv_gate  decode 16    theirs    9.87 ours   12.20  ratio 1.236  share   5.8% of gap  (~0.81% headline)
+  pooler    decode 1     theirs   13.22 ours   14.62  ratio 1.106  share   4.9% of gap  (~0.68% headline)
+  pooler    verify 32    theirs   24.54 ours   27.34  ratio 1.114  share   4.1% of gap  (~0.57% headline)
+  unpooler  decode 1     theirs    3.56 ours    4.71  ratio 1.325  share   4.0% of gap  (~0.56% headline)
+  o         verify 1     theirs    5.29 ours    6.50  ratio 1.230  share   4.0% of gap  (~0.55% headline)
+  qkv_gate  verify 16    theirs   14.01 ours   16.18  ratio 1.155  share   3.9% of gap  (~0.54% headline)
+  unpooler  verify 1     theirs    4.12 ours    5.24  ratio 1.271  share   3.6% of gap  (~0.51% headline)
+  router    verify 32    theirs    7.14 ours    9.04  ratio 1.266  share   2.8% of gap  (~0.39% headline)
+  qkv_gate  decode 32    theirs   10.77 ours   11.97  ratio 1.111  share   2.8% of gap  (~0.38% headline)
+  qkv_gate  verify 32    theirs   17.65 ours   19.27  ratio 1.091  share   2.4% of gap  (~0.33% headline)
+  router    decode 16    theirs    4.66 ours    5.48  ratio 1.176  share   2.1% of gap  (~0.29% headline)
+  router    verify 16    theirs    5.99 ours    7.10  ratio 1.187  share   2.0% of gap  (~0.28% headline)
+  pooler    verify 16    theirs   20.61 ours   21.48  ratio 1.042  share   1.6% of gap  (~0.22% headline)
+  router    verify 1     theirs    4.48 ours    4.88  ratio 1.088  share   1.3% of gap  (~0.18% headline)
+  o         decode 16    theirs    5.71 ours    6.14  ratio 1.075  share   1.1% of gap  (~0.15% headline)
+  unpooler  verify 32    theirs   23.34 ours   24.05  ratio 1.030  share   1.0% of gap  (~0.14% headline)
+  o         verify 16    theirs    6.86 ours    7.41  ratio 1.079  share   1.0% of gap  (~0.14% headline)
+  o         decode 32    theirs    6.16 ours    6.46  ratio 1.050  share   0.7% of gap  (~0.10% headline)
+  o         decode 1     theirs    5.14 ours    5.32  ratio 1.036  share   0.6% of gap  (~0.09% headline)
+  router    decode 32    theirs    5.42 ours    5.67  ratio 1.046  share   0.6% of gap  (~0.08% headline)
+  o         verify 32    theirs    8.93 ours    9.28  ratio 1.039  share   0.5% of gap  (~0.07% headline)
+  router    decode 1     theirs    3.67 ours    3.71  ratio 1.011  share   0.1% of gap  (~0.02% headline)
+  unpooler  verify 16    theirs   19.05 ours   19.09  ratio 1.002  share   0.1% of gap  (~0.01% headline)
+```
+- moe: 62% of the gap is v16 and v32. That is their single persistent WGS kernel against our multi-kernel engine.
+- bf16: the gap is spread over the m=16/32 streams (sk2 consumer, Nathen cps pooler) and m=8 qkv, which is the 12-bit
+  consumer co-design.
 
 ## Why the gap persists (why-gap agent)
 

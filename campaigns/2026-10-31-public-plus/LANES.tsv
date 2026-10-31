@@ -1,13 +1,13 @@
 arm	problem	file	build	checks	verdict	next_action	updated_utc
-B0-aa1/B0-aa2	muse_bf16_proj	files/bf16/B0-aa{1,2}.py	main thread (copy + notice)	0	-	check x2 (raw control)	2026-10-31T00:29Z
-M0-aa1/M0-aa2	muse_moe_w4a16	files/moe/M0-aa{1,2}.py	main thread (copy + notice)	0	-	check x2 (raw control)	2026-10-31T00:29Z
-M1-stack	muse_moe_w4a16	files/moe/M1-stack.py	workflow build+audit	0	-	build	2026-10-31T00:29Z
-A0	muse_attention_decode	files/attention/A0.py	workflow build+audit	0	-	build (public-C full: G0a+G0b+R11)	2026-10-31T00:29Z
-A0p	muse_attention_decode	files/attention/A0p.py	workflow build+audit	0	-	build (public-C cheap: M1+G0b+R11)	2026-10-31T00:29Z
-A1	muse_attention_decode	files/attention/A1-nc2.py, A1-nc4.py	workflow build+audit	0	-	after A0/A0p reads	2026-10-31T00:29Z
-A2	muse_attention_decode	files/attention/A2-d1s8w.py	workflow build+audit	0	-	build (speculative)	2026-10-31T00:29Z
-M2	muse_attention_decode	- (H100 diagnostic)	workflow audit stage	0	-	H100 correctness only	2026-10-31T00:29Z
-P0	muse_prefill_layer	files/prefill/P0-c1.py	workflow build+audit	0	-	build (C1 FA3 everywhere)	2026-10-31T00:29Z
-P1	muse_prefill_layer	files/prefill/P1-c1contig.py	workflow build+audit	0	-	build (C1 + contiguous fa3c gather)	2026-10-31T00:29Z
-P2	muse_prefill_layer	files/prefill/P2-g0race.py	workflow build+audit	0	-	build (G0 + per-class race)	2026-10-31T00:29Z
-D0	muse_decode_layer	files/decode/D0.py	workflow build+audit	0	-	size the tvm_ffi port first; kill if not mechanical	2026-10-31T00:29Z
+B0-aa1/B0-aa2	muse_bf16_proj	files/bf16/B0-aa{1,2}.py	main thread (copy + notice)	2	control 1.5403 (A/A 0.50%)	done; bf16 leaves the track (no surviving graft)	2026-10-31T00:48Z
+M0-aa1/M0-aa2	muse_moe_w4a16	files/moe/M0-aa{1,2}.py	main thread (copy + notice)	2	control 2.3704 (A/A 0.47%)	done; control for M1-stack	2026-10-31T00:48Z
+M1-stack	muse_moe_w4a16	files/moe/M1-stack.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+A0	muse_attention_decode	files/attention/A0.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+A0p	muse_attention_decode	files/attention/A0p.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+A1	muse_attention_decode	files/attention/A1-nc2.py, A1-nc4.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+A2	muse_attention_decode	files/attention/A2-d1s8w.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+M2	muse_attention_decode	- (H100 diagnostic)	workflow audit stage	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+P0	muse_prefill_layer	files/prefill/P0-c1.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+P1	muse_prefill_layer	files/prefill/P1-c1contig.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+P2	muse_prefill_layer	files/prefill/P2-g0race.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z
+D0	muse_decode_layer	files/decode/D0.py	workflow build+audit	0	-	HELD (user stop 00:32Z); see PLAN §12 option B/A/C	2026-10-31T00:48Z

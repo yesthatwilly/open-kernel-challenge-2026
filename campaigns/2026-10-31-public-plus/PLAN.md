@@ -349,3 +349,49 @@ None block the start. These are defaults, which the user can override:
   - new `okc-campaign-public-plus.md` and its MEMORY.md index line;
   - an exception note appended to `okc-data-driven-integration.md` and `okc-campaign-arch-mirror.md` (this track
     only: public base, check-only, contamination rule).
+
+
+## 12. After the controls: next steps (written 2026-10-31T00:48Z, under the user stop of 00:32Z)
+
+**State.**
+- The 4 raw controls are harvested (FINDINGS "Results so far").
+- The build workflow wf_b31b245a-546 was stopped at 00:32Z before any edit. Its script is kept at
+  `~/.claude/projects/-home-user-git-musespark/e0c4de02-bc78-4108-8476-c8340385be4b/workflows/scripts/public-plus-build-wf_b31b245a-546.js`.
+- No agents, checks or H100 work run until the user lifts the stop.
+- Quota 10-31: bf16 18/20 checks, moe 18/20, the others 20/20.
+
+**What the controls change.**
+1. **Readability bar.** Headline A/A is about 0.5%, so an arm must be worth about +0.5% headline to be seen in 2
+   reads.
+2. **Arm odds against that bar:**
+
+| arm | predicted | odds of reading |
+|---|---|---|
+| A1 W2 | +0.14..+0.58% | at the bar |
+| M1-stack (moe) | +0.3..+0.5% | at the bar |
+| bf16 (any graft) | about 0 | none survived; bf16 leaves the track |
+
+3. **Compliance bases** (A0/A0p, P0/P1/P2, D0) are measurements, not bets. They give the compliant targets: how much of
+   2.653 and 1.817 survives our FA3-precision rule.
+4. **Use today's public reads, not the published rows, as targets:** bf16 1.54, moe 2.37.
+
+**Options when the user lifts the stop:**
+
+| option | agents | checks (about) | what it answers |
+|---|---|---|---|
+| **B (recommended): compliant targets + the one surviving graft** | 3 builders (attention A0p, then A1-nc2 on top; prefill P0 and P1; moe M1-stack), each self-audited, no H100 required (the judge check is the correctness test) | attention 4-6, prefill 4, moe 2 | the compliant attention and prefill targets, and whether W2 and the moe stack beat the public file at all |
+| A: the full build as planned (§9) | 6 builders + 6 auditors | about 20 | adds A0 (full), A2 (8-warp d1s), P2 (G0 race), D0 (decode), M2 (diagnostic) |
+| C: stop the track here | 0 | 0 | the inventory plus controls already answer the user's question: our findings agree with or re-derive the public file, and nothing tested beats it |
+
+To restart B, edit the kept script:
+- keep `ITEMS` attn-base (A0p only, plus A1-nc2 applied to it), prefill (P0 and P1 only) and moe;
+- drop attn-graft, attn-m2 and decode, and P2;
+- run `Workflow({scriptPath})` fresh.
+
+Then dispatch per §6: the compliant bases twice each first, then the arms.
+
+**For our scored line (outside this track; the user decides):** the gap tables in FINDINGS say where it is.
+- **moe:** v16/v32 carry 62% of the gap. That is their single persistent WGS kernel against our 3-4 kernel engine,
+  the architecture lever the arch-mirror L3 skeleton failed to reproduce.
+- **bf16:** the gap is spread over the 12-bit m=16/32 consumer and m=8 qkv.
+- Both confirm §4: the remaining gap is architecture, not riders.
