@@ -1,5 +1,5 @@
 # okc: problem=muse_decode_layer
-# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31.
+# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31.
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -5854,8 +5854,10 @@ __device__ __forceinline__ void wgs_seg(const Params& p, Smem& S, unsigned char*
       const uint2 scg = scs;
       if (lg < 3) {
         cwn = *reinterpret_cast<const uint4*>(pc + (((lg + 1) * 4 + wp) * 32 + lane) * 16);
-      } else if (lane == 0) {
-        mbar_arrive1(S.bars + BW_E + ws);  // every code and scale of this stage is in registers: weights slot free
+      } else {
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
+        __syncwarp();
+        if (lane == 0) mbar_arrive1(S.bars + BW_E + ws);  // every code and scale of this stage is in registers: weights slot free
       }
 #pragma unroll
       for (int h = 0; h < 4 / GS; ++h) {
@@ -7219,6 +7221,7 @@ skinny_tma_kernel(const uint4* __restrict__ Wp, const __nv_bfloat16* __restrict_
       for (int q = 0; q < NL; ++q)
         asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(wr[q].x), "=r"(wr[q].y), "=r"(wr[q].z), "=r"(wr[q].w) : "r"(src + q * 512));
     }
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
     __syncwarp();
     if (lane == 0) mbar_arrive(empty0 + 8 * slot);
     if (dg == 3) {
@@ -7924,6 +7927,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           }
           ++pe;
         }
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
         __syncwarp();
         if (lane == 0) mbar_arrive(empty0 + 8 * slot);
       }
@@ -7998,6 +8002,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
       }
       // the stage's shared memory is in registers now: hand the slot back before decoding and multiplying
       if (UPW == 1 && uu == 0) {
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
         __syncwarp();
         if (lane == 0) mbar_arrive(empty0 + 8 * slot);
       }
@@ -8034,6 +8039,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           }
     }
     if (UPW > 1) {
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
       __syncwarp();
       if (lane == 0) mbar_arrive(empty0 + 8 * slot);
     }
@@ -8067,6 +8073,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           ldsm_x4((PK && trow[mt] >= M) ? zrow
                       : xt + trow[mt] * 128 + (((2 * j + chi) ^ ((ui * Mb + trow[mt]) & 7)) << 4),
                   a[j][mt][0], a[j][mt][1], a[j][mt][2], a[j][mt][3]);
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
       __syncwarp();
       if (lane == 0) mbar_arrive(empty0 + 8 * slot);
 #pragma unroll
@@ -13399,6 +13406,7 @@ def _gle_source():
         "            af[r * 4 + u] = v;\n"
         "          }\n"
         "        }\n"
+        "        asm volatile(\"fence.proxy.async.shared::cta;\" ::: \"memory\");   // [WARFIX] reads done before the refill\n"
         "        __syncwarp();\n"
         "        if (lane == 0) mbar_arrive(empty0 + 8 * slot);\n"
         "      }\n"
@@ -13467,6 +13475,7 @@ def _gle_source():
          "          afi[t] = fmaf(a.z, bw.z, afi[t]); afi[t] = fmaf(a.w, bw.w, afi[t]);\n"
          "        }\n"
          "      }\n"
+         "      asm volatile(\"fence.proxy.async.shared::cta;\" ::: \"memory\");   // [WARFIX] reads done before the refill\n"
          "      __syncwarp();\n"
          "      if (lane == 0) mbar_arrive(empty0 + 8 * slot);\n"
          "      continue;\n"
