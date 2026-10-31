@@ -164,6 +164,14 @@
     (bf16 first: the sk2 code comes from it), measures speed, and builds the D0FIX/ET3FIX (+BF16FIX) arms.
   - Plan: on PASS, 2 D0FIX checks, then a scored run and land (correctness comes before speed; landing it is right
     even at a small speed cost). ET3FIX gets 2 checks under the LEVERS-1031b rule.
+- **~16:12Z user (verbatim): "start and pursue any and all leads you have."** Workflow wf_2f1d3d0d-275 (task wybxc2nqh)
+  builds and independently audits each lead (effort high, shared GPUs 1/3/4/5/6):
+  - prefill router chain (PFR, +0.3-0.4%, p 0.25);
+  - prefill KPERM + 2-CTA merge (PFK2, ~0.15%);
+  - moe B4 (+0.13%);
+  - bf16 rk_kernel (BRK, <=0.1%).
+  Already running: sk2 fix (wf_a26ca193-d8e), the attention and prefill compliance-tax designs. Every lead now
+  has an agent. Small leads get 2 phase-C reads each if they pass.
 - **User (verbatim): "go on the sk2 race fix".** Relaunched the same script unchanged as wf_a26ca193-d8e (task wx5ebjqk1):
   complete the fix on GPU 1, then an independent audit on GPU 3.
 - **16:20Z wf_411829f6-5cd did nothing.** Both agents declined: the user request relayed to them was the prefill
