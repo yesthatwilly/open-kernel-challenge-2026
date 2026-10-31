@@ -49,6 +49,7 @@
   8. compact R11 (parked).
 - **09:20Z decode DL2H checks:** 5b0f8dae (r1) and cc512a50 (r2). GO if d1s moe is at least 1.5 us faster than D0 in
   both reads, with no other row more than 0.5% worse.
+- **~10:00Z DL2H KILLED:** reads 2.1912 and 2.2029 (mean 2.197) against D0 checks of 2.188. That is noise, and d1s is flat. The H100's L2-hint gain does not transfer to the H200. Not scored; a CLAIMS refuted line is added. Decode checks left: 16.
 - **09:22Z build workflow wf_2144e5b0-bff:** S6 (design max; GPUs 3,4), ATT pp/ppstsm (GPU 5), PF knobs (GPU 6), BF
   race (GPU 1). Each is built, then audited.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
