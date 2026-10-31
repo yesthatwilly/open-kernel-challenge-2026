@@ -301,7 +301,19 @@
   One builder per problem at effort high, each followed by an independent audit; worktrees `.worktrees/diag-{moe,pf,att}`
   (campaign/diag1031-*). On audit PASS, a marker lands in the scratchpad `diag-ready/`, and the main thread copies the
   file and attempt draft into public-plus and dispatches. Never scored. Dispatch cutoff 23:40Z.
-- Quota at 20:31Z (checks / runs): bf16 16/9, attention 12/6, moe 12/8, decode 11/7, prefill 12/9.
+- **20:50Z sk2fix audit: PASS on all 6 arms** (wf_a9414eed-b89 done; 9 agents, 1.92M tokens; audit probe takemyjob
+  hopper/sk2aud 5f7e83f). Independent regeneration byte-identical; race reproduced at N=16000 with an independent
+  harness (ET3old 15/25 gross, D0FIX/ET3FIX/D0 0); SASS: every changed function fenced, every other one identical
+  (attention 20/20). Speed: D0FIX +0.21%, ET3FIX -0.26%, BF16FIX ~+0.3% time. The judge tolerance does not catch the
+  race (all 40 of ET3old's gross replays passed check_implementation), so the reads cannot show the fix.
+- **20:51Z checks** (attempt files 2026-10-31T20510[2-7]Z on public-plus 56c488ee; rules pre-registered by the
+  auditor): D0FIX 0bd3ae2a / 7167c064, ET3FIX 27c3e9c2 / 60c79ec7 (decode); BF16FIX 754e0c9d / a3aa275b (bf16).
+  - D0FIX GO: 13/13 tests, headline 2-read mean >= 2.19, d1s/d1f <= 69.6/77.5 us, d32s/d32f <= 151.5/303.3 us; then a
+    scored run, landed even below 2.2220 (correctness fix).
+  - ET3FIX: the LEVERS-1031b §1 rule with the fix cost folded in (Z <= -1.0 us, mean >= 2.2138, scored and landed
+    only if >= 2.2220); a speed-only KILL leaves D0FIX as the landing candidate.
+  - BF16FIX GO: 9/9 tests, mean >= 1.525; landing below the 1.5657 board is a user call (HOLD).
+- Quota at 20:52Z (checks / runs): bf16 14/9, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
