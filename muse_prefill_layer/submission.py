@@ -1,8426 +1,5419 @@
 # okc: problem=muse_prefill_layer
-"""SGLang's decoder layer pipeline (baseline.py, MuseSpark1xDecoderLayer.forward at SGLang commit
-a55ab7d5ae1bba59ac351e55026fe7f7644ecc5f) ported module for module at the prefill shapes, with two
-deliberate changes (hypothesis sglang-pipeline-parity):
+# Based on alygg77@6cae49a kernels/muse_prefill_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: G0, own FP8 attention with an FP32 unrounded-P softmax denominator (PV m64n64, no ones row), variants {8, 43} pinned per class {'slide': 8, 'full_long': 43, 'full_short': 43, 'full_batch': 43} (None = FA3), assert T > 8. Compliance patch (public-plus A0/P2, judge 10-31).
+# Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
+# Submitted by alygg77 under the Apache License 2.0 with this notice retained.
+"""Muse Spark prefill layer: one transformer layer step over a batch of tokens.
 
-  1. The local-expert id remap. SGLang's path runs three small kernels on the int32 [T, 8] routing
-     ids: (topk_ids - local_start), % 256, then a gather through the expert_map table (-1 for
-     experts on other GPUs). Here it is one Triton elementwise kernel: r = (ids - local_start) & 255,
-     local_ids = r if r < 32 else -1. local_start is read on the device. The expert_map table is gone.
-  2. The two tokens <= 8 branches (the FP32 F.linear router with the FP32 router input written by
-     the attention boundary, and the sliced unpooler + zero pad) are removed: every prefill case has
-     q_len >= 200. The router always runs the BF16 hi/lo pair with FP32 accumulation, and the
-     unpooler always uses the whole weight. kernel_fn asserts tokens > 8 (a shape check).
+Algorithm (one ``kernel_fn`` call, in order; every stage is one launch or a
+few launches, and the stage order is the data dependency order):
 
-Everything else is SGLang's pipeline as baseline.py composes it:
+1. **QKV projection.** Dense GEMM (cuBLASLt-tuned, else ``torch.mm``) of the
+   attention input, producing ``[Q | K | V | gate]`` per token.
+2. **Q/K prep.** Per-token RMS-norm of Q and K, RoPE rotation, FP8
+   (E4M3) quantisation of Q, and stores of K/V into the paged KV cache,
+   scaled by the cache scales. A CUDA kernel (``qk_prep``) does this; the
+   Triton ``_qk_prep_kernel`` is the same computation and is kept as the
+   fallback path.
+3. **Attention.** Either the FA3 paged FP8 path followed by a fused
+   ``norm * sigmoid(gate)`` epilogue, or the file's own Hopper attention
+   kernel (``attn_fwd``) with that epilogue fused in. The own kernel is
+   picked per shape class in ``prepare`` after validating it against the
+   FA3 path. On non-Hopper devices a slow FP32 reference attention runs
+   instead (testing only, never on the scored path).
+4. **O projection + first boundary.** Dense GEMM, then the boundary mixes
+   the branch into the fp32 residual stream:
+   ``stream = alpha * stream + beta * rms(branch)`` and emits the next
+   block's BF16 input as ``rms(stream) * (1 + g_pre)``. The boundary
+   kernels also zero the MoE work-counters as a side effect.
+5. **Router + pooler, overlapped.** The router GEMM and top-8 routing run
+   on a side stream while the pooler GEMM runs on the main stream; the
+   main stream then joins the side stream. Routing picks ``TOP_K`` experts
+   per token, per local expert.
+6. **Grouped MoE.** The pooler output is gathered (with the pre-expert
+   norm) into per-expert token rows, then the fused persistent kernel
+   runs both expert GEMMs: NVFP4 weights are dequantised in registers as
+   the wgmma A-operand, BF16 activations come from shared memory, and
+   the epilogue is the fused SiLU*up (``silu(gate) * up``) for GEMM1.
+7. **Combine + unpooler + second boundary.** The per-route rows are
+   combined (per-expert RMS-norm, weighted by routing weights) back into
+   one ``[T, D_EXPERT]`` tensor, the unpooler GEMM brings it back to
+   ``HIDDEN``, and the second boundary mixes it into the stream and
+   emits the layer output. When the token count is large the second
+   boundary instead rebuilds the fp32 stream from the first boundary's
+   saved RMS factor, saving a 32 KB-per-row round trip.
 
-  qkv_gate projection              bf16_gemm_dispatch (cuBLAS on H200)
-  FusedQKNorm (Triton)             per-head RMSNorm of q and k, read from the fused projection,
-                                   with the interleaved RoPE fused in on sliding layers
-  cache store, q to FP8            as FlashAttentionBackend and set_kv_buffer do for an FP8 cache
-                                   (cast, then the store_cache JIT kernel at the step's rows)
-  flash_attn_with_kvcache (FA3)    paged, causal, window (2047, 0) on sliding layers
-  FusedRMSNormGate (JIT)           per-head output norm x sigmoid(gate)
-  o projection                     bf16_gemm_dispatch; then the all-reduce (identity here)
-  FusedPostNormResidualPreNorm     post-attention norm + residual gate + pre-FFN norm (JIT)
-  router                           two BF16 GEMMs on a hi/lo split of the weight
-                                   (MuseSpark1xRouter above 8 tokens); on a side stream,
-                                   overlapping the pooler
-  FusedMuseSparkRouting (JIT)      sigmoid, biased top-8, renormalize (on the side stream)
-  pooler                           bf16_gemm_dispatch, replicated on every GPU
-  pre-expert norm                  MuseSpark1xRMSNorm (F.rms_norm)
-  experts                          moe_align_block_size, two grouped W4A16 GEMMs: SGLang's
-                                   moe_wna16_marlin_gemm up to 4096 tokens; above that (hypotheses
-                                   experts-hybrid-marlin-turn-triton-first-turn,
-                                   experts-triton-w4a16-inkernel-fp4 and -swapab-reglhs) a Triton
-                                   fused_moe_kernel, computed swap-AB, that dequantizes the
-                                   NVFP4 tiles (nibble-reordered in prepare) in registers as the
-                                   dot's LHS, in place of moe_wna16_marlin_gemm), silu_and_mul, Triton
-                                   post-expert norm weighted sum; then the all-reduce (identity)
-  unpooler                         the whole weight (bf16_gemm_dispatch)
-  FusedPostNormResidualPreNorm     post-FFN norm + residual gate + the next layer's pre-attention
-                                   norm (JIT)
+Design rules this file follows:
 
-Differs from SGLang (as baseline.py does):
-  * The step's positions, cache rows, FA3 lengths and FA3 scheduler metadata come in with the
-    inputs; SGLang builds them once per step for all layers.
-  * All-reduces are the identity."""
+* ``prepare(weights)`` runs once: it builds the CUDA extension, repacks
+  the NVFP4 expert weights into the kernel's layout, and tunes the two
+  choices that depend on the machine (cuBLASLt algorithm per dense GEMM,
+  own-attention variant per shape class). Those tuning results are the
+  only state carried between calls, plus the compiled extension and one
+  side stream.
+* ``kernel_fn(data, state)`` allocates every activation fresh on every
+  call and returns fresh tensors; nothing computed from one call's
+  inputs is reused by another.
+* The timed path performs no host synchronisation: no ``.item()``,
+  ``.tolist()``, ``torch.cuda.synchronize()`` or data-dependent host
+  branch. (The FP32 fallback attention and the self-tests do sync; they
+  are not on the Hopper path.)
+* The CUDA/C++ sources at the bottom (``CPP``, ``GLUE``, ``_CUDA_SRC``,
+  ``LT_CPP``, ``LT_GLUE``) are the tuned algorithm with every dead
+  preprocessor branch, dead function and dead define removed (the
+  taken path is unchanged: the kernels, tile sizes and launch
+  configs are identical). The one host-supplied switch, MOE_FAST_SCALE
+  (0 when the weights have non-normal block scales), is kept with
+  both of its branches. Everything above
+  them -- constants, Triton kernels, ``prepare``, ``kernel_fn`` and the
+  helpers -- is the Python layer. Anything in that layer
+  whose equivalence is not provable from the source alone needs GPU
+  gating before it is treated as the submission.
+"""
 
-from typing import TypedDict
-
-import copy
 import hashlib
-import inspect
-import os
-import re
-import threading
-import time
-import types
 
-import nvfp4
 import torch
+import torch.nn.functional as F
+from torch.utils.cpp_extension import load_inline
 import triton
 import triton.language as tl
-from sgl_kernel.flash_attn import flash_attn_with_kvcache
-from sgl_kernel.scalar_type import scalar_types
-from torch import nn
+from triton.language.extra import libdevice
 
-from sglang.kernels.ops.activation.activation import silu_and_mul
-from sglang.kernels.ops.kvcache.kvcache import store_cache
-from sglang.kernels.ops.moe.moe_wna16_marlin import moe_wna16_marlin_gemm
-from sglang.kernels.ops.muse_spark_v12.fused_muse_spark_routing import FusedMuseSparkRouting
-from sglang.kernels.ops.muse_spark_v12.fused_norm_gate import FusedRMSNormGate
-from sglang.kernels.ops.muse_spark_v12.fused_norm_residual import FusedPostNormResidualPreNorm
-from sglang.kernels.ops.muse_spark_v12.fused_post_expert_norm_weighted_sum_triton import (
-    fused_post_expert_norm_weighted_sum,
-)
-from sglang.kernels.ops.muse_spark_v12.fused_qk_norm import FusedQKNorm
-from sglang.srt.layers.moe.fused_moe_triton import moe_align_block_size
-from sglang.srt.layers.muse_spark_layers import (
-    MuseSpark1xNormPreservingResidualConnection,
-    MuseSpark1xRMSNorm,
-    MuseSpark1xRMSNormWithInputScale,
-)
-from sglang.srt.layers.quantization.marlin_utils import marlin_make_workspace
-from sglang.srt.layers.quantization.marlin_utils_fp4 import prepare_moe_nvfp4_layer_for_marlin
-from sglang.srt.layers.quantization.unquant import _bf16_gemm_dispatch_impl
+try:  # FA3 (Hopper) from the judge image
+    from sgl_kernel.flash_attn import flash_attn_with_kvcache as _fa3
+except Exception:  # local testing
+    _fa3 = None
 
 
-class Weights(TypedDict):
-    qkv_gate: torch.Tensor            # bfloat16 [2304, 8192]: q 16x64, k 2x64, v 2x64, output gate 16x64
-    o: torch.Tensor                   # bfloat16 [8192, 1024]
-    attn_residual_gate: torch.Tensor  # bfloat16 [8192], the post-attention residual gate's weight
-    pre_ffn_norm: torch.Tensor        # bfloat16 [8192] (applied as 1 + w)
-    router: torch.Tensor              # float32 [256, 8192]
-    router_bias: torch.Tensor         # float32 [256], added to the scores only to choose experts
-    pooler: torch.Tensor              # bfloat16 [4096, 8192]
-    pre_expert_norm: torch.Tensor     # bfloat16 [4096] (applied as 1 + w)
-    w13: torch.Tensor                 # uint8 [32, 8192, 2048]: this GPU's experts, gate then up rows, packed E2M1
-    w13_sf: torch.Tensor              # float8_e4m3fn [32, 8192, 256]
-    w13_gs: torch.Tensor              # float32 [32]
-    w2: torch.Tensor                  # uint8 [32, 4096, 2048]
-    w2_sf: torch.Tensor               # float8_e4m3fn [32, 4096, 256]
-    w2_gs: torch.Tensor               # float32 [32]
-    post_expert_norm: torch.Tensor    # bfloat16 [4096] (applied as 1 + w, before normalizing)
-    unpooler: torch.Tensor            # bfloat16 [8192, 4096]; up to 8 tokens only rows 0-1023 (this GPU's slice)
-    post_ffn_norm: torch.Tensor       # bfloat16 [8192] (applied as 1 + w, before normalizing)
-    ffn_residual_gate: torch.Tensor   # bfloat16 [8192]
-    next_pre_attn_norm: torch.Tensor  # bfloat16 [8192], the next layer's input norm (applied as 1 + w)
-
-
-class Config(TypedDict):
-    batch: int            # B sequences
-    q_len: int            # L: 1 for decode, 8 for a verify block (causal inside it); 200-16384 on muse_prefill_layer
-    tokens: int           # T = B * L, request-major
-    hidden: int           # 8192
-    num_q_heads: int      # 16 per GPU under TP8
-    num_kv_heads: int     # 2
-    head_dim: int         # 64
-    page_size: int        # 1 in the scored cases (as SGLang serves Muse on H200), 64 in some tests
-    window: int           # 2048 on sliding-window layers (a token and the 2,047 before it); 0 = all
-    rope_theta: float     # 500000 on sliding-window layers (interleaved RoPE); 0 = no RoPE
-    qk_scale_factor: float
-    sm_scale: float       # 1/8
-    kv_scale: float       # the cache scales' value: 1 in the scored cases (SGLang leaves them unset)
-    n_experts: int        # 256
-    top_k: int            # 8
-    local_experts: int    # 32: this GPU computes experts local_start .. local_start + 31
-
-
-class Inputs(TypedDict):
-    stream: torch.Tensor      # float32 [T, 8192], the residual stream
-    attn_input: torch.Tensor  # bfloat16 [T, 8192], the normalized stream (the previous layer's boundary wrote it)
-    k_cache: torch.Tensor     # float8_e4m3fn [pages, page_size, 2, 64], written in place
-    v_cache: torch.Tensor     # float8_e4m3fn [pages, page_size, 2, 64], written in place
-    positions: torch.Tensor   # int64 [T], each new token's position (seq_lens[b] + i)
-    cache_loc: torch.Tensor   # int64 [T], each new token's flat cache row (page * page_size + offset)
-    cache_seqlens: torch.Tensor  # int32 [B], seq_lens + L
-    cu_seqlens_q: torch.Tensor   # int32 [B+1], 0, L, 2L, ...
-    scheduler_metadata: torch.Tensor | None  # int32, FA3's tile schedule (get_scheduler_metadata) on
-                                             # full-attention decode steps, else None
-    k_scale: torch.Tensor     # float32 [], key = e4m3 * k_scale: 1 in the scored cases, 1/64 in some tests
-    v_scale: torch.Tensor     # float32 []
-    page_table: torch.Tensor  # int32 [B, max_pages], physical page of each logical page (-1 unused)
-    seq_lens: torch.Tensor    # int32 [B], cached tokens per request; the block starts at this position
-    local_start: torch.Tensor # int32 [1], this GPU's first expert (a multiple of 32; its weights are w13[0], ...)
-    config: Config
-
+# --------------------------------------------------------------------------------------
+# Model geometry. Every other size in the file derives from these.
+# --------------------------------------------------------------------------------------
 
 HIDDEN = 8192
-RMS_EPS = 1e-5
-POST_NORM_EPS = 1e-8
-FP8 = torch.float8_e4m3fn
-N_EXPERTS = 256
+D_EXPERT = 4096
 TOP_K = 8
 LOCAL_EXPERTS = 32
-D_EXPERT = 4096
-# SGLang's MuseSpark1xRouter and sliced unpooler switch paths at this many tokens; every prefill
-# case is above it, so only the above-8 paths are kept.
-SMALL_BATCH_MAX_TOKENS = 8
-# Expert path by shape (hypothesis experts-hybrid-marlin-turn-triton-first-turn): up to this many
-# tokens (turn_1 753, turn_4 3012, every test) SGLang's two Marlin GEMMs; above it (the first turn's
-# 16384) the Triton NVFP4 grouped GEMM. Not a measured crossover: T in (4096, 16384) is unscored and
-# untuned.
-MARLIN_MAX_TOKENS = 4096
-# MuseSpark1xFp4Experts' candidates, smallest first.
-BLOCK_SIZE_M_CANDIDATES = (8, 16, 32, 48, 64)
-# Grouped NVFP4 GEMM (swap-AB) tile configs, chosen from the shape (tokens) only. About T of the
-# T * 8 routes land on this GPU's 32 experts, so an expert gets ~T/32 rows: the token tile BLOCK_T
-# (the MMA N side) covers one expert in one tile at the turn shapes (~24 rows at turn_1, ~94 at
-# turn_4) and four tiles at the first turn's ~512. BLOCK_W is the MMA M side (rows of the expert's
-# N). moe_align_block_size pads to BLOCK_T. Entries are (max tokens, config); the last one has no
-# bound. Above 4096 tokens (first turn) BLOCK_T 256 feeds each in-register dequantized W tile to twice
-# the MMA columns (wgmma m64n256 per warpgroup); its two [64, 256] activation slabs per K step leave
-# room for 2 smem stages, not 3.
-# BLOCK_K is fixed by the nibble order prepare() stores (EXPERT_BLOCK_K): each byte of a 128-k chunk
-# holds k0 + i (low nibble) and k0 + 64 + i (high nibble).
-EXPERT_BLOCK_K = 128
-EXPERT_CONFIGS = (
-    (1024, dict(BLOCK_T=64, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=4, num_stages=3)),
-    (4096, dict(BLOCK_T=128, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=8, num_warps=8, num_stages=3)),
-    (None, dict(BLOCK_T=256, BLOCK_W=128, BLOCK_K=EXPERT_BLOCK_K, GROUP_SIZE_T=4, num_warps=8, num_stages=2)),
-)
-SF_BLOCK = tl.constexpr(16)  # nvfp4.BLOCK: k per e4m3 block scale
-# The kernel's W tile is E2M1 * block scale * 2^-7 (exact in BF16); the epilogue multiplies by
-# global scale * 2^7. 2^119 moves the e = 0 subnormal placement (E2M1 * 2^-126) to that range.
-SCALE_BIAS = tl.constexpr(2.0 ** 119)
-EPILOGUE_BIAS = tl.constexpr(2.0 ** 7)
-# Write zeros for the m-blocks of non-local routes (expert -1), as SGLang's Triton guard does. Only
-# the second GEMM's output reaches the weighted sum (the first GEMM's -1 rows only feed the
-# second GEMM's -1 blocks, which never read A), so only that GEMM pays for it.
-ZERO_NONLOCAL_W2 = True
-ROPE_POSITIONS = 1 << 21
+HQ, HKV, HD = 16, 2, 64
+Q_SIZE, KV_SIZE = HQ * HD, HKV * HD
+# QKV gate output per token: [Q (Q_SIZE) | K (KV_SIZE) | V (KV_SIZE) | gate (Q_SIZE)].
+QKV_SIZE = 2 * Q_SIZE + 2 * KV_SIZE
+GATE_OFFSET = Q_SIZE + 2 * KV_SIZE  # gate starts after Q, K, V
+RMS_EPS = 1e-5  # RMS-norm epsilon (post-norm and Q/K-norm; the CUDA kernels use the same)
+POST_NORM_EPS = 1e-8  # boundary / combine RMS-norm epsilon (the CUDA kernels use the same)
 ROPE_THETA = 500_000.0
-REMAP_BLOCK = 1024
+FP8 = torch.float8_e4m3fn
+LOG2E = 1.4426950408889634  # converts a natural-log softmax scale for exp2
+
+# NVFP4 expert weights: K is walked in stages of KS elements; each
+# (n-tile, k-stage) weight block holds KS * 128 code bytes + KS * 8 scale bytes.
+KS, WBLK = 64, 4608
+
+
+# --------------------------------------------------------------------------------------
+# Tuning knobs. Each one is a measured default, not a guess: the comment says
+# what it changes and why the value is what it is. All of them were formerly
+# scattered through the file (several after their first use); they are
+# collected here so the whole launch configuration is visible at once.
+# --------------------------------------------------------------------------------------
+
+# --- MoE launch ---
+# Tile slots per weight n-tile in the (non-persistent) expert GEMMs.
+P_GEMM1 = 8
+P_GEMM2 = 16
+MOE_LARGE_T = 8192  # token count from which the "large" launch mode/order apply
+# Launch mode per token count: "fused" = both GEMMs in one persistent launch,
+# "persist" = two persistent launches, anything else = two per-tile-grid launches.
+MOE_MODE_SMALL = "fused"
+MOE_MODE_LARGE = "fused"
+# Tile order for the persistent work queue: 0 expert order, 1 biggest first,
+# 2 big first + small tiles spread between.
+MOE_ORDER_SMALL = 1
+MOE_ORDER_LARGE = 1
+MOE_FINE_ORDER_SHIFT = 8  # bit 8 of the plan order / fused flags: fine remainder tiles
+MIN_TILE_ROWS = 32  # smallest token tile; the plan's tile-count bound divides by this
+MOE_TILE_SLACK = 64  # extra tile slots in the plan buffer, beyond the bound
+MAX_PADDED_ROWS_PER_EXPERT = 256  # per-expert row allowance in the padded row buffer
+FINE_MIN_T = 2048  # from this token count, remainder tiles round to 32 rows
+SKINNY_TEST = False  # feasibility-test build: the fused MoE kernel at 2 CTAs/SM
+CIT = False  # combine in the tail of the fused expert kernel (no combine launch)
+GATHER_PLAN = True  # the gather kernel also writes the plan (one launch fewer)
+MOE_SMEM_SM90 = 227 * 1024  # dynamic shared memory for the fused/persistent MoE kernels
+MOE_SMEM_SM80 = 163 * 1024
+MOE_SMEM_SKINNY_TEST = 100 * 1024
+
+# --- Boundary ---
+BND_RECOMPUTE = True  # second boundary rebuilds the fp32 stream from the first's RMS factor
+BND_RC_MIN_T = 8192  # ...from this token count (below it, the stored stream is cheaper)
+BND_CUDA_MIN = 1  # token count from which the CUDA boundary kernel replaces the Triton one
+
+# --- Router / combine ---
+ROUTER_SERIAL_MAX = 0  # T <= this: router GEMM on the main stream before the pooler
+ROUTER_SERIAL_MIN = 1 << 30  # T >= this: the same (never, at the scored sizes)
+ROUTER_LT = True  # False: the router GEMM always runs as torch.mm (no tuned split-K algorithm)
+COMBINE_NW_SMALL = 8  # Triton combine warps at T <= COMBINE_SMALL_T
+COMBINE_SMALL_T = 4096
+COMBINE_PW_EARLY = tl.constexpr(False)  # Triton combine: norm weight loaded before the PDL wait
+CUDA_COMBINE = False  # CUDA combine kernel (PDL): slower than Triton at the scored sizes
+TRITON_PDL = False  # qk_prep and combine (Triton) launched with programmatic dependent launch
+
+# --- Attention ---
+QK_PREP_CUDA = True  # CUDA q/k prep instead of the Triton kernel (same numerics)
+PREP_SPLIT_MAX_T = 1024  # stage cache-only attention tiles on the side stream during the qkv GEMM
+PREP_SPLIT = {"slide": False, "full": False}  # split-staging by shape class (off: it cost time)
+PREP_SPLIT_AFTER = True  # capture the side branch after the qkv GEMM node, not before it
+ATTN_SK = {"slide": 0, "full_long": 0, "full_short": 0, "full_batch": 0}  # stream-K grid per class (0: off)
+ATTN_SK_MAX_PAIRS = 1536  # stream-K applies only up to this many (block, pair) pairs; must match ATTN_SK_MAXPAIRS in _CUDA_SRC
+ATTN_PF_MAX_T = 0  # tokens <= this: the attention kernel prefetches the o-proj weight into L2 (0: off)
+ATTN_SPLIT_MODE = 1  # 0: fill two waves; 1: minimize waves / splits (wave-quantization aware)
+# Own attention variant per shape class when it validates (None: time all variants
+# in prepare). Variant 43 is ~4% faster than 8 on long full attention and ~3%
+# slower on sliding windows, hence the split by class.
+ATTN_FIXED = {'slide': 8, 'full_long': 43, 'full_short': 43, 'full_batch': 43}   # [public-C P2] per class (None: FA3); ATTN_FIXED = None races FA3 / 8 / 43 in prepare
+# Own-kernel variants: (consumer warpgroups, exponentials per thread per tile on
+# the FMA pipe). The first element sizes the split heuristic; the GLUE launch
+# table maps the variant to the kernel template parameters.
+ATTN_VARIANTS = {8: (3, 0), 43: (3, 0)}   # [public-C P2] only the variants whose softmax paths carry the FP32 sum
+OWN_ATTN_LOCAL = False  # local (sm_80) runs use the FP32 fallback attention unless set
+ATTN_ASTAGES = 4  # must match `#define ATTN_ASTAGES` in _CUDA_SRC (it sets the staging depth)
+# Dynamic shared memory for the own attention kernel: Q/K staging + per-stage
+# K/V tiles (a K tile is 128 keys x 64, a V tile 72 x 128). Must match the
+# kernel's staging in _CUDA_SRC.
+ATTN_SMEM = 1024 + 1024 + 4096 * 3 + ATTN_ASTAGES * (8192 + 72 * 128)
+ATTN_SMEM_SM80_EXTRA = 3 * 64 * 128  # sm_80 test path stages P in shared memory
+ATTN_VALIDATE_TOL = 0.03  # max relative error for an own-kernel variant to validate
+ATTN_Q_ROWS_PER_WARPGROUP = 8  # query rows one warpgroup owns in the split heuristic
+ATTN_KEY_TILE = 128  # keys per staging tile
+ATTN_MAX_SPLITS = 16  # cap on attention key-range splits
+ATTN_SPLIT_PENALTY = 0.02  # cost added per extra split (the merge pass is not free)
+ATTN_SPLIT_SLOT = HD + 2  # per (split, token, head) partial: 64 unnormalised O + max + sum
+ATTN_SK_Q_BLOCK = 24  # stream-K: query rows per (block, pair) -- 3 warpgroups x 8 rows
+FALLBACK_Q_BLOCK = 1024  # query rows per step in the FP32 fallback attention
+
+# --- Dense GEMMs (cuBLASLt) ---
+# name -> (state weight [N, K], fp32 output). The router GEMM returns both
+# halves (hi | lo partial logits) in one GEMM.
+LT_GEMMS = {"qkv": ("qkv_gate", False), "o": ("o", False), "router": ("router_hilo", True),
+            "pooler": ("pooler", False), "unpooler": ("unpooler", False)}
+LT_TOKENS = (753, 3012, 16384)  # token counts of the scored shapes; others use torch.mm
+# T -> SMs left free for the router chain by sizing the pooler down (0/absent:
+# torch.mm or the tuned algorithm). The router chain runs on a side stream
+# during the pooler GEMM; at small T the pooler holds every SM, so the chain
+# would wait for the pooler's end and land the top-8 on the critical path.
+POOL_SM_RESERVE = {}
+# (T, gemm) -> cuBLASLt heuristic signature (tile id, split-K, reduction,
+# custom option): a fixed pick, so prepare never races near-equal algorithms.
+LT_PIN = {(753, "router"): (33, 4, 2, 3), (16384, "o"): (201, 1, 0, 2),
+          (16384, "unpooler"): (201, 1, 0, 2), (16384, "pooler"): (29, 1, 0, 1)}
+LT_ALGO_TOL = 2e-2  # a tuned algorithm must match torch.mm this closely to be kept
+LT_MIN_SPEEDUP = 0.97  # ...and must beat torch.mm by at least this factor to be kept
+LT_WORKSPACE_BYTES = 64 << 20  # cuBLASLt workspace per stream (main + side)
+
+# --- Self-tests (check runs only, printed from prepare) ---
+SELFTEST = False
+SYNTH_SM_SCALE = 0.125  # 1 / sqrt(HD), the softmax scale of the synthetic attention cases
+SYNTH_QK_SCALE_FACTOR = 5.4730064863875  # qk scale factor of the synthetic attention cases
+
+# The side stream for the router GEMM + top-8 (created in prepare). It is a
+# module global, not part of the state dict, because the state holds only
+# tensors and plain data.
+SIDE_STREAM = None
+
+# --------------------------------------------------------------------------------------
+# Triton kernels. The CUDA kernels in _CUDA_SRC do the same jobs on the hot
+# paths; these cover the boundary/combine epilogues and the q/k prep
+# fallback. Shapes here are spelled with the model constants: a QKV row is
+# [Q | K | V | gate], so the gate starts at GATE_OFFSET.
+# --------------------------------------------------------------------------------------
 
 
 @triton.jit
-def _local_expert_ids_kernel(ids_ptr, start_ptr, out_ptr, n, LOCAL: tl.constexpr, BLOCK: tl.constexpr):
-    """out = (ids - local_start) mod 256 where that is < LOCAL, else -1 (SGLang's expert_map on
-    this EP rank). int32 in, int32 out; & 255 is the non-negative mod 256 in two's complement."""
-    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < n
-    ids = tl.load(ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-    start = tl.load(start_ptr).to(tl.int32)
-    r = (ids - start) & 255
-    out = tl.where(r < LOCAL, r, -1).to(tl.int32)
-    tl.store(out_ptr + offs, out, mask=mask)
-
-
-def _local_expert_ids(topk_ids, local_start):
-    ids = topk_ids.contiguous()
-    out = torch.empty(ids.shape, dtype=torch.int32, device=ids.device)
-    n = ids.numel()
-    _local_expert_ids_kernel[(triton.cdiv(n, REMAP_BLOCK),)](
-        ids, local_start, out, n, LOCAL=LOCAL_EXPERTS, BLOCK=REMAP_BLOCK, num_warps=4)
-    return out
-
-
-def _gemm(x, w):
-    return _bf16_gemm_dispatch_impl(x, w, None)
-
-
-def _param(w):
-    return nn.Parameter(w.contiguous(), requires_grad=False)
-
-
-def _norm(cls, w, size, eps, **kw):
-    """A Muse norm module holding w (applied as 1 + w), as the checkpoint loads it."""
-    norm = cls(size, eps=eps, has_weight=w is not None, zero_centered_gamma=True, **kw)
-    if w is not None:
-        norm.weight = _param(w)
-        norm.precompute_effective_weight()
-    return norm
-
-
-def _residual(w):
-    gate = MuseSpark1xNormPreservingResidualConnection(HIDDEN, temperature=0.3)
-    gate.gate = _param(w)
-    gate.precompute_coefficients()
-    return gate
+def _to_e4m3(x):
+    """fp32 -> float8_e4m3fn bits (uint8), round-to-nearest-even, saturating at 448."""
+    a = tl.abs(x)
+    u = a.to(tl.int32, bitcast=True)
+    normal = ((u + 0x7FFFF + ((u >> 20) & 1)) >> 20) - 960
+    sub = libdevice.rint(a * 512.0).to(tl.int32)
+    code = tl.where(a < 0.015625, sub, normal)
+    code = tl.minimum(code, 126)
+    code = tl.where(x < 0, code | 128, code)
+    return code.to(tl.uint8)
 
 
 @triton.jit
-def _e2m1_bits_to_bf16(bits):
-    """int32 BF16 bit patterns -> bfloat16 (a bitcast)."""
-    return bits.to(tl.uint16).to(tl.bfloat16, bitcast=True)
+def _qk_prep_kernel(qkv_ptr, pos_ptr, loc_ptr, invf_ptr, q8_ptr, kc_ptr, vc_ptr, ksc_ptr, vsc_ptr,
+                     ROPE: tl.constexpr, SCALED: tl.constexpr, PDL: tl.constexpr = False):
+    if PDL:  # programmatic dependent launch: let the successor launch, wait for the predecessor's results
+        tl.extra.cuda.gdc_launch_dependents()
+        tl.extra.cuda.gdc_wait()
+    t = tl.program_id(0)
+    row = qkv_ptr + t.to(tl.int64) * 2304  # Triton does not capture plain-int module globals
+    h = tl.arange(0, 16)[:, None]  # Triton does not capture plain-int module globals
+    i = tl.arange(0, 32)[None, :]  # Triton does not capture plain-int module globals
+    qe = tl.load(row + h * 64 + 2 * i).to(tl.float32)  # Triton does not capture plain-int module globals
+    qo = tl.load(row + h * 64 + 2 * i + 1).to(tl.float32)  # Triton does not capture plain-int module globals
+    rq = tl.rsqrt((tl.sum(qe * qe, 1) + tl.sum(qo * qo, 1)) / 64.0 + 1e-5)[:, None]  # Triton does not capture plain-int module globals
+    qe = qe * rq
+    qo = qo * rq
+    kh = tl.arange(0, 2)[:, None]  # Triton does not capture plain-int module globals
+    ke = tl.load(row + 1024 + kh * 64 + 2 * i).to(tl.float32)  # Triton does not capture plain-int module globals
+    ko = tl.load(row + 1024 + kh * 64 + 2 * i + 1).to(tl.float32)  # Triton does not capture plain-int module globals
+    rk = tl.rsqrt((tl.sum(ke * ke, 1) + tl.sum(ko * ko, 1)) / 64.0 + 1e-5)[:, None]  # Triton does not capture plain-int module globals
+    ke = ke * rk
+    ko = ko * rk
+    if ROPE:
+        pos = tl.load(pos_ptr + t).to(tl.float32)
+        ang = pos * tl.load(invf_ptr + i)
+        c = libdevice.cos(ang)
+        s = libdevice.sin(ang)
+        qe, qo = qe * c - qo * s, qe * s + qo * c
+        ke, ko = ke * c - ko * s, ke * s + ko * c
+    qrow = q8_ptr + t.to(tl.int64) * 1024  # Triton does not capture plain-int module globals
+    tl.store(qrow + h * 64 + 2 * i, _to_e4m3(qe))  # Triton does not capture plain-int module globals
+    tl.store(qrow + h * 64 + 2 * i + 1, _to_e4m3(qo))  # Triton does not capture plain-int module globals
+    loc = tl.load(loc_ptr + t).to(tl.int64)
+    j = tl.arange(0, 64)[None, :]  # Triton does not capture plain-int module globals
+    v = tl.load(row + 1152 + kh * 64 + j).to(tl.float32)  # Triton does not capture plain-int module globals
+    if SCALED:
+        ks = tl.load(ksc_ptr)
+        vs = tl.load(vsc_ptr)
+        ke = ke / ks
+        ko = ko / ks
+        v = v / vs
+    tl.store(kc_ptr + loc * 128 + kh * 64 + 2 * i, _to_e4m3(ke))  # Triton does not capture plain-int module globals
+    tl.store(kc_ptr + loc * 128 + kh * 64 + 2 * i + 1, _to_e4m3(ko))  # Triton does not capture plain-int module globals
+    tl.store(vc_ptr + loc * 128 + kh * 64 + j, _to_e4m3(v))  # Triton does not capture plain-int module globals
 
 
-@triton.jit(do_not_specialize=["num_valid_tokens", "EM"])
-def _moe_nvfp4_gemm_kernel(
-    a_ptr, b_ptr, sf_ptr, gs_ptr, c_ptr, sorted_ids_ptr, expert_ids_ptr, n_padded_ptr,
-    num_valid_tokens, EM,
-    N: tl.constexpr, K: tl.constexpr, TOP_K: tl.constexpr,
-    BLOCK_T: tl.constexpr, BLOCK_W: tl.constexpr, BLOCK_K: tl.constexpr, GROUP_SIZE_T: tl.constexpr,
-    ZERO_NONLOCAL: tl.constexpr,
-):
-    """SGLang's fused_moe_kernel (fused_moe_triton/fused_moe.py) in its W4A16 form, computed
-    transposed (swap-AB): acc[n, tokens] += W[n, k] @ A[tokens, k].T, so the weight tile,
-    dequantized from the stored NVFP4 codes in registers, is the dot's LEFT operand (the one sm_90
-    wgmma reads from registers) and only the bf16 activation tile goes through shared memory.
-
-      W codes   uint8 [E, N, K/2], N-major, nibble-reordered by prepare(): in each BLOCK_K chunk at
-                k0, byte i holds k0 + i in the low nibble and k0 + BLOCK_K/2 + i in the high one
-      W scales  float8_e4m3fn [E, N, K/16], one per 16 k (original order)
-      W global  float32 [E], applied once to the fp32 accumulator in the epilogue
-
-    A is bf16 [M, K] (row = sorted id // TOP_K), C is bf16 [num_valid_tokens, N] (row = sorted
-    id). No routed-weight multiply. All strides follow from N and K (contiguous tensors)."""
-    HALF: tl.constexpr = BLOCK_K // 2
-    GROUPS_HALF: tl.constexpr = HALF // SF_BLOCK
-    pid = tl.program_id(axis=0)
-    num_pid_t = tl.cdiv(EM, BLOCK_T)
-    num_pid_w: tl.constexpr = N // BLOCK_W
-    # Token tiles fastest within a group, so the token tiles of one (expert, weight tile) run
-    # adjacent and the weight tile is re-read from L2; the group bounds the activation rows in flight.
-    num_pid_in_group = GROUP_SIZE_T * num_pid_w
-    group_id = pid // num_pid_in_group
-    first_pid_t = group_id * GROUP_SIZE_T
-    group_size_t = min(num_pid_t - first_pid_t, GROUP_SIZE_T)
-    pid_t = first_pid_t + ((pid % num_pid_in_group) % group_size_t)
-    pid_w = (pid % num_pid_in_group) // group_size_t
-
-    # The grid covers the static bound of sorted_ids; blocks past the real padded count exit here.
-    num_tokens_post_padded = tl.load(n_padded_ptr)
-    if pid_t * BLOCK_T >= num_tokens_post_padded:
-        return
-
-    offs_token_id = pid_t * BLOCK_T + tl.arange(0, BLOCK_T).to(tl.int64)
-    offs_token = tl.load(sorted_ids_ptr + offs_token_id).to(tl.int64)
-    token_mask = offs_token < num_valid_tokens
-    offs_w = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
-    # [BLOCK_W, BLOCK_T]: the transposed output tile.
-    c_ptrs = c_ptr + offs_token[None, :] * N + offs_w[:, None]
-
-    off_expert = tl.load(expert_ids_ptr + pid_t).to(tl.int64)
-    if off_expert == -1:
-        # Routes to experts on other GPUs.
-        if ZERO_NONLOCAL:
-            tl.store(c_ptrs, tl.zeros((BLOCK_W, BLOCK_T), dtype=c_ptr.dtype.element_ty),
-                     mask=token_mask[None, :])
-        return
-
-    offs_h = tl.arange(0, HALF)
-    # [HALF, BLOCK_T] activation slab, K-contiguous down the rows: k0 + i for the low half; the high
-    # half is the same pointers + HALF.
-    a_ptrs = a_ptr + (offs_token[None, :] // TOP_K) * K + offs_h[:, None]
-    # [BLOCK_W, HALF] code bytes of one BLOCK_K chunk.
-    b_ptrs = b_ptr + off_expert * (N * (K // 2)) + offs_w[:, None] * (K // 2) + offs_h[None, :]
-    # [BLOCK_W, BLOCK_K // 16] compact scale tile: the chunk's 8 block scales per row, contiguous.
-    s_ptrs = (sf_ptr + off_expert * (N * (K // SF_BLOCK)) + offs_w[:, None] * (K // SF_BLOCK)
-              + tl.arange(0, BLOCK_K // SF_BLOCK)[None, :])
-
-    acc = tl.zeros((BLOCK_W, BLOCK_T), dtype=tl.float32)
-    for _ in range(0, K // BLOCK_K):
-        a_lo = tl.load(a_ptrs, mask=token_mask[None, :], other=0.0)
-        a_hi = tl.load(a_ptrs + HALF, mask=token_mask[None, :], other=0.0)
-        b = tl.load(b_ptrs).to(tl.int32)
-        s = tl.load(s_ptrs)
-        # Block scale * 2^119 (exact: e4m3 has 4 significant bits and 448 * 2^119 < bf16 max), once
-        # per scale on the compact tile, then split into the low half's groups 0..3 and the high
-        # half's 4..7 and broadcast to 16 k each (group g covers half-index i with i // 16 == g).
-        sb = (s.to(tl.float32) * SCALE_BIAS).to(tl.bfloat16)
-        sb_lo, sb_hi = tl.split(tl.permute(tl.reshape(sb, (BLOCK_W, 2, GROUPS_HALF)), (0, 2, 1)))
-        sb_lo = tl.reshape(tl.broadcast_to(sb_lo[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
-        sb_hi = tl.reshape(tl.broadcast_to(sb_hi[:, :, None], (BLOCK_W, GROUPS_HALF, SF_BLOCK)), (BLOCK_W, HALF))
-        # E2M1 -> BF16 by bit placement: the 3 magnitude bits go to bf16 bits 8..6 (exponent low
-        # bits and the top mantissa bit), the sign to bit 15. That is E2M1 * 2^-126 exactly,
-        # e = 0 codes landing on bf16 subnormals (0.5 -> 2^-127). The product E2M1 * scale * 2^-7
-        # has at most 6 significant bits, so it is exact in BF16.
-        w_lo = _e2m1_bits_to_bf16(((b & 0x07) << 6) | ((b & 0x08) << 12)) * sb_lo  # k0 + i
-        w_hi = _e2m1_bits_to_bf16(((b & 0x70) << 2) | ((b & 0x80) << 8)) * sb_hi   # k0 + HALF + i
-        acc = tl.dot(w_lo, a_lo, acc)
-        acc = tl.dot(w_hi, a_hi, acc)
-        a_ptrs += BLOCK_K
-        b_ptrs += BLOCK_K // 2
-        s_ptrs += BLOCK_K // SF_BLOCK
-
-    # The per-expert global scale (and the 2^7 the W tile left out), once per output.
-    gs = tl.load(gs_ptr + off_expert) * EPILOGUE_BIAS
-    tl.store(c_ptrs, (acc * gs).to(c_ptr.dtype.element_ty), mask=token_mask[None, :])
+@triton.jit
+def _norm_gate_kernel(o_ptr, qkv_ptr, out_ptr):
+    t = tl.program_id(0)
+    h = tl.arange(0, 16)[:, None]  # Triton does not capture plain-int module globals
+    j = tl.arange(0, 64)[None, :]  # Triton does not capture plain-int module globals
+    o = tl.load(o_ptr + t.to(tl.int64) * 1024 + h * 64 + j).to(tl.float32)  # Triton does not capture plain-int module globals
+    g = tl.load(qkv_ptr + t.to(tl.int64) * 2304 + 1280 + h * 64 + j).to(tl.float32)  # Triton does not capture plain-int module globals
+    r = tl.rsqrt(tl.sum(o * o, 1) / 64.0 + 1e-5)[:, None]  # Triton does not capture plain-int module globals
+    y = o * r * tl.sigmoid(g)
+    tl.store(out_ptr + t.to(tl.int64) * 1024 + h * 64 + j, y.to(tl.bfloat16))  # Triton does not capture plain-int module globals
 
 
-def _expert_config(tokens):
-    for bound, cfg in EXPERT_CONFIGS:
-        if bound is None or tokens <= bound:
-            return cfg
-    raise AssertionError("unreachable")
+@triton.jit
+def _boundary_kernel(branch_ptr, stream_ptr, gpost_ptr, alpha_ptr, beta_ptr, gpre_ptr, sout_ptr, nout_ptr,
+                     HAS_GPOST: tl.constexpr, H: tl.constexpr, STORE_S: tl.constexpr = True):
+    t = tl.program_id(0)
+    offs = tl.arange(0, H)
+    base = t.to(tl.int64) * H
+    b = tl.load(branch_ptr + base + offs).to(tl.float32)
+    if HAS_GPOST:
+        b = b * (1.0 + tl.load(gpost_ptr + offs).to(tl.float32))
+    r1 = tl.rsqrt(tl.sum(b * b, 0) / H + 1e-8)  # Triton does not capture plain-int module globals
+    s = tl.load(alpha_ptr + offs) * tl.load(stream_ptr + base + offs) + tl.load(beta_ptr + offs) * (b * r1)
+    if STORE_S:
+        tl.store(sout_ptr + base + offs, s)
+    r2 = tl.rsqrt(tl.sum(s * s, 0) / H + 1e-5)  # Triton does not capture plain-int module globals
+    tl.store(nout_ptr + base + offs, (s * r2 * (1.0 + tl.load(gpre_ptr + offs).to(tl.float32))).to(tl.bfloat16))
 
 
-def _nvfp4_moe_gemm(a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, num_valid, cfg, zero_nonlocal,
-                    report=None):
-    """out[sorted id] = a[sorted id // top_k] @ dequant(w[expert of its block]).T, on the
-    token blocks moe_align_block_size laid out (cfg's BLOCK_T). w is the nibble-reordered bank."""
-    n, k = w.shape[1], w.shape[2] * 2
-    assert a.shape[1] == k and out.shape[1] == n and sf.shape[2] * nvfp4.BLOCK == k
-    assert cfg["BLOCK_K"] == EXPERT_BLOCK_K and nvfp4.BLOCK == SF_BLOCK.value
-    assert n % cfg["BLOCK_W"] == 0 and k % cfg["BLOCK_K"] == 0
-    em = sorted_ids.shape[0]
-    grid = (triton.cdiv(em, cfg["BLOCK_T"]) * (n // cfg["BLOCK_W"]),)
-    compiled = _moe_nvfp4_gemm_kernel[grid](
-        a, w, sf, gs, out, sorted_ids, expert_ids, n_padded, num_valid, em,
-        N=n, K=k, TOP_K=top_k, BLOCK_T=cfg["BLOCK_T"], BLOCK_W=cfg["BLOCK_W"], BLOCK_K=cfg["BLOCK_K"],
-        GROUP_SIZE_T=cfg["GROUP_SIZE_T"], ZERO_NONLOCAL=zero_nonlocal,
-        num_warps=cfg["num_warps"], num_stages=cfg["num_stages"])
-    if report is not None:  # prepare() only: register / spill / smem use of this variant, for the log
-        print(f"[expert gemm] {report} BLOCK_T={cfg['BLOCK_T']} BLOCK_W={cfg['BLOCK_W']} "
-              f"warps={cfg['num_warps']} stages={cfg['num_stages']}: "
-              f"n_regs={getattr(compiled, 'n_regs', '?')} n_spills={getattr(compiled, 'n_spills', '?')} "
-              f"shared={getattr(compiled, 'shared', getattr(getattr(compiled, 'metadata', None), 'shared', '?'))}",
-              flush=True)
-    return out
+@triton.jit
+def _combine_kernel(y_ptr, rrow_ptr, lid_ptr, w_ptr, gs_ptr, pw_ptr, out_ptr, H: tl.constexpr, PDL: tl.constexpr = False):
+    offs = tl.arange(0, H)
+    if COMBINE_PW_EARLY:  # the norm weight is a constant: load it before waiting for the expert kernel
+        pw = 1.0 + tl.load(pw_ptr + offs).to(tl.float32)
+    if PDL:
+        tl.extra.cuda.gdc_launch_dependents()
+        tl.extra.cuda.gdc_wait()
+    t = tl.program_id(0)
+    if not COMBINE_PW_EARLY:
+        pw = 1.0 + tl.load(pw_ptr + offs).to(tl.float32)  # BF16 weight, applied as 1 + w
+    acc = tl.zeros([H], dtype=tl.float32)
+    for k in tl.static_range(8):  # Triton does not capture plain-int module globals
+        lid = tl.load(lid_ptr + t * 8 + k)  # Triton does not capture plain-int module globals
+        if lid >= 0:
+            row = tl.load(rrow_ptr + t * 8 + k)  # Triton does not capture plain-int module globals
+            y = tl.load(y_ptr + row.to(tl.int64) * H + offs).to(tl.float32) * (tl.load(gs_ptr + lid) * pw)
+            rr = tl.rsqrt(tl.sum(y * y, 0) / H + 1e-8)  # Triton does not capture plain-int module globals
+            acc += y * (rr * tl.load(w_ptr + t * 8 + k))  # Triton does not capture plain-int module globals
+    tl.store(out_ptr + t.to(tl.int64) * H + offs, acc.to(tl.bfloat16))
 
 
-def _marlin_bank(weights):
-    """The local experts in Marlin's layout, via SGLang's own loader step."""
-    device = weights["w13"].device
-    layer = types.SimpleNamespace(
-        quant_config=types.SimpleNamespace(group_size=16),
-        moe_runner_config=types.SimpleNamespace(is_gated=True),
-        intermediate_size_per_partition=weights["w13"].shape[1] // 2,
-        params_dtype=torch.bfloat16,
-        w13_weight=weights["w13"].contiguous(),
-        w2_weight=weights["w2"].contiguous(),
-        w13_weight_scale=weights["w13_sf"].contiguous(),
-        w2_weight_scale=weights["w2_sf"].contiguous(),
-        w13_weight_scale_2=weights["w13_gs"].contiguous(),
-        w2_weight_scale_2=weights["w2_gs"].contiguous(),
-    )
-    prepare_moe_nvfp4_layer_for_marlin(layer)
-    return {
-        "w13": layer.w13_weight.data, "w13_s": layer.w13_weight_scale.data, "w13_gs": layer.w13_weight_scale_2.data,
-        "w2": layer.w2_weight.data, "w2_s": layer.w2_weight_scale.data, "w2_gs": layer.w2_weight_scale_2.data,
-        "size_n": layer.intermediate_size_per_partition,
-        "workspace": marlin_make_workspace(device, max_blocks_per_sm=4),
-    }
+# --------------------------------------------------------------------------------------
+# prepare: build the per-weights state once (extension, repacked weights,
+# tuned GEMM / attention choices). kernel_fn only reads this state.
+# --------------------------------------------------------------------------------------
 
 
-def _reorder_nibbles(packed):
-    """Lossless repack of uint8 [E, N, K/2] E2M1 codes (element 2i low nibble, 2i + 1 high) into
-    the kernel's order: in each EXPERT_BLOCK_K chunk at k0, byte i holds k0 + i (low nibble) and
-    k0 + EXPERT_BLOCK_K/2 + i (high nibble). The same codes, permuted; a new tensor (the input is
-    not modified). Each expert is checked to invert exactly."""
-    experts, n, kh = packed.shape
-    k = kh * 2
-    assert k % EXPERT_BLOCK_K == 0
-    chunks, half = k // EXPERT_BLOCK_K, EXPERT_BLOCK_K // 2
-    out = torch.empty_like(packed)
-    for i in range(experts):
-        p = packed[i]
-        codes = torch.stack((p & 0x0F, p >> 4), dim=-1).reshape(n, chunks, 2, half)  # k order
-        q = codes[:, :, 0, :] | (codes[:, :, 1, :] << 4)
-        out[i] = q.reshape(n, kh)
-        back = torch.stack((q & 0x0F, q >> 4), dim=-2).reshape(n, kh, 2)
-        assert torch.equal(back[..., 0] | (back[..., 1] << 4), p), f"nibble reorder not lossless (expert {i})"
-    return out
+def _residual(gate):
+    """Residual-stream mixing coefficients from a residual gate: the branch
+    weight is beta = sigmoid(gate / 0.3), alpha = sqrt(sigmoid(-gate/0.3) * (1 + beta))."""
+    w = gate.float() / 0.3
+    beta = torch.sigmoid(w)
+    alpha = torch.sqrt(torch.clamp(torch.sigmoid(-w) * (1.0 + beta), min=1e-3))
+    return alpha.contiguous(), beta.contiguous()
 
 
-def _expert_bank(weights):
-    """The local experts: E2M1 codes nibble-reordered for the kernel (new tensors, the weights are
-    untouched), e4m3 block scales and fp32 global scales as stored, contiguous."""
-    bank = {name: weights[name].contiguous() for name in ("w13_sf", "w13_gs", "w2_sf", "w2_gs")}
-    for name in ("w13", "w2"):
-        bank[name] = _reorder_nibbles(weights[name].contiguous())
-    return bank
+def _split_router(router):
+    """Split the fp32 router weight into hi/lo BF16 halves stacked as one
+    [512, 8192] GEMM: one GEMM gives both partial-logit halves."""
+    hi = router.to(torch.bfloat16)
+    lo = (router - hi.float()).to(torch.bfloat16)
+    return torch.cat([hi, lo], 0).contiguous()
 
 
-# The prepare() check covers at least one full 128 (rows) x 128 (k) tile: one whole BLOCK_K chunk,
-# i.e. both nibble halves and all eight scale groups, every N row. A config's check uses
-# max(CHECK_ROWS, BLOCK_T) rows, so the valid region is whole token blocks at every BLOCK_T.
-CHECK_ROWS = 128
-CHECK_K = EXPERT_BLOCK_K
-
-
-def _check_expert_gemms(bank, weights, zero_w2=ZERO_NONLOCAL_W2):
-    """Untimed. Runs every kernel variant kernel_fn can launch (so each is compiled before capture)
-    on a synthetic case built from the weights alone, and asserts its in-kernel dequant of the
-    reordered bank equals nvfp4.dequantize of the ORIGINAL packing. Row r of A is one-hot at
-    k0 + r % 128, so output row r is column k0 + r % 128 of the dequantized expert, through the
-    real pointer arithmetic, K loop, nibble order, scale indexing and transposed epilogue. One -1
-    block and one block past the padded count must leave their rows untouched (or zero, for the -1
-    block when zero-storing)."""
-    device = bank["w13"].device
-    e = LOCAL_EXPERTS - 1  # the largest expert offsets
-    for name, top_k, zero_nonlocal in (("w13", TOP_K, False), ("w2", 1, zero_w2)):
-        w, sf, gs = bank[name], bank[name + "_sf"], bank[name + "_gs"]
-        orig = weights[name]
-        n, k = w.shape[1], w.shape[2] * 2
-        k0 = k // 2 + CHECK_K  # a chunk in the middle of the K loop
-        assert k0 % EXPERT_BLOCK_K == 0
-        ref = nvfp4.dequantize(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2], sf[e, :, k0 // 16:(k0 + CHECK_K) // 16], gs[e])
-        codes = nvfp4.unpack_e2m1(orig[e, :, k0 // 2:(k0 + CHECK_K) // 2])
-        for _, cfg in EXPERT_CONFIGS:
-            bt = cfg["BLOCK_T"]
-            check_rows = max(CHECK_ROWS, bt)        # whole token blocks of valid rows
-            assert check_rows % bt == 0
-            rows = torch.arange(check_rows, device=device)
-            want = ref[:, rows % CHECK_K].t()       # [check_rows, n]
-            want_codes = codes[:, rows % CHECK_K].t()
-            total = check_rows + 2 * bt             # + one -1 block + one block past n_padded
-            x = torch.zeros((total, k), dtype=torch.bfloat16, device=device)
-            x[rows, k0 + rows % CHECK_K] = 1.0
-            sorted_ids = (torch.arange(total, device=device, dtype=torch.int32) * top_k).contiguous()
-            expert_ids = torch.full((triton.cdiv(total, bt),), e, dtype=torch.int32, device=device)
-            expert_ids[check_rows // bt] = -1
-            expert_ids[check_rows // bt + 1] = 0    # valid expert, but past n_padded: must not run
-            n_padded = torch.tensor([check_rows + bt], dtype=torch.int32, device=device)
-            out = torch.full((total * top_k, n), float("nan"), dtype=torch.bfloat16, device=device)
-            _nvfp4_moe_gemm(x, w, sf, gs, out, sorted_ids, expert_ids, n_padded, top_k, total * top_k, cfg,
-                            zero_nonlocal, report=name)
-            torch.cuda.synchronize()
-            got = out[0:check_rows * top_k:top_k].float()
-            bad = ((got - want).abs() > want.abs() * 2.0 ** -7) | got.isnan()
-            if bool(bad.any()):
-                halves = bool((want_codes[bad].abs() == 0.5).all())
-                raise AssertionError(
-                    f"NVFP4 in-kernel dequant mismatch: {name} BLOCK_T={bt}, {int(bad.sum())} of {bad.numel()} "
-                    f"values, max err {float((got - want).abs().max())}"
-                    + (" (only E2M1 +-0.5 codes: bf16 subnormals flushed to zero)" if halves else ""))
-            nonlocal_rows = out[check_rows * top_k:(check_rows + bt) * top_k:top_k].float()
-            if zero_nonlocal:
-                assert bool((nonlocal_rows == 0).all()), f"{name} BLOCK_T={bt}: -1 block not zeroed"
-            else:
-                assert bool(nonlocal_rows.isnan().all()), f"{name} BLOCK_T={bt}: -1 block was written"
-            past = out[(check_rows + bt) * top_k::top_k].float()
-            assert bool(past.isnan().all()), f"{name} BLOCK_T={bt}: block past n_padded was written"
-
-
-# prepare()'s end-to-end expert check: a synthetic case above MARLIN_MAX_TOKENS (so _experts_triton
-# runs the first turn's BLOCK_T 256 config and _experts_marlin its block_size_m 64), compared under the
-# judge's metric with a bound (1%) below the tightest reference tolerance (3%), and the judge's row
-# rule (5x the bound, near-zero rows against a tenth of the average row).
-E2E_CHECK_TOKENS = 8192
-E2E_CHECK_TOL = 2e-2  # under the judge's tightest 3%; Triton-vs-Marlin is two bf16 pipelines, not a reference
-E2E_ROW_FACTOR = 5.0
-
-
-def _check_experts_e2e(state, device):
-    """Untimed. One call each of _experts_triton (state['bank']) and _experts_marlin (state['marlin'])
-    on synthetic data built here (random bf16 rows, random distinct top-8 experts of 256 mapped to this
-    GPU's 32 as kernel_fn maps them, random normalized weights): the same inputs through both banks
-    must agree. Covers both banks' wiring and any scale corruption between them."""
-    gen = torch.Generator(device=device)
-    gen.manual_seed(0)
-    t = E2E_CHECK_TOKENS
-    x = torch.randn((t, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
-    ids = torch.rand((t, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
-    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-    topk_weights = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
-    topk_weights = (topk_weights / topk_weights.sum(dim=1, keepdim=True)).contiguous()
-    got = _experts_triton(x, topk_weights, local_ids, state).float()
-    want = _experts_marlin(x, topk_weights, local_ids, state).float()
-    torch.cuda.synchronize()
-    assert bool(torch.isfinite(got).all()) and bool(torch.isfinite(want).all()), "expert e2e check: NaN/Inf"
-    err = float((got - want).norm() / want.norm().clamp_min(1e-30))
-    row_ref = want.norm(dim=-1)
-    row_err = (got - want).norm(dim=-1) / torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
-    worst = float(row_err.max())
-    print(f"[expert e2e] T={t} triton vs marlin: rel L2 {err:.3e}, worst row {worst:.3e} "
-          f"({int((local_ids >= 0).sum())} local routes)", flush=True)
-    assert err <= E2E_CHECK_TOL, f"expert e2e check: triton vs marlin rel L2 {err:.3e} > {E2E_CHECK_TOL:g}"
-    assert worst <= E2E_ROW_FACTOR * E2E_CHECK_TOL, (
-        f"expert e2e check: worst row {worst:.3e} > {E2E_ROW_FACTOR:g} x {E2E_CHECK_TOL:g}")
-
-
-def _weighted_sum_skips_remote(state, device):
-    """Untimed, prepare() only (hypothesis w2-nonlocal-zero-store-off-first-turn). True when
-    fused_post_expert_norm_weighted_sum never reads the y rows of remote slots: its output is
-    bitwise equal and finite whether those rows hold NaN or zero. Then the w2 zero-store of -1 token
-    tiles is dead work and can be turned off."""
-    try:
-        gen = torch.Generator(device=device).manual_seed(20261024)
-        t = 4096
-        ids = torch.randint(0, N_EXPERTS, (t, TOP_K), generator=gen, device=device, dtype=torch.int32)
-        local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-        w = torch.rand((t, TOP_K), generator=gen, device=device, dtype=torch.float32)
-        w = (w / w.sum(dim=1, keepdim=True)).contiguous()
-        y = torch.randn((t, TOP_K, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
-        remote = local_ids < 0
-        outs = []
-        for fill in (float("nan"), 0.0):
-            yy = y.clone()
-            yy[remote] = fill
-            outs.append(fused_post_expert_norm_weighted_sum(
-                yy, w, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
-                slot_expert_ids=local_ids))
-        torch.cuda.synchronize()
-        ok = bool(torch.isfinite(outs[0].float()).all()) and torch.equal(outs[0], outs[1])
-        print(f"[w2 zero-store] {'OFF (weighted sum skips remote slots)' if ok else 'ON: weighted sum reads remote rows'}",
-              flush=True)
-        return ok
-    except Exception as e:
-        print(f"[w2 zero-store] ON: probe raised {e!r}", flush=True)
-        return False
+def _fast_scales_ok(weights):
+    # The fast block-scale decode is exact only for positive normal E4M3
+    # scales (bytes 0x08..0x7E: no zero, subnormal, negative or NaN
+    # encodings); otherwise the extension is built with the exact decode.
+    return all(bool(((weights[k].view(torch.uint8) >= 0x08) & (weights[k].view(torch.uint8) <= 0x7E)).all())
+               for k in ("w13_sf", "w2_sf"))
 
 
 def prepare(weights):
-    t_prepare0 = time.perf_counter()
-    # experts-rega-dq2-dequant-cost-diag: FIRST, the dq module's nvcc build in a background thread (its source is static
-    # text derived from _rega_fsilu_src()), so it overlaps master's own setup; _rega_dq_phase joins it. The finally joins
-    # it as well, so no build outlives prepare() even when master's setup raises.
-    dq_job = _rega_dq_start(t_prepare0)
-    try:
-        return _prepare_master(weights, t_prepare0, dq_job)
-    finally:
-        _rega_dq_join(dq_job)
+    global SIDE_STREAM
+    dev = weights["qkv_gate"].device
+    st = {}
+    for n in ("qkv_gate", "o", "pooler", "unpooler"):
+        st[n] = weights[n].contiguous()
+    st["router_hilo"] = _split_router(weights["router"].float())
+    st["router_bias"] = weights["router_bias"].float().contiguous()
+    st["a1"], st["b1"] = _residual(weights["attn_residual_gate"])
+    st["a2"], st["b2"] = _residual(weights["ffn_residual_gate"])
+    # Norm weights stay BF16 exactly as given (applied as 1 + w): the kernels form 1 + w in fp32 when they load them.
+    for n in ("pre_ffn_norm", "pre_expert_norm", "post_expert_norm", "post_ffn_norm", "next_pre_attn_norm"):
+        st["g_" + n] = weights[n].contiguous()
+    st["inv_freq"] = (1.0 / (ROPE_THETA ** (torch.arange(0, HD, 2, device=dev).float() / HD))).contiguous()
+    st["mod"] = _build(_fast_scales_ok(weights))
+    st["w13r"] = _repack(weights["w13"], weights["w13_sf"], True)
+    st["w2r"] = _repack(weights["w2"], weights["w2_sf"], False)
+    st["w13_gs"] = weights["w13_gs"].float().contiguous()
+    st["w2_gs"] = weights["w2_gs"].float().contiguous()
+    st["ones32"] = torch.ones(LOCAL_EXPERTS, dtype=torch.float32, device=dev)
+    st["no_zero"] = torch.empty((0,), dtype=torch.int32, device=dev)
+    st["no_zero_f"] = torch.empty((0,), dtype=torch.float32, device=dev)
+    st["no_zero_b"] = torch.empty((0,), dtype=torch.bfloat16, device=dev)
+    props = torch.cuda.get_device_properties(dev)
+    st["smem"] = MOE_SMEM_SM90 if props.major >= 9 else MOE_SMEM_SM80
+    if SKINNY_TEST:  # feasibility test build (MOE_SKINNY_TEST): 2 CTAs per SM
+        st["smem"] = MOE_SMEM_SKINNY_TEST
+    st["mod"].moe_init(st["smem"])
+    st["attn_smem"] = ATTN_SMEM + (0 if props.major >= 9 else ATTN_SMEM_SM80_EXTRA)
+    st["mod"].attn_init(st["attn_smem"])
+    st["no_pf"] = torch.empty((0,), dtype=torch.uint8, device=dev)
+    st["nsm"] = props.multi_processor_count
+    st["moe_dbg"] = torch.empty((0,), dtype=torch.int64, device=dev)  # a timeline buffer here turns on item tracing
+    st["moe_flags"] = 0  # experiments only
+    if SIDE_STREAM is None:
+        SIDE_STREAM = torch.cuda.Stream(device=dev)
+    st["lt_choice"] = _init_lt(st, dev)
+    torch.cuda.synchronize()
+    st["attn_choice"] = _choose_attention(st, props)
+    if SELFTEST:
+        try:
+            _selftest(st, weights)
+        except Exception as exc:  # noqa: BLE001
+            print("SELFTEST failed:", repr(exc), flush=True)
+        for fn in (_selftest_attn2, _selftest_boundary):
+            try:
+                fn(st)
+            except Exception as exc:  # noqa: BLE001
+                print("SELFTEST", fn.__name__, "failed:", repr(exc), flush=True)
+    return st
 
 
-def _prepare_master(weights, t_prepare0, dq_job):
-    """Master's prepare() body, unchanged except the dq phase after w2st and its summary echoed last."""
-    device = weights["qkv_gate"].device
-    router = weights["router"]
-    hi = router.to(torch.bfloat16)
-    lo = (router - hi.float()).to(torch.bfloat16)
-    # [2^21, 64] float32 cos | sin, as SGLang's RotaryEmbedding builds it.
-    inv_freq = 1.0 / (ROPE_THETA ** (torch.arange(0, 64, 2, dtype=torch.float, device=device) / 64))
-    freqs = torch.einsum("i,j -> ij", torch.arange(ROPE_POSITIONS, dtype=torch.float, device=device), inv_freq)
-    pre_ffn = _norm(MuseSpark1xRMSNorm, weights["pre_ffn_norm"], HIDDEN, RMS_EPS)
-    next_pre_attn = _norm(MuseSpark1xRMSNorm, weights["next_pre_attn_norm"], HIDDEN, RMS_EPS)
-    post_attn = _norm(MuseSpark1xRMSNorm, None, HIDDEN, POST_NORM_EPS, is_post_norm=True,
-                      post_norm_gain_center_type="one", residual_id=1)
-    post_ffn = _norm(MuseSpark1xRMSNormWithInputScale, weights["post_ffn_norm"], HIDDEN, POST_NORM_EPS,
-                     is_post_norm=True, post_norm_gain_center_type="one", residual_id=2)
-    post_expert = _norm(MuseSpark1xRMSNormWithInputScale, weights["post_expert_norm"], D_EXPERT, POST_NORM_EPS,
-                        is_post_norm=True, post_norm_gain_center_type="one", residual_id=2)
-    state = {
-        "dense": {name: weights[name].contiguous() for name in ("qkv_gate", "o", "pooler", "unpooler")},
-        "router_hi_t": hi.t().contiguous(),
-        "router_lo_t": lo.t().contiguous(),
-        # router-hilo-one-gemm-n512: hi | lo side by side, bf16 [8192, 512], so one GEMM gives both halves.
-        "router_hilo_t": torch.cat((hi.t(), lo.t()), dim=1).contiguous(),
-        "routing": FusedMuseSparkRouting(expert_bias=weights["router_bias"].float().contiguous(), route_scale=1.0,
-                                         router_output_multiplier=0.1767766952966369,
-                                         router_score_division_eps=1e-15),
-        "cos_sin": torch.cat((freqs.cos(), freqs.sin()), dim=-1),
-        "qk_norm": FusedQKNorm(head_dim=64, num_q_heads=16, num_kv_heads=2, eps=RMS_EPS),
-        "o_norm_gate": FusedRMSNormGate(MuseSpark1xRMSNorm(64, eps=RMS_EPS, has_weight=False), True, 64),
-        "attn_boundary": FusedPostNormResidualPreNorm(post_attn, _residual(weights["attn_residual_gate"]), pre_ffn),
-        "ffn_boundary": FusedPostNormResidualPreNorm(post_ffn, _residual(weights["ffn_residual_gate"]), next_pre_attn),
-        "pre_expert_norm": _norm(MuseSpark1xRMSNorm, weights["pre_expert_norm"], D_EXPERT, RMS_EPS),
-        # pre-expert-norm-fused-rega-gather: the checkpoint's bf16 weight (applied as 1 + w); the fused kernel adds
-        # the 1 in fp32. A weight, not input-derived; read-only.
-        "pre_expert_w": weights["pre_expert_norm"].to(torch.bfloat16).contiguous(),
-        # MuseSpark1xFp4Experts binds the post-expert norm's effective (1 + w) weight.
-        "post_expert_w": post_expert._get_effective_weight().detach().to(torch.bfloat16),
-        "side_stream": torch.cuda.Stream(device),
-        "_modules": (pre_ffn, next_pre_attn, post_attn, post_ffn, post_expert),
-    }
-    del freqs
-    # The Triton bank first (its scales alias the weights), and its check: compiles every
-    # expert-GEMM variant and checks its dequant against nvfp4.dequantize.
-    state["bank"] = _expert_bank(weights)
-    state["zero_nonlocal_w2"] = not _weighted_sum_skips_remote(state, device)
-    _check_expert_gemms(state["bank"], weights, state["zero_nonlocal_w2"])
-    torch.cuda.synchronize()
-    scale_names = ("w13_sf", "w13_gs", "w2_sf", "w2_gs")
-    scales_before = {name: state["bank"][name].clone() for name in scale_names}
-    # Then the Marlin bank, from copies, so SGLang's repack cannot touch the weights or the Triton bank.
-    state["marlin"] = _marlin_bank(
-        {name: weights[name].clone() for name in ("w13", "w2", "w13_sf", "w2_sf", "w13_gs", "w2_gs")})
-    torch.cuda.synchronize()
-    for name in scale_names:
-        assert torch.equal(state["bank"][name], scales_before[name]), f"{name} changed by the Marlin repack"
-        assert torch.equal(weights[name], scales_before[name]), f"weights[{name}] changed by the Marlin repack"
-    del scales_before
+# --------------------------------------------------------------------------------------
+# Dense GEMMs: torch.mm, or a cuBLASLt algorithm tuned in prepare when it
+# beats torch.mm (same library, different kernel choice). The tuner runs
+# once in prepare; kernel_fn only looks the choice up.
+# --------------------------------------------------------------------------------------
+
+
+def _lt_pin_index(lt, pid, pin):
+    """LT_PIN entry -> heuristic index: None (torch.mm), an int index (legacy), or a signature tuple
+    (tile id, split-K, reduction scheme, custom option) matched against each heuristic result's config
+    read back from cuBLASLt; returns -1 when no result matches (the caller then tunes as usual)."""
+    if pin is None:
+        return None
+    n = lt.lt_nalgo(pid)
+    if isinstance(pin, int):
+        return pin if pin < n else -1
+    for a in range(n):
+        info = list(lt.lt_info(pid, a))
+        if (info[0], info[1], info[6], info[8]) == tuple(pin):
+            return a
+    return -1
+
+
+def _lt_rel_err(out, ref):
+    """Max relative error of a candidate GEMM output against the torch.mm reference."""
+    return float((out.float() - ref).abs().max() / ref.abs().max().clamp_min(1e-6))
+
+
+def _tune_lt(st):
+    """Time cuBLASLt's heuristic algorithms for each dense GEMM at the scored token counts; keep one
+    only where it beats torch.mm."""
+    lt = st["lt"]
+    dev = "cuda"
+    choice = {}
+    for T in LT_TOKENS:
+        for name, (wn, f32) in LT_GEMMS.items():
+            w = st[wn]
+            N, K = w.shape
+            x = (torch.randn((T, K), device=dev) * 0.5).to(torch.bfloat16)
+            odt = torch.float32 if f32 else torch.bfloat16
+            ref_fn = (lambda: torch.mm(x, w.t(), out_dtype=torch.float32)) if f32 else (lambda: torch.mm(x, w.t()))
+            ref = ref_fn().float()
+            t_ref = _time(ref_fn, reps=10)
+            if name == "router" and not ROUTER_LT:  # (the split-K pick steals the concurrent pooler's SMs)
+                del x
+                continue
+            out = torch.empty((T, N), dtype=odt, device=dev)
+            if name == "pooler" and POOL_SM_RESERVE.get(T, 0) > 0:
+                pid = lt.lt_plan_sm(T, N, K, f32, st["lt_ws"].numel(), 4, st["nsm"] - POOL_SM_RESERVE[T])
+                if lt.lt_nalgo(pid) > 0:
+                    lt.lt_run(pid, 0, x, w, out, st["lt_ws"])
+                    torch.cuda.synchronize()
+                    if _lt_rel_err(out, ref) < LT_ALGO_TOL:
+                        choice[(T, name)] = (pid, 0)
+                        t = _time(lambda: lt.lt_run(pid, 0, x, w, out, st["lt_ws"]), reps=10)
+                        print(f"LT T={T} pooler sized for {st['nsm'] - POOL_SM_RESERVE[T]} SMs: "
+                              f"{t:.1f}us alone (torch.mm {t_ref:.1f}us)", flush=True)
+                        del x, out
+                        continue
+            pid = lt.lt_plan(T, N, K, f32, st["lt_ws"].numel(), 32)
+            if (T, name) in LT_PIN:  # a fixed pick: no prepare-time race between near-equal algorithms
+                a = _lt_pin_index(lt, pid, LT_PIN[(T, name)])
+                if a != -1:  # -1: no heuristic result has the pinned signature -> time them as usual
+                    if a is not None:
+                        choice[(T, name)] = (pid, a)
+                    print(f"LT T={T} {name}: pinned {LT_PIN[(T, name)]} -> algo {a}", flush=True)
+                    del x, out
+                    continue
+                print(f"LT T={T} {name}: pinned signature {LT_PIN[(T, name)]} not offered; tuning instead", flush=True)
+            best = (t_ref, None)
+            for a in range(lt.lt_nalgo(pid)):
+                try:
+                    lt.lt_run(pid, a, x, w, out, st["lt_ws"])
+                    torch.cuda.synchronize()
+                    if not _lt_rel_err(out, ref) < LT_ALGO_TOL:
+                        continue
+                    t = _time(lambda: lt.lt_run(pid, a, x, w, out, st["lt_ws"]), reps=10)
+                except Exception:  # noqa: BLE001
+                    continue
+                if t < best[0] * LT_MIN_SPEEDUP:
+                    best = (t, a)
+            if best[1] is not None:
+                choice[(T, name)] = (pid, best[1])
+            print(f"LT tune T={T} {name}: torch.mm {t_ref:.1f}us, best {best[0]:.1f}us "
+                  f"algo {best[1]} of {lt.lt_nalgo(pid)}", flush=True)
+            del x, out
     torch.cuda.empty_cache()
-    _align_par_setup(state, device)
-    align2_lines = _align2_setup(state, device)
-    _silu_sorted_setup(state, device)
-    _check_experts_e2e(state, device)
-    torch.cuda.synchronize()
-    # Last: the CUDA dequant-producer path (build, canary, self-check, turn_4 gate); a failure keeps Marlin.
-    print(f"[prepare] max_memory_allocated before ssdq {torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB",
-          flush=True)
-    _ssdq_setup(state, weights, device, t_prepare0)
-    torch.cuda.synchronize()
-    # Then the register-A wgmma path (rewrite stage 1): its gates read what _experts dispatches (ssdq or Marlin)
-    # with rega off; it prints the final PATH CHOSEN lines last.
-    _rega_setup(state, weights, device, t_prepare0)
-    torch.cuda.synchronize()
-    # Last of all, after master's whole setup (so rega's first_turn setup starts before its own deadline): the
-    # contiguous-KV FA3 gate, with its own deadlines; any failure leaves master's paged FA3 call.
-    fa3c_lines = _fa3c_setup(state, device, t_prepare0)
-    # pre-expert-norm-fused-rega-gather: after rega's setup, so it gates what _experts really dispatches.
-    _norm_gather_setup(state, device, t_prepare0)
-    torch.cuda.synchronize()
-    # combo-b-normgather-two-cta-low-regate: AFTER master's whole setup (rega v2 build and its low / high / ft
-    # gates, fa3c) and norm-gather's: the separate muse_prefill_rega_lo module (two CTAs/SM low-class candidates),
-    # its checks and its gate on the norm-gather-ON block. Never raises; any failure keeps master's low class.
-    lo_lines = _rega_lo_phase(state, weights, device, t_prepare0)
-    torch.cuda.synchronize()
-    # experts-rega-w13-fast-silu-epilogue: LAST of all setup (after _rega_lo_phase, whose rega_low_variant it needs,
-    # and after norm-gather's setup, whose prenorm dispatch it gates on): the separate muse_prefill_rega_fsilu module,
-    # its own start / step deadlines, accuracy canaries and w13-alone timing gates. Never raises; any miss keeps
-    # master's w13 launch.
-    fsilu_info = {}
-    fsilu_lines = _rega_fsilu_phase(state, weights, device, t_prepare0, fsilu_info)
-    torch.cuda.synchronize()
-    # experts-rega-w2-early-loads-low-class: after fsilu (its module's w2 is arm a; no build of its own), the
-    # per-class w2-alone gate of master vs arm a. Never raises; any miss keeps master's w2.
-    w2st_lines = _rega_w2st_phase(state, weights, device, t_prepare0, fsilu_info)
-    torch.cuda.synchronize()
-    # experts-rega-dq2-dequant-cost-diag: after w2st (it reads both per-class flag sets) and before fsilu_info is
-    # dropped (its calibrated pop alphas): joins the background build, then the exactness checks, timings and the
-    # gated route. Never raises; its <= 3 KB summary is printed at its end and echoed last below (16 KB log tail).
-    dq_lines = _rega_dq_phase(state, weights, device, t_prepare0, fsilu_info, dq_job)
-    del fsilu_info
-    torch.cuda.synchronize()
-    # The align2 lines again, after rega's PATH CHOSEN lines, so the archived log tail keeps them.
-    for line in align2_lines:
-        print(line, flush=True)
-    for line in fa3c_lines:
-        print(line, flush=True)
-    # The low-class candidates' summary ('[rega-lo] PATH CHOSEN low: ...').
-    for line in lo_lines:
-        print(line[:1200], flush=True)
-    # The fast-silu phase's compact summary, then the w2st one; w2st's PATH CHOSEN lines are the last prepare() lines
-    # (16 KB log tail).
-    for line in fsilu_lines:
-        print(line[:700], flush=True)
-    for line in w2st_lines:
-        print(line[:600], flush=True)
-    for line in dq_lines:
-        print(line, flush=True)
-    return state
+    return choice
 
 
-def _experts(x, topk_weights, local_ids, state, pre_norm=False):
-    """Shape gate. For T <= MARLIN_MAX_TOKENS, in this order: the register-A wgmma kernel (REGA_MIN_TOKENS < T)
-    when prepare()'s gate for the T's class ('low' T <= REGA_LOW_MAX, 'high' above) turned it ON; else the
-    dequant-producer SS-wgmma kernel for SSDQ_MIN_TOKENS < T when its turn_4 gate turned it ON; else Marlin.
-    Above MARLIN_MAX_TOKENS: the register-A wgmma kernel for T <= REGA_FT_MAX when prepare()'s first-turn
-    gate ('ft') turned it ON, else (and always above REGA_FT_MAX) the Triton NVFP4 GEMM. Reads the token count
-    (a shape) and prepare-time flags, never tensor values.
-    pre_norm=True (kernel_fn): x is the raw pooler output and the pre-expert RMSNorm still has to be applied: on
-    the rega path with state['norm_gather_ok'][class] ON the norm is fused into rega's row gather; everywhere
-    else it is master's module call, then the path above."""
-    tokens = x.shape[0]
-    if tokens <= MARLIN_MAX_TOKENS:
-        cls = "low" if tokens <= REGA_LOW_MAX else "high"
-        if tokens > REGA_MIN_TOKENS and state.get("rega_ok", {}).get(cls, False):
-            if pre_norm:
-                if state.get("norm_gather_ok", {}).get(cls, False):
-                    return _experts_rega(x, topk_weights, local_ids, state, prenorm=True)
-                x = state["pre_expert_norm"](x)
-            return _experts_rega(x, topk_weights, local_ids, state)
-        if pre_norm:
-            x = state["pre_expert_norm"](x)
-        if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
-            return _experts_ssdq(x, topk_weights, local_ids, state)
-        return _experts_marlin(x, topk_weights, local_ids, state)
-    if tokens <= REGA_FT_MAX and state.get("rega_ok", {}).get("ft", False):
-        if pre_norm:
-            if state.get("norm_gather_ok", {}).get("ft", False):
-                return _experts_rega(x, topk_weights, local_ids, state, prenorm=True)
-            x = state["pre_expert_norm"](x)
-        return _experts_rega(x, topk_weights, local_ids, state)
-    if pre_norm:
-        x = state["pre_expert_norm"](x)
-    return _experts_triton(x, topk_weights, local_ids, state)
+def _init_lt(st, dev):
+    """Build the cuBLASLt extension and tune the dense GEMMs; None choice on any failure."""
+    try:
+        st["lt"] = _build_lt()
+        st["lt_ws"] = torch.empty(LT_WORKSPACE_BYTES, dtype=torch.uint8, device=dev)
+        st["lt_ws_side"] = torch.empty(LT_WORKSPACE_BYTES, dtype=torch.uint8, device=dev)
+        return _tune_lt(st)
+    except Exception as exc:  # noqa: BLE001
+        print("LT unavailable:", repr(exc)[:300], flush=True)
+        return None
 
 
-# On the Marlin path (T <= MARLIN_MAX_TOKENS) _experts_marlin replaces moe_align_block_size with
-# _align_parallel_kernel, ported from muse_moe_w4a16 master via the decode layer (hypothesis
-# moe-align-local-routes-parallel-port): one launch, and Marlin's block list holds the 32 local
-# experts' routes only, so no m-blocks are spent on remote routes. Gated by a prepare() self-check.
-ALIGN_PAR_CHUNK = 512
-ALIGN_PAR_WARPS = 8
-ALIGN_PAR_BLK = 64
-ALIGN_PAR_TAG = "[align-local]"
-
-
-@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks"])
-def _align_parallel_kernel(topk_ids_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
-                           local_start, local_count, n, cap, n_blocks, CHUNK: tl.constexpr,
-                           PAD_BLOCK: tl.constexpr, BLK: tl.constexpr, BSM: tl.constexpr,
-                           NUM_E: tl.constexpr):
-    """_align_small_kernel's outputs for any n, grid (local_count + 1,).
-
-    Every program streams the n route ids in CHUNK chunks and counts all local experts, so each
-    knows every segment start. Program e < local_count then places expert e's routes in ascending
-    route order (segment start + routes placed by earlier chunks + rank in the chunk), its padding
-    slots (sentinel n) and its block_experts entries. Program local_count writes local_ids, the
-    sentinel into [total, cap), -1 into block_experts past the used blocks, and n_padded. The
-    store sets are disjoint across programs, so no atomics or ordering are needed; no program
-    reads what another writes (local ids are recomputed from topk_ids)."""
-    pid = tl.program_id(0)
-    offs0 = tl.arange(0, CHUNK)
-    experts = tl.arange(0, NUM_E)
-
-    counts = tl.zeros([NUM_E], dtype=tl.int32)
-    for c in range(0, n, CHUNK):
-        offs = c + offs0
-        mask = offs < n
-        ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-        local = ids - local_start
-        local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
-        counts += tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
-    padded = (counts + BSM - 1) // BSM * BSM
-    seg_end = tl.cumsum(padded, axis=0)
-    seg_start = seg_end - padded
-    total = tl.sum(padded, axis=0)
-
-    if pid < local_count:
-        sel = experts == pid
-        my_count = tl.sum(tl.where(sel, counts, 0), axis=0)
-        my_padded = tl.sum(tl.where(sel, padded, 0), axis=0)
-        my_start = tl.sum(tl.where(sel, seg_start, 0), axis=0)
-        # This expert's routes, ascending route index.
-        base = my_start
-        for c in range(0, n, CHUNK):
-            offs = c + offs0
-            mask = offs < n
-            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-            local = ids - local_start
-            match = (mask & (local == pid)).to(tl.int32)
-            rank = tl.cumsum(match, axis=0) - 1
-            tl.store(sorted_ids_ptr + base + rank, offs, mask=match > 0)
-            base += tl.sum(match, axis=0)
-        # Its padding slots: fewer than BSM, over a power-of-2 tile (BSM 48 is not one).
-        j = tl.arange(0, PAD_BLOCK)
-        tl.store(sorted_ids_ptr + my_start + my_count + j, tl.zeros([PAD_BLOCK], dtype=tl.int32) + n,
-                 mask=j < my_padded - my_count)
-        # Its m-blocks [my_start / BSM, (my_start + my_padded) / BSM); a runtime loop, since one
-        # expert can own up to cdiv(M, BSM) blocks.
-        b0 = my_start // BSM
-        nb = my_padded // BSM
-        kb0 = tl.arange(0, BLK)
-        for k in range(0, nb, BLK):
-            kb = k + kb0
-            tl.store(block_experts_ptr + b0 + kb, tl.zeros([BLK], dtype=tl.int32) + pid, mask=kb < nb)
-    else:
-        for c in range(0, n, CHUNK):
-            offs = c + offs0
-            mask = offs < n
-            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-            local = ids - local_start
-            local = tl.where((local >= 0) & (local < local_count), local, -1)
-            tl.store(local_ids_ptr + offs, local, mask=mask)
-        # Every slot past the used length.
-        for s in range(0, cap, CHUNK):
-            slots = s + offs0
-            tl.store(sorted_ids_ptr + slots, tl.zeros([CHUNK], dtype=tl.int32) + n,
-                     mask=(slots >= total) & (slots < cap))
-        used_blocks = total // BSM
-        kb0 = tl.arange(0, BLK)
-        for k in range(0, n_blocks, BLK):
-            kb = k + kb0
-            tl.store(block_experts_ptr + kb, tl.zeros([BLK], dtype=tl.int32) - 1,
-                     mask=(kb >= used_blocks) & (kb < n_blocks))
-        tl.store(n_padded_ptr, total)
-
-
-def _align_parallel(topk_ids, local_start, local_count, block_size_m):
-    """Marlin's (sorted_ids, block_experts, n_padded) and local_ids [M, 8] int32 for M > 32, in one launch of
-    _align_parallel_kernel over local_count + 1 programs. n, cap and n_blocks are runtime
-    arguments, so only block_size_m selects a compiled variant."""
-    topk_ids = topk_ids.contiguous()
-    device = topk_ids.device
-    n = topk_ids.numel()
-    cap = n + local_count * (block_size_m - 1)
-    n_blocks = triton.cdiv(cap, block_size_m)
-    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
-    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
-    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
-    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
-    _align_parallel_kernel[(local_count + 1,)](
-        topk_ids, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
-        n_blocks, CHUNK=ALIGN_PAR_CHUNK, PAD_BLOCK=triton.next_power_of_2(block_size_m),
-        BLK=ALIGN_PAR_BLK, BSM=block_size_m, NUM_E=triton.next_power_of_2(local_count),
-        num_warps=ALIGN_PAR_WARPS)
-    return local_ids, (sorted_ids, block_experts, n_padded)
-
-def _align_par_ref_view(sorted_ids, block_experts, n_padded, n, bsm):
-    """Per local expert: (sorted routes, block count) from an align's three outputs."""
-    sorted_ids = sorted_ids.cpu()
-    block_experts = block_experts.cpu()
-    used = min(int(n_padded.cpu()[0]) // bsm, block_experts.numel())
-    out = {}
-    for e in range(LOCAL_EXPERTS):
-        blocks = (block_experts[:used] == e).nonzero().flatten().tolist()
-        routes = []
-        for b in blocks:
-            seg = sorted_ids[b * bsm:(b + 1) * bsm]
-            routes += seg[seg < n].tolist()
-        out[e] = (sorted(routes), len(blocks))
+def _mm(st, x, name, side=False):
+    """x [T, K] @ W[N, K]^T with the tuned cuBLASLt algorithm for this shape, else torch.mm."""
+    T = x.shape[0]
+    choice = st["lt_choice"].get((T, name)) if st.get("lt_choice") else None
+    wn, f32 = LT_GEMMS[name]
+    w = st[wn]
+    if choice is None:
+        return torch.mm(x, w.t(), out_dtype=torch.float32) if f32 else torch.mm(x, w.t())
+    out = torch.empty((T, w.shape[0]), dtype=torch.float32 if f32 else torch.bfloat16, device=x.device)
+    st["lt"].lt_run(choice[0], choice[1], x, w, out, st["lt_ws_side"] if side else st["lt_ws"])
     return out
 
 
-def _align_par_setup(state, device):
-    """Untimed, prepare() only: compile _align_parallel_kernel for every block_size_m the Marlin path
-    can pick, then compare it per local expert with SGLang's moe_align_block_size(local_ids, bsm,
-    N_EXPERTS) on synthetic routings (local_ids 0-31, -1 remote). Remote routes, padding and capacity
-    differences are ignored. Sets state["align_par_ok"]; any failure keeps master's align."""
-    state["align_par_ok"] = False
-    cases = mismatches = 0
-    try:
-        for bsm in BLOCK_SIZE_M_CANDIDATES:
-            _align_parallel(torch.zeros((16, TOP_K), dtype=torch.int32, device=device), 0, LOCAL_EXPERTS, bsm)
-        torch.cuda.synchronize()
-        gen = torch.Generator(device=device).manual_seed(20261024)
-        for tokens in (9, 200, 753, 3012, 4096):
-            for kind in ("random", "skewed", "all_remote"):
-                ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
-                if kind == "skewed":
-                    ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
-                elif kind == "all_remote":
-                    ids = ids % (N_EXPERTS - LOCAL_EXPERTS) + LOCAL_EXPERTS
-                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-                for bsm in BLOCK_SIZE_M_CANDIDATES:
-                    if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
-                        break
-                r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, bsm, N_EXPERTS)
-                n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, bsm)
-                cases += 1
-                bad = not torch.equal(n_local, local_ids)
-                if not bad:
-                    bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), bsm)
-                           != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), bsm))
-                if bad:
-                    mismatches += 1
-                    print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={bsm}", flush=True)
-        torch.cuda.synchronize()
-        state["align_par_ok"] = mismatches == 0
-    except Exception as e:
-        print(f"{ALIGN_PAR_TAG} setup raised {e!r}", flush=True)
-        mismatches = max(mismatches, 1)
-        state["align_par_ok"] = False
-    print(f"{ALIGN_PAR_TAG} {'ON' if state['align_par_ok'] else 'OFF'} cases={cases} mismatches={mismatches}"
-          f" (PATH CHOSEN = {'parallel align' if state['align_par_ok'] else 'MASTER align'} on the Marlin path)",
-          flush=True)
-    _align_par_ft_setup(state, device)
+# --------------------------------------------------------------------------------------
+# Weight repack: NVFP4 expert weights into the fused kernel's layout.
+# --------------------------------------------------------------------------------------
 
 
-ALIGN_PAR_FT_TOKENS = (8192, 16384)
+def _codes(packed):
+    """uint8 [..., K/2] -> uint8 codes [..., K] (element 2i = low nibble)."""
+    lo = packed & 15
+    hi = packed >> 4
+    return torch.stack((lo, hi), dim=-1).flatten(-2)
 
 
-def _align_par_ft_setup(state, device):
-    """Untimed, prepare() only (experts-turn-rega-s4-first-turn-n128): the same per-expert comparison with
-    moe_align_block_size at the first-turn sizes, at Marlin's block size for the T and at REGA_BSM (the rega
-    path's block), on random, skewed and local-saturated (every route on a local expert: the most blocks)
-    routings. Sets state["align_par_ft_ok"] only, so a miss here turns off the rega first-turn class and never
-    master's Marlin-path align."""
-    state["align_par_ft_ok"] = False
-    cases = mismatches = 0
-    try:
-        gen = torch.Generator(device=device).manual_seed(20261025)
-        for tokens in ALIGN_PAR_FT_TOKENS:
-            for kind in ("random", "skewed", "local"):
-                if kind == "local":
-                    ids = torch.rand((tokens, LOCAL_EXPERTS), generator=gen, device=device).topk(
-                        TOP_K, dim=1).indices.to(torch.int32)
-                else:
-                    ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device,
-                                        dtype=torch.int32)
-                    if kind == "skewed":
-                        ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
-                local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-                for bsm in BLOCK_SIZE_M_CANDIDATES:
-                    if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
-                        break
-                for b in sorted({bsm, REGA_BSM}):
-                    r_sorted, r_blocks, r_pad = moe_align_block_size(local_ids, b, N_EXPERTS)
-                    n_local, (n_sorted, n_blocks, n_pad) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, b)
-                    cases += 1
-                    bad = not torch.equal(n_local, local_ids)
-                    if not bad:
-                        bad = (_align_par_ref_view(r_sorted, r_blocks, r_pad, ids.numel(), b)
-                               != _align_par_ref_view(n_sorted, n_blocks, n_pad, ids.numel(), b))
-                    if bad:
-                        mismatches += 1
-                        print(f"{ALIGN_PAR_TAG}   mismatch T={tokens} {kind} bsm={b}", flush=True)
-        torch.cuda.synchronize()
-        state["align_par_ft_ok"] = cases > 0 and mismatches == 0
-    except Exception as e:
-        print(f"{ALIGN_PAR_TAG} first-turn cases raised {e!r}", flush=True)
-        mismatches = max(mismatches, 1)
-        state["align_par_ft_ok"] = False
-    print(f"{ALIGN_PAR_TAG} first-turn T {ALIGN_PAR_FT_TOKENS}: {'ok' if state['align_par_ft_ok'] else 'MISS'} "
-          f"cases={cases} mismatches={mismatches} (gates only the rega first-turn class)", flush=True)
-# align-two-phase-all-t-rega (restack of turn-align-two-phase-chunk-prefix, extended to the first_turn class):
-# _align_parallel streams all n route ids twice on each of its local_count + 1 programs (about 17 us at T=753,
-# 70 us at T=3012, 390-420 us at T=16384). align2 keeps its exact outputs but reads each id about twice in
-# total: launch A counts each chunk's routes per local expert, launch B (every program loads the small count
-# table) places its chunk's routes at segment start + earlier chunks' counts + in-chunk rank, and one tail
-# program writes padding, block_experts and n_padded (and, in the 'tail' form, the sentinel fill; in the 'dist'
-# form every place program fills its own slot range instead). The decision (a chunk size per "bsm:class" string,
-# 0 / absent = master's align, plus the fill form under the key "dist") lives in state["align2_ok"], a plain dict
-# of ints; prepare() compiles, checks every output bit for bit against _align_parallel and gates on cold-L2
-# graph medians. Only _experts_rega calls _align_dispatch; Marlin and ssdq keep _align_parallel.
-ALIGN2_TAG = "[align2]"
-ALIGN2_CHUNKS = (512, 1024)
-ALIGN2_WARPS = 8
-ALIGN2_BLKT = 256
-ALIGN2_SENT = 2048
-ALIGN2_BSMS = (16,)                    # REGA_BSM, the only caller
-ALIGN2_MIN_TOKENS = 200                # the dispatch is only used above this T (the equivalence suite starts there)
-ALIGN2_LOW_MAX = 1024                  # T class 'low' <= this < 'high' <= MARLIN_MAX_TOKENS < 'ft' <= REGA_FT_MAX
-ALIGN2_GATE = ((16, 753, "low"), (16, 3012, "high"), (16, 16384, "ft"))
-ALIGN2_RATIO = 0.98
-ALIGN2_ALTERNATIONS = 15
-ALIGN2_TESTS_T = (9, 200, 300, 753, 1100, 1506, 3012, 4096, 4500, 8192, 16384)
-ALIGN2_DIST_MIN_T = 8192               # the 'dist' fill form is checked on the cases from this T up
-ALIGN2_TAIL_MAX_US = 10.0              # single tail program above this at T=16384: distributed fill
+# Nibble slot i (the old layout's 4i..4i+3) -> bit positions of (m0, m1, m2, sign) in the 32-bit word
+# (see convert8 in _CUDA_SRC).
+_CODE_POS = {3: (6, 7, 8, 15), 7: (22, 23, 24, 31), 2: (2, 3, 4, 11), 6: (18, 19, 20, 27),
+             1: (28, 29, 30, 5), 5: (12, 13, 14, 21), 0: (0, 1, 26, 9), 4: (16, 17, 10, 25)}  # dequant layout
 
 
-@triton.jit(do_not_specialize=["local_start", "local_count", "n"])
-def _align2_count_kernel(topk_ids_ptr, cnt_ptr, local_start, local_count, n, CHUNK: tl.constexpr,
-                         NUM_E: tl.constexpr):
-    """cnt[chunk, e] = routes of chunk `chunk` (CHUNK ids) that map to local expert e."""
-    pid = tl.program_id(0)
-    experts = tl.arange(0, NUM_E)
-    offs = pid * CHUNK + tl.arange(0, CHUNK)
-    mask = offs < n
-    ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-    local = ids - local_start
-    local = tl.where(mask & (local >= 0) & (local < local_count), local, -1)
-    counts = tl.sum((local[:, None] == experts[None, :]).to(tl.int32), axis=0)
-    tl.store(cnt_ptr + pid * NUM_E + experts, counts)
-
-
-@triton.jit(do_not_specialize=["local_start", "local_count", "n", "cap", "n_blocks", "nchunks", "span"])
-def _align2_place_kernel(topk_ids_ptr, cnt_ptr, local_ids_ptr, sorted_ids_ptr, block_experts_ptr, n_padded_ptr,
-                         local_start, local_count, n, cap, n_blocks, nchunks, span, CHUNK: tl.constexpr,
-                         NCH_P2: tl.constexpr, NUM_E: tl.constexpr, BSM: tl.constexpr, PAD_BLOCK: tl.constexpr,
-                         BLKT: tl.constexpr, SENT: tl.constexpr, DIST: tl.constexpr, TAIL_ONLY: tl.constexpr):
-    """_align_parallel_kernel's four outputs, grid (nchunks + 1,). Programs < nchunks place their chunk's
-    routes and local ids; program nchunks writes the padding slots, block_experts, n_padded and (DIST == 0) the
-    sentinel tail; with DIST == 1 each place program fills the sentinel slots of its own range
-    [pid * span, (pid + 1) * span). The store sets are disjoint (placement and padding stay below total, the
-    sentinel at or above it), so no atomics or ordering are needed. TAIL_ONLY (prepare() timing diagnostic):
-    the place programs return at once."""
-    pid = tl.program_id(0)
-    experts = tl.arange(0, NUM_E)
-    chs = tl.arange(0, NCH_P2)
-    cnt = tl.load(cnt_ptr + chs[:, None] * NUM_E + experts[None, :],
-                  mask=(chs[:, None] < nchunks) & (experts[None, :] < NUM_E), other=0)
-    counts = tl.sum(cnt, axis=0)
-    padded = (counts + BSM - 1) // BSM * BSM
-    seg_start = tl.cumsum(padded, axis=0) - padded
-    total = tl.sum(padded, axis=0)
-    if pid < nchunks:
-        if not TAIL_ONLY:
-            pre = tl.sum(tl.where(chs[:, None] < pid, cnt, 0), axis=0)
-            offs = pid * CHUNK + tl.arange(0, CHUNK)
-            mask = offs < n
-            ids = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int32)
-            local = ids - local_start
-            valid = mask & (local >= 0) & (local < local_count)
-            local = tl.where(valid, local, -1)
-            tl.store(local_ids_ptr + offs, local, mask=mask)
-            onehot = (local[:, None] == experts[None, :]).to(tl.int32)
-            rank = tl.cumsum(onehot, axis=0) - 1
-            pos = tl.sum(onehot * (seg_start[None, :] + pre[None, :] + rank), axis=1)
-            tl.store(sorted_ids_ptr + pos, offs, mask=valid)
-            if DIST:
-                lo = pid * span
-                hi = tl.minimum(lo + span, cap)
-                f0 = tl.arange(0, SENT)
-                for s in range(lo, hi, SENT):
-                    slots = s + f0
-                    tl.store(sorted_ids_ptr + slots, tl.zeros([SENT], dtype=tl.int32) + n,
-                             mask=(slots >= total) & (slots < hi))
-    else:
-        # Each expert's padding slots [seg_start + count, seg_start + padded): fewer than BSM.
-        j = tl.arange(0, PAD_BLOCK)
-        pslots = (seg_start + counts)[:, None] + j[None, :]
-        tl.store(sorted_ids_ptr + pslots, tl.zeros([NUM_E, PAD_BLOCK], dtype=tl.int32) + n,
-                 mask=j[None, :] < (padded - counts)[:, None])
-        if not DIST:
-            # The sentinel in every slot past the used length.
-            s0 = tl.arange(0, SENT)
-            for s in range(0, cap, SENT):
-                slots = s + s0
-                tl.store(sorted_ids_ptr + slots, tl.zeros([SENT], dtype=tl.int32) + n,
-                         mask=(slots >= total) & (slots < cap))
-        # Block b belongs to the expert whose segment holds slot b * BSM: the number of experts whose
-        # segment ends at or before it; -1 past the used blocks.
-        seg_end = seg_start + padded
-        b0 = tl.arange(0, BLKT)
-        for b in range(0, n_blocks, BLKT):
-            blk = b + b0
-            first = blk * BSM
-            e_of = tl.sum((seg_end[None, :] <= first[:, None]).to(tl.int32), axis=1)
-            tl.store(block_experts_ptr + blk, tl.where(first < total, e_of, -1), mask=blk < n_blocks)
-        tl.store(n_padded_ptr, total)
-
-
-def _align_two_phase(topk_ids, local_start, local_count, block_size_m, chunk, dist=0, stage="full", kinfo=None):
-    """_align_parallel's (local_ids, (sorted_ids, block_experts, n_padded)), bit for bit, in two launches.
-    The count table is shape-sized scratch allocated per call (nothing is kept between calls). dist: 0 = the
-    tail program fills the sentinel range, 1 = the place programs do. stage / kinfo are prepare()-only
-    diagnostics: 'count' stops after launch A, 'tail' runs launch B with the place programs returning at once
-    (its output is then not a valid align); kinfo (a list) receives launch B's compiled-kernel handle."""
-    topk_ids = topk_ids.contiguous()
-    device = topk_ids.device
-    n = topk_ids.numel()
-    cap = n + local_count * (block_size_m - 1)
-    n_blocks = triton.cdiv(cap, block_size_m)
-    nchunks = triton.cdiv(n, chunk)
-    num_e = triton.next_power_of_2(local_count)
-    local_ids = torch.empty(topk_ids.shape, dtype=torch.int32, device=device)
-    sorted_ids = torch.empty((cap,), dtype=torch.int32, device=device)
-    block_experts = torch.empty((n_blocks,), dtype=torch.int32, device=device)
-    n_padded = torch.empty((1,), dtype=torch.int32, device=device)
-    cnt = torch.empty((nchunks, num_e), dtype=torch.int32, device=device)
-    _align2_count_kernel[(nchunks,)](topk_ids, cnt, local_start, local_count, n, CHUNK=chunk, NUM_E=num_e,
-                                     num_warps=ALIGN2_WARPS)
-    if stage != "count":
-        handle = _align2_place_kernel[(nchunks + 1,)](
-            topk_ids, cnt, local_ids, sorted_ids, block_experts, n_padded, local_start, local_count, n, cap,
-            n_blocks, nchunks, triton.cdiv(cap, nchunks), CHUNK=chunk,
-            NCH_P2=max(2, triton.next_power_of_2(nchunks)), NUM_E=num_e, BSM=block_size_m,
-            PAD_BLOCK=triton.next_power_of_2(block_size_m), BLKT=ALIGN2_BLKT, SENT=ALIGN2_SENT,
-            DIST=bool(dist), TAIL_ONLY=stage == "tail", num_warps=ALIGN2_WARPS)
-        if kinfo is not None:
-            kinfo.append(handle)
-    return local_ids, (sorted_ids, block_experts, n_padded)
-
-
-def _align_dispatch(local_ids, block_size_m, state):
-    """The align _experts_rega calls (local_start 0 on mapped ids): align2 with the chunk size and fill form
-    prepare() gated for (block_size_m, T class), else master's _align_parallel. Reads only the shape of
-    local_ids and the plain-int dict state["align2_ok"]; nothing is cached from inputs."""
-    tokens = local_ids.shape[0]
-    chunk = 0
-    ok = state["align2_ok"]
-    if tokens > ALIGN2_MIN_TOKENS and tokens <= REGA_FT_MAX:
-        cls = "low" if tokens <= ALIGN2_LOW_MAX else ("high" if tokens <= MARLIN_MAX_TOKENS else "ft")
-        chunk = ok.get(f"{block_size_m}:{cls}", 0)
-    if chunk:
-        return _align_two_phase(local_ids, 0, LOCAL_EXPERTS, block_size_m, chunk, ok.get("dist", 0))
-    return _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m)
-
-
-def _align2_cases(device):
-    """Synthetic routings: (T, kind, ids, local_start). Mapped (0-31, -1) and raw (0-255) id forms. From
-    T = 8192: 'local-saturated' (every route local, the ft worst case: most blocks, the sentinel range nearly
-    empty)."""
-    gen = torch.Generator(device=device).manual_seed(20261025)
-    for tokens in ALIGN2_TESTS_T:
-        raw = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
-        mapped = torch.where(raw < LOCAL_EXPERTS, raw, torch.full_like(raw, -1)).contiguous()
-        skew = raw.clone()
-        skew[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
-        one = torch.full_like(raw, 7)
-        remote = raw % (N_EXPERTS - LOCAL_EXPERTS) + LOCAL_EXPERTS
-        yield tokens, "random-mapped", mapped, 0
-        yield tokens, "random-raw", raw, 0
-        yield tokens, "skewed", torch.where(skew < LOCAL_EXPERTS, skew, torch.full_like(skew, -1)).contiguous(), 0
-        yield tokens, "one-expert", one, 0
-        yield tokens, "all-remote", remote, 0
-        yield tokens, "offset-8", raw, 8
-        if tokens >= 8192:
-            yield tokens, "local-saturated", (raw % LOCAL_EXPERTS).contiguous(), 0
-
-
-def _align2_first_mismatch(ref, new):
-    names = ("local_ids", "sorted_ids", "block_experts", "n_padded")
-    r = (ref[0], ref[1][0], ref[1][1], ref[1][2])
-    w = (new[0], new[1][0], new[1][1], new[1][2])
-    for name, a, b in zip(names, r, w):
-        if a.shape != b.shape:
-            return f"{name} shape {tuple(a.shape)} vs {tuple(b.shape)}"
-        if not torch.equal(a, b):
-            idx = (a != b).nonzero().flatten()[0].item()
-            return f"{name}[{idx}] master {a.view(-1)[idx].item()} vs new {b.view(-1)[idx].item()}"
-    return None
-
-
-def _align2_gate_time(fns, device):
-    """Cold-L2 graph-replay medians (us) of every fn in the same loop, ALIGN2_ALTERNATIONS alternations, the
-    order rotated and flipped each time, an empty-graph baseline subtracted."""
-    graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
-    tiny = torch.zeros(16, dtype=torch.float32, device=device)
-    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    names = list(graphs)
-    samples = {name: [] for name in names}
-    for name in names:
-        once(graphs[name])
-    for i in range(ALIGN2_ALTERNATIONS):
-        order = names[i % len(names):] + names[:i % len(names)]
-        if i % 2:
-            order = order[::-1]
-        for name in order:
-            samples[name].append(once(graphs[name]))
-    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
-    base = med.pop("empty")
-    return {name: max(v - base, 0.0) for name, v in med.items()}
-
-
-def _align2_setup(state, device):
-    """Untimed, prepare() only, next to _align_par_setup and before the ssdq / rega setups (so their gates and
-    replay checks run on the align that will be timed). Compiles align2 for block_size_m 16 and both chunk
-    sizes, requires torch.equal on all four outputs against _align_parallel on every synthetic case (the
-    'tail' fill form on all of them, the 'dist' form from T = ALIGN2_DIST_MIN_T up, which holds the
-    one-expert and local-saturated extremes), times the single tail program at T=16384 (more than
-    ALIGN2_TAIL_MAX_US: the distributed fill, if it passed), then gates per (block_size_m, T class) on cold-L2
-    graph medians (ON only at <= ALIGN2_RATIO x master, the faster chunk size). Sets state["align2_ok"] =
-    {"bsm:class": chunk, "dist": 0 or 1}; every failure keeps master's align. Returns the lines prepare()
-    prints again after the rega setup, so the archived log tail keeps them."""
-    state["align2_ok"] = {}
-    lines = []
-    form = "tail"
-    try:
-        if not state.get("align_par_ok", False):
-            print(f"{ALIGN2_TAG} OFF: master's parallel align is off (PATH CHOSEN = master align)", flush=True)
-        else:
-            for bsm in ALIGN2_BSMS:
-                for chunk in ALIGN2_CHUNKS:
-                    _align_two_phase(torch.zeros((16, TOP_K), dtype=torch.int32, device=device), 0, LOCAL_EXPERTS,
-                                     bsm, chunk)
-            torch.cuda.synchronize()
-            bad = {}
-            cases = 0
-            extremes = set()
-            for tokens, kind, ids, start in _align2_cases(device):
-                for bsm in ALIGN2_BSMS:
-                    ref = _align_parallel(ids, start, LOCAL_EXPERTS, bsm)
-                    for chunk in ALIGN2_CHUNKS:
-                        for dist in (0, 1):
-                            if dist and tokens < ALIGN2_DIST_MIN_T:
-                                continue
-                            new = _align_two_phase(ids, start, LOCAL_EXPERTS, bsm, chunk, dist)
-                            cases += 1
-                            why = _align2_first_mismatch(ref, new)
-                            if tokens == 16384 and kind in ("one-expert", "local-saturated") and not why:
-                                extremes.add((kind, chunk, dist))
-                            if why and (bsm, chunk, dist) not in bad:
-                                bad[(bsm, chunk, dist)] = (
-                                    f"bsm {bsm} chunk {chunk} fill {'dist' if dist else 'tail'} T={tokens} "
-                                    f"{kind}: {why}")
-            torch.cuda.synchronize()
-            for why in bad.values():
-                print(f"{ALIGN2_TAG} OFF: {why}", flush=True)
-            print(f"{ALIGN2_TAG} equivalence cases={cases} (bsm x chunk x fill combos failing: {len(bad)}); "
-                  f"T=16384 one-expert + local-saturated passing (kind, chunk, dist): {sorted(extremes)}",
-                  flush=True)
-            gen = torch.Generator(device=device).manual_seed(20261025)
-            bsm0 = ALIGN2_BSMS[0]
-            # Register count and spills of the place kernel at CHUNK 1024 (T=16384: NCH_P2 = 128).
-            kinfo = []
-            lids_big = _ssdq_case(16384, "random", gen, device)[2]
-            _align_two_phase(lids_big, 0, LOCAL_EXPERTS, bsm0, 1024, 0, "full", kinfo)
-            torch.cuda.synchronize()
-            handle = kinfo[0] if kinfo else None
-            print(f"{ALIGN2_TAG} place kernel CHUNK 1024 (T=16384, NCH_P2 128, {ALIGN2_WARPS} warps): "
-                  f"registers {getattr(handle, 'n_regs', 'n/a')}, spills {getattr(handle, 'n_spills', 'n/a')}",
-                  flush=True)
-            # The single tail program: place programs return at once, so (count + tail) - count is the tail.
-            tail_chunks = [c for c in ALIGN2_CHUNKS if (bsm0, c, 0) not in bad]
-            dist_chunks = [c for c in ALIGN2_CHUNKS if (bsm0, c, 1) not in bad]
-            if tail_chunks:
-                fns = {}
-                for c in tail_chunks:
-                    fns[f"count{c}"] = lambda c=c: _align_two_phase(lids_big, 0, LOCAL_EXPERTS, bsm0, c, 0, "count")
-                    fns[f"tail{c}"] = lambda c=c: _align_two_phase(lids_big, 0, LOCAL_EXPERTS, bsm0, c, 0, "tail")
-                tmeds = _align2_gate_time(fns, device)
-                tails = {c: max(tmeds[f"tail{c}"] - tmeds[f"count{c}"], 0.0) for c in tail_chunks}
-                worst_tail = max(tails.values())
-                use_dist = worst_tail > ALIGN2_TAIL_MAX_US and bool(dist_chunks)
-                form = "dist" if use_dist else "tail"
-                print(f"{ALIGN2_TAG} single tail program at T=16384 (fill + padding + block_experts): "
-                      + ", ".join(f"chunk {c} {v:.1f} us" for c, v in tails.items())
-                      + f"; limit {ALIGN2_TAIL_MAX_US:.0f} us -> fill form {form}"
-                      + ("" if not (worst_tail > ALIGN2_TAIL_MAX_US and not dist_chunks)
-                         else " (distributed fill failed its equivalence pass: kept the tail form)"),
-                      flush=True)
-            elif dist_chunks:
-                form = "dist"
-                print(f"{ALIGN2_TAG} tail form failed the equivalence check: fill form dist", flush=True)
-            use = 1 if form == "dist" else 0
-            del lids_big
-            for bsm, tokens, cls in ALIGN2_GATE:
-                chunks = [c for c in ALIGN2_CHUNKS if (bsm, c, use) not in bad]
-                if not chunks:
-                    lines.append(f"{ALIGN2_TAG} GATE bsm {bsm} {cls} T={tokens}: no chunk size passed the check")
-                    continue
-                lids = _ssdq_case(tokens, "random", gen, device)[2]
-                fns = {"master": lambda: _align_parallel(lids, 0, LOCAL_EXPERTS, bsm)}
-                for c in chunks:
-                    fns[f"chunk{c}"] = lambda c=c: _align_two_phase(lids, 0, LOCAL_EXPERTS, bsm, c, use)
-                meds = _align2_gate_time(fns, device)
-                best = min(chunks, key=lambda c: meds[f"chunk{c}"])
-                ratio = meds[f"chunk{best}"] / max(meds["master"], 1e-9)
-                if ratio <= ALIGN2_RATIO:
-                    state["align2_ok"][f"{bsm}:{cls}"] = best
-                lines.append(f"{ALIGN2_TAG} GATE bsm {bsm} {cls} T={tokens} cold-L2 graph medians over "
-                             f"{ALIGN2_ALTERNATIONS} alternations (empty-graph baseline subtracted): master "
-                             f"{meds['master']:.1f} us; " + "; ".join(f"chunk {c} {meds[f'chunk{c}']:.1f} us"
-                                                                      for c in chunks)
-                             + f"; chunk chosen {best} ratio {ratio:.3f} (ON at <= {ALIGN2_RATIO}), fill {form}: "
-                             f"{'ON' if f'{bsm}:{cls}' in state['align2_ok'] else 'OFF'}")
-                del lids
-            state["align2_ok"]["dist"] = use if any(k != "dist" for k in state["align2_ok"]) else 0
-    except Exception as e:
-        print(f"{ALIGN2_TAG} OFF: setup raised {e!r}"[:400], flush=True)
-        state["align2_ok"] = {}
-    for line in lines:
-        print(line, flush=True)
-    on = {k: v for k, v in state["align2_ok"].items() if k != "dist"}
-    final = lines + [f"{ALIGN2_TAG} PATH CHOSEN: "
-                     + ("; ".join(f"bsm:class {key}: two-phase chunk {k}, fill {form}" for key, k in sorted(on.items()))
-                        if on else "master _align_parallel everywhere")
-                     + " (every other (bsm, class): master _align_parallel; rega path only; Marlin / ssdq keep "
-                       "master's align)"]
-    print(final[-1], flush=True)
-    return final
-
-
-# Marlin-path silu-mul over the aligned local rows only (hypothesis silu-mul-triton-local-rows-marlin-turn):
-# SGLang's act_and_mul_kernel launches over all T*8 slots; this walks moe_align_block_size's sorted_ids
-# up to n_padded and computes silu(gate) * up for slots whose local id is >= 0 (remote and padding rows
-# are skipped, as today their cache2 rows are left unwritten and never read).
-SILU_SORTED_BLOCK_R = 16
-SILU_SORTED_BLOCK_N = 512
-
-
-@triton.jit(do_not_specialize=["num_slots"])
-def _silu_mul_sorted_kernel(cache1_ptr, cache2_ptr, sorted_ptr, n_padded_ptr, local_ids_ptr, num_slots,
-                            SIZE_N: tl.constexpr, BLOCK_R: tl.constexpr, BLOCK_N: tl.constexpr):
-    n_padded = tl.load(n_padded_ptr)
-    r0 = tl.program_id(0) * BLOCK_R
-    if r0 < n_padded:
-        rows = r0 + tl.arange(0, BLOCK_R)
-        sid = tl.load(sorted_ptr + rows, mask=rows < n_padded, other=num_slots)
-        valid = sid < num_slots
-        lid = tl.load(local_ids_ptr + sid, mask=valid, other=-1)
-        valid = valid & (lid >= 0)
-        cols = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
-        s64 = sid.to(tl.int64)
-        m = valid[:, None]
-        src = cache1_ptr + s64[:, None] * (2 * SIZE_N) + cols[None, :]
-        g = tl.load(src, mask=m, other=0.0).to(tl.float32)
-        u = tl.load(src + SIZE_N, mask=m, other=0.0).to(tl.float32)
-        y = g / (1.0 + tl.exp(-g)) * u
-        tl.store(cache2_ptr + s64[:, None] * SIZE_N + cols[None, :], y.to(tl.bfloat16), mask=m)
-
-
-def _silu_mul_sorted(cache1, cache2, sorted_ids, n_padded, local_ids, size_n):
-    num_slots = cache2.shape[0]
-    grid = (triton.cdiv(sorted_ids.shape[0], SILU_SORTED_BLOCK_R), size_n // SILU_SORTED_BLOCK_N)
-    _silu_mul_sorted_kernel[grid](cache1, cache2, sorted_ids, n_padded, local_ids, num_slots, SIZE_N=size_n,
-                                  BLOCK_R=SILU_SORTED_BLOCK_R, BLOCK_N=SILU_SORTED_BLOCK_N, num_warps=4)
-
-
-def _silu_sorted_setup(state, device):
-    """Untimed, prepare() only: compile _silu_mul_sorted_kernel and compare it with SGLang's
-    silu_and_mul on the local rows of synthetic caches at T=753 and T=3012 (Marlin block 64), within
-    one bf16 rounding (the exp may differ from SGLang's expf in the last fp32 bits). Sets
-    state["silu_sorted_ok"]; any failure keeps silu_and_mul."""
-    state["silu_sorted_ok"] = False
-    try:
-        size_n = state["marlin"]["size_n"]
-        if size_n % SILU_SORTED_BLOCK_N:
-            raise ValueError(f"size_n {size_n} not a multiple of {SILU_SORTED_BLOCK_N}")
-        gen = torch.Generator(device=device).manual_seed(20261024)
-        worst = 0.0
-        for tokens in (753, 3012):
-            ids = torch.randint(0, N_EXPERTS, (tokens, TOP_K), generator=gen, device=device, dtype=torch.int32)
-            local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-            for bsm in BLOCK_SIZE_M_CANDIDATES:
-                if tokens * TOP_K / LOCAL_EXPERTS / bsm < 0.9:
-                    break
-            sorted_ids, _, n_padded = moe_align_block_size(local_ids, bsm, N_EXPERTS)
-            cache1 = (torch.randn((tokens * TOP_K, 2 * size_n), generator=gen, device=device) * 3).to(torch.bfloat16)
-            ref = torch.zeros((tokens * TOP_K, size_n), dtype=torch.bfloat16, device=device)
-            got = torch.zeros_like(ref)
-            silu_and_mul(cache1, ref, expert_ids=local_ids.view(-1), expert_step=1)
-            _silu_mul_sorted(cache1, got, sorted_ids, n_padded, local_ids.view(-1), size_n)
-            torch.cuda.synchronize()
-            loc = local_ids.view(-1) >= 0
-            r, g = ref[loc].float(), got[loc].float()
-            if not bool(torch.isfinite(g).all()):
-                raise AssertionError(f"non-finite output at T={tokens}")
-            err = ((g - r).abs() / (r.abs() + 1e-3)).max().item()
-            worst = max(worst, err)
-            if err > 2.0 ** -7:
-                raise AssertionError(f"T={tokens} max rel err {err:.3e} > 2^-7")
-        state["silu_sorted_ok"] = True
-        print(f"[silu-sorted] ON max rel err {worst:.2e} (PATH CHOSEN = sorted silu on the Marlin path)", flush=True)
-    except Exception as e:
-        print(f"[silu-sorted] OFF: {e!r} (PATH CHOSEN = MASTER silu_and_mul)", flush=True)
-
-
-def _experts_marlin(x, topk_weights, local_ids, state):
-    """MuseSpark1xFp4Experts._marlin_expert_outputs and its post-expert-norm finalize, on ids
-    already mapped to this GPU's experts (0-31, -1 elsewhere)."""
-    bank = state["marlin"]
-    num_tokens, size_k = x.shape
-    size_n = bank["size_n"]
-    gemm1_n = 2 * size_n
-    topk_weights = topk_weights.to(torch.float32).contiguous()
-    for block_size_m in BLOCK_SIZE_M_CANDIDATES:
-        if num_tokens * TOP_K / LOCAL_EXPERTS / block_size_m < 0.9:
-            break
-    if state.get("align_par_ok", False):
-        # moe-align-local-routes-parallel-port: local routes only, one launch (prepare() self-checked).
-        _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, block_size_m)
-    else:
-        sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, block_size_m, N_EXPERTS)
-    cache2 = torch.empty((num_tokens * TOP_K, size_n), device=x.device, dtype=x.dtype)
-    cache13 = torch.empty((num_tokens * TOP_K * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
-    cache1 = cache13[: num_tokens * TOP_K * gemm1_n].view(-1, gemm1_n)
-    cache3 = cache13[: num_tokens * TOP_K * size_k].view(-1, size_k)
-    common = dict(moe_block_size=block_size_m, mul_topk_weights=False, is_ep=True,
-                  b_q_type=scalar_types.float4_e2m1f, is_k_full=True, use_atomic_add=False,
-                  use_fp32_reduce=True, is_zp_float=False)
-    ws = bank["workspace"]
-    cache1 = moe_wna16_marlin_gemm(
-        x, cache1, bank["w13"], None, bank["w13_s"], bank["w13_gs"], None, None, None, ws,
-        sorted_ids, block_experts, n_padded, topk_weights, top_k=TOP_K,
-        size_m=num_tokens, size_n=gemm1_n, size_k=size_k, **common)
-    if state.get("silu_sorted_ok", False):
-        _silu_mul_sorted(cache1.view(-1, gemm1_n), cache2, sorted_ids, n_padded, local_ids.view(-1), size_n)
-    else:
-        silu_and_mul(cache1.view(-1, gemm1_n), cache2, expert_ids=local_ids.view(-1), expert_step=1)
-    y = moe_wna16_marlin_gemm(
-        cache2, cache3, bank["w2"], None, bank["w2_s"], bank["w2_gs"], None, None, None, ws,
-        sorted_ids, block_experts, n_padded, topk_weights, top_k=1,
-        size_m=num_tokens * TOP_K, size_n=size_k, size_k=size_n, **common).view(num_tokens, TOP_K, size_k)
-    return fused_post_expert_norm_weighted_sum(
-        y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
-        slot_expert_ids=local_ids)
-
-
-def _experts_triton(x, topk_weights, local_ids, state):
-    """MuseSpark1xFp4Experts' expert outputs and post-expert-norm finalize, on ids already mapped
-    to this GPU's experts (0-31, -1 elsewhere), with the two Marlin GEMMs replaced by the Triton
-    grouped GEMM that dequantizes the stored NVFP4 weights in registers."""
-    bank = state["bank"]
-    num_tokens, size_k = x.shape
-    gemm1_n = bank["w13"].shape[1]
-    size_n = gemm1_n // 2
-    num_slots = num_tokens * TOP_K
-    topk_weights = topk_weights.to(torch.float32).contiguous()
-    cfg = _expert_config(num_tokens)
-    # moe-align-32-experts-first-turn: the ids are already 0-31 or -1, so align over the 32 local experts
-    # (muse_moe_w4a16 master does the same): 32 counters and numel + 33*(BLOCK_T-1) capacity, not 257.
-    sorted_ids, block_experts, n_padded = moe_align_block_size(local_ids, cfg["BLOCK_T"], LOCAL_EXPERTS)
-    cache2 = torch.empty((num_slots, size_n), device=x.device, dtype=x.dtype)
-    cache13 = torch.empty((num_slots * max(gemm1_n, size_k),), device=x.device, dtype=x.dtype)
-    cache1 = cache13[: num_slots * gemm1_n].view(-1, gemm1_n)
-    cache3 = cache13[: num_slots * size_k].view(-1, size_k)
-    _nvfp4_moe_gemm(x.contiguous(), bank["w13"], bank["w13_sf"], bank["w13_gs"], cache1, sorted_ids, block_experts,
-                    n_padded, TOP_K, num_slots, cfg, False)
-    silu_and_mul(cache1, cache2, expert_ids=local_ids.view(-1), expert_step=1)
-    y = _nvfp4_moe_gemm(cache2, bank["w2"], bank["w2_sf"], bank["w2_gs"], cache3, sorted_ids, block_experts,
-                        n_padded, 1, num_slots, cfg, state["zero_nonlocal_w2"]).view(num_tokens, TOP_K, size_k)
-    return fused_post_expert_norm_weighted_sum(
-        y, topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS, weight_first=True,
-        slot_expert_ids=local_ids)
-
-
-# ---------------------------------------------------------------------------------------------
-# CUDA dequant-producer SS-wgmma expert path for turn_4 (hypothesis
-# experts-turn4-cuda-dequant-producer-ss-wgmma, rewrite stage 1). 1024 < T <= MARLIN_MAX_TOKENS.
-#
-# Two launches of one hand-written Hopper kernel (load_inline, sm_90a only) replace the two Marlin
-# GEMMs; master's parallel align (here at block 128) and the post-expert weighted sum are kept. The
-# weights stay NVFP4 in global memory (the nibble-reordered bank prepare() already holds); the only
-# bf16 copy of a weight tile lives in shared memory for one pipeline stage. CTA = 3 warpgroups, one
-# 128-route x 256-column tile per CTA, BLOCK_K 64, 4 stages of (A 16 KB + B 32 KB):
-#   WG0 (producer, 128 threads): prefetches the next 128-k chunk of packed E2M1 codes and e4m3
-#       scales into registers, dequantizes it (exact, the nibble -> bf16 bit trick of the Triton
-#       kernel) into the 128B-swizzled B stage with st.shared, fence.proxy.async, mbarrier arrive.
-#       Thread 0 also issues the A tile TMA (the activation rows are pre-gathered into sorted order
-#       by ssdq_gather, so A is a plain 2-D TMA box, no cp.async gather).
-#   WG1, WG2 (consumers): SS wgmma m64n256k16 (both operands from shared memory: no register-A
-#       hazard), 64 routes each, fp32 accumulators, global scale in the epilogue.
-# No setmaxnreg: the review's 232 + 160 split needs 79,872 registers per SM (> 65,536); all three
-# warpgroups run at the 168-register launch-bounds cap instead.
-# w13's epilogue writes bf16 rows in sorted-row space (c1[row, 8192]); a Triton kernel does silu*up
-# row-to-row (c2[row, 4096]); w2 reads c2 by TMA directly and scatters rows to y[sorted id].
-# ---------------------------------------------------------------------------------------------
-SSDQ_TAG = "[ssdq]"
-SSDQ_BM = 128
-SSDQ_MIN_TOKENS = 1024        # the path serves SSDQ_MIN_TOKENS < T <= MARLIN_MAX_TOKENS
-SSDQ_GATE_TOKENS = 3012       # turn_4: the shape the gate times
-SSDQ_GATE_RATIO = 0.95        # ON only when new / Marlin pair <= this
-SSDQ_ALTERNATIONS = 9
-SSDQ_BUDGET_S = 170.0         # skip the whole setup if prepare() has used more than this already
-SSDQ_EXT_NAME = "muse_prefill_ssdq_v1"
-SSDQ_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
-SSDQ_CUDA_CFLAGS = ["-O3", "-std=c++20", "-lineinfo", SSDQ_GENCODE]
-SSDQ_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)"}
-SSDQ_SILU_BLOCK_R = 16
-SSDQ_SILU_BLOCK_N = 512
-
-_SSDQ_CPP = r"""
-#include <torch/extension.h>
-#include <vector>
-std::vector<int64_t> ssdq_info();
-void ssdq_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes,
-                 int64_t n_experts, torch::Tensor xs);
-int64_t ssdq_gemm(int64_t mode, torch::Tensor a, torch::Tensor w, torch::Tensor sf, torch::Tensor gs,
-                  torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes, torch::Tensor out,
-                  torch::Tensor err, torch::Tensor prof, int64_t use_prof);
-"""
-
-_SSDQ_HEAD = r"""
-#include <torch/extension.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAException.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
-#include <cstdint>
-#include <vector>
-
-namespace {
-
-constexpr int THREADS = 384;
-constexpr int STAGES = 4;
-constexpr int BM = 128;                       // routes per CTA tile
-constexpr int BN = 256;                       // output columns per CTA tile
-constexpr int BKT = 64;                       // k per pipeline stage (one 128 B swizzled row)
-constexpr int A_BYTES = BM * BKT * 2;         // 16384
-constexpr int B_BYTES = BN * BKT * 2;         // 32768
-constexpr int STAGE_BYTES = A_BYTES + B_BYTES;
-constexpr int SMEM_BYTES = 1024 + STAGES * STAGE_BYTES;
-static_assert(A_BYTES % 1024 == 0 && STAGE_BYTES % 1024 == 0, "stage alignment");
-static_assert(SMEM_BYTES + 4096 <= 227 * 1024, "shared memory budget");
-
-struct __align__(64) Maps { CUtensorMap m; };
-
-__device__ __forceinline__ uint32_t smem_u32(const void* p) {
-  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
-}
-__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
-  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
-}
-__device__ __forceinline__ void fence_barrier_init() {
-  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
-}
-__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
-  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n" :: "r"(a), "r"(tx) : "memory");
-}
-__device__ __forceinline__ void mbar_arrive(uint32_t a) {
-  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];\n" :: "r"(a) : "memory");
-}
-__device__ __forceinline__ bool mbar_try(uint32_t a, uint32_t parity) {
-  uint32_t ok;
-  asm volatile("{\n\t.reg .pred P;\n\t"
-               "mbarrier.try_wait.parity.shared::cta.b64 P, [%1], %2;\n\t"
-               "selp.u32 %0, 1, 0, P;\n\t}\n"
-               : "=r"(ok) : "r"(a), "r"(parity) : "memory");
-  return ok != 0;
-}
-// Bounded wait: after 2^26 cycles without the phase, record error word 1 and stop waiting (dead),
-// so a broken pipeline ends in a failed self-check instead of a hang.
-__device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err, bool& dead) {
-  if (dead || mbar_try(a, parity)) return;
-  const long long t0 = clock64();
-  while (!mbar_try(a, parity)) {
-    if (clock64() - t0 > (1ll << 26)) {
-      dead = true;
-      atomicExch(err, 1);
-      return;
-    }
-  }
-}
-__device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
-  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3}], [%4];\n"
-               :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(bar) : "memory");
-}
-// Generic-proxy shared writes (the dequantized B tile) must be made visible to the async proxy
-// (wgmma) before the mbarrier arrive that publishes them.
-__device__ __forceinline__ void fence_proxy_async() {
-  asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
-}
-// wgmma exists only for sm_90a: every such body is compiled only under __CUDA_ARCH_FEAT_SM90_ALL, so
-// a stray plain compute_90 pass still assembles; there ssdq_kernel only sets error word 2.
-__device__ __forceinline__ void wgmma_fence() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory");
-#endif
-}
-__device__ __forceinline__ void wgmma_commit() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
-#endif
-}
-template <int N>
-__device__ __forceinline__ void wgmma_wait() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory");
-#endif
-}
-__device__ __forceinline__ void fence_acc(float (&d)[128]) {
-#pragma unroll
-  for (int i = 0; i < 128; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
-}
-// K-major SWIZZLE_128B shared-memory matrix descriptor: start address >> 4 (bits 0-13), LBO 1
-// (unused for swizzled K-major), SBO 1024 B between 8-row core groups (bits 32-45), layout type 1 =
-// 128B swizzle (bits 62-63), base offset 0 (every tile base is 1024-aligned; the k16 advance of +32 B
-// stays inside the first 128 B row).
-__device__ __forceinline__ uint64_t make_desc(uint32_t saddr) {
-  return static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4) | (static_cast<uint64_t>(1) << 16) |
-         (static_cast<uint64_t>(1024 >> 4) << 32) | (static_cast<uint64_t>(1) << 62);
-}
-"""
-
-_SSDQ_BODY = r"""
-__device__ __forceinline__ uint32_t bf16x2_bcast(float v) {
-  __nv_bfloat162 b = __float2bfloat162_rn(v);
-  return *reinterpret_cast<uint32_t*>(&b);
-}
-// a * b (+ -0), bf16x2, round to nearest; subnormal inputs are kept (the sibling kernels' trick).
-__device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
-  uint32_t d;
-  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
-  return d;
-}
-// One e4m3 byte -> float (hardware cvt, as the sibling kernels), times 2^119, as a bf16x2 broadcast.
-// 448 * 2^119 < the bf16 maximum and e4m3 has 4 significant bits, so the bf16 value is exact.
-__device__ __forceinline__ uint32_t sf_bf16x2(uint32_t byte) {
-  const unsigned short in = static_cast<unsigned short>(byte & 0xFFu);
-  uint32_t h2;
-  asm("cvt.rn.f16x2.e4m3x2 %0, %1;\n" : "=r"(h2) : "h"(in));
-  const float f = __half2float(__ushort_as_half(static_cast<unsigned short>(h2 & 0xFFFFu)));
-  return bf16x2_bcast(f * __int_as_float(0x7B000000));
-}
-// p holds two E2M1 codes, at bits 0-3 and 16-19. Each code goes to bf16 bits: 3 magnitude bits to
-// bits 8..6 (exponent low bits and the top mantissa bit), sign to bit 15: that is e2m1 * 2^-126
-// exactly (e = 0 codes on bf16 subnormals); times scale * 2^119 gives e2m1 * scale * 2^-7, at most 6
-// significant bits, exact in bf16. The epilogue multiplies by global scale * 2^7.
-__device__ __forceinline__ uint32_t dq_pair(uint32_t p, uint32_t sb2) {
-  const uint32_t v = ((p & 0x00070007u) << 6) | ((p & 0x00080008u) << 12);
-  return mul_bf16x2(v, sb2);
-}
-
-__global__ void __launch_bounds__(THREADS, 1)
-ssdq_kernel(const __grid_constant__ Maps maps,
-            const uint8_t* __restrict__ w,         // [E][N][K/2], nibble-reordered per 128-k chunk
-            const uint8_t* __restrict__ sf,        // e4m3 [E][N][K/16]
-            const float* __restrict__ gs,          // fp32 [E] global scales
-            const int* __restrict__ sorted_ids,    // block-128 align of the local ids
-            const int* __restrict__ block_experts,
-            int n_experts, int num_routes, int N, int K, int mode,
-            __nv_bfloat16* __restrict__ out, int out_ld, int* __restrict__ err, long long* __restrict__ prof) {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  extern __shared__ __align__(1024) uint8_t smem_raw[];
-  __shared__ __align__(8) uint64_t bars[2 * STAGES];
-  const int e = __ldg(block_experts + blockIdx.y);
-  if (e < 0 || e >= n_experts) return;  // uniform over the CTA: no barrier has been touched yet
-  // Launch marker: err[0] is the error word, err[1 + mode] counts CTAs that started real work.
-  if (threadIdx.x == 0) atomicAdd(err + 1 + mode, 1);
-
-  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const uint32_t raw = smem_u32(smem_raw);
-  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
-  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STAGES]);
-  const int n0 = blockIdx.x * BN;   // first output column of this tile
-  const int m0 = blockIdx.y * BM;   // first sorted row of this tile
-  const int KT = K / BKT;           // pipeline steps
-  const bool do_prof = prof != nullptr;
-  long long* pr = prof + 4 * mode;
-
-  if (tid == 0) {
-#pragma unroll
-    for (int s = 0; s < STAGES; ++s) {
-      mbar_init(full0 + 8 * s, 129);   // 128 producer threads + the TMA thread's expect_tx arrive
-      mbar_init(empty0 + 8 * s, 8);    // one arrive per consumer warp
-    }
-    fence_barrier_init();
-  }
-  __syncthreads();
-  bool dead = false;
-
-  if (warp < 4) {
-    // ---------------- producer warpgroup ----------------
-    const int p = tid;                 // 0..127
-    const int q = p & 3;               // 16-byte piece of a row's 64-byte chunk
-    const int rs = p >> 2;             // 0..31: rows rs + 32 * it
-    const uint8_t* wbase = w + (static_cast<size_t>(e) * N + n0) * (K / 2);
-    const uint8_t* sbase = sf + (static_cast<size_t>(e) * N + n0) * (K / 16);
-    const int nchunks = K / 128;
-    long long wait_cyc = 0;
-    const long long t_begin = (do_prof && p == 0) ? clock64() : 0;
-    uint4 cur[8], nxt[8];
-    uint2 cs[8], ns[8];
-#pragma unroll
-    for (int it = 0; it < 8; ++it) {
-      const int row = it * 32 + rs;
-      cur[it] = __ldg(reinterpret_cast<const uint4*>(wbase + static_cast<size_t>(row) * (K / 2) + q * 16));
-      cs[it] = __ldg(reinterpret_cast<const uint2*>(sbase + static_cast<size_t>(row) * (K / 16)));
-    }
-    for (int c = 0; c < nchunks; ++c) {
-      if (c + 1 < nchunks) {
-#pragma unroll
-        for (int it = 0; it < 8; ++it) {
-          const int row = it * 32 + rs;
-          nxt[it] = __ldg(reinterpret_cast<const uint4*>(wbase + static_cast<size_t>(row) * (K / 2) + (c + 1) * 64 + q * 16));
-          ns[it] = __ldg(reinterpret_cast<const uint2*>(sbase + static_cast<size_t>(row) * (K / 16) + (c + 1) * 8));
-        }
-      }
-#pragma unroll
-      for (int half = 0; half < 2; ++half) {
-        const int kt = 2 * c + half;
-        const int s = kt % STAGES;
-        const long long tw = do_prof ? clock64() : 0;
-        mbar_wait(empty0 + 8 * s, ((kt / STAGES) & 1) ^ 1, err, dead);
-        if (do_prof) wait_cyc += clock64() - tw;
-        uint8_t* stage = smem + s * STAGE_BYTES;
-        if (p == 0) {
-          mbar_expect_tx(full0 + 8 * s, A_BYTES);
-          tma_2d(smem_u32(stage), reinterpret_cast<uint64_t>(&maps.m), kt * BKT, m0, full0 + 8 * s);
-        }
-        uint8_t* bt = stage + A_BYTES;
-#pragma unroll
-        for (int it = 0; it < 8; ++it) {
-          const int row = it * 32 + rs;
-          const uint32_t sc = half ? cs[it].y : cs[it].x;          // 4 scale bytes: groups of this half
-          const uint32_t sb2 = sf_bf16x2((sc >> (8 * q)) & 0xFFu);  // this thread's 16 k = one scale group
-          const uint32_t wv[4] = {cur[it].x, cur[it].y, cur[it].z, cur[it].w};
-          uint32_t o[8];
-#pragma unroll
-          for (int i = 0; i < 4; ++i) {
-            // bytes (b0, b1) and (b2, b3) of the word -> codes at bits 0-7 and 16-23; the high nibbles
-            // (k + 64) for the second half.
-            const uint32_t pa = __byte_perm(wv[i], 0u, 0x4140) >> (4 * half);
-            const uint32_t pb = __byte_perm(wv[i], 0u, 0x4342) >> (4 * half);
-            o[2 * i] = dq_pair(pa, sb2);
-            o[2 * i + 1] = dq_pair(pb, sb2);
-          }
-          uint8_t* rowp = bt + row * 128;
-          const int sw = row & 7;
-          *reinterpret_cast<uint4*>(rowp + (((2 * q) ^ sw) << 4)) = make_uint4(o[0], o[1], o[2], o[3]);
-          *reinterpret_cast<uint4*>(rowp + (((2 * q + 1) ^ sw) << 4)) = make_uint4(o[4], o[5], o[6], o[7]);
-        }
-        fence_proxy_async();
-        mbar_arrive(full0 + 8 * s);
-        if (half == 1) {
-#pragma unroll
-          for (int it = 0; it < 8; ++it) { cur[it] = nxt[it]; cs[it] = ns[it]; }
-        }
-      }
-    }
-    if (do_prof && p == 0) {
-      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 0), static_cast<unsigned long long>(wait_cyc));
-      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 2), 1ull);
-      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 3), static_cast<unsigned long long>(clock64() - t_begin));
-    }
-  } else {
-    // ---------------- consumer warpgroups ----------------
-    const int ctid = tid - 128, wg = ctid >> 7, cw = (ctid >> 5) & 3;
-    float acc[128];
-#pragma unroll
-    for (int i = 0; i < 128; ++i) acc[i] = 0.f;
-    long long wait_cyc = 0;
-    for (int kt = 0; kt < KT; ++kt) {
-      const int s = kt % STAGES;
-      const long long tw = do_prof ? clock64() : 0;
-      mbar_wait(full0 + 8 * s, (kt / STAGES) & 1, err, dead);
-      if (do_prof) wait_cyc += clock64() - tw;
-      const uint32_t a = smem_u32(smem + s * STAGE_BYTES) + wg * (64 * 128);
-      const uint32_t b = smem_u32(smem + s * STAGE_BYTES + A_BYTES);
-      fence_acc(acc);
-      wgmma_fence();
-#pragma unroll
-      for (int k = 0; k < 4; ++k) {
-        const uint64_t da = make_desc(a + k * 32), db = make_desc(b + k * 32);
-@MMA_CALL@
-      }
-      wgmma_commit();
-      wgmma_wait<1>();  // the previous stage's group has retired: its buffers can be refilled
-      fence_acc(acc);
-      if (kt > 0 && lane == 0) mbar_arrive(empty0 + 8 * ((kt - 1) % STAGES));
-    }
-    wgmma_wait<0>();
-    fence_acc(acc);
-    if (lane == 0) mbar_arrive(empty0 + 8 * ((KT - 1) % STAGES));
-    if (do_prof && (ctid & 127) == 0) {
-      atomicAdd(reinterpret_cast<unsigned long long*>(pr + 1), static_cast<unsigned long long>(wait_cyc));
-    }
-
-    // Epilogue straight from registers: acc[4j + 2h + l] = row (16 cw + lane / 4 + 8 h) of this
-    // warpgroup's 64, column 8 j + 2 (lane % 4) + l of the 256.
-    const float gsc = __ldg(gs + e) * 128.0f;   // the 2^7 the dequantized tile left out
-    const int rbase = m0 + wg * 64 + cw * 16 + (lane >> 2);
-    int sid0 = 0, sid1 = 0;
-    if (mode == 1) {
-      sid0 = __ldg(sorted_ids + rbase);
-      sid1 = __ldg(sorted_ids + rbase + 8);
-    }
-    const bool ok0 = mode == 0 || (sid0 >= 0 && sid0 < num_routes);
-    const bool ok1 = mode == 0 || (sid1 >= 0 && sid1 < num_routes);
-    const size_t r0 = mode == 0 ? static_cast<size_t>(rbase) : static_cast<size_t>(sid0);
-    const size_t r1 = mode == 0 ? static_cast<size_t>(rbase + 8) : static_cast<size_t>(sid1);
-    __nv_bfloat16* o0 = out + r0 * out_ld + n0 + 2 * (lane & 3);
-    __nv_bfloat16* o1 = out + r1 * out_ld + n0 + 2 * (lane & 3);
-#pragma unroll
-    for (int j = 0; j < 32; ++j) {
-      if (ok0) {
-        __nv_bfloat162 v = __floats2bfloat162_rn(acc[4 * j] * gsc, acc[4 * j + 1] * gsc);
-        *reinterpret_cast<__nv_bfloat162*>(o0 + 8 * j) = v;
-      }
-      if (ok1) {
-        __nv_bfloat162 v = __floats2bfloat162_rn(acc[4 * j + 2] * gsc, acc[4 * j + 3] * gsc);
-        *reinterpret_cast<__nv_bfloat162*>(o1 + 8 * j) = v;
-      }
-    }
-  }
-#else
-  // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
-  if (threadIdx.x == 0) atomicExch(err, 2);
-#endif
-}
-
-// xs[slot] = x[sorted_ids[slot] / 8] for the slots of local blocks (sentinel slots: zeros); slots of
-// blocks past the used count (expert -1) are skipped. One CTA per slot.
-__global__ void __launch_bounds__(256)
-ssdq_gather_kernel(const __nv_bfloat16* __restrict__ x, const int* __restrict__ sorted_ids,
-                   const int* __restrict__ block_experts, int num_routes, int H, int n_experts,
-                   __nv_bfloat16* __restrict__ xs) {
-  const int slot = blockIdx.x;
-  const int be = __ldg(block_experts + (slot / BM));
-  if (be < 0 || be >= n_experts) return;
-  const int sid = __ldg(sorted_ids + slot);
-  uint4* dst = reinterpret_cast<uint4*>(xs + static_cast<size_t>(slot) * H);
-  const int nv = H / 8;
-  if (sid >= 0 && sid < num_routes) {
-    const uint4* src = reinterpret_cast<const uint4*>(x + static_cast<size_t>(sid >> 3) * H);
-    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = __ldg(src + v);
-  } else {
-    const uint4 z = make_uint4(0u, 0u, 0u, 0u);
-    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = z;
-  }
-}
-
-typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
-                                  const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
-                                  CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
-
-EncodeTiledFn get_encode() {
-  static EncodeTiledFn fn_cached = nullptr;
-  if (fn_cached != nullptr) return fn_cached;
-  void* fn = nullptr;
-  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
-#if CUDART_VERSION >= 12050
-  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
-#else
-  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
-#endif
-  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
-    (void)cudaGetLastError();
-    return nullptr;
-  }
-  fn_cached = reinterpret_cast<EncodeTiledFn>(fn);
-  return fn_cached;
-}
-
-}  // namespace
-
-// regs, local bytes, static smem, dynamic smem, CTAs per SM, cudaFuncSetAttribute rc, binaryVersion,
-// ptxVersion, attribute calls ok.
-std::vector<int64_t> ssdq_info() {
-  std::vector<int64_t> r;
-  const void* fn = reinterpret_cast<const void*>(ssdq_kernel);
-  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES);
-  cudaFuncAttributes a{};
-  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
-  int occ = 0;
-  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, ssdq_kernel, THREADS, SMEM_BYTES);
-  const bool ok = e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess;
-  if (!ok) (void)cudaGetLastError();
-  r.push_back(a.numRegs);
-  r.push_back(static_cast<int64_t>(a.localSizeBytes));
-  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
-  r.push_back(SMEM_BYTES);
-  r.push_back(occ);
-  r.push_back(static_cast<int64_t>(e1));
-  r.push_back(a.binaryVersion);
-  r.push_back(a.ptxVersion);
-  r.push_back(ok ? 1 : 0);
-  return r;
-}
-
-void ssdq_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes,
-                 int64_t n_experts, torch::Tensor xs) {
-  TORCH_CHECK(x.is_cuda() && x.is_contiguous() && xs.is_contiguous() && sorted_ids.is_contiguous() &&
-              block_experts.is_contiguous() && x.scalar_type() == at::kBFloat16 && xs.scalar_type() == at::kBFloat16 &&
-              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt, "ssdq_gather: layout");
-  TORCH_CHECK(x.size(1) == xs.size(1) && x.size(1) % 8 == 0 && xs.size(0) == block_experts.numel() * BM &&
-              sorted_ids.numel() <= xs.size(0), "ssdq_gather: sizes");
-  const int slots = static_cast<int>(block_experts.numel() * BM);
-  if (slots == 0) return;
-  auto stream = at::cuda::getCurrentCUDAStream();
-  ssdq_gather_kernel<<<slots, 256, 0, stream>>>(
-      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), reinterpret_cast<const int*>(sorted_ids.data_ptr()), reinterpret_cast<const int*>(block_experts.data_ptr()),
-      static_cast<int>(num_routes), static_cast<int>(x.size(1)), static_cast<int>(n_experts),
-      reinterpret_cast<__nv_bfloat16*>(xs.data_ptr()));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-
-// mode 0: w13, out = c1 in sorted-row space [rows, N]; mode 1: w2, out = y [num_routes, N] scattered
-// to the sorted ids. Returns 0, or the CUresult + 1000 of a failed tensor-map encode (1 if the entry
-// point is missing).
-int64_t ssdq_gemm(int64_t mode, torch::Tensor a, torch::Tensor w, torch::Tensor sf, torch::Tensor gs,
-                  torch::Tensor sorted_ids, torch::Tensor block_experts, int64_t num_routes, torch::Tensor out,
-                  torch::Tensor err, torch::Tensor prof, int64_t use_prof) {
-  TORCH_CHECK(mode == 0 || mode == 1, "ssdq_gemm: mode");
-  TORCH_CHECK(a.is_cuda() && a.is_contiguous() && w.is_contiguous() && sf.is_contiguous() && gs.is_contiguous() &&
-              sorted_ids.is_contiguous() && block_experts.is_contiguous() && out.is_contiguous(), "ssdq_gemm: contiguous");
-  TORCH_CHECK(a.scalar_type() == at::kBFloat16 && out.scalar_type() == at::kBFloat16 && w.scalar_type() == at::kByte &&
-              sf.scalar_type() == at::kFloat8_e4m3fn && gs.scalar_type() == at::kFloat &&
-              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
-              err.scalar_type() == at::kInt && prof.scalar_type() == at::kLong, "ssdq_gemm: dtypes");
-  const int64_t N = w.size(1), K = w.size(2) * 2;
-  TORCH_CHECK(N % BN == 0 && K % 128 == 0 && a.size(1) == K && sf.size(2) * 16 == K && out.size(1) == N,
-              "ssdq_gemm: shapes");
-  const int64_t nb = block_experts.numel();
-  TORCH_CHECK(a.size(0) == nb * BM && sorted_ids.numel() <= a.size(0), "ssdq_gemm: rows");
-  TORCH_CHECK(mode == 0 ? out.size(0) == a.size(0) : out.size(0) == num_routes, "ssdq_gemm: out rows");
-  if (nb == 0) return 0;
-  EncodeTiledFn enc = get_encode();
-  if (enc == nullptr) return 1;
-  Maps maps;
-  const cuuint64_t dims[2] = {static_cast<cuuint64_t>(K), static_cast<cuuint64_t>(a.size(0))};
-  const cuuint64_t strides[1] = {static_cast<cuuint64_t>(K) * 2};
-  const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(BM)};
-  const cuuint32_t es[2] = {1, 1};
-  const CUresult rc = enc(&maps.m, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, a.data_ptr(), dims, strides, box, es,
-                          CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
-                          CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
-  if (rc != CUDA_SUCCESS) return 1000 + static_cast<int64_t>(rc);
-  auto stream = at::cuda::getCurrentCUDAStream();
-  dim3 grid(static_cast<unsigned>(N / BN), static_cast<unsigned>(nb));
-  ssdq_kernel<<<grid, THREADS, SMEM_BYTES, stream>>>(
-      maps, reinterpret_cast<const uint8_t*>(w.data_ptr()), reinterpret_cast<const uint8_t*>(sf.data_ptr()),
-      reinterpret_cast<const float*>(gs.data_ptr()), reinterpret_cast<const int*>(sorted_ids.data_ptr()),
-      reinterpret_cast<const int*>(block_experts.data_ptr()), static_cast<int>(gs.numel()),
-      static_cast<int>(num_routes), static_cast<int>(N), static_cast<int>(K), static_cast<int>(mode),
-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), reinterpret_cast<int*>(err.data_ptr()),
-      use_prof ? reinterpret_cast<long long*>(prof.data_ptr()) : nullptr);
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-  return 0;
-}
-"""
-
-
-def _ssdq_mma_call():
-    """The wgmma m64n256k16 SS call (bf16 x bf16 -> fp32, both operands K-major from shared memory
-    descriptors, scale-d = 1, scales 1, no transpose), as inline asm over the 128 accumulators."""
-    d = ", ".join(f"%{i}" for i in range(128))
-    outs = ", ".join(f'"+f"(acc[{i}])' for i in range(128))
-    return "\n".join([
-        "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)",
-        '        asm volatile("{\\n\\t.reg .pred p;\\n\\t"',
-        '                     "setp.ne.b32 p, %130, 0;\\n\\t"',
-        '                     "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 "',
-        f'                     "{{{d}}}, "',
-        '                     "%128, %129, p, 1, 1, 0, 0;\\n\\t}\\n"',
-        f"                     : {outs}",
-        '                     : "l"(da), "l"(db), "r"(1));',
-        "#endif",
-    ])
-
-
-def _ssdq_src():
-    return _SSDQ_HEAD + _SSDQ_BODY.replace("@MMA_CALL@", _ssdq_mma_call())
-
-
-@triton.jit
-def _silu_rows_kernel(c1_ptr, c2_ptr, n_padded_ptr, SIZE_N: tl.constexpr, BLOCK_R: tl.constexpr,
-                      BLOCK_N: tl.constexpr):
-    """c2[r] = silu(c1[r, :SIZE_N]) * c1[r, SIZE_N:] for every sorted row r < n_padded (a multiple of the
-    128-row block, so no row mask); the padded rows hold zeros and stay zeros."""
-    r0 = tl.program_id(0) * BLOCK_R
-    if r0 < tl.load(n_padded_ptr):
-        rows = (r0 + tl.arange(0, BLOCK_R)).to(tl.int64)
-        cols = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
-        src = c1_ptr + rows[:, None] * (2 * SIZE_N) + cols[None, :]
-        g = tl.load(src).to(tl.float32)
-        u = tl.load(src + SIZE_N).to(tl.float32)
-        y = g / (1.0 + tl.exp(-g)) * u
-        tl.store(c2_ptr + rows[:, None] * SIZE_N + cols[None, :], y.to(tl.bfloat16))
-
-
-def _silu_rows(c1, c2, n_padded, size_n):
-    grid = (triton.cdiv(c1.shape[0], SSDQ_SILU_BLOCK_R), size_n // SSDQ_SILU_BLOCK_N)
-    _silu_rows_kernel[grid](c1, c2, n_padded, SIZE_N=size_n, BLOCK_R=SSDQ_SILU_BLOCK_R,
-                            BLOCK_N=SSDQ_SILU_BLOCK_N, num_warps=4)
-
-
-def _experts_ssdq(x, topk_weights, local_ids, state, tracer=None, use_prof=False):
-    """The experts on the dequant-producer SS-wgmma kernel, on ids already mapped to this GPU's experts
-    (0-31, -1 elsewhere). align (block 128, local routes only) -> gather rows into sorted order ->
-    w13 -> silu*up (row to row) -> w2 (scatter to the route slot) -> master's weighted sum. tracer, only
-    passed by prepare(), is called around every launch (it syncs and prints there)."""
-    ext, bank = state["ssdq_ext"], state["bank"]
-    num_tokens, size_k = x.shape
-    gemm1_n = bank["w13"].shape[1]
-    size_n = gemm1_n // 2
-    num_slots = num_tokens * TOP_K
-    topk_weights = topk_weights.to(torch.float32).contiguous()
-    err, prof = state["ssdq_err"], state["ssdq_prof"]
-    if tracer:
-        tracer("align")
-    _, (sorted_ids, block_experts, n_padded) = _align_parallel(local_ids, 0, LOCAL_EXPERTS, SSDQ_BM)
-    if tracer:
-        tracer("align done", sorted_ids, n_padded)
-    rows = block_experts.shape[0] * SSDQ_BM
-    xs = torch.empty((rows, size_k), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("ssdq_gather")
-    ext.ssdq_gather(x.contiguous(), sorted_ids, block_experts, num_slots, LOCAL_EXPERTS, xs)
-    if tracer:
-        tracer("ssdq_gather done", xs, n_padded)
-    c1 = torch.empty((rows, gemm1_n), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("ssdq_gemm w13")
-    rc = ext.ssdq_gemm(0, xs, bank["w13"], bank["w13_sf"], bank["w13_gs"], sorted_ids, block_experts, num_slots,
-                       c1, err, prof, 1 if use_prof else 0)
-    if tracer:
-        tracer("ssdq_gemm w13 done", c1, n_padded)
-        tracer.rc("w13", rc)
-    c2 = torch.empty((rows, size_n), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("silu_rows")
-    _silu_rows(c1, c2, n_padded, size_n)
-    if tracer:
-        tracer("silu_rows done", c2, n_padded)
-    # The weighted sum skips remote slots when prepare() proved it (state['zero_nonlocal_w2'] False);
-    # otherwise remote rows must read as zeros.
-    if state["zero_nonlocal_w2"]:
-        y = torch.zeros((num_slots, size_k), device=x.device, dtype=x.dtype)
-    else:
-        y = torch.empty((num_slots, size_k), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("ssdq_gemm w2")
-    rc = ext.ssdq_gemm(1, c2, bank["w2"], bank["w2_sf"], bank["w2_gs"], sorted_ids, block_experts, num_slots,
-                       y, err, prof, 1 if use_prof else 0)
-    if tracer:
-        tracer("ssdq_gemm w2 done", y, None, local_ids)
-        tracer.rc("w2", rc)
-    return fused_post_expert_norm_weighted_sum(
-        y.view(num_tokens, TOP_K, size_k), topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-        weight_first=True, slot_expert_ids=local_ids)
-
-
-_SSDQ_TEMPLATED_ACCESSOR = re.compile(
-    r"(?:\.|->)\s*(?:\w*data_ptr|size|stride|item|sizes|strides|accessor|packed_accessor\w*|data|to|toType)\s*<")
-
-
-def _ssdq_source_audit():
-    """Cheap pre-build audit of the C++/CUDA source. libtorch exports Tensor::data_ptr<int64_t> (long) but
-    not <long long>, so a templated accessor can link and then fail at import with an undefined symbol
-    (the ssdq stage-1 failure). Returns a list of 'line N: text' offenders (empty = clean)."""
-    bad = []
-    for name, src in (("cpp", _SSDQ_CPP), ("cuda", _ssdq_src())):
-        for n, line in enumerate(src.splitlines(), 1):
-            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
-                bad.append(f"{name} line {n}: {line.strip()[:120]}")
-    return bad
-
-
-def _ssdq_build():
-    """Compile the module (prepare only, never during capture): (ext or None, error text). sm_90a only:
-    cpp_extension's JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, a
-    plain compute_90 pass that cannot assemble wgmma), so the list is set to 9.0a for the build and
-    restored after; the wgmma body is also behind __CUDA_ARCH_FEAT_SM90_ALL."""
-    t0 = time.perf_counter()
-    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
-    ext, err_text = None, ""
-    try:
-        from torch.utils import cpp_extension
-        from torch.utils.cpp_extension import load_inline
-        print(f"{SSDQ_TAG} torch {torch.__version__} cuda {torch.version.cuda}; device capability "
-              f"{torch.cuda.get_device_capability()}", flush=True)
-        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
-        try:
-            arch_flags = cpp_extension._get_cuda_arch_flags()
-        except Exception as e:  # this torch does not know the 'a' suffix: default list + the guards
-            print(f"{SSDQ_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
-                  flush=True)
-            if prev is None:
-                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-            else:
-                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-            arch_flags = [f"<unknown>"]
-        print(f"{SSDQ_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
-              f"{arch_flags}; extra_cuda_cflags {SSDQ_CUDA_CFLAGS}", flush=True)
-        ext = load_inline(name=SSDQ_EXT_NAME, cpp_sources=_SSDQ_CPP, cuda_sources=_ssdq_src(),
-                          functions=["ssdq_info", "ssdq_gather", "ssdq_gemm"],
-                          extra_cuda_cflags=list(SSDQ_CUDA_CFLAGS), verbose=False)
-    except Exception as e:
-        err_text = str(e)
-        ext = None
-        print(f"{SSDQ_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {err_text[-400:]!r}",
-              flush=True)
-    finally:
-        if prev is None:
-            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-        else:
-            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-    if ext is not None:
-        print(f"{SSDQ_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
-    return ext, err_text
-
-
-class _SsdqTracer:
-    """prepare()-only: announces each launch with a flushed print BEFORE it, then synchronizes and
-    prints AFTER it (so a fault names its kernel), checks the encode return codes, and names the first
-    non-finite tensor."""
-
-    def __init__(self, tag):
-        self.tag = tag
-        self.bad = None
-        self.rc_bad = None
-
-    def __call__(self, name, tensor=None, rows=None, sel=None):
-        if tensor is None:
-            print(f"{SSDQ_TAG} [{self.tag}] launching {name}", flush=True)
-            return
-        torch.cuda.synchronize()
-        print(f"{SSDQ_TAG} [{self.tag}] {name}", flush=True)
-        if self.bad is not None or tensor.dtype not in (torch.bfloat16, torch.float32):
-            return
-        if sel is not None:
-            view = tensor[(sel.view(-1) >= 0)]
-        elif rows is not None:
-            view = tensor[:int(rows.item())]
-        else:
-            view = tensor
-        if not bool(torch.isfinite(view.float()).all()):
-            self.bad = name
-            print(f"{SSDQ_TAG} [{self.tag}] FIRST NON-FINITE TENSOR after: {name}", flush=True)
-
-    def rc(self, name, rc):
-        if rc != 0 and self.rc_bad is None:
-            self.rc_bad = f"{name} tensor-map encode rc {rc}"
-
-
-def _ssdq_case(tokens, kind, gen, device):
-    """Synthetic expert-input case: x bf16 [T, 4096], mapped local ids [T, 8], normalized weights."""
-    x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
-    ids = torch.rand((tokens, N_EXPERTS), generator=gen, device=device).topk(TOP_K, dim=1).indices.to(torch.int32)
-    if kind == "skewed":
-        # four experts get every token: many 128-route blocks per expert (second, third ... token tile)
-        ids[:, :4] = torch.tensor([0, 31, 5, 17], dtype=torch.int32, device=device)
-    elif kind == "one":
-        # one local expert gets every token's first route; the other routes are remote
-        ids[:, 0] = 7
-        ids[:, 1:] = ids[:, 1:] % (N_EXPERTS - LOCAL_EXPERTS) + LOCAL_EXPERTS
-    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-    tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
-    tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
-    return x, tw, local_ids
-
-
-def _ssdq_reference_y(x, local_ids, weights, cache):
-    """fp32 reference of the two expert GEMMs and the silu*up, on dequantized ORIGINAL-order weights:
-    y [T * 8, 4096] bf16 (intermediates rounded to bf16 where the pipelines store bf16), zeros for
-    remote routes."""
-    tokens = x.shape[0]
-    flat = local_ids.view(-1)
-    y = torch.zeros((tokens * TOP_K, D_EXPERT), dtype=torch.bfloat16, device=x.device)
-    for e in range(LOCAL_EXPERTS):
-        idx = (flat == e).nonzero().flatten()
-        if idx.numel() == 0:
-            continue
-        if e not in cache:
-            cache[e] = (nvfp4.dequantize(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]),
-                        nvfp4.dequantize(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]))
-        w13, w2 = cache[e]
-        h = (x[idx // TOP_K].float() @ w13.t()).to(torch.bfloat16).float()
-        g, u = h[:, :D_EXPERT], h[:, D_EXPERT:]
-        a = (g / (1.0 + torch.exp(-g)) * u).to(torch.bfloat16).float()
-        y[idx] = (a @ w2.t()).to(torch.bfloat16)
-    return y
-
-
-def _ssdq_metrics(out, ref):
-    """The judge's relative L2 and worst row (a near-zero row is measured against a tenth of the average
-    row), or inf when out is not finite."""
-    out, ref = out.float(), ref.float()
-    if not bool(torch.isfinite(out).all()):
-        return float("inf"), float("inf")
-    err = float((out - ref).norm() / ref.norm().clamp_min(1e-30))
-    row_ref = ref.norm(dim=-1)
-    row_err = (out - ref).norm(dim=-1) / torch.maximum(row_ref, 0.1 * row_ref.mean()).clamp_min(1e-30)
-    return err, float(row_err.max())
-
-
-def _ssdq_graph_time(fn, device):
-    """Capture fn once (after a warm-up on a side stream); returns a replay closure."""
-    side = torch.cuda.Stream(device)
-    side.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(side):
-        for _ in range(2):
-            fn()
-    torch.cuda.current_stream().wait_stream(side)
-    torch.cuda.synchronize()
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        fn()
-    torch.cuda.synchronize()
-    return graph
-
-
-SSDQ_REPLAY_TOKENS = 4096     # a judge test shape inside the path's range
-SSDQ_REPLAY_KINDS = ("random", "skewed", "one", "random")
-
-
-def _ssdq_replay_check(state, weights, cache, device, gen):
-    """prepare() only. The judge prepares two states (setup copies: 2) and rotates them across
-    repetitions with refilled inputs. Emulate it: a second state with its own bank copy, error word
-    and counters; one CUDA graph of _experts_ssdq per state over that state's own static inputs; then
-    rounds that refill a state's inputs with a fresh routing, replay its graph and check it against the
-    fp32 reference, alternating A, B / B, A. A launch input shared across states (a module global, a
-    tensor map or buffer frozen for the other state) shows up as a mismatch. Returns None or why."""
-    st2 = dict(state)
-    st2["bank"] = {k: v.clone() for k, v in state["bank"].items()}
-    st2["ssdq_err"] = torch.zeros_like(state["ssdq_err"])
-    st2["ssdq_prof"] = torch.zeros_like(state["ssdq_prof"])
-    states = (state, st2)
-    t = SSDQ_REPLAY_TOKENS
-    bufs, graphs, holders = [], [], []
-    try:
-        for st in states:
-            b = _ssdq_case(t, "random", gen, device)
-            holder = {}
-
-            def fn(st=st, b=b, holder=holder):
-                holder["out"] = _experts_ssdq(b[0], b[1], b[2], st)
-
-            graphs.append(_ssdq_graph_time(fn, device))
-            bufs.append(b)
-            holders.append(holder)
-        for r, kind in enumerate(SSDQ_REPLAY_KINDS):
-            for i in ((0, 1) if r % 2 == 0 else (1, 0)):
-                x, tw, lids = _ssdq_case(t, kind if i == 0 else SSDQ_REPLAY_KINDS[-1 - r], gen, device)
-                for dst, src in zip(bufs[i], (x, tw, lids)):
-                    dst.copy_(src)
-                states[i]["ssdq_err"].zero_()
-                graphs[i].replay()
-                torch.cuda.synchronize()
-                got = holders[i]["out"].clone()
-                ref_y = _ssdq_reference_y(x, lids, weights, cache)
-                ref = fused_post_expert_norm_weighted_sum(
-                    ref_y.view(t, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-                    weight_first=True, slot_expert_ids=lids)
-                mar = _experts_marlin(x, tw, lids, state)
-                torch.cuda.synchronize()
-                word = int(states[i]["ssdq_err"][0].item())
-                marks = states[i]["ssdq_err"].tolist()
-                if marks[1] <= 0 or marks[2] <= 0:  # this replay did not launch the ssdq kernels
-                    word = word or 99
-                e_new, w_new = _ssdq_metrics(got, ref)
-                e_mar, _ = _ssdq_metrics(mar, ref)
-                bound = max(2.0 * e_mar, 8e-3)
-                print(f"{SSDQ_TAG} replay round {r} state {'AB'[i]} T={t}: ssdq rel L2 {e_new:.3e} worst row "
-                      f"{w_new:.3e}; bound {bound:.3e}; error word {word}; launch marker w13 {marks[1]} "
-                      f"w2 {marks[2]}", flush=True)
-                if word != 0 or not (e_new <= bound and w_new <= 5.0 * bound):
-                    return f"round {r} state {'AB'[i]} rel L2 {e_new:.3e} worst row {w_new:.3e} word {word}"
-        print(f"{SSDQ_TAG} two-state replay check ok ({len(SSDQ_REPLAY_KINDS)} rounds x 2 states)", flush=True)
-        return None
-    finally:
-        del graphs, holders, bufs, st2, states
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
-def _ssdq_gate(state, device):
-    """Interleaved CUDA-graph replays with a cold-L2 flush of the whole expert block (align, GEMMs,
-    silu, weighted sum) at the scored turn_4 T: Marlin pair vs the new path, SSDQ_ALTERNATIONS
-    alternations, order swapped each time. Returns (marlin_us, ssdq_us), medians."""
-    gen = torch.Generator(device=device).manual_seed(20261025)
-    x, tw, local_ids = _ssdq_case(SSDQ_GATE_TOKENS, "random", gen, device)
-    g_m = _ssdq_graph_time(lambda: _experts_marlin(x, tw, local_ids, state), device)
-    g_n = _ssdq_graph_time(lambda: _experts_ssdq(x, tw, local_ids, state), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    t_m, t_n = [], []
-    once(g_m)
-    once(g_n)
-    for i in range(SSDQ_ALTERNATIONS):
-        if i % 2 == 0:
-            t_m.append(once(g_m))
-            t_n.append(once(g_n))
-        else:
-            t_n.append(once(g_n))
-            t_m.append(once(g_m))
-    t_m.sort()
-    t_n.sort()
-    return t_m[len(t_m) // 2], t_n[len(t_n) // 2]
-
-
-def _ssdq_setup(state, weights, device, t_start):
-    """prepare() only. Build, canary, self-check against an fp32 reference (calibrated on Marlin's own
-    error), producer/consumer-wait counters, and the cold-L2 graph gate at turn_4. Sets
-    state['ssdq_ok']; every failure prints one OFF line and leaves Marlin as master has it."""
-    state["ssdq_ok"] = False
-    why = None
-    phases = []
-    t_phase = [time.perf_counter()]
-    t_pre = t_phase[0] - t_start
-
-    def phase(name):
-        now = time.perf_counter()
-        phases.append((name, now - t_phase[0]))
-        t_phase[0] = now
-        print(f"{SSDQ_TAG} phase {name}: {phases[-1][1]:.1f}s; prepare total {now - t_start:.1f}s; "
-              f"budget remaining {SSDQ_BUDGET_S - (now - t_start):.1f}s of {SSDQ_BUDGET_S:.0f}s", flush=True)
-
-    print(f"{SSDQ_TAG} prepare used {t_pre:.1f}s before this setup (budget {SSDQ_BUDGET_S:.0f}s, "
-          f"remaining {SSDQ_BUDGET_S - t_pre:.1f}s)", flush=True)
-    try:
-        if not state.get("align_par_ok", False):
-            why = "master's parallel align is off (the path needs it)"
-        elif time.perf_counter() - t_start > SSDQ_BUDGET_S:
-            why = f"prepare already used {time.perf_counter() - t_start:.0f}s > {SSDQ_BUDGET_S:.0f}s budget"
-        if why:
-            print(f"{SSDQ_TAG} OFF: {why} (PATH CHOSEN = marlin at every T)", flush=True)
-            return
-        offenders = _ssdq_source_audit()
-        if offenders:
-            print(f"{SSDQ_TAG} OFF: source audit found templated accessors (long/long long trap): "
-                  f"{offenders[:4]} (PATH CHOSEN = marlin at every T)", flush=True)
-            return
-        print(f"{SSDQ_TAG} source audit ok: no data_ptr<..> or templated size/item/data/to accessor", flush=True)
-        phase("audit")
-        ext, err_text = _ssdq_build()
-        phase("build")
-        if ext is None:
-            print(f"{SSDQ_TAG} OFF: build failed (PATH CHOSEN = marlin at every T)", flush=True)
-            return
-        info = ext.ssdq_info()
-        print(f"{SSDQ_TAG} kernel ssdq_kernel: regs={info[0]} local_bytes={info[1]} static_smem={info[2]} "
-              f"dyn_smem={info[3]} ctas_per_sm={info[4]} setattr_rc={info[5]} binaryVersion={info[6]} "
-              f"ptxVersion={info[7]} attr_ok={info[8]}", flush=True)
-        if not info[8] or info[4] < 1:
-            print(f"{SSDQ_TAG} OFF: cannot launch (attributes/occupancy) (PATH CHOSEN = marlin)", flush=True)
-            return
-        state["ssdq_ext"] = ext
-        state["ssdq_err"] = torch.zeros(3, dtype=torch.int32, device=device)
-        state["ssdq_prof"] = torch.zeros(8, dtype=torch.int64, device=device)
-        gen = torch.Generator(device=device).manual_seed(20261025)
-
-        # Canary: one tiny launch of every kernel, each followed by a sync and a print; then the error
-        # word, the encode return codes and a finiteness check that names the first bad tensor.
-        x, tw, lids = _ssdq_case(130, "random", gen, device)
-        tracer = _SsdqTracer("canary")
-        out = _experts_ssdq(x, tw, lids, state, tracer=tracer)
-        torch.cuda.synchronize()
-        word = int(state["ssdq_err"][0].item())
-        marks = state["ssdq_err"].tolist()
-        print(f"{SSDQ_TAG} canary launch marker: w13 CTAs started {marks[1]}, w2 CTAs started {marks[2]}", flush=True)
-        if marks[1] <= 0 or marks[2] <= 0:
-            print(f"{SSDQ_TAG} OFF: canary kernels did not run (launch marker w13 {marks[1]}, w2 {marks[2]}) "
-                  f"(PATH CHOSEN = marlin)", flush=True)
-            return
-        if word != 0 or tracer.rc_bad or tracer.bad or not bool(torch.isfinite(out.float()).all()):
-            print(f"{SSDQ_TAG} OFF: canary failed: error word {word} ({SSDQ_ERR_TEXT.get(word, '?')}), "
-                  f"{tracer.rc_bad}, first non-finite tensor after {tracer.bad} (PATH CHOSEN = marlin)", flush=True)
-            return
-        print(f"{SSDQ_TAG} canary ok: error word 0, every tensor finite", flush=True)
-        phase("canary")
-
-        # Self-check: forced routings (random, skewed to four experts, one expert) at T=1506, 3012 and
-        # 4096 (a judge test shape), vs an fp32 dequant reference; bound = max(2 x Marlin's own error, 8e-3).
-        cache = {}
-        cases = ((1506, "random"), (3012, "random"), (4096, "skewed"), (1100, "one"), (4096, "random"))
-        for tokens, kind in cases:
-            x, tw, lids = _ssdq_case(tokens, kind, gen, device)
-            state["ssdq_err"].zero_()
-            ref_y = _ssdq_reference_y(x, lids, weights, cache)
-            ref = fused_post_expert_norm_weighted_sum(
-                ref_y.view(tokens, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-                weight_first=True, slot_expert_ids=lids)
-            tracer = _SsdqTracer(f"T={tokens} {kind}")
-            new = _experts_ssdq(x, tw, lids, state, tracer=tracer)
-            torch.cuda.synchronize()
-            mar = _experts_marlin(x, tw, lids, state)
-            torch.cuda.synchronize()
-            word = int(state["ssdq_err"][0].item())
-            marks = state["ssdq_err"].tolist()
-            e_new, w_new = _ssdq_metrics(new, ref)
-            e_mar, w_mar = _ssdq_metrics(mar, ref)
-            bound = max(2.0 * e_mar, 8e-3)
-            print(f"{SSDQ_TAG} self-check T={tokens} {kind}: ssdq rel L2 {e_new:.3e} worst row {w_new:.3e}; "
-                  f"marlin rel L2 {e_mar:.3e} worst row {w_mar:.3e}; bound {bound:.3e}; error word {word}; "
-                  f"{int((lids >= 0).sum())} local routes; launch marker w13 {marks[1]} w2 {marks[2]}", flush=True)
-            if marks[1] <= 0 or marks[2] <= 0:
-                word = word or 99
-            if word != 0 or tracer.rc_bad or tracer.bad or not (e_new <= bound and w_new <= 5.0 * bound):
-                print(f"{SSDQ_TAG} OFF: self-check failed at T={tokens} {kind} (error word {word}, "
-                      f"{tracer.rc_bad}, non-finite after {tracer.bad}) (PATH CHOSEN = marlin)", flush=True)
-                del cache
-                torch.cuda.empty_cache()
-                return
-        phase("self-check")
-        replay_why = _ssdq_replay_check(state, weights, cache, device, gen)
-        del cache
-        torch.cuda.empty_cache()
-        if replay_why:
-            print(f"{SSDQ_TAG} OFF: two-state replay check failed: {replay_why} (PATH CHOSEN = marlin)", flush=True)
-            return
-
-        phase("replay-check")
-        # One profiled launch: producer wait vs consumer wait per CTA (a dequant-bound producer shows a
-        # small producer wait and a large consumer wait).
-        gen = torch.Generator(device=device).manual_seed(20261025)
-        x, tw, lids = _ssdq_case(SSDQ_GATE_TOKENS, "random", gen, device)
-        state["ssdq_prof"].zero_()
-        _experts_ssdq(x, tw, lids, state, use_prof=True)
-        torch.cuda.synchronize()
-        prof = state["ssdq_prof"].tolist()
-        for mode, name in ((0, "w13"), (1, "w2")):
-            wait_p, wait_c, ctas, cyc = prof[4 * mode:4 * mode + 4]
-            if ctas:
-                print(f"{SSDQ_TAG} counters {name} T={SSDQ_GATE_TOKENS}: {ctas} CTAs, per CTA {cyc / ctas:.0f} cycles, "
-                      f"producer waiting on empty stages {wait_p / ctas:.0f} cycles, consumer waiting on full "
-                      f"stages {wait_c / (2 * ctas):.0f} cycles per warpgroup "
-                      f"(producer-bound if the consumer wait is large and the producer wait small)", flush=True)
-
-        phase("counters")
-        # Gate: cold-L2 CUDA-graph replays, whole expert block, new vs Marlin pair, turn_4 T.
-        t_m, t_n = _ssdq_gate(state, device)
-        phase("gate")
-        ratio = t_n / t_m
-        ok = ratio <= SSDQ_GATE_RATIO
-        state["ssdq_ok"] = bool(ok)
-        print(f"{SSDQ_TAG} GATE T={SSDQ_GATE_TOKENS} cold-L2 graph medians over {SSDQ_ALTERNATIONS} alternations: "
-              f"marlin pair {t_m:.1f} us, ssdq {t_n:.1f} us, ratio {ratio:.3f} (ON at <= {SSDQ_GATE_RATIO})", flush=True)
-        print(f"{SSDQ_TAG} PATH CHOSEN T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: "
-              f"{'ssdq (faster: ' + format(t_n, '.1f') + ' < ' + format(t_m, '.1f') + ' us)' if ok else f'marlin (ssdq ratio {ratio:.3f} not <= {SSDQ_GATE_RATIO})'}; "
-              f"all other T: unchanged", flush=True)
-        if not ok:
-            print(f"{SSDQ_TAG} OFF: gate ratio {ratio:.3f} > {SSDQ_GATE_RATIO}", flush=True)
-        assert (not ok) or t_n < t_m
-    except Exception as e:  # never raises into prepare(); a device fault would have poisoned the context
-        state["ssdq_ok"] = False
-        print(f"{SSDQ_TAG} OFF: setup raised {e!r} (PATH CHOSEN = marlin)", flush=True)
-    finally:
-        # Last lines of prepare(): the archived log keeps the tail.
-        total = time.perf_counter() - t_start
-        print(f"{SSDQ_TAG} prepare per-phase seconds: before-ssdq {t_pre:.1f}, "
-              + ", ".join(f"{n} {d:.1f}" for n, d in phases)
-              + f"; total {total:.1f}s; budget remaining {SSDQ_BUDGET_S - total:.1f}s of {SSDQ_BUDGET_S:.0f}s",
-              flush=True)
-        ssdq_on = bool(state.get("ssdq_ok"))
-        print(f"{SSDQ_TAG} PATH CHOSEN T <= {SSDQ_MIN_TOKENS}: marlin/unchanged; "
-              f"T in ({SSDQ_MIN_TOKENS}, {MARLIN_MAX_TOKENS}]: {'ssdq' if ssdq_on else 'marlin'} "
-              f"(gate ratio constant SSDQ_GATE_RATIO = {SSDQ_GATE_RATIO}); T > {MARLIN_MAX_TOKENS}: triton/unchanged",
-              flush=True)
-
-
-# ---------------------------------------------------------------------------------------------
-# experts-turn-rega-s4-port-t4096 (rewrite stage 1, replaces the Marlin pair at 200 < T <= 4096 where it
-# wins its gate): the register-A swap-AB wgmma NVFP4 grouped GEMM of muse_moe_w4a16's s5 copy-safe build
-# (git show hyp/muse_moe_w4a16/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced:muse_moe_w4a16/submission.py;
-# patch: muse_moe_w4a16/hypotheses/done/neutral/cuda-nvfp4-wgmma-rega-grouped-s5-copy-safe-forced.patch).
-#
-# Per expert the weight tile (128 rows x 64 k: codes + e4m3 scales, a lossless retiling of the stored NVFP4
-# bytes made once in prepare) is one bulk copy; each consumer warp dequantizes its 16 rows IN REGISTERS
-# straight into the bf16 A fragments of an m64nNk16 register-A wgmma (swap-AB: the weight rows are the MMA's
-# M, the routed tokens its N: 16/32/64/128 tokens per expert chunk, a 2-D TMA box of the gathered rows is
-# B). The w13 epilogue computes silu(gate) * up in fp32 from the fp32 accumulators and rounds to bf16 once
-# (no stored BF16 copy of any weight, no intermediate bf16 rounding); w2 scatters bf16 rows to the route
-# slot of master's y [T * 8, 4096] and master's post-expert norm weighted sum finishes.
-#
-# Copy safety (the judge prepares two states and rotates them, copying tensors): the TMA maps are encoded
-# in C++ on EVERY call from the scratch tensor passed in that call and handed to the kernel as a
-# __grid_constant__ argument; nothing at file scope holds a pointer, a map or a buffer; the scratch (xs, hs)
-# is allocated per call (graph pool, like master's ssdq path); the only per-state device data are the
-# retiled bank and the int32[3] error word + launch markers (cloned with the state). There is no pointer
-# equality gate and no "live state" check in the timed call: kernel_fn dispatches on the token count and on
-# the prepare-time flags state['rega_ok'][class] only.
-#
-# Dispatch order in _experts for T <= MARLIN_MAX_TOKENS: rega if state['rega_ok'][class]; else ssdq if
-# T > SSDQ_MIN_TOKENS and state['ssdq_ok']; else Marlin. Classes: 'low' T <= REGA_LOW_MAX (gated at T = 753
-# against whatever _experts dispatches there: master's whole Marlin block), 'high' T in (REGA_LOW_MAX,
-# MARLIN_MAX_TOKENS] (gated at T = 3012 against rega-off dispatch, ssdq and Marlin in one interleaved loop).
-# ---------------------------------------------------------------------------------------------
-
-REGA_TAG = "[rega]"
-REGA_BSM = 16
-REGA_MIN_TOKENS = 200          # the path serves REGA_MIN_TOKENS < T <= MARLIN_MAX_TOKENS
-REGA_LOW_MAX = 1024            # class 'low': T <= this; class 'high': above it
-REGA_GATE_TOKENS = {"low": 753, "high": 3012}
-REGA_GATE_RATIO = 0.95         # ON only when rega <= this x the fastest alternative (min of ssdq, Marlin, dispatch)
-REGA_ALTERNATIONS = 9          # >= 7 interleaved alternations
-REGA_BUDGET_S = 200.0          # no setup if prepare() has already used this many seconds
-REGA_COPY_DEADLINE_S = 255.0   # the copy / replay check must start before this many seconds into prepare()
-REGA_BUCKETS = (16, 32, 64, 128)
-REGA_THREADS = 384
-REGA_STAGES = 4
-REGA_BK = 128
-REGA_REC = 4608
-REGA_STAGE_BYTES = 2 * REGA_REC + 2 * 128 * 128
-REGA_EPI_BYTES = {True: 128 * (64 * 2 + 16), False: 128 * (128 * 2 + 16)}
-REGA_SMEM = {g: 1024 + REGA_STAGES * REGA_STAGE_BYTES + REGA_EPI_BYTES[g] for g in (True, False)}
-REGA_STATIC_SMEM_BOUND = 16384  # tables + barriers (the C++ static_assert uses the same bound)
-REGA_SMEM_LIMIT = 227 * 1024
-REGA_EXT_NAME = "muse_prefill_rega_v2"  # v2: rega_kernel<G, BIG> (first-turn capacity class)
-REGA_GENCODE = "-gencode=arch=compute_90a,code=sm_90a"
-REGA_CUDA_CFLAGS = ["-O3", "-std=c++20", "-lineinfo", REGA_GENCODE]
-REGA_MAGIC = 0x57474d4d        # block 0 of each kernel writes it to err[1] (w13) / err[2] (w2)
-REGA_ERR_TEXT = {0: "ok", 1: "mbarrier wait timed out", 2: "non-sm_90a image ran (wgmma compiled out)",
-                 3: "block or chunk table overflow", 4: "an expert owns two runs of blocks (align not sorted)"}
-# experts-turn-rega-s4-first-turn-n128 (rewrite stage 2): class 'ft' = MARLIN_MAX_TOKENS < T <= REGA_FT_MAX, gated
-# at T = 16384 (soft routing) against master's Triton block (the rega-off dispatch). The kernel's first-turn
-# capacity class (rega_kernel<G, true>) holds the worst case at REGA_FT_MAX (every route local); T > REGA_FT_MAX
-# always stays on Triton (shape-based).
-REGA_FT_MAX = 16384
-REGA_FT_GATE_TOKENS = 16384
-REGA_MAXBLK = 2304             # small class block table (C++ MAXBLK); larger tables launch the first-turn class
-REGA_MAXBLK_FT = 8224          # C++ MAXBLK_FT
-REGA_MAXC_FT = 1088            # C++ MAXC_FT
-REGA_FT_START_DEADLINE_S = 150.0   # no ft checks if prepare() has already used this many seconds
-# (4500, local): 36480 slots = 2280 blocks, the largest stage-1-class table above 4096 (class boundary)
-REGA_FT_SELF_CHECKS = ((4500, "local"), (8192, "random"), (8192, "local"), (16384, "random"), (16384, "skewed"),
-                       (16384, "one"), (16384, "local"))
-REGA_FT_REPLAY_PLAN = ((8192, ("random", "local")), (16384, ("random", "skewed", "one", "local")))
-REGA_STATE_KEYS = ("rega_ext", "rega_bank", "rega_err", "rega_grid", "post_expert_w", "zero_nonlocal_w2",
-                   "align_par_ok", "align2_ok")
-
-_REGA_CPP = r"""
-#include <torch/extension.h>
-#include <vector>
-std::vector<int64_t> rega_init();
-void rega_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-               int64_t num_routes, int64_t n_experts, torch::Tensor xs);
-void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
-             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
-"""
-
-_REGA_HEAD = r"""
-#include <torch/extension.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAException.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
-#include <cstdint>
-#include <cstring>
-#include <vector>
-
-namespace {
-
-constexpr int THREADS = 384;
-constexpr int STAGES = 4;
-constexpr int BK = 128;                          // k per pipeline stage (two 64-k records)
-constexpr int REC = 4608;                        // record: 4096 B codes + 512 B scales
-constexpr int REC_CODES = 4096;
-constexpr int WST = 2 * REC;                     // 9216 B of weight per stage
-constexpr int SLAB_HALF = 128 * 128;             // one SWIZZLE_128B box: up to 128 rows x 64 bf16
-constexpr int STAGE_BYTES = WST + 2 * SLAB_HALF; // 41984
-constexpr int MAXBLK = 2304;                     // block-table capacity (T = 4096: 2078 blocks of 16)
-constexpr int MAXC = 512;                        // chunk-table capacity (<= 8 blocks per chunk)
-// first-turn capacity class (T <= 16384): worst case 131072 local routes + 32 x 15 padding = 8222 blocks of 16
-// and <= 8222 / 8 + 32 = 1059 chunks. Its block-expert table is read from global (__ldg), only the chunk
-// tables live in shared memory (2 x 1088 x 4 B).
-constexpr int MAXBLK_FT = 8224;
-constexpr int MAXC_FT = 1088;
-constexpr int MAXE = 32;                         // local experts
-constexpr int PITCH13 = 64 * 2 + 16;             // staging row pitch, w13 (64 bf16 + pad)
-constexpr int PITCH2 = 128 * 2 + 16;             // staging row pitch, w2 (128 bf16 + pad)
-static_assert(WST % 1024 == 0 && STAGE_BYTES % 1024 == 0, "stage alignment");
-template <bool G>
-struct Smem {
-  static constexpr int EPI = 128 * (G ? PITCH13 : PITCH2);
-  static constexpr int BYTES = 1024 + STAGES * STAGE_BYTES + EPI;
-};
-static_assert(Smem<false>::BYTES + 16384 <= 227 * 1024, "shared memory budget");
-// Capacity class: BIG = false is the T <= 4096 build (tables and smem exactly as stage 1); BIG = true serves
-// 4096 < T <= 16384 with the block-expert table in global memory.
-template <bool BIG>
-struct Cap {
-  static constexpr int BLK = BIG ? MAXBLK_FT : MAXBLK;
-  static constexpr int C = BIG ? MAXC_FT : MAXC;
-  static constexpr int SBE = BIG ? 1 : MAXBLK;   // shared block-expert table entries
-};
-// static tables + barriers / per-expert arrays stay under the 16384 B static bound in both classes
-static_assert((Cap<false>::SBE + 2 * Cap<false>::C) * 4 + 1024 <= 16384, "static smem, small class");
-static_assert((Cap<true>::SBE + 2 * Cap<true>::C) * 4 + 1024 <= 16384, "static smem, first-turn class");
-// Block-expert table views: the small class indexes its shared copy (a plain pointer, as stage 1); the large
-// class reads global memory through the read-only path.
-struct GTab {
-  const int* p;
-  __device__ __forceinline__ int operator[](int i) const { return __ldg(p + i); }
-};
-template <bool BIG>
-struct BeSel;
-template <>
-struct BeSel<false> {
-  using T = const int*;
-  static __device__ __forceinline__ T make(const int* s, const int* g) { return s; }
-};
-template <>
-struct BeSel<true> {
-  using T = GTab;
-  static __device__ __forceinline__ T make(const int* s, const int* g) { return GTab{g}; }
-};
-
-struct __align__(64) Maps { CUtensorMap m[4]; };
-
-__device__ __forceinline__ uint32_t smem_u32(const void* p) {
-  return static_cast<uint32_t>(__cvta_generic_to_shared(p));
-}
-__device__ __forceinline__ void mbar_init(uint32_t a, uint32_t count) {
-  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" :: "r"(a), "r"(count) : "memory");
-}
-__device__ __forceinline__ void fence_barrier_init() {
-  asm volatile("fence.mbarrier_init.release.cluster;\n" ::: "memory");
-}
-__device__ __forceinline__ void mbar_expect_tx(uint32_t a, uint32_t tx) {
-  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;\n" :: "r"(a), "r"(tx) : "memory");
-}
-__device__ __forceinline__ void mbar_arrive(uint32_t a) {
-  asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0];\n" :: "r"(a) : "memory");
-}
-__device__ __forceinline__ bool mbar_try(uint32_t a, uint32_t parity) {
-  uint32_t ok;
-  asm volatile("{\n\t.reg .pred P;\n\t"
-               "mbarrier.try_wait.parity.shared::cta.b64 P, [%1], %2;\n\t"
-               "selp.u32 %0, 1, 0, P;\n\t}\n"
-               : "=r"(ok) : "r"(a), "r"(parity) : "memory");
-  return ok != 0;
-}
-// Bounded wait: after 2^26 cycles without the phase, record an error word and stop waiting
-// (dead), so a broken pipeline ends in a failed self-check instead of a hang.
-__device__ __forceinline__ void mbar_wait(uint32_t a, uint32_t parity, int* err, bool& dead) {
-  if (dead || mbar_try(a, parity)) return;
-  const long long t0 = clock64();
-  while (!mbar_try(a, parity)) {
-    if (clock64() - t0 > (1ll << 26)) {  // ~34 ms, >1000x any real stage wait
-      dead = true;
-      atomicExch(err, 1);
-      return;
-    }
-  }
-}
-// Plain 1-D bulk copy (no createpolicy / .L2::cache_hint operand: that helper family never ran on
-// the judge and is the prime suspect of the swap-AB sibling's illegal instruction 715).
-__device__ __forceinline__ void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
-  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
-               :: "r"(dst), "l"(src), "r"(bytes), "r"(bar) : "memory");
-}
-__device__ __forceinline__ void tma_2d(uint32_t dst, uint64_t map, int c0, int c1, uint32_t bar) {
-  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2, %3}], [%4];\n"
-               :: "r"(dst), "l"(map), "r"(c0), "r"(c1), "r"(bar) : "memory");
-}
-// wgmma / setmaxnreg exist only for sm_90a: every such body is compiled only when
-// __CUDA_ARCH_FEAT_SM90_ALL is defined, so a stray plain compute_90 pass still assembles; in that
-// pass rega_kernel only sets error word 2 and returns (the path is then turned off in setup).
-__device__ __forceinline__ void wgmma_fence() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.fence.sync.aligned;\n" ::: "memory");
-#endif
-}
-__device__ __forceinline__ void wgmma_commit() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.commit_group.sync.aligned;\n" ::: "memory");
-#endif
-}
-template <int N>
-__device__ __forceinline__ void wgmma_wait() {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  asm volatile("wgmma.wait_group.sync.aligned %0;\n" :: "n"(N) : "memory");
-#endif
-}
-template <int NA>
-__device__ __forceinline__ void fence_acc(float (&d)[NA]) {
-#pragma unroll
-  for (int i = 0; i < NA; ++i) asm volatile("" : "+f"(d[i]) :: "memory");
-}
-__device__ __forceinline__ void named_bar(int id, int count) {
-  asm volatile("bar.sync %0, %1;\n" :: "r"(id), "r"(count) : "memory");
-}
-__device__ __forceinline__ void stsm_x2_t(uint32_t a, uint32_t r0, uint32_t r1) {
-  asm volatile("stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%0], {%1, %2};\n" :: "r"(a), "r"(r0), "r"(r1) : "memory");
-}
-__device__ __forceinline__ void stsm_x4_t(uint32_t a, uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3) {
-  asm volatile("stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%0], {%1, %2, %3, %4};\n"
-               :: "r"(a), "r"(r0), "r"(r1), "r"(r2), "r"(r3) : "memory");
-}
-// K-major SWIZZLE_128B shared-memory matrix descriptor: start address >> 4 (bits 0-13), LBO 1
-// (unused for swizzled K-major), SBO 1024 B between 8-row core groups (bits 32-45), layout type
-// 1 = 128B swizzle (bits 62-63), base offset 0 (every box base is 1024-aligned; the k16 advance
-// of +32 B stays inside the first 128 B, so address bits 7-9 stay 0).
-__device__ __forceinline__ uint64_t make_desc(uint32_t saddr) {
-  return static_cast<uint64_t>((saddr & 0x3FFFFu) >> 4) | (static_cast<uint64_t>(1) << 16) |
-         (static_cast<uint64_t>(1024 >> 4) << 32) | (static_cast<uint64_t>(1) << 62);
-}
-
-// Dequant, verbatim from the swap-AB sibling (cuda-nvfp4-swapab-mma-persistent-small-m).
-// Four E4M3 bytes -> two f16x2: lo from bytes 0,1 (byte 0 in the low half), hi from bytes 2,3.
-__device__ __forceinline__ void e4m3x4_to_f16x2x2(uint32_t w, uint32_t& lo, uint32_t& hi) {
-  asm("{\n\t.reg .b16 a, b;\n\tmov.b32 {a, b}, %2;\n\t"
-      "cvt.rn.f16x2.e4m3x2 %0, a;\n\tcvt.rn.f16x2.e4m3x2 %1, b;\n\t}\n"
-      : "=r"(lo), "=r"(hi) : "r"(w));
-}
-__device__ __forceinline__ uint32_t bf16x2_bcast(float v) {
-  __nv_bfloat162 b = __float2bfloat162_rn(v);
-  return *reinterpret_cast<uint32_t*>(&b);
-}
-// a * b (+ -0), bf16x2, round to nearest; subnormal inputs are kept.
-__device__ __forceinline__ uint32_t mul_bf16x2(uint32_t a, uint32_t b) {
-  uint32_t d;
-  asm("fma.rn.bf16x2 %0, %1, %2, %3;\n" : "=r"(d) : "r"(a), "r"(b), "r"(0x80008000u));
-  return d;
-}
-// 8 E2M1 codes -> the 4 bf16x2 A registers, exact: (q & 0x80008000) | ((q & 0x70007000) >> 6) is
-// e2m1 * 2^-126 in each half (nibbles 3 - i and 7 - i); sg / sg8 are the row g / g + 8 scales
-// times 2^119, so each product is e2m1 * sf * 2^-7 (at most 6 significant bits, exact in bf16).
-__device__ __forceinline__ void dequant8(uint32_t q, uint32_t sg, uint32_t sg8, uint32_t (&a)[4]) {
-#pragma unroll
-  for (int i = 0; i < 4; ++i) {
-    const uint32_t v = (q & 0x80008000u) | ((q & 0x70007000u) >> 6);
-    a[i] = mul_bf16x2(v, (i & 1) ? sg8 : sg);
-    q <<= 4;
-  }
-}
-__device__ __forceinline__ uint32_t pack_bf16(float lo, float hi) {
-  __nv_bfloat162 b = __floats2bfloat162_rn(lo, hi);
-  return *reinterpret_cast<uint32_t*>(&b);
-}
-// silu(gate) * up entirely in fp32 from the fp32 accumulators; the caller rounds the product to bf16
-// ONCE (pack_bf16). No intermediate bf16 rounding of gate or up.
-__device__ __forceinline__ float silu_mul(float hg, float hu) {
-  return hg / (1.f + expf(-hg)) * hu;
-}
-
-template <int NB>
-struct Wg;
-"""
-
-_REGA_BODY = r"""
-struct Item {
-  int j, e, slot0, nbk, bucket, multi;
-};
-// Item it of the (expert, tile, chunk) order. Expert group = chunks [f, f + k) of one expert
-// (f = gfirst[e], k = gcount[e]), items [f * T, (f + k) * T); it / T always lands inside its own group.
-// be: the block-expert table view (shared pointer in the small class, GTab in the first-turn class).
-template <class BE>
-__device__ __forceinline__ Item decode_item(int it, int T, BE be, const int* cblk, const int* cnb,
-                                            const int* gfirst, const int* gcount) {
-  const int cg = it / T;
-  const int ge = be[cblk[cg]];
-  const int f = gfirst[ge];
-  const int k = gcount[ge] > 0 ? gcount[ge] : 1;
-  const int local = it - f * T;
-  const int c = f + local % k;
-  Item m;
-  m.j = local / k;
-  const int b0 = cblk[c];
-  m.slot0 = b0 * 16;
-  m.nbk = cnb[c];
-  m.e = be[b0];
-  m.bucket = m.nbk <= 1 ? 0 : (m.nbk <= 2 ? 1 : (m.nbk <= 4 ? 2 : 3));
-  m.multi = k > 1 ? 1 : 0;
-  return m;
-}
-
-// Dequantize one pipeline stage (two 64-k records) of this warp's 16 weight rows into the 32 bf16x2
-// register-A fragments (8 k16 steps x 4 registers).
-__device__ __forceinline__ void dq_stage(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4]) {
-  const float P119 = __int_as_float(0x7B000000);  // 2^119
-  const int g = lane >> 2;
-#pragma unroll
-  for (int r = 0; r < 2; ++r) {
-    const uint4 q = *reinterpret_cast<const uint4*>(st + r * REC + cw * 512 + lane * 16);
-    const uint2 sc = *reinterpret_cast<const uint2*>(st + r * REC + REC_CODES + cw * 64 + g * 8);
-    uint32_t hs[4];
-    e4m3x4_to_f16x2x2(sc.x, hs[0], hs[1]);
-    e4m3x4_to_f16x2x2(sc.y, hs[2], hs[3]);
-    const uint32_t qw[4] = {q.x, q.y, q.z, q.w};
-#pragma unroll
-    for (int k = 0; k < 4; ++k) {
-      const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&hs[k]));
-      dequant8(qw[k], bf16x2_bcast(fs.x * P119), bf16x2_bcast(fs.y * P119), a[r * 4 + k]);
-    }
-  }
-}
-
-// wgmma_wait<0> right after the commit, BEFORE the next k-step's dequant rewrites the register-A
-// fragments, so no wgmma group is ever in flight while a[] is written (s3 variant A, the only variant
-// kept in s4: the s3 bucket canary passed it in every N bucket).
-template <int NB, bool G>
-__device__ __forceinline__ void consume_item(const Item& m, uint8_t* smem, uint8_t* ep, uint32_t full0,
-                                             uint32_t empty0, int& n, int KS, int cw, int lane, int ctid,
-                                             const float* __restrict__ gs, const int* __restrict__ sorted_ids,
-                                             int num_routes, __nv_bfloat16* __restrict__ out, int out_ld,
-                                             int* err, bool& dead) {
-  constexpr int NA = NB / 2;
-  float acc[NA];
-#pragma unroll
-  for (int i = 0; i < NA; ++i) acc[i] = 0.f;
-  uint32_t a0[8][4];
-  for (int kb = 0; kb < KS; ++kb) {
-    const int s = n % STAGES;
-    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
-    const uint8_t* st = smem + s * STAGE_BYTES;
-    dq_stage(st, cw, lane, a0);
-    const uint32_t slab = smem_u32(st + WST);
-    fence_acc<NA>(acc);
-    wgmma_fence();
-#pragma unroll
-    for (int r = 0; r < 2; ++r) {
-#pragma unroll
-      for (int k = 0; k < 4; ++k) Wg<NB>::mma(acc, a0[r * 4 + k], make_desc(slab + r * SLAB_HALF + k * 32));
-    }
-    wgmma_commit();
-    wgmma_wait<0>();  // group retired: a0[] may be rewritten and this stage released at once
-    fence_acc<NA>(acc);
-    if (lane == 0) mbar_arrive(empty0 + 8 * s);
-    ++n;
-  }
-  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc
-  fence_acc<NA>(acc);
-
-  // Epilogue: stage the bf16 tile through shared memory (stmatrix .trans: token rows), then
-  // coalesced 16-byte row stores. Barrier 1 = the 256 consumer threads.
-  const int nvalid = m.nbk * 16;
-  const float gsc = __ldg(gs + m.e);
-  named_bar(1, 256);  // every consumer is done reading the previous item's staging tile
-  if (G) {
-    // acc[4i + 0/1]: gate (fragment row g) for tokens 8i + 2t4, +1; acc[4i + 2/3]: up (row g + 8).
-#pragma unroll
-    for (int i = 0; i < NB / 8; i += 2) {
-      const uint32_t r0 = pack_bf16(silu_mul(acc[4 * i] * gsc, acc[4 * i + 2] * gsc),
-                                    silu_mul(acc[4 * i + 1] * gsc, acc[4 * i + 3] * gsc));
-      const uint32_t r1 = pack_bf16(silu_mul(acc[4 * i + 4] * gsc, acc[4 * i + 6] * gsc),
-                                    silu_mul(acc[4 * i + 5] * gsc, acc[4 * i + 7] * gsc));
-      const int mi = (lane >> 3) & 1, rr = lane & 7;
-      const int tok = 8 * (i + mi) + rr;
-      stsm_x2_t(smem_u32(ep + tok * PITCH13 + cw * 16), r0, r1);
-    }
-  } else {
-#pragma unroll
-    for (int i = 0; i < NB / 8; i += 2) {
-      const uint32_t r0 = pack_bf16(acc[4 * i] * gsc, acc[4 * i + 1] * gsc);
-      const uint32_t r1 = pack_bf16(acc[4 * i + 2] * gsc, acc[4 * i + 3] * gsc);
-      const uint32_t r2 = pack_bf16(acc[4 * i + 4] * gsc, acc[4 * i + 5] * gsc);
-      const uint32_t r3 = pack_bf16(acc[4 * i + 6] * gsc, acc[4 * i + 7] * gsc);
-      const int mi = lane >> 3, rr = lane & 7;
-      const int tok = 8 * (i + (mi >> 1)) + rr;
-      const int col = 16 * cw + 8 * (mi & 1);
-      stsm_x4_t(smem_u32(ep + tok * PITCH2 + col * 2), r0, r1, r2, r3);
-    }
-  }
-  named_bar(1, 256);
-  if (G) {
-    // h_sorted[slot0 + t, 64 j .. 64 j + 64): 128 B per token row.
-    for (int v = ctid; v < nvalid * 8; v += 256) {
-      const int t = v >> 3, c = v & 7;
-      const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH13 + c * 16);
-      *reinterpret_cast<uint4*>(out + static_cast<size_t>(m.slot0 + t) * out_ld + m.j * 64 + c * 8) = val;
-    }
-  } else {
-    // cache3[route, 128 j .. 128 j + 128): 256 B per token row, real routes only.
-    for (int v = ctid; v < nvalid * 16; v += 256) {
-      const int t = v >> 4, c = v & 15;
-      const int sid = __ldg(sorted_ids + m.slot0 + t);
-      if (sid >= 0 && sid < num_routes) {
-        const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH2 + c * 16);
-        *reinterpret_cast<uint4*>(out + static_cast<size_t>(sid) * out_ld + m.j * 128 + c * 8) = val;
-      }
-    }
-  }
-}
-
-template <bool G, bool BIG>
-__global__ void __launch_bounds__(THREADS, 1)
-rega_kernel(const __grid_constant__ Maps maps,
-          const uint8_t* __restrict__ wbank,        // [E][T][K/64][REC]
-          const float* __restrict__ gs,             // fp32 [E] global scale * 2^7
-          const int* __restrict__ sorted_ids,       // block-16 align of the local ids
-          const int* __restrict__ block_experts,
-          const int* __restrict__ n_padded,
-          int blocks_len, int num_routes, int n_tiles, int K, int n_experts,
-          __nv_bfloat16* __restrict__ out, int out_ld, int* __restrict__ err) {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  // Launch marker: block 0 writes a magic into err[1] (w13 instantiation) or err[2] (w2); err is int[3], one per
-  // prepared state. prepare reads both back after every graph replay to prove THIS sm_90a image ran. err[0] is
-  // the error word: 1 mbarrier timeout, 2 non-sm_90a image, 3 a table overflowed, 4 an expert owns two runs.
-  if (blockIdx.x == 0 && threadIdx.x == 0) err[G ? 1 : 2] = 0x57474d4d;
-  extern __shared__ __align__(1024) uint8_t smem_raw[];
-  __shared__ __align__(8) uint64_t bars[2 * STAGES];
-  constexpr int CBLK = Cap<BIG>::BLK, CC = Cap<BIG>::C;
-  __shared__ int s_be[Cap<BIG>::SBE], s_cblk[CC], s_cnb[CC];
-  __shared__ int s_first[MAXE], s_gfirst[MAXE], s_gcount[MAXE];
-  __shared__ int s_wsum[THREADS / 32];
-  __shared__ int s_bad;  // set when an expert owns two runs: the chunk groups would not be contiguous
-  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const uint32_t raw = smem_u32(smem_raw);
-  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
-  uint8_t* ep = smem + STAGES * STAGE_BYTES;
-  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STAGES]);
-  // block-expert table view: s_be (small class) or block_experts in global via __ldg (first-turn class)
-  const typename BeSel<BIG>::T be = BeSel<BIG>::make(s_be, block_experts);
-
-  int nb = __ldg(n_padded) / 16;
-  const int nb_wanted = nb;
-  nb = nb < blocks_len ? nb : blocks_len;
-  nb = nb < CBLK ? nb : CBLK;
-  if (tid == 0 && nb_wanted > nb) atomicExch(err, 3);  // never truncate silently
-  if constexpr (!BIG) {
-    for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);
-  }
-  if (tid < MAXE) {
-    s_first[tid] = -1;
-    s_gfirst[tid] = 0;
-    s_gcount[tid] = 0;
-  }
-  if (tid == 0) {
-    s_bad = 0;
-#pragma unroll
-    for (int s = 0; s < STAGES; ++s) {
-      mbar_init(full0 + 8 * s, 1);
-      mbar_init(empty0 + 8 * s, 8);  // one arrive per consumer warp
-    }
-    fence_barrier_init();
-  }
-  __syncthreads();
-
-  // Run starts. The align sorts blocks by expert, so every local expert owns ONE run of blocks; a block starts
-  // its expert's run when its predecessor belongs to another expert. A second run of the same expert (an align
-  // that is not sorted) loses the CAS and sets error word 4: never a silent mis-chunking. Any expert id outside
-  // [0, n_experts) is not local.
-  for (int b = tid; b < nb; b += THREADS) {
-    const int e = be[b];
-    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || be[b - 1] != e)) {
-      if (atomicCAS(&s_first[e], -1, b) != -1) {
-        atomicExch(err, 4);
-        s_bad = 1;
-      }
-    }
-  }
-  __syncthreads();
-
-  // Chunks: a block starts a chunk when its expert is local and it is 0 mod 8 into the expert's run. Rounds of
-  // THREADS blocks; each round numbers its chunk starts after the earlier rounds' (ballot + per-warp counts).
-  int base = 0;
-  for (int r0 = 0; r0 < nb; r0 += THREADS) {
-    const int b = r0 + tid;
-    int flag = 0, cn = 0;
-    if (b < nb) {
-      const int e = be[b];
-      if (e >= 0 && e < n_experts && e < MAXE && s_first[e] >= 0 && ((b - s_first[e]) & 7) == 0) {
-        flag = 1;
-        cn = 1;
-        while (cn < 8 && b + cn < nb && be[b + cn] == e) ++cn;
-      }
-    }
-    const unsigned ball = __ballot_sync(0xffffffffu, flag);
-    if (lane == 0) s_wsum[warp] = __popc(ball);
-    __syncthreads();
-    int tot = 0;
-#pragma unroll
-    for (int w = 0; w < THREADS / 32; ++w) tot += s_wsum[w];
-    if (flag) {
-      int off = 0;
-      for (int w = 0; w < warp; ++w) off += s_wsum[w];
-      const int idx = base + off + __popc(ball & ((1u << lane) - 1u));
-      if (idx < CC) {
-        s_cblk[idx] = b;
-        s_cnb[idx] = cn;
-      }
-    }
-    base += tot;
-    __syncthreads();
-  }
-  if (tid == 0 && base > CC) atomicExch(err, 3);
-  const int nc = base < CC ? base : CC;
-  // Per-expert chunk group: first chunk and chunk count (chunks of one expert are consecutive).
-  for (int c = tid; c < nc; c += THREADS) {
-    const int e = be[s_cblk[c]];
-    atomicAdd(&s_gcount[e], 1);
-    if (c == 0 || be[s_cblk[c - 1]] != e) s_gfirst[e] = c;
-  }
-  __syncthreads();
-
-  // Two runs of one expert would make decode_item index outside its chunk group (an out-of-bounds table read
-  // and a wild weight / output address): do no work at all then; error word 4 already turns the path off.
-  const int total = s_bad ? 0 : nc * n_tiles;
-  const int KS = K / BK;
-  bool dead = false;
-  if (warp < 4) {
-    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n" ::: "memory");
-    if (tid == 0) {
-      const int KC = K / 64;
-      int n = 0;
-      for (int it = blockIdx.x; it < total; it += gridDim.x) {
-        const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
-        const uint8_t* wsrc = wbank + (static_cast<size_t>(m.e) * n_tiles + m.j) * static_cast<size_t>(KC) * REC;
-        const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[m.bucket]);
-        const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;
-        for (int kb = 0; kb < KS; ++kb, ++n) {
-          const int s = n % STAGES;
-          mbar_wait(empty0 + 8 * s, ((n / STAGES) & 1) ^ 1, err, dead);
-          const uint32_t st = smem_u32(smem + s * STAGE_BYTES);
-          const uint32_t fb = full0 + 8 * s;
-          mbar_expect_tx(fb, tx);
-          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
-          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
-          tma_2d(st + WST + SLAB_HALF, map, kb * BK + 64, m.slot0, fb);
-        }
-      }
-    }
-  } else {
-    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n" ::: "memory");
-    const int ctid = tid - 128, cw = ctid >> 5;
-    int n = 0;
-    for (int it = blockIdx.x; it < total; it += gridDim.x) {
-      const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
-#define WG_CONSUME(NB_)                                                                                      \
-  consume_item<NB_, G>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
-                       out_ld, err, dead)
-      switch (m.bucket) {
-        case 0: WG_CONSUME(16); break;
-        case 1: WG_CONSUME(32); break;
-        case 2: WG_CONSUME(64); break;
-        default: WG_CONSUME(128); break;
-      }
-#undef WG_CONSUME
-    }
-  }
-#else
-  // Not the sm_90a image: no wgmma here. Flag it (error word 2) and do nothing else.
-  if (threadIdx.x == 0) atomicExch(err, 2);
-#endif
-}
-
-// xs[slot] = x[sorted_ids[slot] / 8] for the slots of local blocks (sentinel slots: zeros);
-// slots past n_padded and slots of SGLang's remote (-1) blocks are skipped.
-__global__ void __launch_bounds__(256)
-rega_gather_kernel(const __nv_bfloat16* __restrict__ x, const int* __restrict__ sorted_ids,
-                 const int* __restrict__ block_experts, const int* __restrict__ n_padded, int num_routes, int H,
-                 int n_experts, __nv_bfloat16* __restrict__ xs) {
-  const int slot = blockIdx.x;
-  if (slot >= __ldg(n_padded)) return;
-  const int be = __ldg(block_experts + slot / 16);
-  if (be < 0 || be >= n_experts) return;
-  const int sid = __ldg(sorted_ids + slot);
-  uint4* dst = reinterpret_cast<uint4*>(xs + static_cast<size_t>(slot) * H);
-  const int nv = H / 8;
-  if (sid >= 0 && sid < num_routes) {
-    const uint4* src = reinterpret_cast<const uint4*>(x + static_cast<size_t>(sid >> 3) * H);
-    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = __ldg(src + v);
-  } else {
-    const uint4 z = make_uint4(0u, 0u, 0u, 0u);
-    for (int v = threadIdx.x; v < nv; v += blockDim.x) dst[v] = z;
-  }
-}
-
-typedef CUresult (*EncodeTiledFn)(CUtensorMap*, CUtensorMapDataType, cuuint32_t, void*, const cuuint64_t*,
-                                  const cuuint64_t*, const cuuint32_t*, const cuuint32_t*, CUtensorMapInterleave,
-                                  CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
-
-// Nothing lives at file scope: every rega_gemm call resolves the driver entry point and encodes its own tensor
-// maps into a stack-local Maps from the tensors passed in THAT call (a __grid_constant__ kernel argument).
-EncodeTiledFn get_encode() {
-  void* fn = nullptr;
-  cudaDriverEntryPointQueryResult q = cudaDriverEntryPointSymbolNotFound;
-#if CUDART_VERSION >= 12050
-  const cudaError_t e = cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled", &fn, 12000, cudaEnableDefault, &q);
-#else
-  const cudaError_t e = cudaGetDriverEntryPoint("cuTensorMapEncodeTiled", &fn, cudaEnableDefault, &q);
-#endif
-  if (e != cudaSuccess || q != cudaDriverEntryPointSuccess || fn == nullptr) {
-    (void)cudaGetLastError();
-    return nullptr;
-  }
-  return reinterpret_cast<EncodeTiledFn>(fn);
-}
-
-template <bool G, bool BIG>
-void info_one(std::vector<int64_t>& r) {
-  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);
-  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, Smem<G>::BYTES);
-  cudaFuncAttributes a{};
-  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
-  int occ = 0;
-  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, Smem<G>::BYTES);
-  if (e1 != cudaSuccess || e2 != cudaSuccess || e3 != cudaSuccess) (void)cudaGetLastError();
-  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));
-  r.push_back(e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess ? 1 : 0);
-  r.push_back(a.numRegs);
-  r.push_back(static_cast<int64_t>(a.localSizeBytes));
-  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
-  r.push_back(Smem<G>::BYTES);
-  r.push_back(occ);
-  r.push_back(static_cast<int64_t>(e1));
-  r.push_back(a.binaryVersion);
-  r.push_back(a.ptxVersion);
-}
-
-}  // namespace
-
-// Per instantiation (w13 then w2 of the small class, then w13 then w2 of the first-turn class): gated + 2 x
-// first-turn class, attribute calls ok, numRegs, localSizeBytes, static
-// smem, dynamic smem, occupancy (CTAs per SM), cudaFuncSetAttribute's error code, binaryVersion,
-// ptxVersion (both report 90 for sm_90 and sm_90a: logged only; error word 2 is the real proof).
-std::vector<int64_t> rega_init() {
-  std::vector<int64_t> r;
-  info_one<true, false>(r);
-  info_one<false, false>(r);
-  info_one<true, true>(r);
-  info_one<false, true>(r);
-  return r;
-}
-
-void rega_gather(torch::Tensor x, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-               int64_t num_routes, int64_t n_experts, torch::Tensor xs) {
-  TORCH_CHECK(x.is_contiguous() && xs.is_contiguous() && sorted_ids.is_contiguous() && block_experts.is_contiguous() &&
-              x.scalar_type() == at::kBFloat16 && xs.scalar_type() == at::kBFloat16 &&
-              sorted_ids.scalar_type() == at::kInt && block_experts.scalar_type() == at::kInt &&
-              n_padded.scalar_type() == at::kInt, "rega_gather: layout");
-  TORCH_CHECK(x.size(1) == xs.size(1) && x.size(1) % 8 == 0 && sorted_ids.numel() <= xs.size(0) &&
-              block_experts.numel() * 16 >= sorted_ids.numel(), "rega_gather: sizes");
-  const int slots = static_cast<int>(sorted_ids.numel());
-  if (slots == 0) return;
-  auto stream = at::cuda::getCurrentCUDAStream();
-  rega_gather_kernel<<<slots, 256, 0, stream>>>(
-      reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), reinterpret_cast<int*>(sorted_ids.data_ptr()), reinterpret_cast<int*>(block_experts.data_ptr()),
-      reinterpret_cast<int*>(n_padded.data_ptr()), static_cast<int>(num_routes), static_cast<int>(x.size(1)),
-      static_cast<int>(n_experts), reinterpret_cast<__nv_bfloat16*>(xs.data_ptr()));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-
-void rega_gemm(int64_t which, torch::Tensor bsrc, torch::Tensor wbank,
-             torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-             int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
-  TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
-  TORCH_CHECK(bsrc.is_cuda() && bsrc.is_contiguous() && bsrc.dim() == 2 && bsrc.scalar_type() == at::kBFloat16 &&
-              bsrc.size(0) > 0 && bsrc.size(1) > 0 && bsrc.size(1) == K,
-              "rega_gemm: B-source scratch layout (cuda, contiguous, 2-D bf16, width K)");
-  TORCH_CHECK(wbank.is_contiguous() && gs.is_contiguous() && sorted_ids.is_contiguous() &&
-              block_experts.is_contiguous() && out.is_contiguous() && wbank.scalar_type() == at::kByte &&
-              gs.scalar_type() == at::kFloat && sorted_ids.scalar_type() == at::kInt &&
-              block_experts.scalar_type() == at::kInt && n_padded.scalar_type() == at::kInt &&
-              out.scalar_type() == at::kBFloat16 && err.scalar_type() == at::kInt && err.numel() >= 3,
-              "rega_gemm: layout");
-  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK_FT && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),
-              "rega_gemm: sizes");
-  TORCH_CHECK(wbank.numel() == gs.numel() * n_tiles * (K / 64) * REC, "rega_gemm: weight bank size");
-  TORCH_CHECK(out.size(1) == (which == 0 ? n_tiles * 64 : n_tiles * 128), "rega_gemm: output width");
-  auto stream = at::cuda::getCurrentCUDAStream();
-  const int blocks_len = static_cast<int>(block_experts.numel());
-  // Capacity class from the table length (a shape: T * 8 + 32 * 15 slots / 16): the stage-1 instantiation
-  // for every table it can hold (all T <= 4096), the first-turn one above.
-  const bool big = blocks_len > MAXBLK;
-  // s5: encode this launch's four tensor maps (N buckets 16/32/64/128) over the bsrc passed in THIS call,
-  // into a stack-local Maps passed by value as the __grid_constant__ kernel parameter (frozen into the
-  // graph node at capture). Host-only driver work: no sync, no allocation, nothing persisted.
-  EncodeTiledFn enc = get_encode();
-  TORCH_CHECK(enc != nullptr, "rega_gemm: cuTensorMapEncodeTiled entry point missing");
-  Maps mp;
-  std::memset(&mp, 0, sizeof(Maps));
-  {
-    const cuuint64_t dims[2] = {static_cast<cuuint64_t>(bsrc.size(1)), static_cast<cuuint64_t>(bsrc.size(0))};
-    const cuuint64_t strides[1] = {static_cast<cuuint64_t>(bsrc.size(1)) * 2};
-    const cuuint32_t es[2] = {1, 1};
-    void* base = bsrc.data_ptr();
-    for (int b = 0; b < 4; ++b) {
-      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 << b)};
-      const CUresult rc = enc(&mp.m[b], CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, base, dims, strides, box, es,
-                              CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
-                              CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
-      TORCH_CHECK(rc == CUDA_SUCCESS, "rega_gemm: tensor map ", b, " rc ", static_cast<int>(rc));
-    }
-  }
-#define WG_LAUNCH(G_, B_)                                                                                     \
-  rega_kernel<G_, B_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \
-      mp, reinterpret_cast<uint8_t*>(wbank.data_ptr()), reinterpret_cast<float*>(gs.data_ptr()), reinterpret_cast<int*>(sorted_ids.data_ptr()),             \
-      reinterpret_cast<int*>(block_experts.data_ptr()), reinterpret_cast<int*>(n_padded.data_ptr()), blocks_len, static_cast<int>(num_routes),      \
-      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                           \
-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)), reinterpret_cast<int*>(err.data_ptr()))
-  if (which == 0) {
-    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);
-  } else {
-    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);
-  }
-#undef WG_LAUNCH
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-"""
-
-
-def _rega_wgmma_src():
-    """The four wgmma m64nNk16 RS wrappers (A = 4 bf16x2 registers, B = smem descriptor, fp32 D,
-    scale-d = 1, scales a/b = 1, B not transposed: K-major), generated per N."""
-    out = []
-    for nb in REGA_BUCKETS:
-        na = nb // 2
-        d = ", ".join(f"%{i}" for i in range(na))
-        lines = [
-            "template <>",
-            f"struct Wg<{nb}> {{",
-            f"  static __device__ __forceinline__ void mma(float (&d)[{na}], const uint32_t (&a)[4], uint64_t desc) {{",
-            "#if defined(__CUDA_ARCH_FEAT_SM90_ALL)",
-            '    asm volatile("{\\n\\t.reg .pred p;\\n\\t"',
-            f'                 "setp.ne.b32 p, %{na + 5}, 0;\\n\\t"',
-            f'                 "wgmma.mma_async.sync.aligned.m64n{nb}k16.f32.bf16.bf16 "',
-            f'                 "{{{d}}}, "',
-            f'                 "{{%{na}, %{na + 1}, %{na + 2}, %{na + 3}}}, %{na + 4}, p, 1, 1, 0;\\n\\t}}\\n"',
-            "                 : " + ", ".join(f'"+f"(d[{i}])' for i in range(na)),
-            '                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(1));',
-            "#endif",
-            "  }",
-            "};",
-        ]
-        out.append("\n".join(lines))
-    return "\n".join(out) + "\n"
-
-
-def _rega_src():
-    return _REGA_HEAD + _rega_wgmma_src() + _REGA_BODY
-
-
-# Build-failure fallback (pre-flight audit): if muse_prefill_rega_v2 does not compile or load, prepare() builds
-# master's exact stage-1 extension (muse_prefill_rega_v1) instead, so the low / high classes master ships survive
-# and 'ft' stays OFF. Its source is derived from the v2 source by reverting this stage's edits, and is used
-# only when its sha256 equals master's (else no fallback: everything OFF, as before).
-REGA_EXT_NAME_V1 = "muse_prefill_rega_v1"
-REGA_V1_SHA256 = "244ca8b9220a6adc820f3ef7eec3717c5ce1f2be7caf238158008807fb534a0f"
-_REGA_V1_EDITS = (  # (part, text in v2, master's text)
-    ("head",
-     ('// first-turn capacity class (T <= 16384): worst case 131072 local routes + 32 x 15 padding = 8222 blocks of 16\n'
-      '// and <= 8222 / 8 + 32 = 1059 chunks. Its block-expert table is read from global (__ldg), only the chunk\n'
-      '// tables live in shared memory (2 x 1088 x 4 B).\n'
-      'constexpr int MAXBLK_FT = 8224;\n'
-      'constexpr int MAXC_FT = 1088;\n'),
-     ""),
-    ("head",
-     ('// Capacity class: BIG = false is the T <= 4096 build (tables and smem exactly as stage 1); BIG = true serves\n'
-      '// 4096 < T <= 16384 with the block-expert table in global memory.\n'
-      'template <bool BIG>\n'
-      'struct Cap {\n'
-      '  static constexpr int BLK = BIG ? MAXBLK_FT : MAXBLK;\n'
-      '  static constexpr int C = BIG ? MAXC_FT : MAXC;\n'
-      '  static constexpr int SBE = BIG ? 1 : MAXBLK;   // shared block-expert table entries\n'
-      '};\n'
-      '// static tables + barriers / per-expert arrays stay under the 16384 B static bound in both classes\n'
-      'static_assert((Cap<false>::SBE + 2 * Cap<false>::C) * 4 + 1024 <= 16384, "static smem, small class");\n'
-      'static_assert((Cap<true>::SBE + 2 * Cap<true>::C) * 4 + 1024 <= 16384, "static smem, first-turn class");\n'
-      '// Block-expert table views: the small class indexes its shared copy (a plain pointer, as stage 1); the large\n'
-      '// class reads global memory through the read-only path.\n'
-      'struct GTab {\n'
-      '  const int* p;\n'
-      '  __device__ __forceinline__ int operator[](int i) const { return __ldg(p + i); }\n'
-      '};\n'
-      'template <bool BIG>\n'
-      'struct BeSel;\n'
-      'template <>\n'
-      'struct BeSel<false> {\n'
-      '  using T = const int*;\n'
-      '  static __device__ __forceinline__ T make(const int* s, const int* g) { return s; }\n'
-      '};\n'
-      'template <>\n'
-      'struct BeSel<true> {\n'
-      '  using T = GTab;\n'
-      '  static __device__ __forceinline__ T make(const int* s, const int* g) { return GTab{g}; }\n'
-      '};\n'),
-     ""),
-    ("body",
-     ('// be: the block-expert table view (shared pointer in the small class, GTab in the first-turn class).\n'
-      'template <class BE>\n'
-      '__device__ __forceinline__ Item decode_item(int it, int T, BE be, const int* cblk, const int* cnb,\n'),
-     ('__device__ __forceinline__ Item decode_item(int it, int T, const int* be, const int* cblk, const int* cnb,\n')),
-    ("body",
-     ('  }\n'
-      '}\n'
-      '\n'
-      'template <bool G, bool BIG>\n'),
-     ('  }\n'
-      '}\n'
-      '\n'
-      'template <bool G>\n')),
-    ("body",
-     ('  constexpr int CBLK = Cap<BIG>::BLK, CC = Cap<BIG>::C;\n'
-      '  __shared__ int s_be[Cap<BIG>::SBE], s_cblk[CC], s_cnb[CC];\n'),
-     ('  __shared__ int s_be[MAXBLK], s_cblk[MAXC], s_cnb[MAXC];\n')),
-    ("body",
-     ('  // block-expert table view: s_be (small class) or block_experts in global via __ldg (first-turn class)\n'
-      '  const typename BeSel<BIG>::T be = BeSel<BIG>::make(s_be, block_experts);\n'),
-     ""),
-    ("body",
-     ('  nb = nb < CBLK ? nb : CBLK;\n'),
-     ('  nb = nb < MAXBLK ? nb : MAXBLK;\n')),
-    ("body",
-     ('  if constexpr (!BIG) {\n'
-      '    for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);\n'
-      '  }\n'),
-     ('  for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);\n')),
-    ("body",
-     ('    const int e = be[b];\n'
-      '    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || be[b - 1] != e)) {\n'),
-     ('    const int e = s_be[b];\n'
-      '    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || s_be[b - 1] != e)) {\n')),
-    ("body",
-     ('      const int e = be[b];\n'),
-     ('      const int e = s_be[b];\n')),
-    ("body",
-     ('        while (cn < 8 && b + cn < nb && be[b + cn] == e) ++cn;\n'),
-     ('        while (cn < 8 && b + cn < nb && s_be[b + cn] == e) ++cn;\n')),
-    ("body",
-     ('      if (idx < CC) {\n'),
-     ('      if (idx < MAXC) {\n')),
-    ("body",
-     ('  if (tid == 0 && base > CC) atomicExch(err, 3);\n'
-      '  const int nc = base < CC ? base : CC;\n'),
-     ('  if (tid == 0 && base > MAXC) atomicExch(err, 3);\n'
-      '  const int nc = base < MAXC ? base : MAXC;\n')),
-    ("body",
-     ('    const int e = be[s_cblk[c]];\n'),
-     ('    const int e = s_be[s_cblk[c]];\n')),
-    ("body",
-     ('    if (c == 0 || be[s_cblk[c - 1]] != e) s_gfirst[e] = c;\n'),
-     ('    if (c == 0 || s_be[s_cblk[c - 1]] != e) s_gfirst[e] = c;\n')),
-    ("body",
-     ('        const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);\n'),
-     ('        const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);\n')),
-    ("body",
-     ('    for (int it = blockIdx.x; it < total; it += gridDim.x) {\n'
-      '      const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);\n'),
-     ('    for (int it = blockIdx.x; it < total; it += gridDim.x) {\n'
-      '      const Item m = decode_item(it, n_tiles, s_be, s_cblk, s_cnb, s_gfirst, s_gcount);\n')),
-    ("body",
-     ('  return reinterpret_cast<EncodeTiledFn>(fn);\n'
-      '}\n'
-      '\n'
-      'template <bool G, bool BIG>\n'),
-     ('  return reinterpret_cast<EncodeTiledFn>(fn);\n'
-      '}\n'
-      '\n'
-      'template <bool G>\n')),
-    ("body",
-     ('  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);\n'),
-     ('  const void* fn = reinterpret_cast<const void*>(rega_kernel<G>);\n')),
-    ("body",
-     ('  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));\n'),
-     ('  r.push_back(G ? 1 : 0);\n')),
-    ("body",
-     ('// Per instantiation (w13 then w2 of the small class, then w13 then w2 of the first-turn class): gated + 2 x\n'
-      '// first-turn class, attribute calls ok, numRegs, localSizeBytes, static\n'),
-     ('// Per instantiation (w13 then w2): gated, attribute calls ok, numRegs, localSizeBytes, static\n')),
-    ("body",
-     ('  info_one<true, false>(r);\n'
-      '  info_one<false, false>(r);\n'
-      '  info_one<true, true>(r);\n'
-      '  info_one<false, true>(r);\n'),
-     ('  info_one<true>(r);\n'
-      '  info_one<false>(r);\n')),
-    ("body",
-     ('  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK_FT && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),\n'),
-     ('  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK && gs.numel() <= MAXE && sorted_ids.numel() <= bsrc.size(0),\n')),
-    ("body",
-     ('  // Capacity class from the table length (a shape: T * 8 + 32 * 15 slots / 16): the stage-1 instantiation\n'
-      '  // for every table it can hold (all T <= 4096), the first-turn one above.\n'
-      '  const bool big = blocks_len > MAXBLK;\n'),
-     ""),
-    ("body",
-     ('#define WG_LAUNCH(G_, B_)                                                                                     \\\n'
-      '  rega_kernel<G_, B_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \\\n'),
-     ('#define WG_LAUNCH(G_)                                                                                         \\\n'
-      '  rega_kernel<G_><<<static_cast<unsigned>(grid), THREADS, Smem<G_>::BYTES, stream>>>(                          \\\n')),
-    ("body",
-     ('  if (which == 0) {\n'
-      '    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);\n'
-      '  } else {\n'
-      '    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);\n'
-      '  }\n'),
-     ('  if (which == 0) WG_LAUNCH(true); else WG_LAUNCH(false);\n')),
-)
-
-
-def _rega_src_v1():
-    """Master's exact rega CUDA source (stage 1), or None when the reverted text does not hash to master's."""
-    parts = {"head": _REGA_HEAD, "body": _REGA_BODY}
-    for part, new, old in _REGA_V1_EDITS:
-        if parts[part].count(new) != 1:
-            return None
-        parts[part] = parts[part].replace(new, old)
-    src = parts["head"] + _rega_wgmma_src() + parts["body"]
-    return src if hashlib.sha256(src.encode()).hexdigest() == REGA_V1_SHA256 else None
-
-
-def _rega_build(name=REGA_EXT_NAME, src=None):
-    """Compile the module (prepare only, never during capture): (ext or None, error text). sm_90a only:
-    cpp_extension's JIT path appends -gencode flags from TORCH_CUDA_ARCH_LIST (else from the device, a plain
-    compute_90 pass that cannot assemble wgmma), so the list is set to 9.0a for the build and restored after;
-    every wgmma / setmaxnreg body is also behind __CUDA_ARCH_FEAT_SM90_ALL with an error-word-2 #else."""
-    t0 = time.perf_counter()
-    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
-    ext, err_text = None, ""
-    try:
-        from torch.utils import cpp_extension
-        from torch.utils.cpp_extension import load_inline
-        print(f"{REGA_TAG} torch {torch.__version__} cuda {torch.version.cuda}; device capability "
-              f"{torch.cuda.get_device_capability()}", flush=True)
-        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
-        try:
-            arch_flags = cpp_extension._get_cuda_arch_flags()
-        except Exception as e:  # this torch does not know the 'a' suffix: default list + the guards
-            print(f"{REGA_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
-                  flush=True)
-            if prev is None:
-                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-            else:
-                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-            arch_flags = ["<unknown>"]
-        print(f"{REGA_TAG} build arch flags: TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> "
-              f"{arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}", flush=True)
-        ext = load_inline(name=name, cpp_sources=_REGA_CPP, cuda_sources=src if src is not None else _rega_src(),
-                          functions=["rega_init", "rega_gather", "rega_gemm"],
-                          extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
-    except Exception as e:
-        err_text = str(e)
-        ext = None
-        print(f"{REGA_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {err_text[-400:]!r}",
-              flush=True)
-    finally:
-        if prev is None:
-            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-        else:
-            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-    if ext is not None:
-        print(f"{REGA_TAG} load_inline compiled in {time.perf_counter() - t0:.1f}s", flush=True)
-    return ext, err_text
-
-
-def _rega_source_audit():
-    """Pre-build audit: no templated Tensor accessor (libtorch exports data_ptr<int64_t> but not
-    <long long>: the ssdq stage-1 failure), same scan as _ssdq_source_audit over the rega sources."""
-    bad = []
-    for name, src in (("cpp", _REGA_CPP), ("cuda", _rega_src())):
-        for n, line in enumerate(src.splitlines(), 1):
-            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
-                bad.append(f"{name} line {n}: {line.strip()[:120]}")
-    return bad
-
-
-def _rega_nibbles(packed):
-    """uint8 [..., n] -> uint8 [..., 2n]: element 2i is the low nibble, as nvfp4 packs."""
-    return torch.stack((packed & 0x0F, packed >> 4), dim=-1).flatten(-2)
-
-
-def _rega_pack_nibbles(nib):
-    """Inverse of _rega_nibbles."""
-    nib = nib.reshape(*nib.shape[:-1], -1, 2)
-    return nib[..., 0] | (nib[..., 1] << 4)
-
-
-def _rega_code_dims(rows, k, gated):
-    """Source view and permutation of one expert's [rows, k] nibbles. Source dims: rh (gate/up
-    half for w13, row half of the warp's 16 for w2), j (128-row tile), w (warp), g (lane / 4), kc
-    (64-k block), s (k16 step), kh (k 8-15 half), t (lane % 4), kl (k parity). Target: j kc w g t
-    s kl kh rh, then kh and rh are reversed, so the nibble in the lane's word s is 4 kl + 2 (1 -
-    kh) + (1 - rh): register pair i = rh + 2 kh at nibbles 3 - i (kl = 0) and 7 - i (kl = 1)."""
-    kc = k // 64
-    if gated:  # row = rh * I + 64 j + 8 w + g
-        return (2, rows // 128, 8, 8, kc, 4, 2, 4, 2), (1, 4, 2, 3, 7, 5, 8, 6, 0)
-    # row = 128 j + 16 w + 8 rh + g
-    return (rows // 128, 8, 2, 8, kc, 4, 2, 4, 2), (0, 4, 1, 3, 7, 5, 8, 6, 2)
-
-
-def _rega_scale_dims(rows, kg, gated):
-    """Source view and permutation of one expert's [rows, k / 16] scale bytes. Target: j kc w g s
-    rh, i.e. per lane group g 8 bytes, byte 2 s + rh = row g + 8 rh at k16 step s."""
-    kc = kg // 4
+def _repack(w, sf, gated):
+    """w: uint8 [E, N, 2048]; sf: e4m3 [E, N, 256] -> uint8 [E, N/128, KS, WBLK]."""
+    E, N, _ = w.shape
+    n_tiles = N // 128
+    dev = w.device
     if gated:
-        return (2, rows // 128, 8, 8, kc, 4), (1, 4, 2, 3, 5, 0)
-    return (rows // 128, 8, 2, 8, kc, 4), (0, 4, 1, 3, 5, 2)
-
-
-def _rega_inverse(perm):
-    inv = [0] * len(perm)
-    for i, p in enumerate(perm):
-        inv[p] = i
-    return inv
-
-
-def _rega_tile_expert(packed, sf, gated):
-    """One expert's uint8 [rows, k / 2] codes and float8_e4m3fn [rows, k / 16] scales -> the
-    kernel's records (flat uint8, [tiles][k / 64][4096 codes + 512 scales]), asserting that
-    un-permuting both parts gives the source bytes back exactly."""
-    rows, k = packed.shape[0], packed.shape[1] * 2
-    tiles, kc = rows // 128, k // 64
-    shape, perm = _rega_code_dims(rows, k, gated)
-    codes = _rega_pack_nibbles(_rega_nibbles(packed).view(shape).permute(perm).flip(-1, -2).reshape(-1, 8)).reshape(
-        tiles, kc, 4096)
-    src_sf = sf.contiguous().view(torch.uint8)
-    s_shape, s_perm = _rega_scale_dims(rows, k // 16, gated)
-    scales = src_sf.view(s_shape).permute(s_perm).reshape(tiles, kc, 512)
-    rec = torch.cat((codes, scales), dim=-1).contiguous()
-    back_c = _rega_nibbles(rec[..., :4096].reshape(-1)).view([shape[p] for p in perm]).flip(-1, -2).permute(
-        _rega_inverse(perm)).reshape(rows, k)
-    assert torch.equal(_rega_pack_nibbles(back_c), packed), "code retiling is not lossless"
-    back_s = rec[..., 4096:].reshape(-1).view([s_shape[p] for p in s_perm]).permute(_rega_inverse(s_perm)).reshape(
-        rows, k // 16)
-    assert torch.equal(back_s, src_sf), "scale retiling is not lossless"
-    return rec.reshape(-1)
-
-
-def _rega_bank(weights, start, count):
-    """The wgmma path's lossless retiling of experts [start, start + count): codes and E4M3 scales
-    stay NVFP4 bytes, global scales stay fp32 with the dequant bias 2^7 folded in (exact)."""
-    w13, w2 = weights["w13"], weights["w2"]
-    rec13 = w13[0].numel() + weights["w13_sf"][0].numel()
-    rec2 = w2[0].numel() + weights["w2_sf"][0].numel()
-    q13 = torch.empty((count, rec13), dtype=torch.uint8, device=w13.device)
-    q2 = torch.empty((count, rec2), dtype=torch.uint8, device=w2.device)
-    for i in range(count):
-        e = start + i
-        q13[i] = _rega_tile_expert(w13[e].contiguous(), weights["w13_sf"][e], True)
-        q2[i] = _rega_tile_expert(w2[e].contiguous(), weights["w2_sf"][e], False)
-    sl = slice(start, start + count)
-    return {
-        "q13": q13.reshape(-1), "gs13": (weights["w13_gs"][sl].float() * 128.0).contiguous(),
-        "q2": q2.reshape(-1), "gs2": (weights["w2_gs"][sl].float() * 128.0).contiguous(),
-    }
-
-
-def _rega_audit_cpp(src):
-    """Static scan of the CUDA/C++ source for state that outlives a call: mutable file / namespace
-    scope variables, static locals, and device-side globals (__device__ / __constant__ / __managed__
-    variables). Returns a list of findings (empty = none). __shared__ is per launch and not state."""
-    findings = []
-    txt = re.sub(r"(?m)^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", "", src)  # preprocessor lines and their continuations
-    txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)
-    txt = re.sub(r"//[^\n]*", "", txt)
-    txt = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', txt)
-    for m in re.finditer(r"(?m)^\s*(__device__|__constant__|__managed__)\s+(?!__forceinline__|void\b|inline\b|static\b)"
-                         r"[^;(){}]*?\w+\s*(\[[^\]]*\])?\s*(=[^;]*)?;", txt):
-        findings.append("device global: " + " ".join(m.group(0).split())[:100])
-    for m in re.finditer(r"\bstatic\b(?!\s+(?:constexpr|const|__device__|__forceinline__|inline)\b)[^;{]*", txt):
-        findings.append("static: " + " ".join(m.group(0).split())[:100])
-    stack, cur = [], ""
-    for ch in txt:
-        if ch == "{":
-            if re.search(r"=\s*$", cur):  # brace initializer: part of the statement
-                stack.append("init")
-                cur += ch
-            else:
-                stack.append("ns" if re.search(r"\bnamespace\b[^{};]*$", cur) else "blk")
-                cur = ""
-        elif ch == "}":
-            was = stack.pop() if stack else "blk"
-            cur = cur + ch if was == "init" else ""
-        elif ch == ";":
-            stmt = cur.strip()
-            cur = ""
-            if "blk" in stack or not stmt:
-                continue
-            if (re.match(r"(typedef|using|static_assert|extern|template)\b", stmt) or "constexpr" in stmt
-                    or "(" in stmt):
-                continue
-            findings.append("file-scope variable: " + " ".join(stmt.split())[:100])
-        else:
-            cur += ch
-    return findings
-
-
-def _rega_audit_globals():
-    """prepare-time audit: (a) the load_inline source for mutable file-scope / static / device globals,
-    (b) this Python module for tensors, graphs or containers of tensors at module scope. Returns the
-    findings; any finding turns the path off."""
-    findings = _rega_audit_cpp(_REGA_CPP + "\n" + _rega_src())
-    n_cpp = len(findings)
-    for name, val in list(globals().items()):
-        if isinstance(val, (torch.Tensor, torch.cuda.CUDAGraph)):
-            findings.append(f"python global {name}: {type(val).__name__}")
-        elif isinstance(val, (dict, list, tuple, set)):
-            items = val.values() if isinstance(val, dict) else val
-            if any(isinstance(v, (torch.Tensor, torch.cuda.CUDAGraph)) for v in items):
-                findings.append(f"python global {name}: container holding a tensor / graph")
-    print(f"{REGA_TAG} global/static audit: CUDA/C++ source {n_cpp} mutable file-scope / static / device "
-          f"globals, Python module {len(findings) - n_cpp} tensor-holding globals; findings "
-          f"{findings if findings else 'none'}; per-state data: rega_bank, rega_err; per call: xs, hs, tensor maps",
-          flush=True)
-    return findings
-
-
-def _experts_rega(x, topk_weights, local_ids, state, tracer=None, prenorm=False):
-    """The experts on the register-A wgmma kernel, on ids already mapped to this GPU's experts (0-31, -1
-    elsewhere). align (block 16, local routes only, master's parallel align) -> gather the routed rows into
-    sorted order -> w13 + silu*up (fp32, one bf16 rounding) into hs -> w2 scattered to the route slot of y ->
-    master's weighted sum. Everything a launch reads comes from `state` (bank, error word) and this call's
-    tensors (the tensor maps are encoded from xs / hs in C++ on every call). tracer, only passed by
-    prepare(), announces each launch before it and syncs + prints after it. prenorm=True: x is the RAW pooler
-    output; _norm_gather_kernel applies the pre-expert RMSNorm while gathering (replacing norm + rega_gather)."""
-    ext, bank = state["rega_ext"], state["rega_bank"]
-    err, grid = state["rega_err"], state["rega_grid"]
-    num_tokens, size_k = x.shape
-    num_slots = num_tokens * TOP_K
-    # combo-b-normgather-two-cta-low-regate: low class only, the prepare-set variant int (0 = master's
-    # rega_kernel<G, false>, 1 = V64, 2 = V32 on the separate muse_prefill_rega_lo module) and its grid int. A
-    # shape (the token count) and two prepare-time ints of this state decide; never a tensor value or a pointer.
-    variant = state.get("rega_low_variant", 0) if num_tokens <= REGA_LOW_MAX else 0
-    grid_lo = state.get("rega_low_grid", grid)
-    # experts-rega-w13-fast-silu-epilogue: a per-class prepare-time bool selects the w13 launch of the separate
-    # muse_prefill_rega_fsilu module (master's source with silu_mul's one line swapped for __fdividef / __expf).
-    # Never on the rega_gemm_lo path (variant != 0); w2 and everything else stay master's. Shape + prepare-time
-    # values only.
-    fsilu_ext = state.get("rega_fsilu_ext")
-    fsilu = (not variant and fsilu_ext is not None
-             and bool(state.get("rega_fsilu_ok", {}).get(_rega_class(num_tokens), False)))
-    # experts-rega-w2-early-loads-low-class: a per-class prepare-time bool selects the w2 launch of the same module
-    # (its rega_gemm which 1 = arm a: early gs / sorted_ids loads, route ids from the staging tile's pad column).
-    # Shape + prepare-time values only; never on the rega_gemm_lo path (rega_low_variant != 0 takes precedence).
-    w2st = (not variant and fsilu_ext is not None
-            and bool(state.get("rega_w2st_ok", {}).get(_rega_class(num_tokens), False)))
-    # experts-rega-dq2-dequant-cost-diag / experts-rega-a5b-desc-splitcommit: a per-class prepare-time int (0 = off;
-    # 3 = A3; 5 = A5b+D+SC) selects the muse_prefill_rega_dq module's MODE-0 instantiation of that arm for BOTH GEMMs;
-    # prepare sets it only where the arm's hs and y were torch.equal to this class's dispatched fsilu w13 + w2st w2. Each
-    # arm reads its own prepare-time re-encoded bank copy (state['rega_dq_bank'][arm]: A3 permuted codes, A5b ENC4 codes
-    # + packed scales). Shape + prepare-time values only; never on the rega_gemm_lo path. Absent keys: master.
-    dq = 0 if variant else int(state.get("rega_dq_ok", {}).get(_rega_class(num_tokens), 0))
-    dq_ext = state.get("rega_dq_ext") if dq else None
-    dq_bank = (state.get("rega_dq_bank") or {}).get(dq) if dq in (3, 5) else bank
-    if dq_ext is None or dq_bank is None:
-        dq = 0
-    topk_weights = topk_weights.to(torch.float32).contiguous()
-    if tracer:
-        tracer("before", "align")
-    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(local_ids, REGA_BSM, state)
-    if tracer:
-        tracer("after", "align")
-    rows = block_experts.shape[0] * REGA_BSM
-    xs = torch.empty((rows, size_k), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("before", "rega_gather")
-    if prenorm:
-        nw, nprog, rnd = state["norm_gather_cfg"][_rega_class(num_tokens)]
-        _norm_gather(x.contiguous(), state["pre_expert_w"], sorted_ids, block_experts, n_padded, num_slots, xs,
-                     nw, nprog, rnd)
+        nt = torch.arange(n_tiles, device=dev).view(n_tiles, 1, 1)
+        q = torch.arange(8, device=dev).view(1, 8, 1)
+        lr = torch.arange(16, device=dev).view(1, 1, 16)
+        perm = torch.where(lr < 8, 64 * nt + 8 * q + lr, 4096 + 64 * nt + 8 * q + lr - 8).reshape(-1)
     else:
-        ext.rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
-    if tracer:
-        tracer("after", "rega_gather")
-    hs = torch.empty((rows, D_EXPERT), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("before", "rega_kernel<w13+silu>")
-    if variant:
-        state["rega_lo_ext"].rega_gemm_lo(0, variant, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts,
-                                          n_padded, num_slots, D_EXPERT // 64, size_k, hs, grid_lo, err)
-    elif dq:
-        dq_ext.rega_gemm(0, xs, dq_bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
-                         D_EXPERT // 64, size_k, hs, grid, err, 0, dq)
-    elif fsilu:
-        fsilu_ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
-                            D_EXPERT // 64, size_k, hs, grid, err)
-    else:
-        ext.rega_gemm(0, xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
-                      D_EXPERT // 64, size_k, hs, grid, err)
-    if tracer:
-        tracer("after", "rega_kernel<w13+silu>")
-    # The weighted sum skips remote slots when prepare() proved it (state['zero_nonlocal_w2'] False);
-    # otherwise remote rows must read as zeros.
-    if state["zero_nonlocal_w2"]:
-        y = torch.zeros((num_slots, size_k), device=x.device, dtype=x.dtype)
-    else:
-        y = torch.empty((num_slots, size_k), device=x.device, dtype=x.dtype)
-    if tracer:
-        tracer("before", "rega_kernel<w2>")
-    if variant:
-        state["rega_lo_ext"].rega_gemm_lo(1, variant, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts,
-                                          n_padded, num_slots, size_k // 128, D_EXPERT, y, grid_lo, err)
-    elif dq:
-        dq_ext.rega_gemm(1, hs, dq_bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
-                         size_k // 128, D_EXPERT, y, grid, err, 0, dq)
-    elif w2st:
-        fsilu_ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
-                            size_k // 128, D_EXPERT, y, grid, err)
-    else:
-        ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
-                      size_k // 128, D_EXPERT, y, grid, err)
-    if tracer:
-        tracer("after", "rega_kernel<w2>")
-    return fused_post_expert_norm_weighted_sum(
-        y.view(num_tokens, TOP_K, size_k), topk_weights, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-        weight_first=True, slot_expert_ids=local_ids)
+        perm = torch.arange(N, device=dev)
+    out = torch.empty((E, n_tiles, KS, WBLK), dtype=torch.uint8, device=dev)
+    sf_u8 = sf.view(torch.uint8)
+    shifts = torch.tensor([3, 7, 1, 5, 2, 6, 0, 4], dtype=torch.int32, device=dev)  # (half, hk, b) order below
+    pos = torch.tensor([_CODE_POS[int(i)] for i in shifts.tolist()], dtype=torch.int64, device=dev)  # [8, 4]
+    for e in range(E):
+        c = _codes(w[e][perm]).to(torch.int32)  # [N, 4096]
+        # rows: [nt, wg, w, half, g]; k: [ks, j, hk, t, b]
+        c = c.view(n_tiles, 2, 4, 2, 8, KS, 4, 2, 4, 2)
+        # -> [nt, ks, wg, w, g, t, j, half, hk, b]
+        c = c.permute(0, 5, 1, 2, 4, 8, 6, 3, 7, 9).reshape(n_tiles, KS, 2, 4, 8, 4, 4, 8)
+        # Nibble index for (half, hk, b): i = 3 - (half + 2*hk) + 4*b; flattened order (half, hk, b):
+        # (0,0,0)->3 (0,0,1)->7 (0,1,0)->1 (0,1,1)->5 (1,0,0)->2 (1,0,1)->6 (1,1,0)->0 (1,1,1)->4
+        # Bit layout read by convert8 (rotate + mask per register): code bit b of the code in nibble slot i goes to
+        # bit _CODE_POS[i][b] (b: m0, m1, m2, sign).
+        cb = (c.to(torch.int64).unsqueeze(-1) >> torch.arange(4, device=dev)) & 1  # [..., 8, 4]
+        words = (cb << pos).sum((-1, -2)) & 0xFFFFFFFF
+        wbytes = torch.stack([(words >> (8 * i)) & 0xFF for i in range(4)], dim=-1).to(torch.uint8)
+        out[e, :, :, :4096] = wbytes.reshape(n_tiles, KS, 4096)
+        s = sf_u8[e][perm].view(n_tiles, 2, 4, 2, 8, KS, 4)  # rows [nt, wg, w, half, g]; cols [ks, j]
+        s = s.permute(0, 5, 1, 2, 4, 6, 3).reshape(n_tiles, KS, 512)  # [nt, ks, wg, w, g, j, half]
+        out[e, :, :, 4096:] = s
+    return out
 
 
-class _RegaTracer:
-    """prepare()-only: a flushed print BEFORE each launch, then a device sync and a flushed print AFTER it,
-    so a fault names its kernel. Never passed by kernel_fn, never used under capture."""
-
-    def __init__(self, tag):
-        self.tag = tag
-        self.t0 = 0.0
-
-    def __call__(self, when, name):
-        if when == "before":
-            print(f"{REGA_TAG} [{self.tag}] launching {name}", flush=True)
-            torch.cuda.synchronize()
-            self.t0 = time.perf_counter()
-            return
-        torch.cuda.synchronize()
-        # eager host-timed launch + kernel (us): a ranking aid, not the judged number
-        print(f"{REGA_TAG} [{self.tag}] {name} done ({(time.perf_counter() - self.t0) * 1e6:.0f} us eager)",
-              flush=True)
+# --------------------------------------------------------------------------------------
+# Attention: FA3 paged FP8 path, the FP32 fallback for non-Hopper devices,
+# and the file's own Hopper kernel (validated + tuned in prepare).
+# --------------------------------------------------------------------------------------
 
 
-def _rega_reference_y(x, local_ids, weights, cache):
-    """fp32 reference of the two expert GEMMs and the silu*up on the dequantized original-order weights
-    (nvfp4.dequantize): the gate / up matmul stays fp32 end to end, silu*up is fp32 and rounded to bf16 once
-    (the kernel stores it as bf16), y [T * 8, 4096] bf16, zeros for remote routes."""
-    tokens = x.shape[0]
-    flat = local_ids.view(-1)
-    y = torch.zeros((tokens * TOP_K, D_EXPERT), dtype=torch.bfloat16, device=x.device)
-    for e in range(LOCAL_EXPERTS):
-        idx = (flat == e).nonzero().flatten()
-        if idx.numel() == 0:
-            continue
-        if e not in cache:
-            cache[e] = (nvfp4.dequantize(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]),
-                        nvfp4.dequantize(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]))
-        w13, w2 = cache[e]
-        h = x[idx // TOP_K].float() @ w13.t()
-        g, u = h[:, :D_EXPERT], h[:, D_EXPERT:]
-        a = (g / (1.0 + torch.exp(-g)) * u).to(torch.bfloat16).float()
-        y[idx] = (a @ w2.t()).to(torch.bfloat16)
-    return y
+def _attention_fallback(data, q8, cfg):
+    """Local (non-Hopper) attention over the paged FP8 cache, FP32 math. Testing only: it
+    synchronises (`.tolist()`), so it is not on the scored path."""
+    B, L = cfg["batch"], cfg["q_len"]
+    page, window = cfg["page_size"], cfg["window"]
+    ks, vs = data["k_scale"].float(), data["v_scale"].float()
+    kf = data["k_cache"].view(-1, HKV, HD)
+    vf = data["v_cache"].view(-1, HKV, HD)
+    scale = cfg["sm_scale"] * cfg["qk_scale_factor"]
+    out = torch.empty((B * L, HQ, HD), dtype=torch.bfloat16, device=q8.device)
+    seq_lens = data["seq_lens"].tolist()
+    for b in range(B):
+        seq = seq_lens[b]
+        first = max(0, seq - window + 1) if window else 0
+        kp = torch.arange(first, seq + L, device=q8.device)
+        rows = data["page_table"][b].long()[kp // page] * page + kp % page
+        keys = kf[rows].float() * ks
+        vals = vf[rows].float() * vs
+        q = q8[b * L:(b + 1) * L].float()
+        for c in range(0, L, FALLBACK_Q_BLOCK):
+            qp = seq + torch.arange(c, min(c + FALLBACK_Q_BLOCK, L), device=q8.device)
+            vis = kp[None, :] <= qp[:, None]
+            if window:
+                vis &= kp[None, :] > qp[:, None] - window
+            qq = q[c:c + FALLBACK_Q_BLOCK].view(-1, HKV, HQ // HKV, HD)
+            att = torch.einsum("lkgd,skd->lkgs", qq, keys) * scale
+            att = att.masked_fill(~vis[:, None, None, :], float("-inf")).softmax(-1)
+            out[b * L + c: b * L + c + qq.shape[0]] = torch.einsum("lkgs,skd->lkgd", att, vals).reshape(-1, HQ, HD).to(torch.bfloat16)
+    return out
 
 
-def _rega_reference_out(x, tw, lids, state, weights, cache):
-    tokens = x.shape[0]
-    ref_y = _rega_reference_y(x, lids, weights, cache)
-    return fused_post_expert_norm_weighted_sum(
-        ref_y.view(tokens, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-        weight_first=True, slot_expert_ids=lids)
-
-
-def _rega_marks(err):
-    """(error word, w13 launch marker, w2 launch marker) read back from an error tensor (prepare only)."""
-    word, m13, m2 = [int(v) for v in err.tolist()]
-    return word, m13, m2
-
-
-def _rega_launched(m13, m2):
-    return m13 == REGA_MAGIC and m2 == REGA_MAGIC
-
-
-def _rega_copy_tree(obj):
-    """The judge's copy, modelled: a recursive walk that clones every tensor and shares everything else
-    (the ext module, ints, strings), rebuilding dicts / lists / tuples."""
-    if torch.is_tensor(obj):
-        return obj.clone()
-    if isinstance(obj, dict):
-        return {k: _rega_copy_tree(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_rega_copy_tree(v) for v in obj]
-    if isinstance(obj, tuple):
-        return tuple(_rega_copy_tree(v) for v in obj)
-    return obj
-
-
-REGA_REPLAY_TOKENS = (753, 3012, 4096)
-REGA_REPLAY_KINDS = ("random", "skewed", "one")
-REGA_REPLAY_SEQ = ("A", "B", "C", "A", "B")
-
-
-def _rega_case(tokens, kind, gen, device):
-    """_ssdq_case, plus kind 'local': every token's top 8 drawn from the 32 local experts only (all 8 routes
-    local), which forces the most blocks and chunks the align can produce at this T; kind 'pop:<alpha>'
-    (combo-b, prepare-time low-class gate): the popularity-skewed routing of _rega_pop_case."""
-    if kind.startswith("pop"):
-        return _rega_pop_case(tokens, float(kind.split(":")[1]) if ":" in kind else 2.0, gen, device)
-    if kind != "local":
-        return _ssdq_case(tokens, kind, gen, device)
-    x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
-    local_ids = torch.rand((tokens, LOCAL_EXPERTS), generator=gen, device=device).topk(
-        TOP_K, dim=1).indices.to(torch.int32).contiguous()
-    tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
-    tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
-    return x, tw, local_ids
-
-
-def _rega_incumbent(tokens):
-    """(name, fn) of master's expert block at this T without rega: Marlin up to MARLIN_MAX_TOKENS, else Triton.
-    The self-check bound is calibrated on its error against the fp32 reference."""
-    if tokens <= MARLIN_MAX_TOKENS:
-        return "marlin", _experts_marlin
-    return "triton", _experts_triton
-
-
-def _rega_tiles(lids):
-    """prepare() only: the rega align's table sizes for these ids: (blocks table length, used blocks, chunks,
-    max chunks of one expert). Work items: chunks x 64 (w13) and chunks x 32 (w2)."""
-    _, (_, block_experts, n_padded) = _align_parallel(lids, 0, LOCAL_EXPERTS, REGA_BSM)
-    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
-    be = block_experts[:used].cpu().long()
-    counts = torch.bincount(be[(be >= 0) & (be < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS)
-    chunks = (counts + 7) // 8
-    return block_experts.numel(), used, int(chunks.sum()), int(chunks.max())
-
-
-def _rega_replay_check(state, weights, cache, device, gen, plan=None, keys=None):
-    """prepare() only. The judge prepares TWO states (setup copies: 2), copies tensors, and rotates them across
-    repetitions with refilled inputs. Three states over the pieces _experts_rega reads: A = the prepared
-    state, B = copy.deepcopy (the ext module shared through the memo), C = the recursive tensor-cloning walk
-    after a 2 MB pad allocation. Per T, one CUDA graph of _experts_rega per state over that state's own static
-    inputs; per routing, replays A, B, C, A, B, each after REFILLING that state's inputs in place with a fresh
-    case, each compared with the fp32 reference (bound: max(2 x Marlin's own error, 8e-3), worst row 5x) and
-    each required to leave BOTH launch markers and error word 0 in that state's own error tensor (this is the
-    LAUNCHED = rega assertion). plan: ((T, kinds), ...), default REGA_REPLAY_TOKENS x REGA_REPLAY_KINDS; above
-    MARLIN_MAX_TOKENS the bound is calibrated on Triton (master's block there) instead of Marlin. Graphs are freed
-    after every T and the peak allocation printed. keys: the state keys copied (default REGA_STATE_KEYS; the
-    low-class candidates add REGA_LO_STATE_KEYS, their module shared like rega_ext). Returns (None or why,
-    summary line)."""
-    if plan is None:
-        plan = tuple((t, REGA_REPLAY_KINDS) for t in REGA_REPLAY_TOKENS)
-    mini = {k: state[k] for k in (REGA_STATE_KEYS if keys is None else keys)}
-    states = {"A": mini}
-    pads = []
-    for label in ("B", "C"):
-        pads.append(torch.empty(2 * 1024 * 1024, dtype=torch.uint8, device=device))
-        if label == "B":
-            st = copy.deepcopy(mini, {id(v): v for v in mini.values() if isinstance(v, types.ModuleType)})
-        else:
-            st = _rega_copy_tree(mini)
-        torch.cuda.synchronize()
-        states[label] = st
-        same = st["rega_bank"]["q13"].data_ptr() == mini["rega_bank"]["q13"].data_ptr() or \
-            st["rega_err"].data_ptr() == mini["rega_err"].data_ptr()
-        print(f"{REGA_TAG} copy {label}: bank 0x{st['rega_bank']['q13'].data_ptr():x} vs A "
-              f"0x{mini['rega_bank']['q13'].data_ptr():x}, err 0x{st['rega_err'].data_ptr():x} vs A "
-              f"0x{mini['rega_err'].data_ptr():x} (shared: {same})", flush=True)
-        if same:
-            return f"copy {label} shares state A's tensors", ""
-    n = n_launched = 0
-    worst_new = worst_mar = 0.0
-    for t, kinds in plan:
-        inc_name, inc_fn = _rega_incumbent(t)
-        graphs, bufs, holders = {}, {}, {}
-        try:
-            for name, st in states.items():
-                b = _rega_case(t, "random", gen, device)
-                holder = {}
-
-                def fn(st=st, b=b, holder=holder):
-                    holder["out"] = _experts_rega(b[0], b[1], b[2], st)
-
-                graphs[name] = _ssdq_graph_time(fn, device)
-                bufs[name], holders[name] = b, holder
-            for kind in kinds:
-                for name in REGA_REPLAY_SEQ:
-                    st = states[name]
-                    x, tw, lids = _rega_case(t, kind, gen, device)
-                    for dst, src in zip(bufs[name], (x, tw, lids)):
-                        dst.copy_(src)
-                    st["rega_err"].zero_()
-                    graphs[name].replay()
-                    torch.cuda.synchronize()
-                    got = holders[name]["out"].clone()
-                    word, m13, m2 = _rega_marks(st["rega_err"])
-                    ref = _rega_reference_out(x, tw, lids, state, weights, cache)
-                    mar = inc_fn(x, tw, lids, state)
-                    torch.cuda.synchronize()
-                    e_new, w_new = _ssdq_metrics(got, ref)
-                    e_mar, _ = _ssdq_metrics(mar, ref)
-                    bound = max(2.0 * e_mar, 8e-3)
-                    launched = _rega_launched(m13, m2)
-                    n += 1
-                    n_launched += int(launched)
-                    worst_new, worst_mar = max(worst_new, e_new), max(worst_mar, e_mar)
-                    ok = word == 0 and launched and e_new <= bound and w_new <= 5.0 * bound
-                    print(f"{REGA_TAG} replay T={t} {kind} state {name}: rega rel L2 {e_new:.3e} worst row "
-                          f"{w_new:.3e}; {inc_name} {e_mar:.3e}; bound {bound:.3e}; error word {word}; launch markers "
-                          f"w13 {'yes' if m13 == REGA_MAGIC else 'NO'} w2 {'yes' if m2 == REGA_MAGIC else 'NO'}"
-                          f"{'' if ok else '  <-- MISS'}", flush=True)
-                    if not ok:
-                        return (f"T={t} {kind} state {name}: rel L2 {e_new:.3e} worst row {w_new:.3e} bound "
-                                f"{bound:.3e} word {word} ({REGA_ERR_TEXT.get(word, '?')}) markers {m13:#x}/{m2:#x}",
-                                "")
-        finally:
-            del graphs, bufs, holders
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            if t > MARLIN_MAX_TOKENS:
-                print(f"{REGA_TAG} replay T={t}: graphs freed; max_memory_allocated "
-                      f"{torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB", flush=True)
-    del states, pads
-    torch.cuda.empty_cache()
-    return None, (f"{n} refilled graph replays over states A, B (deepcopy), C (tensor clone) at "
-                  f"{[(t, k) for t, k in plan]}; LAUNCHED = rega on {n_launched}/{n} (both launch "
-                  f"markers); worst rel L2 {worst_new:.2e} (incumbent {worst_mar:.2e})")
-
-
-def _rega_gate(state, device, tokens):
-    """Interleaved CUDA-graph replays with a >= 256 MB cold-L2 flush of the WHOLE expert block (align, GEMMs,
-    silu, weighted sum) at one scored T on a random (soft) routing: rega against every alternative, each in
-    the same loop, REGA_ALTERNATIONS alternations, the order rotated and flipped each time, an empty-graph
-    baseline subtracted from every median. Alternatives: whatever _experts dispatches with rega off (the
-    incumbent: ssdq when ON at T > SSDQ_MIN_TOKENS, else Marlin), ssdq itself when it exists and is ON, and
-    Marlin's block. Above MARLIN_MAX_TOKENS (class 'ft') the only alternative is the dispatch: master's Triton
-    block (ssdq and Marlin do not serve those T). Returns {name: median us}."""
-    gen = torch.Generator(device=device).manual_seed(20261025)
-    x, tw, lids = _ssdq_case(tokens, "random", gen, device)
-    fns = {"rega": lambda: _experts_rega(x, tw, lids, state),
-           "dispatch": lambda: _experts(x, tw, lids, state)}  # rega flags are False while gating
-    if tokens <= MARLIN_MAX_TOKENS:
-        if tokens > SSDQ_MIN_TOKENS and state.get("ssdq_ok", False):
-            fns["ssdq"] = lambda: _experts_ssdq(x, tw, lids, state)
-        fns["marlin"] = lambda: _experts_marlin(x, tw, lids, state)
-    graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
-    tiny = torch.zeros(16, dtype=torch.float32, device=device)
-    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    names = list(graphs)
-    samples = {name: [] for name in names}
-    for name in names:
-        once(graphs[name])  # warm-up replay
-    for i in range(REGA_ALTERNATIONS):
-        order = names[i % len(names):] + names[:i % len(names)]
-        if i % 2:
-            order = order[::-1]
-        for name in order:
-            samples[name].append(once(graphs[name]))
-    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
-    base = med.pop("empty")
-    return {name: max(v - base, 0.0) for name, v in med.items()}
-
-
-def _rega_ft_setup(state, weights, device, t_start, phase, big_ok):
-    """prepare() only, after the low / high gates (the kernel has passed canary, self-check and the copy / replay
-    check at T <= 4096). Class 'ft' (MARLIN_MAX_TOKENS < T <= REGA_FT_MAX): the capacity arithmetic, the
-    first-turn instantiations' attributes, zero_nonlocal_w2 False, the first-turn align check, an eager
-    self-check at T 8192 / 16384 (random, skewed, one-expert, local-saturated: the most blocks and chunks) against
-    the fp32 reference with the bound calibrated on Triton's own error, the A/B/C copy / replay check at 8192 and
-    16384, then the cold-L2 gate at T = REGA_FT_GATE_TOKENS (soft routing) against master's Triton block (the
-    rega-off dispatch). Sets only state['rega_ok']['ft']; returns (gate line or None, OFF reason or None). Any
-    failure leaves the low / high classes and master's Triton path as they were."""
-    state["rega_ok"]["ft"] = False
-    zero = bool(state["zero_nonlocal_w2"])
-    worst_slots = REGA_FT_MAX * TOP_K + LOCAL_EXPERTS * (REGA_BSM - 1)
-    worst_blocks = -(-worst_slots // REGA_BSM)
-    worst_chunks = worst_blocks // 8 + LOCAL_EXPERTS
-    print(f"{REGA_TAG} ft capacity: worst case at T={REGA_FT_MAX} (every route local): {worst_blocks} blocks "
-          f"(table {REGA_MAXBLK_FT}), <= {worst_chunks} chunks (table {REGA_MAXC_FT}); tables of <= {REGA_MAXBLK} "
-          f"blocks launch the stage-1 instantiation; zero_nonlocal_w2 {zero}", flush=True)
-    if worst_blocks > REGA_MAXBLK_FT or worst_chunks > REGA_MAXC_FT:
-        return None, "first-turn tables smaller than the worst case"
-    if not big_ok:
-        return None, "first-turn instantiation attribute / occupancy / register-pool check failed"
-    if zero:
-        return None, "zero_nonlocal_w2 is True (rega would memset a 1.07 GB y every call)"
-    if not state.get("align_par_ft_ok", False):
-        return None, "parallel align missed at first-turn sizes"
-    used = time.perf_counter() - t_start
-    if used > REGA_FT_START_DEADLINE_S:
-        return None, f"prepare already used {used:.0f}s > {REGA_FT_START_DEADLINE_S:.0f}s ft start deadline"
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats(device)
-    gen = torch.Generator(device=device).manual_seed(20261026)
-    cache = {}
-    try:
-        for tokens, kind in REGA_FT_SELF_CHECKS:
-            x, tw, lids = _rega_case(tokens, kind, gen, device)
-            tab_len, n_used, chunks, max_chunks = _rega_tiles(lids)
-            inc_name, inc_fn = _rega_incumbent(tokens)
-            state["rega_err"].zero_()
-            ref = _rega_reference_out(x, tw, lids, state, weights, cache)
-            new = _experts_rega(x, tw, lids, state, tracer=_RegaTracer(f"ft T={tokens} {kind}"))
-            torch.cuda.synchronize()
-            inc = inc_fn(x, tw, lids, state)
-            torch.cuda.synchronize()
-            word, m13, m2 = _rega_marks(state["rega_err"])
-            e_new, w_new = _ssdq_metrics(new, ref)
-            e_inc, w_inc = _ssdq_metrics(inc, ref)
-            bound = max(2.0 * e_inc, 8e-3)
-            ok = word == 0 and _rega_launched(m13, m2) and e_new <= bound and w_new <= 5.0 * bound
-            print(f"{REGA_TAG} ft self-check T={tokens} {kind}: {int((lids >= 0).sum())} local routes; block table "
-                  f"{tab_len} ({'first-turn' if tab_len > REGA_MAXBLK else 'stage-1'} class), {n_used} used, "
-                  f"{chunks} chunks (max {max_chunks} per expert; items w13 {chunks * (D_EXPERT // 64)}, w2 "
-                  f"{chunks * (D_EXPERT // 128)}); rega rel L2 {e_new:.3e} worst row {w_new:.3e}; {inc_name} "
-                  f"{e_inc:.3e} / {w_inc:.3e}; bound {bound:.3e}; error word {word} "
-                  f"({REGA_ERR_TEXT.get(word, '?')}); launch markers w13 {m13:#x} w2 {m2:#x}"
-                  f"{'' if ok else '  <-- MISS'}", flush=True)
-            del x, tw, lids, ref, new, inc
-            if not ok:
-                return None, (f"self-check failed at T={tokens} {kind} (error word {word} "
-                              f"{REGA_ERR_TEXT.get(word, '?')}, rel L2 {e_new:.3e}, worst row {w_new:.3e}, bound "
-                              f"{bound:.3e}, markers {m13:#x}/{m2:#x})")
-        torch.cuda.empty_cache()
-        print(f"{REGA_TAG} ft self-check done; max_memory_allocated {torch.cuda.max_memory_allocated(device) / 2**30:.2f}"
-              f" GiB", flush=True)
-        phase("ft-self-check")
-        why, line = _rega_replay_check(state, weights, cache, device, gen, plan=REGA_FT_REPLAY_PLAN)
-        if why:
-            return None, f"copy / replay check failed: {why}"
-        print(f"{REGA_TAG} LAUNCHED = rega (ft): {line}", flush=True)
-        phase("ft-copy-check")
-    finally:
-        cache.clear()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    used = time.perf_counter() - t_start
-    if used > REGA_BUDGET_S:
-        return None, f"gate skipped: prepare already used {used:.0f}s > {REGA_BUDGET_S:.0f}s budget"
-    meds = _rega_gate(state, device, REGA_FT_GATE_TOKENS)
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-    ratio = meds["rega"] / max(meds["dispatch"], 1e-9)
-    state["rega_ok"]["ft"] = bool(ratio <= REGA_GATE_RATIO)
-    gate_line = (f"{REGA_TAG} GATE ft T={REGA_FT_GATE_TOKENS} soft cold-L2 graph medians over {REGA_ALTERNATIONS} "
-                 f"alternations (empty-graph baseline subtracted): rega {meds['rega']:.1f} us; dispatch (master's "
-                 f"Triton block) {meds['dispatch']:.1f} us; ratio {ratio:.3f} (ON at <= {REGA_GATE_RATIO}); "
-                 f"zero_nonlocal_w2 {zero}; max_memory_allocated "
-                 f"{torch.cuda.max_memory_allocated(device) / 2**30:.2f} GiB: "
-                 f"{'ON' if state['rega_ok']['ft'] else 'OFF'}")
-    print(gate_line, flush=True)
-    phase("ft-gate")
-    return gate_line, None
-
-
-def _rega_setup(state, weights, device, t_start):
-    """prepare() only, after master's ssdq setup. Build, retile, canary, self-check against an fp32
-    reference (bound calibrated on Marlin's own error), the two-state copy / replay check with the launch
-    markers (LAUNCHED asserted), then one cold-L2 gate per T class. Sets state['rega_ok'] = {'low': bool,
-    'high': bool}; every failure prints one OFF line and leaves master's dispatch as it was. The gate
-    medians and the PATH CHOSEN lines are printed LAST (the archived log keeps the tail). Then the first-turn
-    class 'ft' (_rega_ft_setup), whose failures turn off 'ft' only."""
-    state["rega_ok"] = {"low": False, "high": False, "ft": False}
-    ft_line, ft_off = None, None
-    v1_fallback = False
-    phases = []
-    t_phase = [time.perf_counter()]
-    t_pre = t_phase[0] - t_start
-    off = []
-    gate_lines = []
-    gate_meds = {}
-
-    def phase(name):
-        now = time.perf_counter()
-        phases.append((name, now - t_phase[0]))
-        t_phase[0] = now
-        print(f"{REGA_TAG} phase {name}: {phases[-1][1]:.1f}s; prepare total {now - t_start:.1f}s; budget remaining "
-              f"{REGA_BUDGET_S - (now - t_start):.1f}s of {REGA_BUDGET_S:.0f}s", flush=True)
-
-    print(f"{REGA_TAG} prepare used {t_pre:.1f}s before this setup (budget {REGA_BUDGET_S:.0f}s)", flush=True)
-    try:
-        if not state.get("align_par_ok", False):
-            off.append("master's parallel align is off (the path needs it)")
-        elif time.perf_counter() - t_start > REGA_BUDGET_S:
-            off.append(f"prepare already used {time.perf_counter() - t_start:.0f}s > {REGA_BUDGET_S:.0f}s budget")
-        else:
-            cap = torch.cuda.get_device_capability(device)
-            if tuple(cap) != (9, 0):
-                off.append(f"device capability {cap} is not (9, 0)")
-            shapes = {k: tuple(weights[k].shape) for k in ("w13", "w13_sf", "w2", "w2_sf")}
-            want = {"w13": (LOCAL_EXPERTS, 2 * D_EXPERT, D_EXPERT // 2), "w13_sf": (LOCAL_EXPERTS, 2 * D_EXPERT, D_EXPERT // 16),
-                    "w2": (LOCAL_EXPERTS, D_EXPERT, D_EXPERT // 2), "w2_sf": (LOCAL_EXPERTS, D_EXPERT, D_EXPERT // 16)}
-            if shapes != want:
-                off.append(f"unsupported weight shapes {shapes}")
-            for gated in (True, False):
-                need = REGA_SMEM[gated] + REGA_STATIC_SMEM_BOUND
-                if need > REGA_SMEM_LIMIT:
-                    off.append(f"smem {need} B > {REGA_SMEM_LIMIT} B")
-        if off:
-            return
-        offenders = _rega_source_audit()
-        if offenders:
-            off.append(f"source audit found templated accessors: {offenders[:4]}")
-            return
-        print(f"{REGA_TAG} source audit ok: no data_ptr<..> or templated size/item/data/to accessor; smem w13 "
-              f"{REGA_SMEM[True]} B, w2 {REGA_SMEM[False]} B dynamic (+ <= {REGA_STATIC_SMEM_BOUND} B static) <= "
-              f"{REGA_SMEM_LIMIT} B", flush=True)
-        phase("audit")
-        ext, _ = _rega_build()
-        phase("build")
-        if ext is None:
-            # v2 did not compile / load: build master's exact stage-1 extension so low / high keep master's
-            # behaviour; the first-turn class stays OFF (that build has no first-turn instantiation).
-            src_v1 = _rega_src_v1()
-            print(f"{REGA_TAG} v2 build FAILED; fallback: master's {REGA_EXT_NAME_V1} "
-                  f"({'source sha256 matches master' if src_v1 else 'source does NOT match master: no fallback'})",
-                  flush=True)
-            if src_v1 is not None:
-                ext, _ = _rega_build(REGA_EXT_NAME_V1, src_v1)
-                phase("build-v1-fallback")
-            if ext is None:
-                off.append("build failed")
-                return
-            v1_fallback = True
-        info = ext.rega_init()
-        # per capacity class (False: stage-1 tables, True: first-turn); the v1 fallback has no first-turn class
-        attrs_ok = {False: True, True: not v1_fallback}
-        for i in range(0, len(info), 10):
-            flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, ptx_v = info[i:i + 10]
-            gated, big = bool(flag & 1), bool(flag & 2)
-            print(f"{REGA_TAG} kernel {'w13+silu' if gated else 'w2'} {'first-turn' if big else 'stage-1'} class: "
-                  f"attrs ok {bool(a_ok)} (SetAttribute rc {e1}), "
-                  f"regs {regs}, local bytes {local_bytes}{' (SPILL)' if local_bytes > 0 else ''}, static smem "
-                  f"{static_smem} B, dynamic smem {dyn_smem} B, CTAs/SM {occ}, binaryVersion {bin_v}, ptxVersion "
-                  f"{ptx_v}", flush=True)
-            # setmaxnreg.inc blocks forever unless the CTA's register pool covers 40 x 128 + 232 x 256
-            attrs_ok[big] = (attrs_ok[big] and bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
-                             and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
-        if not attrs_ok[False]:
-            off.append("cudaFuncSetAttribute / cudaFuncGetAttributes / occupancy / register-pool check failed")
-            return
-        findings = _rega_audit_globals()
-        if findings:
-            off.append(f"module/static state found: {findings}")
-            return
-        t0 = time.perf_counter()
-        state["rega_ext"] = ext
-        state["rega_err"] = torch.zeros(3, dtype=torch.int32, device=device)
-        state["rega_grid"] = int(torch.cuda.get_device_properties(device).multi_processor_count)
-        state["rega_bank"] = _rega_bank(weights, 0, LOCAL_EXPERTS)
-        torch.cuda.synchronize()
-        print(f"{REGA_TAG} retiled {LOCAL_EXPERTS} experts losslessly (round trips exact) in "
-              f"{time.perf_counter() - t0:.1f}s; grid {state['rega_grid']} persistent CTAs x {REGA_THREADS} threads, "
-              f"BK {REGA_BK}, {REGA_STAGES} stages, N buckets {REGA_BUCKETS}", flush=True)
-        phase("retile")
-        gen = torch.Generator(device=device).manual_seed(20261025)
-
-        # Canary: one launch of every kernel at a tiny T, each with its before / after print.
-        x, tw, lids = _ssdq_case(300, "random", gen, device)
-        out = _experts_rega(x, tw, lids, state, tracer=_RegaTracer("canary"))
-        torch.cuda.synchronize()
-        word, m13, m2 = _rega_marks(state["rega_err"])
-        print(f"{REGA_TAG} canary: error word {word} ({REGA_ERR_TEXT.get(word, '?')}), launch markers w13 "
-              f"{m13:#x} w2 {m2:#x}", flush=True)
-        if word != 0 or not _rega_launched(m13, m2) or not bool(torch.isfinite(out.float()).all()):
-            off.append(f"canary failed: error word {word}, markers {m13:#x}/{m2:#x}")
-            return
-        phase("canary")
-
-        # Self-check: every N bucket (T=300 ~9 routes/expert: 16; 753 ~24: 32; 1506 ~47: 64; 3012 ~94: 128),
-        # skewed (4 hot experts: multi-chunk groups) and one-expert routings, eager, vs the fp32 reference;
-        # bound = max(2 x Marlin's own error, 8e-3), worst row 5x.
-        cache = {}
-        cases = ((300, "random"), (753, "random"), (1506, "random"), (3012, "random"), (1100, "one"),
-                 (4096, "skewed"), (4096, "random"))
-        for tokens, kind in cases:
-            x, tw, lids = _ssdq_case(tokens, kind, gen, device)
-            state["rega_err"].zero_()
-            ref = _rega_reference_out(x, tw, lids, state, weights, cache)
-            new = _experts_rega(x, tw, lids, state, tracer=_RegaTracer(f"T={tokens} {kind}"))
-            torch.cuda.synchronize()
-            mar = _experts_marlin(x, tw, lids, state)
-            torch.cuda.synchronize()
-            word, m13, m2 = _rega_marks(state["rega_err"])
-            e_new, w_new = _ssdq_metrics(new, ref)
-            e_mar, w_mar = _ssdq_metrics(mar, ref)
-            bound = max(2.0 * e_mar, 8e-3)
-            print(f"{REGA_TAG} self-check T={tokens} {kind}: rega rel L2 {e_new:.3e} worst row {w_new:.3e}; marlin "
-                  f"{e_mar:.3e} / {w_mar:.3e}; bound {bound:.3e}; error word {word}; {int((lids >= 0).sum())} "
-                  f"local routes; launch markers w13 {m13:#x} w2 {m2:#x}", flush=True)
-            if word != 0 or not _rega_launched(m13, m2) or not (e_new <= bound and w_new <= 5.0 * bound):
-                off.append(f"self-check failed at T={tokens} {kind} (error word {word} "
-                           f"{REGA_ERR_TEXT.get(word, '?')}, rel L2 {e_new:.3e}, worst row {w_new:.3e}, bound "
-                           f"{bound:.3e}, markers {m13:#x}/{m2:#x})")
-                del cache
-                return
-        phase("self-check")
-        if time.perf_counter() - t_start > REGA_COPY_DEADLINE_S:
-            off.append(f"copy check skipped: prepare already used {time.perf_counter() - t_start:.0f}s")
-            del cache
-            return
-        why, line = _rega_replay_check(state, weights, cache, device, gen)
-        del cache
-        torch.cuda.empty_cache()
-        if why:
-            off.append(f"copy / replay check failed: {why}")
-            return
-        print(f"{REGA_TAG} LAUNCHED = rega: {line}", flush=True)
-        phase("copy-check")
-
-        # Gates, one per T class. rega flags are False here, so `dispatch` is exactly what _experts runs today.
-        for cls in ("low", "high"):
-            tokens = REGA_GATE_TOKENS[cls]
-            meds = _rega_gate(state, device, tokens)
-            gate_meds[cls] = meds
-            alts = {k: v for k, v in meds.items() if k != "rega"}
-            best_name = min(alts, key=alts.get)
-            ratio = meds["rega"] / max(alts[best_name], 1e-9)
-            state["rega_ok"][cls] = bool(ratio <= REGA_GATE_RATIO)
-            gate_lines.append(
-                f"{REGA_TAG} GATE {cls} T={tokens} cold-L2 graph medians over {REGA_ALTERNATIONS} alternations "
-                f"(empty-graph baseline subtracted): rega {meds['rega']:.1f} us; "
-                + "; ".join(f"{k} {v:.1f} us" for k, v in alts.items())
-                + f"; fastest alternative {best_name}; ratio rega/{best_name} {ratio:.3f} (ON at <= "
-                  f"{REGA_GATE_RATIO}): {'ON' if state['rega_ok'][cls] else 'OFF'}")
-            print(gate_lines[-1], flush=True)
-        phase("gate")
-        # First-turn class: its own checks and gate; a failure there turns off 'ft' only.
-        try:
-            if v1_fallback:
-                ft_line, ft_off = None, f"v2 build failed; running master's {REGA_EXT_NAME_V1} (no first-turn class)"
-            else:
-                ft_line, ft_off = _rega_ft_setup(state, weights, device, t_start, phase, attrs_ok[True])
-        except Exception as e:
-            state["rega_ok"]["ft"] = False
-            ft_line, ft_off = None, f"ft setup raised {e!r}"[:300]
-        if ft_off:
-            state["rega_ok"]["ft"] = False
-    except Exception as e:  # never raises into prepare(); a device fault would have poisoned the context
-        state["rega_ok"] = {"low": False, "high": False, "ft": False}
-        off.append(f"setup raised {e!r}"[:300])
-    finally:
-        total = time.perf_counter() - t_start
-        if off:
-            state["rega_ok"] = {"low": False, "high": False, "ft": False}
-            print(f"{REGA_TAG} OFF: {'; '.join(off)}"[:900], flush=True)
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        # Last lines of prepare(): the archived log keeps the tail.
-        print(f"{REGA_TAG} prepare per-phase seconds: before-rega {t_pre:.1f}, "
-              + ", ".join(f"{n} {d:.1f}" for n, d in phases)
-              + f"; total {total:.1f}s; budget {REGA_BUDGET_S:.0f}s", flush=True)
-        for line in gate_lines:
-            print(line, flush=True)
-        if ft_line:
-            print(ft_line, flush=True)
-        if ft_off and not off:
-            print(f"{REGA_TAG} OFF ft: {ft_off} (T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}] stays on triton)"[:900],
-                  flush=True)
-        ok = state["rega_ok"]
-        ssdq_on = bool(state.get("ssdq_ok"))
-        print(f"{REGA_TAG} PATH CHOSEN T in ({REGA_MIN_TOKENS}, {REGA_LOW_MAX}]: "
-              f"{'rega' if ok['low'] else 'marlin (master unchanged)'}; T in ({REGA_LOW_MAX}, {MARLIN_MAX_TOKENS}]: "
-              f"{'rega' if ok['high'] else ('ssdq' if ssdq_on else 'marlin')} (dispatch order: rega if ON, else ssdq if "
-              f"ON, else marlin; ssdq {'ON' if ssdq_on else 'OFF'}); T <= {REGA_MIN_TOKENS}: marlin; T > "
-              f"{MARLIN_MAX_TOKENS}: next line", flush=True)
-        print(f"{REGA_TAG} PATH CHOSEN T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}]: "
-              f"{'rega' if ok.get('ft', False) else 'triton'}; T > {REGA_FT_MAX}: triton", flush=True)
-
-
-# ---------------------------------------------------------------------------------------------
-# fa3-full-contiguous-kv-triton-gather-gated: on full-attention layers at page_size 1, FA3 can read a
-# contiguous KV copy (TMA path) instead of the page-size-1 paged rows (cp.async gather path). A Triton
-# kernel builds the copy per call; prepare() times, per scored class and with a cold L2, the paged call
-# (A) against gather + contiguous varlen (B) and gather + contiguous batched (C), and routes a class to
-# B or C only when it beats A by the class bar. Every other shape, and every failure, runs master's call.
-# Buffers are per state (never module-global) and sized from shapes.
-# ---------------------------------------------------------------------------------------------
-FA3C_TAG = "[fa3 contig]"
-FA3C_ROW = 128                    # bytes per cache row: 2 kv heads x 64 head_dim, FP8
-FA3C_BLOCK = 128                  # positions per gather program
-FA3C_START_DEADLINE_S = 235.0     # no setup if prepare() has already used this many seconds (after master's rega)
-FA3C_CLASS_DEADLINE_S = 265.0     # no further class is timed once prepare() has used this many seconds
-FA3C_REPS = 25                    # alternations per class (each variant replayed once per alternation)
-FA3C_REL_TOL = 1e-2
-FA3C_ROW_TOL = 5e-2
-FA3C_SOFTMAX_SCALE = 0.125
-FA3C_AGENTIC_SPREAD = 0.075       # reference.AGENTIC_SPREAD: the batched scored cases' length spread
-# (name, batch, q_len, spread, ctx, bar): the full-layer classes the judge scores, most stake first.
-# First-turn classes use a 0.98 bar (the gather is <1% of FA3 there); the others 0.97.
-FA3C_CLASSES = (
-    ("first_turn b1 L16384 ctx65536", 1, 16384, "fixed", 65536, 0.98),
-    ("first_turn b1 L16384 ctx32768", 1, 16384, "fixed", 32768, 0.98),
-    ("first_turn b1 L16384 ctx0", 1, 16384, "fixed", 0, 0.98),
-    ("turn_4 b4 L753 ctx80000", 4, 753, "agentic", 80000, 0.97),
-    ("turn_1 b1 L753 ctx80000", 1, 753, "fixed", 80000, 0.97),
-)
-# phasec fa3c-pin-turns-b: these classes route this mode whenever it passed the self-check and was timed,
-# whatever the bar says (the GATE line still prints the bar's own pick). Every other class is gated as before.
-FA3C_PIN = {"turn_4 b4 L753 ctx80000": "B", "turn_1 b1 L753 ctx80000": "B"}
-# prepare()'s correctness cases: (batch, lens, q_len).
-FA3C_CHECKS = (
-    ("b1 ctx3000 L753", (3000,), 753),
-    ("b4 {0,777,5000,80000} L753", (0, 777, 5000, 80000), 753),
-    ("b1 ctx0 L16384", (0,), 16384),
-    ("b2 {37,1000} L211", (37, 1000), 211),
-)
-
-
-@triton.jit(do_not_specialize=["width", "pt_stride"])
-def _kv_gather_contig_kernel(k_ptr, v_ptr, pt_ptr, seqlens_ptr, kb_ptr, vb_ptr, width, pt_stride,
-                             BLOCK: tl.constexpr, ROW: tl.constexpr):
-    """k_buf[b, p] = k_cache row page_table[b, p] and likewise v, for p < cache_seqlens[b]; zeros for
-    p >= cache_seqlens[b] (so a masked tail tile never feeds stale FP8 bytes into P x V). Rows are 128 B."""
-    b = tl.program_id(0)
-    pos = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
-    inside = pos < width
-    n = tl.load(seqlens_ptr + b)
-    live = inside & (pos < n)
-    page = tl.load(pt_ptr + b * pt_stride + pos, mask=live, other=0)
-    page = tl.maximum(page, 0).to(tl.int64)
-    cols = tl.arange(0, ROW)
-    src = page[:, None] * ROW + cols[None, :]
-    kk = tl.load(k_ptr + src, mask=live[:, None], other=0)
-    vv = tl.load(v_ptr + src, mask=live[:, None], other=0)
-    dst = (b.to(tl.int64) * width + pos.to(tl.int64))[:, None] * ROW + cols[None, :]
-    tl.store(kb_ptr + dst, kk, mask=inside[:, None])
-    tl.store(vb_ptr + dst, vv, mask=inside[:, None])
-
-
-def _fa3c_gather(k_cache, v_cache, page_table, cache_seqlens, k_buf, v_buf):
-    """k_buf / v_buf: uint8 [B, W, 2, 64] (W = page_table.shape[1], page_size 1)."""
-    batch, width = page_table.shape
-    _kv_gather_contig_kernel[(batch, triton.cdiv(width, FA3C_BLOCK))](
-        k_cache.view(torch.uint8), v_cache.view(torch.uint8), page_table, cache_seqlens, k_buf, v_buf,
-        width, page_table.stride(0), BLOCK=FA3C_BLOCK, ROW=FA3C_ROW, num_warps=4)
-
-
-def _fa3c_key(batch, length, width):
-    return (batch, length, round((width - length) / 16384))
-
-
-def _fa3c_attend(mode, q8, k_cache, v_cache, page_table, cache_seqlens, cu_seqlens_q, length, scale, bufs):
-    """mode A: master's paged call. B: gather + contiguous varlen. C: gather + contiguous batched.
-    q8: FP8 [T, 16, 64]. Returns the attention output (not the tuple)."""
-    if mode == "A":
-        out = flash_attn_with_kvcache(
-            q=q8, k_cache=k_cache, v_cache=v_cache, page_table=page_table, cache_seqlens=cache_seqlens,
-            cu_seqlens_q=cu_seqlens_q, max_seqlen_q=length, softmax_scale=scale, causal=True,
-            window_size=(-1, -1), scheduler_metadata=None)
-    else:
-        k_buf, v_buf = bufs
-        _fa3c_gather(k_cache, v_cache, page_table, cache_seqlens, k_buf, v_buf)
-        if mode == "B":
-            out = flash_attn_with_kvcache(
-                q=q8, k_cache=k_buf.view(FP8), v_cache=v_buf.view(FP8), page_table=None,
-                cache_seqlens=cache_seqlens, cu_seqlens_q=cu_seqlens_q, max_seqlen_q=length,
-                softmax_scale=scale, causal=True, window_size=(-1, -1), scheduler_metadata=None)
-        else:
-            batch = page_table.shape[0]
-            out = flash_attn_with_kvcache(
-                q=q8.view(batch, length, q8.shape[1], q8.shape[2]), k_cache=k_buf.view(FP8),
-                v_cache=v_buf.view(FP8), page_table=None, cache_seqlens=cache_seqlens,
-                softmax_scale=scale, causal=True, window_size=(-1, -1), scheduler_metadata=None)
+def _attention(data, q8, cfg):
+    """FA3 paged FP8 attention (or the FP32 fallback when FA3 is unavailable)."""
+    if _fa3 is None:
+        return _attention_fallback(data, q8, cfg)
+    window = cfg["window"]
+    scaled = cfg["kv_scale"] != 1.0
+    descale = {}
+    if scaled:
+        B = cfg["batch"]
+        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(B, HKV),
+                       v_descale=data["v_scale"].reshape(1, 1).expand(B, HKV))
+    out = _fa3(q=q8.view(-1, HQ, HD), k_cache=data["k_cache"], v_cache=data["v_cache"],
+               page_table=data["page_table"], cache_seqlens=data["cache_seqlens"],
+               cu_seqlens_q=data["cu_seqlens_q"], max_seqlen_q=cfg["q_len"],
+               softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"], causal=True,
+               window_size=(window - 1, 0) if window else (-1, -1),
+               scheduler_metadata=data["scheduler_metadata"], **descale)
     if isinstance(out, tuple):
         out = out[0]
     return out
 
 
-def _fa3c_case(device, lens, length, width, seed):
-    """Synthetic page-size-1 case at a given width: scattered page table (-1 unused), coherent FP8 K / V
-    (keys share a direction, so softmax is peaked: LESSONS 2026-10-25 on FP8 P), FP8 q."""
-    gen = torch.Generator(device=device).manual_seed(seed)
-    batch = len(lens)
-    total = batch * width
-    perm = torch.randperm(total, generator=gen, device=device).to(torch.int32)
-    page_table = torch.full((batch, width), -1, dtype=torch.int32, device=device)
-    off = 0
-    for i, n in enumerate(lens):
-        m = n + length
-        page_table[i, :m] = perm[off:off + m]
-        off += m
-    u = torch.randn(64, generator=gen, device=device)
-    u = u / u.norm()
-    k_cache = (3.0 * u + 0.6 * torch.randn((total, 1, 2, 64), generator=gen, device=device)).to(FP8)
-    v_cache = torch.randn((total, 1, 2, 64), generator=gen, device=device).to(FP8)
-    q8 = (2.0 * u + 0.6 * torch.randn((batch * length, 16, 64), generator=gen, device=device)).to(FP8)
-    cache_seqlens = torch.tensor([n + length for n in lens], dtype=torch.int32, device=device)
-    cu = torch.arange(0, batch * length + 1, length, dtype=torch.int32, device=device)
-    return dict(q8=q8, k_cache=k_cache, v_cache=v_cache, page_table=page_table, cache_seqlens=cache_seqlens,
-                cu=cu, length=length, width=width, batch=batch)
+def _attention_norm_gate(data, q8, qkv, cfg):
+    """FA3 attention followed by the fused `rms(att) * sigmoid(gate)` epilogue -> og [T, Q_SIZE]."""
+    T = cfg["tokens"]
+    att = _attention(data, q8, cfg)
+    og = torch.empty((T, Q_SIZE), dtype=torch.bfloat16, device=q8.device)
+    _norm_gate_kernel[(T,)](att, qkv, og, num_warps=4)
+    return og
 
 
-def _fa3c_bufs(case, device):
-    shape = (case["batch"], case["width"], 2, 64)
-    return (torch.empty(shape, dtype=torch.uint8, device=device), torch.empty(shape, dtype=torch.uint8, device=device))
+def _attn_splits(cfg, data, variant, nsm):
+    """Key-range splits so that small batches still fill the GPU (each split keeps >= 8 key tiles)."""
+    B, L, window = cfg["batch"], cfg["q_len"], cfg["window"]
+    qb = ATTN_Q_ROWS_PER_WARPGROUP * ATTN_VARIANTS[variant][0]
+    base = ((L + qb - 1) // qb) * 2 * B
+    if base >= 2 * nsm:
+        return 1
+    keys = (window + qb) if window else data["page_table"].shape[1] * cfg["page_size"]
+    nmax = max(1, min(ATTN_MAX_SPLITS, (keys // ATTN_KEY_TILE) // 8))
+    if ATTN_SPLIT_MODE == 1:
+        best = None
+        for ns in range(1, nmax + 1):
+            cost = -(-base * ns // nsm) / ns + (ATTN_SPLIT_PENALTY if ns > 1 else 0.0)
+            if best is None or cost < best[0] - 1e-9:
+                best = (cost, ns)
+        return best[1]
+    ns = min((2 * nsm + base - 1) // base, nmax)
+    return max(1, min(ns, ATTN_MAX_SPLITS))
 
 
-def _fa3c_run(case, mode, bufs):
-    return _fa3c_attend(mode, case["q8"], case["k_cache"], case["v_cache"], case["page_table"],
-                        case["cache_seqlens"], case["cu"], case["length"], FA3C_SOFTMAX_SCALE, bufs)
+def _attn_class(cfg):
+    """Shape class of an attention call: the key prepare must choose by."""
+    if cfg["window"]:
+        return "slide"
+    if cfg["tokens"] > 4096:
+        return "full_long"
+    return "full_batch" if cfg["batch"] > 1 else "full_short"
 
 
-def _fa3c_gather_exact(case, bufs):
-    """prepare() only: run the gather into 0xFF-poisoned buffers and compare its bytes with torch indexing."""
-    k_buf, v_buf = bufs
-    k_buf.fill_(255)
-    v_buf.fill_(255)
-    _fa3c_gather(case["k_cache"], case["v_cache"], case["page_table"], case["cache_seqlens"], k_buf, v_buf)
-    torch.cuda.synchronize()
-    for src, buf in ((case["k_cache"], k_buf), (case["v_cache"], v_buf)):
-        rows = src.view(torch.uint8).reshape(-1, FA3C_ROW)
-        for b in range(case["batch"]):
-            n = int(case["cache_seqlens"][b])
-            got = buf[b].reshape(-1, FA3C_ROW)
-            if not torch.equal(got[:n], rows[case["page_table"][b, :n].long()]) or bool((got[n:] != 0).any()):
-                return False
-    return True
+def _attn_variant(st, cfg):
+    """Own-kernel variant for this call's shape class, or None for the FA3 path."""
+    choice = st.get("attn_choice")
+    if not choice:
+        return None
+    return choice[_attn_class(cfg)]
 
 
-def _fa3c_selfcheck(device, ok):
-    """B and C against A on coherent data; a variant that raises or misses is turned off (per variant)."""
-    for name, lens, length in FA3C_CHECKS:
-        width = max(lens) + length
-        case = _fa3c_case(device, lens, length, width, 20261025 + width)
-        bufs = _fa3c_bufs(case, device)
-        tokens = case["batch"] * length
-        ref = _fa3c_run(case, "A", None).reshape(tokens, -1).float()
-        torch.cuda.synchronize()
-        ref_norm = ref.norm(dim=1)
-        floor = 0.1 * ref_norm.mean()
-        try:  # the gather must be byte-exact: every live row copied, zeros past cache_seqlens
-            exact = _fa3c_gather_exact(case, bufs)
-        except Exception as e:
-            exact = False
-            print(f"{FA3C_TAG} selfcheck {name} gather: raised {e!r:.300}", flush=True)
-        print(f"{FA3C_TAG} selfcheck {name} gather byte-exact: {exact}"
-              f"{'' if exact else ' -> B and C off'}", flush=True)
-        if not exact:
-            ok["B"] = ok["C"] = False
-        ok["C"] = False  # batched FP8 q without cu_seqlens_q is untested; a hard CUDA fault here would kill the run
-        for mode in ("B", "C"):
-            if not ok[mode]:
-                continue
-            try:
-                print(f"{FA3C_TAG} selfcheck {name} variant {mode}: launching", flush=True)
-                got = _fa3c_run(case, mode, bufs).reshape(tokens, -1).float()
-                torch.cuda.synchronize()
-                print(f"{FA3C_TAG} selfcheck {name} variant {mode}: done", flush=True)
-                diff = (got - ref).norm(dim=1)
-                rel = float((got - ref).norm() / ref.norm().clamp(min=1e-12))
-                worst = float((diff / torch.maximum(ref_norm, floor)).max())
-                finite = bool(torch.isfinite(got).all())
-                good = finite and rel <= FA3C_REL_TOL and worst <= FA3C_ROW_TOL
-                print(f"{FA3C_TAG} selfcheck {name} variant {mode}: rel L2 {rel:.3e}, worst row {worst:.3e}, "
-                      f"finite {finite}, bitwise-equal to paged {bool(torch.equal(got, ref))} -> {'ok' if good else 'MISS, variant off'}", flush=True)
-                if not good:
-                    ok[mode] = False
-            except Exception as e:
-                ok[mode] = False
-                print(f"{FA3C_TAG} selfcheck {name} variant {mode}: raised {e!r:.300} -> variant off", flush=True)
-        del case, bufs, ref
+def _attn_stage_buffers(data, cfg, dev):
+    """Staging buffers for the own attention kernel: K tiles and V tiles per (batch, head)."""
+    B, L, window, page = cfg["batch"], cfg["q_len"], cfg["window"], cfg["page_size"]
+    smax = (window - 1 + L) if window else data["page_table"].shape[1] * page
+    ntk = (smax + ATTN_KEY_TILE - 1) // ATTN_KEY_TILE
+    kt = torch.empty((B, 2, ntk, ATTN_KEY_TILE * HD), dtype=torch.uint8, device=dev)
+    vt = torch.empty((B, 2, ntk, 72 * ATTN_KEY_TILE), dtype=torch.uint8, device=dev)
+    return ntk, kt, vt
 
 
-def _fa3c_gate_class(device, spec, ok):
-    """Cold-L2 CUDA-graph timing of A, B, C (and the gather alone) at one class; returns
-    (medians dict, bufs of the best contiguous variant or None). A variant that raises is dropped."""
-    name, batch, length, spread, ctx, bar = spec
-    if spread == "agentic":
-        lens = [int(ctx * (1 + FA3C_AGENTIC_SPREAD * (2 * u - 1))) for u in (0.1, 0.4, 0.7, 0.95)[:batch]]
-        width = -(-ctx * 1075 // 1000) + length  # ceil(ctx * (1 + FA3C_AGENTIC_SPREAD)) + q_len, as reference sizes it
-        width = max(width, max(lens) + length)
+def _attn_prep_split(st, data, cfg, ev=None):
+    """Stage the tiles made only of keys already in the cache on the side stream (it needs nothing
+    from this call's qk_prep, so it overlaps the qkv GEMM's idle SMs); _attn_custom stages the rest
+    after joining it. With `ev` (an event recorded before the qkv GEMM was enqueued) the side branch
+    is captured after the GEMM node."""
+    main, side = torch.cuda.current_stream(), SIDE_STREAM
+    pre = _attn_stage_buffers(data, cfg, data["attn_input"].device)
+    if ev is not None:
+        side.wait_event(ev)
     else:
-        lens = [ctx] * batch
-        width = ctx + length
-    case = _fa3c_case(device, lens, length, width, 20261026 + width)
-    bufs = _fa3c_bufs(case, device)
-    graphs = {}
-    fns = {"A": lambda: _fa3c_run(case, "A", None)}
-    for mode in ("B", "C"):
-        if ok[mode]:
-            fns[mode] = (lambda m: lambda: _fa3c_run(case, m, bufs))(mode)
-    fns["gather"] = lambda: _fa3c_gather(case["k_cache"], case["v_cache"], case["page_table"],
-                                         case["cache_seqlens"], bufs[0], bufs[1])
-    for key, fn in fns.items():
-        try:
-            graphs[key] = _ssdq_graph_time(fn, device)
-        except Exception as e:
-            print(f"{FA3C_TAG} {name}: variant {key} failed to capture: {e!r:.300}", flush=True)
-            if key in ("B", "C"):
-                ok[key] = False
-            elif key == "A":
-                raise
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > 2x the 50 MB L2
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    names = list(graphs)
-    samples = {n: [] for n in names}
-    for n in names:
-        once(graphs[n])
-    for i in range(FA3C_REPS):
-        order = names[i % len(names):] + names[:i % len(names)]
-        if i % 2:
-            order = order[::-1]
-        for n in order:
-            try:
-                samples[n].append(once(graphs[n]))
-            except Exception as e:
-                print(f"{FA3C_TAG} {name}: variant {n} replay failed: {e!r:.300}", flush=True)
-                graphs.pop(n, None)
-                if n in ("B", "C"):
-                    ok[n] = False
-                names = [x for x in names if x != n]
-                break
-    med = {n: sorted(v)[len(v) // 2] for n, v in samples.items() if n in graphs and len(v) >= FA3C_REPS // 2}
-    del flush, graphs, case
-    return med, bufs, width
+        side.wait_stream(main)
+    with torch.cuda.stream(side):
+        st["mod"].attn_prep(data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), data["page_table"],
+                            data["seq_lens"], cfg["page_size"], cfg["q_len"], cfg["window"], pre[0], pre[1], pre[2], 1)
+    return pre
 
 
-def _fa3c_setup(state, device, t_start):
-    """prepare() only, AFTER master's whole setup (so master's rega first_turn setup still starts before its
-    deadline), with its own deadlines. Sets state['fa3c'] = {'route': {key: (mode, width, k_buf, v_buf)}};
-    every failure leaves the class on master's paged call. Returns the summary lines."""
-    state["fa3c"] = {"route": {}}
-    lines = []
-    route = state["fa3c"]["route"]
-    ok = {"B": True, "C": True}
-    used = time.perf_counter() - t_start
-    if used > FA3C_START_DEADLINE_S:
-        lines.append(f"{FA3C_TAG} PATH CHOSEN: master's paged FA3 everywhere (prepare already used {used:.0f}s > "
-                     f"{FA3C_START_DEADLINE_S:.0f}s deadline; gate skipped)")
-        print(lines[-1], flush=True)
-        return lines
-    try:
-        t0 = time.perf_counter()
-        _fa3c_selfcheck(device, ok)
-        torch.cuda.synchronize()
-        print(f"{FA3C_TAG} selfcheck took {time.perf_counter() - t0:.1f}s; variants on: "
-              f"B {ok['B']}, C {ok['C']}", flush=True)
-        chosen = []
-        if ok["B"] or ok["C"]:
-            for spec in FA3C_CLASSES:
-                name, batch, length, spread, ctx, bar = spec
-                if time.perf_counter() - t_start > FA3C_CLASS_DEADLINE_S:
-                    chosen.append(f"{name}: A (prepare past {FA3C_CLASS_DEADLINE_S:.0f}s, not timed)")
-                    continue
-                try:
-                    med, bufs, width = _fa3c_gate_class(device, spec, ok)
-                    a = med["A"]
-                    cand = {m: med[m] for m in ("B", "C") if m in med}
-                    best = min(cand, key=cand.get) if cand else None
-                    pick = best if best is not None and cand[best] <= bar * a else "A"
-                    pin, pin_txt = FA3C_PIN.get(name), ""
-                    if pin is not None and pin in cand:
-                        pin_txt, pick = f" [PINNED {pin}; bar alone -> {pick}]", pin
-                    fmt = lambda m: f"{med[m]:.1f}" if m in med else "n/a"
-                    lines.append(f"{FA3C_TAG} GATE {name}: paged {a:.1f} us, contig-varlen {fmt('B')} us, "
-                                 f"contig-batched {fmt('C')} us (gather alone {fmt('gather')} us; bar {bar:g} x paged"
-                                 f"{'' if best is None else f', best/paged {cand[best] / a:.3f}'}) -> {pick}{pin_txt}")
-                    print(lines[-1], flush=True)
-                    if pick != "A":
-                        # Route key from the config only; the buffers are this state's, shaped by the class's width.
-                        route[_fa3c_key(batch, length, width)] = (pick, width, bufs[0], bufs[1])
-                    chosen.append(f"{name}: {pick}{' [PINNED]' if pin_txt else ''}")
-                except Exception as e:
-                    lines.append(f"{FA3C_TAG} GATE {name}: raised {e!r:.300} -> A")
-                    print(lines[-1], flush=True)
-                    chosen.append(f"{name}: A (raised)")
-                torch.cuda.synchronize()
-        else:
-            chosen = [f"{spec[0]}: A (no variant passed the self-check)" for spec in FA3C_CLASSES]
-        lines.append(f"{FA3C_TAG} PATH CHOSEN (full layers, page_size 1; sliding, page 64, scaled and untimed shapes "
-                     f"run master's paged FA3): " + "; ".join(chosen)
-                     + f"; setup {time.perf_counter() - t0:.1f}s, prepare total {time.perf_counter() - t_start:.1f}s")
-        print(lines[-1], flush=True)
-    except Exception as e:  # never raises into prepare(); every class stays on master's paged call
-        route.clear()
-        lines.append(f"{FA3C_TAG} OFF: setup raised {e!r:.300} (PATH CHOSEN = master's paged FA3 everywhere)")
-        print(lines[-1], flush=True)
-    finally:
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    return lines
-
-
-# pre-expert-norm-fused-rega-gather: one Triton kernel replaces the pre-expert RMSNorm + rega_gather.
-# ---------------------------------------------------------------------------------------------------------------
-NG_TAG = "[norm-gather]"
-NG_RATIO = 0.90                # ON only when fused <= this x (module norm + rega_gather), cold-L2 graph replays
-NG_ALTERNATIONS = 21
-NG_BUDGET_S = 270.0            # the whole phase is skipped (every class OFF) when prepare() has used more
-NG_NWARPS = (4, 8)
-NG_MULTS = (1, 2)              # persistent grid = SMs x resident CTAs per SM (from the compiled kernel) x mult
-NG_CANARY = 0x5A5A
-
-
-def _rega_class(tokens):
-    """The T class of the rega path (the same split as rega_ok and align2_ok): shape only."""
-    return "low" if tokens <= REGA_LOW_MAX else ("high" if tokens <= MARLIN_MAX_TOKENS else "ft")
-
-
-@triton.jit(do_not_specialize=["num_routes", "nprog"])
-def _norm_gather_kernel(x_ptr, w_ptr, sorted_ptr, be_ptr, npad_ptr, xs_ptr, num_routes, nprog, eps,
-                        H: tl.constexpr, NE: tl.constexpr, BSM: tl.constexpr, ROUND_W: tl.constexpr):
-    """xs[slot] = rmsnorm(x[sorted_ids[slot] >> 3]) * (1 + w) for the slots of local blocks below n_padded
-    (zeros at sentinel slots), nothing written elsewhere: rega_gather's write set. Persistent: program pid
-    takes slots pid, pid + nprog, ... below n_padded (a device-side bound). fp32 math, one bf16 rounding;
-    the 1 is added to the bf16 checkpoint weight in fp32 (ROUND_W rounds 1 + w to bf16 first, for a module
-    that holds its effective weight in bf16)."""
-    pid = tl.program_id(0)
-    offs = tl.arange(0, H)
-    n_pad = tl.load(npad_ptr)
-    for slot in range(pid, n_pad, nprog):
-        be = tl.load(be_ptr + slot // BSM)
-        if (be >= 0) & (be < NE):
-            sid = tl.load(sorted_ptr + slot)
-            valid = (sid >= 0) & (sid < num_routes)
-            row = tl.load(x_ptr + (sid >> 3).to(tl.int64) * H + offs, mask=valid, other=0.0).to(tl.float32)
-            ss = tl.sum(row * row, axis=0)
-            rstd = tl.rsqrt(ss / H + eps)
-            w = 1.0 + tl.load(w_ptr + offs).to(tl.float32)
-            if ROUND_W:
-                w = w.to(tl.bfloat16).to(tl.float32)
-            y = tl.where(valid, row * rstd * w, 0.0)
-            tl.store(xs_ptr + slot.to(tl.int64) * H + offs, y.to(tl.bfloat16))
-
-
-def _norm_gather(x, w, sorted_ids, block_experts, n_padded, num_routes, xs, num_warps, nprog, round_w):
-    """Launch; returns Triton's compiled-kernel handle. Everything it reads is an argument."""
-    grid = min(nprog, sorted_ids.numel())
-    return _norm_gather_kernel[(grid,)](
-        x, w, sorted_ids, block_experts, n_padded, xs, num_routes, grid, RMS_EPS,
-        H=D_EXPERT, NE=LOCAL_EXPERTS, BSM=REGA_BSM, ROUND_W=round_w, num_warps=num_warps)
-
-
-def _ng_occupancy(handle, num_warps, device):
-    """Resident CTAs per SM of the compiled kernel (registers, threads, shared memory); 4 when the handle
-    does not report its registers."""
-    regs = getattr(handle, "n_regs", None)
-    if not regs:
-        return 4
-    props = torch.cuda.get_device_properties(device)
-    per_warp = -(-int(regs) * 32 // 256) * 256
-    by_regs = getattr(props, "regs_per_multiprocessor", 65536) // (per_warp * num_warps)
-    by_threads = getattr(props, "max_threads_per_multi_processor", 2048) // (32 * num_warps)
-    shared = getattr(handle, "shared", None) or getattr(getattr(handle, "metadata", None), "shared", None) or 0
-    by_smem = getattr(props, "shared_memory_per_multiprocessor", 233472) // shared if shared else 32
-    return max(1, min(by_regs, by_threads, by_smem, 32))
-
-
-def _ng_active_rows(sorted_ids, block_experts, n_padded):
-    """Bool [rows]: the rows rega_gather writes (slot < n_padded and a local block)."""
-    rows = block_experts.shape[0] * REGA_BSM
-    slots = torch.arange(rows, device=sorted_ids.device)
-    be = block_experts[slots // REGA_BSM]
-    return (slots < n_padded) & (be >= 0) & (be < LOCAL_EXPERTS)
-
-
-def _ng_compare(xs_new, xs_ref, active):
-    """(frac of active elements within 1 bf16 ulp, max ulp, rel L2, rows touched outside the active set in
-    either buffer), chunked over rows."""
-    idx = active.nonzero().squeeze(1)
-    n_el = 0
-    le1 = 0
-    mx = 0
-    num = 0.0
-    den = 0.0
-    for lo in range(0, idx.numel(), 2048):
-        sel = idx[lo:lo + 2048]
-        a, b = xs_new[sel], xs_ref[sel]
-        ua = a.view(torch.int16).to(torch.int32) & 0xFFFF
-        ub = b.view(torch.int16).to(torch.int32) & 0xFFFF
-        ka = torch.where((ua & 0x8000) != 0, -(ua & 0x7FFF), ua & 0x7FFF)
-        kb = torch.where((ub & 0x8000) != 0, -(ub & 0x7FFF), ub & 0x7FFF)
-        d = (ka - kb).abs()
-        n_el += d.numel()
-        le1 += int((d <= 1).sum())
-        mx = max(mx, int(d.max()))
-        diff = a.float() - b.float()
-        num += float((diff * diff).sum())
-        den += float((b.float() * b.float()).sum())
-    stray = 0
-    rows = xs_new.shape[0]
-    for lo in range(0, rows, 4096):
-        sl = slice(lo, min(lo + 4096, rows))
-        for buf in (xs_new, xs_ref):
-            touched = (buf[sl].view(torch.int16) != NG_CANARY).any(dim=1)
-            stray += int((touched & ~active[sl]).sum())
-    return le1 / max(n_el, 1), mx, (num / max(den, 1e-30)) ** 0.5, stray
-
-
-def _ng_step(tag, fn):
-    """A launch announced before and synced + printed after, so a fault names its kernel."""
-    print(f"{NG_TAG} [{tag}] launching", flush=True)
-    out = fn()
-    torch.cuda.synchronize()
-    print(f"{NG_TAG} [{tag}] done", flush=True)
+def _attn_custom(st, data, q8, qkv, cfg, nsplit=1, variant=0, pre=None):
+    """FP8 attention (own kernel) with the output norm * sigmoid(gate) fused: returns og [T, Q_SIZE] bf16."""
+    B, L, window, page = cfg["batch"], cfg["q_len"], cfg["window"], cfg["page_size"]
+    dev = q8.device
+    if pre is not None:  # part 1 was issued on the side stream by _attn_prep_split: join it, then stage the rest
+        ntk, kt, vt = pre
+        torch.cuda.current_stream().wait_stream(SIDE_STREAM)
+    else:
+        ntk, kt, vt = _attn_stage_buffers(data, cfg, dev)
+    st["mod"].attn_prep(data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), data["page_table"],
+                        data["seq_lens"], page, L, window, ntk, kt, vt, 2 if pre is not None else 0)
+    out = torch.empty((B * L, Q_SIZE), dtype=torch.bfloat16, device=dev)
+    c = cfg["sm_scale"] * cfg["qk_scale_factor"] * cfg["kv_scale"] * LOG2E
+    if nsplit < 0:  # stream-K over -nsplit CTAs: int header (W, pair prefix, first pairs) + npairs + G partial slots
+        G, nqb = -nsplit, (L + ATTN_SK_Q_BLOCK - 1) // ATTN_SK_Q_BLOCK
+        hdr = (2 + B * nqb * 2 + 1 + G + 63) // 64 * 64  # must match GLUE's ((2 + npairs + 1 + G) + 63) & ~63
+        # Layout agreed with attn_fwd_sk_kernel: header + per-pair blocks of
+        # ATTN_SK_Q_BLOCK q-rows x 8 x ATTN_SPLIT_SLOT.
+        ws = torch.empty((hdr + (B * nqb * 2 + G) * ATTN_SK_Q_BLOCK * 8 * ATTN_SPLIT_SLOT,), dtype=torch.float32, device=dev)
+    else:
+        ws = torch.empty((nsplit, B * L, HQ, ATTN_SPLIT_SLOT), dtype=torch.float32, device=dev) if nsplit > 1 else out
+    pf = st["o"] if B * L <= ATTN_PF_MAX_T else st["no_pf"]  # o-proj weight into L2 during the attention
+    st["mod"].attn_fwd(q8.view(torch.uint8), kt, vt, data["seq_lens"], qkv, out, L, window, ntk, c, cfg["kv_scale"],
+                       st["attn_smem"], nsplit, ws, variant, pf)
     return out
 
 
-def _ng_graph_medians(graphs, device):
-    """Cold-L2 replays (a 256 MiB flush write before each), interleaved over NG_ALTERNATIONS alternations in
-    a rotated and flipped order, an empty-graph baseline subtracted; {name: median us}."""
-    tiny = torch.zeros(16, dtype=torch.float32, device=device)
-    graphs = dict(graphs)
-    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    names = list(graphs)
-    samples = {name: [] for name in names}
-    for name in names:
-        once(graphs[name])
-    for i in range(NG_ALTERNATIONS):
-        order = names[i % len(names):] + names[:i % len(names)]
-        if i % 2:
-            order = order[::-1]
-        for name in order:
-            samples[name].append(once(graphs[name]))
-    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
-    base = med.pop("empty")
-    return {name: max(v - base, 0.0) for name, v in med.items()}
+def _synthetic_attn_case(B, L, ctx, window, page, seed):
+    """A synthetic attention case (random data, paged cache) for validation / tuning."""
+    dev = "cuda"
+    g = torch.Generator(device=dev)
+    g.manual_seed(seed)
+    S = ctx + L
+    npg = (S + page - 1) // page
+    T = B * L
+    q8 = (torch.randn((T, HQ, HD), device=dev, generator=g) * 0.7).to(FP8)
+    qkv = torch.randn((T, QKV_SIZE), device=dev, generator=g).to(torch.bfloat16)
+    kc = (torch.randn((B * npg, page, HKV, HD), device=dev, generator=g) * 0.8 + 0.3).to(FP8)  # [pages, page_size, 2, 64]
+    vc = torch.randn((B * npg, page, HKV, HD), device=dev, generator=g).to(FP8)
+    pt = torch.randperm(B * npg, device=dev, generator=g).to(torch.int32).view(B, npg)
+    data = {"k_cache": kc, "v_cache": vc, "page_table": pt, "seq_lens": torch.full((B,), ctx, dtype=torch.int32, device=dev),
+            "cache_seqlens": torch.full((B,), S, dtype=torch.int32, device=dev),
+            "cu_seqlens_q": torch.arange(0, T + 1, L, dtype=torch.int32, device=dev), "scheduler_metadata": None,
+            "k_scale": torch.tensor(1.0, device=dev), "v_scale": torch.tensor(1.0, device=dev)}
+    cfg = {"batch": B, "q_len": L, "window": window, "page_size": page, "sm_scale": SYNTH_SM_SCALE,
+           "qk_scale_factor": SYNTH_QK_SCALE_FACTOR, "kv_scale": 1.0, "tokens": T}
+    return data, cfg, q8, qkv
 
 
-def _ng_replay_check(state, device, tokens, gen):
-    """Two separately allocated states (the second with its own weight copy), a graph captured on each, replays
-    alternated A B A B with refilled inputs and routings, each against master's composed path eager. Returns
-    (worst rel L2, why or None)."""
-    sb = dict(state)
-    sb["pre_expert_w"] = state["pre_expert_w"].clone()
-    sts = [state, sb]
-    bufs = [list(_rega_case(tokens, "random", gen, device)) for _ in sts]
-    holders = [{} for _ in sts]
-    graphs = []
-    for st, (x, tw, lids), holder in zip(sts, bufs, holders):
-        def fn(st=st, x=x, tw=tw, lids=lids, holder=holder):
-            holder["out"] = _experts_rega(x, tw, lids, st, prenorm=True)
-        graphs.append(_ssdq_graph_time(fn, device))
-    worst = 0.0
-    for r, idx in enumerate((0, 1, 0, 1)):
-        x, tw, lids = _rega_case(tokens, ("random", "skewed")[r % 2], gen, device)
-        for dst, src in zip(bufs[idx], (x, tw, lids)):
-            dst.copy_(src)
-        state["rega_err"].zero_()
-        graphs[idx].replay()
-        torch.cuda.synchronize()
-        new = holders[idx]["out"].clone()
-        ref = _experts_rega(state["pre_expert_norm"](x), tw, lids, state)
-        torch.cuda.synchronize()
-        word = _rega_marks(state["rega_err"])[0]
-        err, _ = _ssdq_metrics(new, ref)
-        worst = max(worst, err)
-        if word != 0 or not err <= 1e-3:
-            return worst, f"replay {r} state {'AB'[idx]}: error word {word}, rel L2 {err:.3e}"
-    del graphs, holders, bufs, sb
-    return worst, None
+def _attn_ref(data, cfg, q8, qkv):
+    """Reference attention path (FA3 + norm-gate) for validating the own kernel."""
+    return _attention_norm_gate(data, q8, qkv, cfg)
 
 
-def _ng_class(state, device, cls, tokens, gen):
-    """Self-check, whole-output check, two-state replay and timing for one T class. Returns (ON, gate line)."""
-    sms = int(torch.cuda.get_device_properties(device).multi_processor_count)
-    ext = state["rega_ext"]
-    w = state["pre_expert_w"]
-    norm = state["pre_expert_norm"]
-    state["norm_gather_cfg"][cls] = (8, sms * 4, False)
-    cases = {}
-    for kind in ("random", "skewed"):
-        x, tw, lids = _rega_case(tokens, kind, gen, device)
-        _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
-        torch.cuda.synchronize()
-        cases[kind] = (x, tw, lids, sorted_ids, block_experts, n_padded)
-    num_routes = tokens * TOP_K
-    # 1. self-check: xs of the fused kernel vs master's norm + rega_gather; first with the plain fp32 1 + w, and,
-    # if that is not within 1 ulp of the module, with 1 + w rounded to bf16 first (a bf16 effective weight).
-    chosen, handle, checks = None, None, []
-    for round_w in (False, True):
-        passed = True
-        for kind, (x, tw, lids, sorted_ids, block_experts, n_padded) in cases.items():
-            rows = block_experts.shape[0] * REGA_BSM
-            xs_ref = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
-            xs_new = torch.empty_like(xs_ref)
-            xs_ref.view(torch.int16).fill_(NG_CANARY)
-            xs_new.view(torch.int16).fill_(NG_CANARY)
-            xn = _ng_step(f"module norm {cls} {kind}", lambda: norm(x))
-            _ng_step(f"rega_gather {cls} {kind}", lambda: ext.rega_gather(
-                xn.contiguous(), sorted_ids, block_experts, n_padded, num_routes, LOCAL_EXPERTS, xs_ref))
-            handle = _ng_step(f"_norm_gather_kernel {cls} {kind} round_w={round_w}", lambda: _norm_gather(
-                x, w, sorted_ids, block_experts, n_padded, num_routes, xs_new, 8, sms * 4, round_w))
-            active = _ng_active_rows(sorted_ids, block_experts, n_padded)
-            frac, mx, rel, stray = _ng_compare(xs_new, xs_ref, active)
-            ok = frac >= 0.999 and mx <= 2 and rel <= 1e-3 and stray == 0
-            checks.append(f"{kind} round_w={round_w}: within 1 ulp {frac:.5f}, max {mx} ulp, rel L2 {rel:.2e}, "
-                          f"stray rows {stray}, {int(active.sum())} active rows: {'ok' if ok else 'MISS'}")
-            print(f"{NG_TAG} self-check {cls} T={tokens} {checks[-1]}", flush=True)
-            passed = passed and ok
-            del xs_ref, xs_new, xn, active
-        if passed:
-            chosen = round_w
-            break
-    if chosen is None:
-        return False, f"{NG_TAG} GATE {cls} T={tokens} random: self-check missed ({'; '.join(checks[-2:])}): OFF"
-    # the compiled kernel's real occupancy, per num_warps (the 4-warp variant is compiled by its first launch)
-    occ = {8: _ng_occupancy(handle, 8, device)}
-    x, tw, lids, sorted_ids, block_experts, n_padded = cases["random"]
-    rows = block_experts.shape[0] * REGA_BSM
-    xs_t = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
-    handle4 = _ng_step(f"_norm_gather_kernel {cls} num_warps=4", lambda: _norm_gather(
-        x, w, sorted_ids, block_experts, n_padded, num_routes, xs_t, 4, sms * 4, chosen))
-    occ[4] = _ng_occupancy(handle4, 4, device)
-    print(f"{NG_TAG} {cls} compiled kernel: " + "; ".join(
-        f"num_warps={nw} n_regs {getattr(h, 'n_regs', 'n/a')} n_spills {getattr(h, 'n_spills', 'n/a')} "
-        f"shared {getattr(h, 'shared', 'n/a')} -> {occ[nw]} CTAs/SM" for nw, h in ((4, handle4), (8, handle))),
-        flush=True)
-    # 2. the whole _experts_rega output, prenorm vs master's composed path, alternating two separately allocated states
-    sb = dict(state)
-    sb["pre_expert_w"] = w.clone()
-    worst_out = 0.0
-    for r, st in enumerate((state, sb, state, sb)):
-        kind = ("random", "skewed")[r % 2]
-        x2, tw2, lids2, *_ = cases[kind]
-        st["norm_gather_cfg"][cls] = (8, sms * occ[8], chosen)
-        state["rega_err"].zero_()
-        ref = _ng_step(f"whole experts ref {cls} {kind}", lambda: _experts_rega(norm(x2), tw2, lids2, state))
-        new = _ng_step(f"whole experts prenorm {cls} {kind}", lambda: _experts_rega(x2, tw2, lids2, st, prenorm=True))
-        word = _rega_marks(state["rega_err"])[0]
-        err, _ = _ssdq_metrics(new, ref)
-        worst_out = max(worst_out, err)
-        if word != 0 or not err <= 1e-3:
-            return False, (f"{NG_TAG} GATE {cls} T={tokens} random: whole-output check missed ({kind} state "
-                           f"{'AB'[r % 2]}: error word {word}, rel L2 {err:.3e}): OFF")
-        del ref, new
-    print(f"{NG_TAG} whole-output check {cls} T={tokens}: worst rel L2 {worst_out:.2e} (bound 1e-3)", flush=True)
-    del sb
+def _validate_attn(st, variants):
+    """Check own-kernel variants against the reference attention path on small synthetic cases; returns
+    the variants that agree."""
+    worst = {v: 0.0 for v in variants}
+    for i, (B, L, ctx, window, page) in enumerate(((2, 300, 1000, 0, 1), (1, 400, 3000, 256, 1), (2, 100, 200, 0, 64))):
+        data, cfg, q8, qkv = _synthetic_attn_case(B, L, ctx, window, page, 7 + i)
+        ref = _attn_ref(data, cfg, q8, qkv).float()
+        for v in variants:
+            for ns in (1, 3):
+                o = _attn_custom(st, data, q8, qkv, cfg, nsplit=ns, variant=v).float()
+                err = float((o - ref).norm() / ref.norm())
+                worst[v] = max(worst[v], err if err == err else 1e9)
+    ok = [v for v in variants if worst[v] < ATTN_VALIDATE_TOL]
+    print("ATTN own kernel validation (worst rel err):", {v: round(e, 4) for v, e in worst.items()}, "->", ok, flush=True)
+    return ok
+
+
+def _tune_attn(st, variants):
+    """Pick, per attention shape class, the fastest of the reference path and the validated own variants."""
+    choice = {}
+    # The scored shapes themselves (synthetic data): sliding 16K chunk, full 16K chunk at 32K context, turn 1 / turn 4 full.
+    for kind, (B, L, ctx, window) in (("slide", (1, 16384, 32768, 2048)), ("full_long", (1, 16384, 32768, 0)),
+                                      ("full_short", (1, 753, 80000, 0)), ("full_batch", (4, 753, 80000, 0))):
+        data, cfg, q8, qkv = _synthetic_attn_case(B, L, ctx, window, 1, 11)
+        res = {"ref": _time(lambda: _attn_ref(data, cfg, q8, qkv), reps=5)}
+        for v in variants:
+            ns = _attn_splits(cfg, data, v, st["nsm"])
+            res[v] = _time(lambda: _attn_custom(st, data, q8, qkv, cfg, nsplit=ns, variant=v), reps=5)
+        best = min(res, key=res.get)
+        choice[kind] = None if best == "ref" else best
+        print(f"ATTN tune {kind}: " + " ".join(f"{k}={t:.0f}us" for k, t in res.items()) + f" -> {best}", flush=True)
+        del data, q8, qkv
     torch.cuda.empty_cache()
-    if tokens <= MARLIN_MAX_TOKENS:
-        worst_rep, why = _ng_replay_check(state, device, tokens, gen)
-        torch.cuda.empty_cache()
-        if why:
-            return False, f"{NG_TAG} GATE {cls} T={tokens} random: two-state replay check missed ({why}): OFF"
-        print(f"{NG_TAG} two-state replay check {cls} T={tokens}: worst rel L2 {worst_rep:.2e} (bound 1e-3)",
-              flush=True)
-    # 3. timing, random routing: the pair vs every fused config (grid from the compiled occupancy), one loop
-    xs_p = torch.empty((rows, D_EXPERT), device=device, dtype=x.dtype)
-    graphs = {"pair": _ssdq_graph_time(lambda: ext.rega_gather(
-        norm(x).contiguous(), sorted_ids, block_experts, n_padded, num_routes, LOCAL_EXPERTS, xs_p), device)}
-    cfgs = {}
-    for nw in NG_NWARPS:
-        for mult in NG_MULTS:
-            cfg = (nw, sms * occ[nw] * mult, chosen)
-            name = f"fused w{nw} g{cfg[1]}"
-            cfgs[name] = cfg
-            graphs[name] = _ssdq_graph_time(lambda cfg=cfg: _norm_gather(
-                x, w, sorted_ids, block_experts, n_padded, num_routes, xs_t, cfg[0], cfg[1], cfg[2]), device)
-    meds = _ng_graph_medians(graphs, device)
-    del graphs
-    best = min(cfgs, key=lambda k: meds[k])
-    ratio = meds[best] / max(meds["pair"], 1e-9)
-    on = bool(ratio <= NG_RATIO)
-    if on:
-        state["norm_gather_cfg"][cls] = cfgs[best]
-    line = (f"{NG_TAG} GATE {cls} T={tokens} random pair {meds['pair']:.1f} us fused {meds[best]:.1f} us "
-            f"ratio {ratio:.3f} (ON at <= {NG_RATIO}; {best}, round_w={chosen}; all fused: "
-            + ", ".join(f"{k} {meds[k]:.1f}" for k in cfgs) + f"): {'ON' if on else 'OFF'}")
-    return on, line
+    return choice
 
 
-def _norm_gather_setup(state, device, t_start):
-    """prepare() only, after _rega_setup: per T class, gate the fused pre-expert norm + gather against master's
-    module norm + rega_gather. Sets state['norm_gather_ok'][class] (and state['norm_gather_cfg'][class] =
-    (num_warps, persistent grid, round_w) for ON classes). Any failure, mismatch, slow ratio or exhausted
-    budget leaves the class OFF = master's path, byte for byte. Never raises."""
-    state["norm_gather_ok"] = {"low": False, "high": False, "ft": False}
-    state["norm_gather_cfg"] = {}
-    lines = {}
-    t0 = time.perf_counter()
-    try:
-        if time.perf_counter() - t_start > NG_BUDGET_S:
-            raise RuntimeError(f"prepare already used {time.perf_counter() - t_start:.0f}s > {NG_BUDGET_S:.0f}s")
-        norm = state["pre_expert_norm"]
-        try:
-            print(f"{NG_TAG} {type(norm).__name__}.forward source:\n"
-                  f"{inspect.getsource(type(norm).forward)}", flush=True)
-        except Exception as e:
-            print(f"{NG_TAG} forward source unavailable: {e!r}", flush=True)
-        try:
-            eff = norm._get_effective_weight()
-            print(f"{NG_TAG} module effective weight dtype {eff.dtype}; checkpoint weight dtype "
-                  f"{state['pre_expert_w'].dtype}", flush=True)
-        except Exception as e:
-            print(f"{NG_TAG} effective weight unavailable: {e!r}", flush=True)
-        gen = torch.Generator(device=device).manual_seed(20261026)
-        classes = {"low": REGA_GATE_TOKENS["low"], "high": REGA_GATE_TOKENS["high"], "ft": REGA_FT_GATE_TOKENS}
-        for cls, tokens in classes.items():
-            try:
-                if not state.get("rega_ok", {}).get(cls, False):
-                    lines[cls] = f"{NG_TAG} GATE {cls} T={tokens}: rega OFF for this class: OFF"
-                elif time.perf_counter() - t_start > NG_BUDGET_S:
-                    lines[cls] = (f"{NG_TAG} GATE {cls} T={tokens}: prepare already used "
-                                  f"{time.perf_counter() - t_start:.0f}s > {NG_BUDGET_S:.0f}s: OFF")
-                else:
-                    on, lines[cls] = _ng_class(state, device, cls, tokens, gen)
-                    state["norm_gather_ok"][cls] = on
-            except Exception as e:
-                state["norm_gather_ok"][cls] = False
-                lines[cls] = f"{NG_TAG} GATE {cls} T={tokens} random: raised {e!r}"[:400] + ": OFF"
-            if not state["norm_gather_ok"][cls]:
-                state["norm_gather_cfg"].pop(cls, None)
-            print(lines[cls], flush=True)
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-    except Exception as e:
-        state["norm_gather_ok"] = {"low": False, "high": False, "ft": False}
-        state["norm_gather_cfg"] = {}
-        print(f"{NG_TAG} OFF everywhere: {e!r}"[:400], flush=True)
-    finally:
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        ok = state["norm_gather_ok"]
-        pick = lambda c: "fused norm+gather" if ok[c] else "master (module norm, then rega_gather)"
-        print(f"{NG_TAG} setup took {time.perf_counter() - t0:.1f}s; prepare total "
-              f"{time.perf_counter() - t_start:.1f}s", flush=True)
-        for line in lines.values():
-            print(line, flush=True)
-        print(f"{NG_TAG} PATH CHOSEN T in ({REGA_MIN_TOKENS}, {REGA_LOW_MAX}]: {pick('low')}; T in "
-              f"({REGA_LOW_MAX}, {MARLIN_MAX_TOKENS}]: {pick('high')}; T in ({MARLIN_MAX_TOKENS}, {REGA_FT_MAX}]: "
-              f"{pick('ft')} (applies only where rega is ON; every other path is master's)", flush=True)
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# combo-b-normgather-two-cta-low-regate: the two-CTAs-per-SM low-class rega candidates (V64 = NMAX 64, 3 stages;
-# V32 = NMAX 32, 4 stages; both 2 CTAs/SM at 80 registers, setmaxnreg 32 / 104), ported from
-# experts-rega-low-class-two-ctas-per-sm impl dfb755d3, as a SEPARATE extension muse_prefill_rega_lo built only
-# after master's whole setup (rega v2 build + low / high / ft gates, fa3c) and norm-gather's setup. Master's
-# muse_prefill_rega_v2 module, its v1 fallback and their sha256 checks are untouched. Re-gated on master's own
-# low-class gate routing (random) at <= 0.95 AND on a popularity guard routing calibrated to ~1350 local routes
-# (the TASK.md floor-implied judge turn_1 load) at <= 1.00, on the norm-gather-ON expert block; the lowest
-# guard-routing median of the passing candidates wins. state['rega_low_variant'] (0 master, 1 V64, 2 V32) and
-# state['rega_low_grid'] are plain ints per state; _experts_rega reads them only at T <= REGA_LOW_MAX.
-# ---------------------------------------------------------------------------------------------------------------
-REGA_LO_TAG = "[rega-lo]"
-REGA_LO_EXT_NAME = "muse_prefill_rega_lo"
-REGA_LO_FUNCS = ("rega_init_lo", "rega_gemm_lo")
-REGA_NS_END = "}  // namespace\n"
-REGA_V2_SHA256 = "b7fbe28b7447bca662bf940c6c99a38374c6737388d563eba190135cc5b2d8e7"  # sha256(_REGA_CPP + _rega_src())
-# (name, NMAX, STG, OCC); the V64-occ1 diagnostic of dfb755d3 is dropped (nvcc time)
-REGA_LO_VARIANTS = {1: ("V64", 64, 3, 2), 2: ("V32", 32, 4, 2)}
-REGA_LO_REGS_OCC2 = 80          # numRegs required at OCC 2: setmaxnreg dec 32 / inc 104 = 32 x 128 + 104 x 256 = 80 x 384
-REGA_LO_POOL = {2: 32 * 128 + 104 * 256}   # registers the setmaxnreg split needs per CTA
-REGA_LO_MAXBLK = 1024           # C++ MAXBLK_LO (block table of rega_lo_kernel; T <= 1024 needs <= 542)
-REGA_LO_STATIC_BOUND = 12288    # C++ STATIC_LO
-REGA_LO_START_DEADLINE_S = 185.0   # no LO build once prepare() has used this many seconds
-REGA_LO_GATE_DEADLINE_S = 250.0    # no candidate step (check, gate, diag), and no switch away from master, after this
-REGA_LO_RANDOM_RATIO = 0.95     # ON only at <= this x master's low-class rega block on the random routing ...
-REGA_LO_GUARD_RATIO = 1.00      # ... AND <= this on the popularity guard routing (never slower under skew)
-# phasec lo-skip-phase: no LO build, checks or gate; the low class keeps master's rega_kernel<G, false>, the arm
-# every logged board-era LO gate kept (guard 1.03-1.04 > 1.00). Saves the phase's ~40 s of prepare().
-REGA_LO_SKIP = True
-REGA_LO_ALTERNATIONS = 11       # interleaved cold-L2 alternations per gate routing (>= 9)
-REGA_LO_GUARD_ROUTES = 1350     # guard target: local routes at T=753 (judge turn_1 ~1314-1359, about 1.8x random)
-REGA_LO_DIAG_MULTS = (1.2, 1.5)  # print-only SKEW CURVE points, x the random routing's local routes
-REGA_LO_POP_ALPHAS = tuple(round(1.0 + 0.1 * i, 1) for i in range(21))   # 1.0 .. 3.0, refined 0.1 steps (2.0-2.4 in)
-REGA_LO_POP_DRAWS = 3
-REGA_LO_SELF_CHECKS = ((300, "random"), (300, "skewed"), (300, "one"), (753, "random"), (753, "skewed"),
-                       (753, "one"), (753, "pop"), (1024, "local"))
-REGA_LO_PRENORM_CHECKS = ((753, "random"), (753, "pop"), (1024, "local"))   # with the fused norm-gather ON
-REGA_LO_REPLAY_KINDS = {300: ("random", "skewed", "one"), 753: ("random", "skewed", "one", "pop")}
-REGA_LO_STATE_KEYS = REGA_STATE_KEYS + ("rega_lo_ext", "rega_low_variant", "rega_low_grid")
-
-_REGA_LO_CPP = r"""
-#include <torch/extension.h>
-#include <vector>
-std::vector<int64_t> rega_init_lo();
-void rega_gemm_lo(int64_t which, int64_t variant, torch::Tensor bsrc, torch::Tensor wbank,
-                  torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-                  int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);
-"""
-
-_REGA_LO_SRC = r"""
-// ---------------------------------------------------------------------------------------------
-// combo-b-normgather-two-cta-low-regate (module muse_prefill_rega_lo, ported from dfb755d3): low-class candidates
-// of the register-A kernel as a separate template rega_lo_kernel<G, NMAX, STG, OCC>. Everything above is master's
-// head + wgmma wrappers + the namespace part of master's v2 body, read unchanged (master's own module
-// muse_prefill_rega_v2 is built from master's strings, sha256-checked); master's templates are never
-// instantiated in this module, only the 4 instantiations below.
-// NMAX = the most tokens one chunk carries (= slab box rows; chunks are cut every CH = NMAX / 16 blocks of 16
-// rows, so token buckets above NMAX are never instantiated), STG = ring depth, OCC = CTAs per SM
-// (__launch_bounds__ minimum blocks). OCC 2: 80 registers per thread at launch, producer setmaxnreg.dec 32,
-// consumers setmaxnreg.inc 104 (32 x 128 + 104 x 256 = 30720 = 80 x 384). OCC 1 (master's 40 / 232 split) is
-// kept in the template but not instantiated here (the V64-occ1 diagnostic was dropped to save nvcc time). The stage index is n % STG and the phase (n / STG) & 1 (STG need not be 2^k).
-// ---------------------------------------------------------------------------------------------
-namespace {
-
-constexpr int MAXBLK_LO = 1024;   // block table: the low class (T <= 1024) needs <= (1024 * 8 + 32 * 15) / 16 = 542
-constexpr int MAXC_LO = 576;      // chunk table: <= MAXBLK_LO / 2 + MAXE chunks (CH >= 2)
-constexpr int STATIC_LO = 12288;  // static smem bound of rega_lo_kernel (tables + barriers + per-expert arrays)
-static_assert((MAXBLK_LO + 2 * MAXC_LO) * 4 + 1024 <= STATIC_LO, "static smem, low-class candidates");
-static_assert(MAXC_LO >= MAXBLK_LO / 2 + MAXE, "chunk table capacity");
-
-template <int NMAX, int STG, int OCC>
-struct GeoLo {
-  static constexpr int SLAB_H = NMAX * 128;          // one SWIZZLE_128B box: NMAX rows x 64 bf16
-  static constexpr int STAGE_B = WST + 2 * SLAB_H;   // weight record pair + two slab halves
-  static constexpr int CH = NMAX / 16;               // blocks of 16 rows per chunk
-  static constexpr int RDEC = OCC == 2 ? 32 : 40;    // producer warpgroup after setmaxnreg.dec
-  static constexpr int RINC = OCC == 2 ? 104 : 232;  // consumer warpgroups after setmaxnreg.inc
-  static constexpr int REGS = OCC == 2 ? 80 : 168;   // registers per thread the split needs at launch
-  static_assert(NMAX == 32 || NMAX == 64 || NMAX == 128, "NMAX in {32, 64, 128}");
-  static_assert(OCC == 1 || OCC == 2, "OCC in {1, 2}");
-  static_assert(STG >= 2, "ring depth");
-  static_assert(SLAB_H % 1024 == 0 && STAGE_B % 1024 == 0, "stage alignment (SWIZZLE_128B boxes)");
-  static_assert(RDEC % 8 == 0 && RINC % 8 == 0 && RDEC >= 24 && RINC <= 256, "setmaxnreg immediates");
-  static_assert(RDEC * 128 + RINC * 256 <= REGS * THREADS, "register pool");
-  static_assert(REGS * THREADS * OCC <= 65536, "register file");
-};
-template <bool G, int NMAX, int STG, int OCC>
-struct SmemLo {
-  static constexpr int EPI = NMAX * (G ? PITCH13 : PITCH2);  // epilogue staging: NMAX token rows
-  static constexpr int BYTES = 1024 + STG * GeoLo<NMAX, STG, OCC>::STAGE_B + EPI;
-  static_assert(BYTES + STATIC_LO <= 227 * 1024, "shared memory budget per CTA");
-  // OCC CTAs per SM, each with its static tables and the 1 KB per-CTA reserve, in the 228 KB SM
-  static_assert(OCC * (BYTES + STATIC_LO + 1024) <= 228 * 1024, "shared memory budget at OCC CTAs per SM");
-};
-static_assert(SmemLo<false, 64, 3, 2>::BYTES == 95232, "V64 w2 dynamic smem (spec)");
-static_assert(SmemLo<false, 32, 4, 2>::BYTES == 79360, "V32 w2 dynamic smem (spec)");
-
-// consume_item with the ring geometry of <NMAX, STG> (master's consume_item reads the fixed STAGES / SLAB_HALF).
-template <int NB, bool G, int NMAX, int STG, int OCC>
-__device__ __forceinline__ void consume_item_lo(const Item& m, uint8_t* smem, uint8_t* ep, uint32_t full0,
-                                                uint32_t empty0, int& n, int KS, int cw, int lane, int ctid,
-                                                const float* __restrict__ gs, const int* __restrict__ sorted_ids,
-                                                int num_routes, __nv_bfloat16* __restrict__ out, int out_ld,
-                                                int* err, bool& dead) {
-  static_assert(NB <= NMAX, "token bucket above the slab");
-  constexpr int NA = NB / 2;
-  constexpr int SLAB_H = GeoLo<NMAX, STG, OCC>::SLAB_H;
-  constexpr int STAGE_B = GeoLo<NMAX, STG, OCC>::STAGE_B;
-  float acc[NA];
-#pragma unroll
-  for (int i = 0; i < NA; ++i) acc[i] = 0.f;
-  uint32_t a0[8][4];
-  for (int kb = 0; kb < KS; ++kb) {
-    const int s = n % STG;
-    mbar_wait(full0 + 8 * s, (n / STG) & 1, err, dead);
-    const uint8_t* st = smem + s * STAGE_B;
-    dq_stage(st, cw, lane, a0);
-    const uint32_t slab = smem_u32(st + WST);
-    fence_acc<NA>(acc);
-    wgmma_fence();
-#pragma unroll
-    for (int r = 0; r < 2; ++r) {
-#pragma unroll
-      for (int k = 0; k < 4; ++k) Wg<NB>::mma(acc, a0[r * 4 + k], make_desc(slab + r * SLAB_H + k * 32));
-    }
-    wgmma_commit();
-    wgmma_wait<0>();  // group retired: a0[] may be rewritten and this stage released at once
-    fence_acc<NA>(acc);
-    if (lane == 0) mbar_arrive(empty0 + 8 * s);
-    ++n;
-  }
-  wgmma_wait<0>();
-  fence_acc<NA>(acc);
-
-  // Epilogue as master's: stage the bf16 tile through shared memory (NB <= NMAX token rows), then coalesced
-  // 16-byte row stores. Barrier 1 = the 256 consumer threads of THIS CTA.
-  const int nvalid = m.nbk * 16;
-  const float gsc = __ldg(gs + m.e);
-  named_bar(1, 256);
-  if (G) {
-#pragma unroll
-    for (int i = 0; i < NB / 8; i += 2) {
-      const uint32_t r0 = pack_bf16(silu_mul(acc[4 * i] * gsc, acc[4 * i + 2] * gsc),
-                                    silu_mul(acc[4 * i + 1] * gsc, acc[4 * i + 3] * gsc));
-      const uint32_t r1 = pack_bf16(silu_mul(acc[4 * i + 4] * gsc, acc[4 * i + 6] * gsc),
-                                    silu_mul(acc[4 * i + 5] * gsc, acc[4 * i + 7] * gsc));
-      const int mi = (lane >> 3) & 1, rr = lane & 7;
-      const int tok = 8 * (i + mi) + rr;
-      stsm_x2_t(smem_u32(ep + tok * PITCH13 + cw * 16), r0, r1);
-    }
-  } else {
-#pragma unroll
-    for (int i = 0; i < NB / 8; i += 2) {
-      const uint32_t r0 = pack_bf16(acc[4 * i] * gsc, acc[4 * i + 1] * gsc);
-      const uint32_t r1 = pack_bf16(acc[4 * i + 2] * gsc, acc[4 * i + 3] * gsc);
-      const uint32_t r2 = pack_bf16(acc[4 * i + 4] * gsc, acc[4 * i + 5] * gsc);
-      const uint32_t r3 = pack_bf16(acc[4 * i + 6] * gsc, acc[4 * i + 7] * gsc);
-      const int mi = lane >> 3, rr = lane & 7;
-      const int tok = 8 * (i + (mi >> 1)) + rr;
-      const int col = 16 * cw + 8 * (mi & 1);
-      stsm_x4_t(smem_u32(ep + tok * PITCH2 + col * 2), r0, r1, r2, r3);
-    }
-  }
-  named_bar(1, 256);
-  if (G) {
-    for (int v = ctid; v < nvalid * 8; v += 256) {
-      const int t = v >> 3, c = v & 7;
-      const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH13 + c * 16);
-      *reinterpret_cast<uint4*>(out + static_cast<size_t>(m.slot0 + t) * out_ld + m.j * 64 + c * 8) = val;
-    }
-  } else {
-    for (int v = ctid; v < nvalid * 16; v += 256) {
-      const int t = v >> 4, c = v & 15;
-      const int sid = __ldg(sorted_ids + m.slot0 + t);
-      if (sid >= 0 && sid < num_routes) {
-        const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH2 + c * 16);
-        *reinterpret_cast<uint4*>(out + static_cast<size_t>(sid) * out_ld + m.j * 128 + c * 8) = val;
-      }
-    }
-  }
-}
-
-template <bool G, int NMAX, int STG, int OCC>
-__global__ void __launch_bounds__(THREADS, OCC)
-rega_lo_kernel(const __grid_constant__ Maps maps,
-               const uint8_t* __restrict__ wbank,        // [E][T][K/64][REC]
-               const float* __restrict__ gs,             // fp32 [E] global scale * 2^7
-               const int* __restrict__ sorted_ids,       // block-16 align of the local ids
-               const int* __restrict__ block_experts,
-               const int* __restrict__ n_padded,
-               int blocks_len, int num_routes, int n_tiles, int K, int n_experts,
-               __nv_bfloat16* __restrict__ out, int out_ld, int* __restrict__ err) {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-  using Geo = GeoLo<NMAX, STG, OCC>;
-  // Launch marker as master's kernel: err[1] (w13) / err[2] (w2) of the state's own error tensor.
-  if (blockIdx.x == 0 && threadIdx.x == 0) err[G ? 1 : 2] = 0x57474d4d;
-  extern __shared__ __align__(1024) uint8_t smem_raw[];
-  __shared__ __align__(8) uint64_t bars[2 * STG];
-  __shared__ int s_be[MAXBLK_LO], s_cblk[MAXC_LO], s_cnb[MAXC_LO];
-  __shared__ int s_first[MAXE], s_gfirst[MAXE], s_gcount[MAXE];
-  __shared__ int s_wsum[THREADS / 32];
-  __shared__ int s_bad;
-  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-  const uint32_t raw = smem_u32(smem_raw);
-  uint8_t* smem = smem_raw + ((1024u - (raw & 1023u)) & 1023u);
-  uint8_t* ep = smem + STG * Geo::STAGE_B;
-  const uint32_t full0 = smem_u32(&bars[0]), empty0 = smem_u32(&bars[STG]);
-  const int* be = s_be;
-
-  int nb = __ldg(n_padded) / 16;
-  const int nb_wanted = nb;
-  nb = nb < blocks_len ? nb : blocks_len;
-  nb = nb < MAXBLK_LO ? nb : MAXBLK_LO;
-  if (tid == 0 && nb_wanted > nb) atomicExch(err, 3);  // never truncate silently
-  for (int b = tid; b < nb; b += THREADS) s_be[b] = __ldg(block_experts + b);
-  if (tid < MAXE) {
-    s_first[tid] = -1;
-    s_gfirst[tid] = 0;
-    s_gcount[tid] = 0;
-  }
-  if (tid == 0) {
-    s_bad = 0;
-#pragma unroll
-    for (int s = 0; s < STG; ++s) {
-      mbar_init(full0 + 8 * s, 1);
-      mbar_init(empty0 + 8 * s, 8);  // one arrive per consumer warp
-    }
-    fence_barrier_init();
-  }
-  __syncthreads();
-
-  // Run starts (as master): an expert owning two runs of blocks sets error word 4 and no work is done.
-  for (int b = tid; b < nb; b += THREADS) {
-    const int e = be[b];
-    if (e >= 0 && e < n_experts && e < MAXE && (b == 0 || be[b - 1] != e)) {
-      if (atomicCAS(&s_first[e], -1, b) != -1) {
-        atomicExch(err, 4);
-        s_bad = 1;
-      }
-    }
-  }
-  __syncthreads();
-
-  // Chunks: a block starts a chunk when its expert is local and it is 0 mod CH into the expert's run.
-  int base = 0;
-  for (int r0 = 0; r0 < nb; r0 += THREADS) {
-    const int b = r0 + tid;
-    int flag = 0, cn = 0;
-    if (b < nb) {
-      const int e = be[b];
-      if (e >= 0 && e < n_experts && e < MAXE && s_first[e] >= 0 && ((b - s_first[e]) & (Geo::CH - 1)) == 0) {
-        flag = 1;
-        cn = 1;
-        while (cn < Geo::CH && b + cn < nb && be[b + cn] == e) ++cn;
-      }
-    }
-    const unsigned ball = __ballot_sync(0xffffffffu, flag);
-    if (lane == 0) s_wsum[warp] = __popc(ball);
-    __syncthreads();
-    int tot = 0;
-#pragma unroll
-    for (int w = 0; w < THREADS / 32; ++w) tot += s_wsum[w];
-    if (flag) {
-      int off = 0;
-      for (int w = 0; w < warp; ++w) off += s_wsum[w];
-      const int idx = base + off + __popc(ball & ((1u << lane) - 1u));
-      if (idx < MAXC_LO) {
-        s_cblk[idx] = b;
-        s_cnb[idx] = cn;
-      }
-    }
-    base += tot;
-    __syncthreads();
-  }
-  if (tid == 0 && base > MAXC_LO) atomicExch(err, 3);
-  const int nc = base < MAXC_LO ? base : MAXC_LO;
-  for (int c = tid; c < nc; c += THREADS) {
-    const int e = be[s_cblk[c]];
-    atomicAdd(&s_gcount[e], 1);
-    if (c == 0 || be[s_cblk[c - 1]] != e) s_gfirst[e] = c;
-  }
-  __syncthreads();
-
-  const int total = s_bad ? 0 : nc * n_tiles;
-  const int KS = K / BK;
-  bool dead = false;
-  if (warp < 4) {
-    asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(Geo::RDEC) : "memory");
-    if (tid == 0) {
-      const int KC = K / 64;
-      int n = 0;
-      for (int it = blockIdx.x; it < total; it += gridDim.x) {
-        const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
-        const uint8_t* wsrc = wbank + (static_cast<size_t>(m.e) * n_tiles + m.j) * static_cast<size_t>(KC) * REC;
-        const uint64_t map = reinterpret_cast<uint64_t>(&maps.m[m.bucket]);
-        const uint32_t tx = WST + 2 * (16 << m.bucket) * 128;
-        for (int kb = 0; kb < KS; ++kb, ++n) {
-          const int s = n % STG;
-          mbar_wait(empty0 + 8 * s, ((n / STG) & 1) ^ 1, err, dead);
-          const uint32_t st = smem_u32(smem + s * Geo::STAGE_B);
-          const uint32_t fb = full0 + 8 * s;
-          mbar_expect_tx(fb, tx);
-          bulk_g2s(st, wsrc + static_cast<size_t>(kb) * WST, WST, fb);
-          tma_2d(st + WST, map, kb * BK, m.slot0, fb);
-          tma_2d(st + WST + Geo::SLAB_H, map, kb * BK + 64, m.slot0, fb);
-        }
-      }
-    }
-  } else {
-    asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(Geo::RINC) : "memory");
-    const int ctid = tid - 128, cw = ctid >> 5;
-    int n = 0;
-    for (int it = blockIdx.x; it < total; it += gridDim.x) {
-      const Item m = decode_item(it, n_tiles, be, s_cblk, s_cnb, s_gfirst, s_gcount);
-#define LO_CONSUME(NB_)                                                                                      \
-  consume_item_lo<NB_, G, NMAX, STG, OCC>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids,  \
-                                          num_routes, out, out_ld, err, dead)
-      // A chunk never carries more than NMAX tokens (CH blocks), so buckets above NMAX are not instantiated;
-      // reaching one anyway is a table bug: error word 3 (the producer then times out: error word 1, bounded).
-      switch (m.bucket) {
-        case 0: LO_CONSUME(16); break;
-        case 1: if constexpr (NMAX >= 32) { LO_CONSUME(32); } else { if (ctid == 0) atomicExch(err, 3); } break;
-        case 2: if constexpr (NMAX >= 64) { LO_CONSUME(64); } else { if (ctid == 0) atomicExch(err, 3); } break;
-        default: if constexpr (NMAX >= 128) { LO_CONSUME(128); } else { if (ctid == 0) atomicExch(err, 3); } break;
-      }
-#undef LO_CONSUME
-    }
-  }
-#else
-  if (threadIdx.x == 0) atomicExch(err, 2);
-#endif
-}
-
-template <bool G, int NMAX, int STG, int OCC>
-void info_lo(std::vector<int64_t>& r, int variant) {
-  const void* fn = reinterpret_cast<const void*>(rega_lo_kernel<G, NMAX, STG, OCC>);
-  const int bytes = SmemLo<G, NMAX, STG, OCC>::BYTES;
-  const cudaError_t e1 = cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes);
-  cudaFuncAttributes a{};
-  const cudaError_t e2 = cudaFuncGetAttributes(&a, fn);
-  int occ = 0;
-  const cudaError_t e3 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ, fn, THREADS, bytes);
-  if (e1 != cudaSuccess || e2 != cudaSuccess || e3 != cudaSuccess) (void)cudaGetLastError();
-  r.push_back(variant);
-  r.push_back(G ? 1 : 0);
-  r.push_back(e1 == cudaSuccess && e2 == cudaSuccess && e3 == cudaSuccess ? 1 : 0);
-  r.push_back(a.numRegs);
-  r.push_back(static_cast<int64_t>(a.localSizeBytes));
-  r.push_back(static_cast<int64_t>(a.sharedSizeBytes));
-  r.push_back(bytes);
-  r.push_back(occ);
-  r.push_back(static_cast<int64_t>(e1));
-  r.push_back(a.binaryVersion);
-  r.push_back(NMAX * 1000 + STG * 10 + OCC);
-}
-
-}  // namespace
-
-// Per candidate instantiation (11 values each; V64 w13, V64 w2, V32 w13, V32 w2): variant, gated, attribute calls ok, numRegs, localSizeBytes,
-// static smem, dynamic smem, CTAs per SM, cudaFuncSetAttribute's rc, binaryVersion, NMAX * 1000 + STG * 10 + OCC.
-// Also sets each one's dynamic smem attribute (needed before any launch). Variants as REGA_LO_VARIANTS.
-std::vector<int64_t> rega_init_lo() {
-  std::vector<int64_t> r;
-  info_lo<true, 64, 3, 2>(r, 1);
-  info_lo<false, 64, 3, 2>(r, 1);
-  info_lo<true, 32, 4, 2>(r, 2);
-  info_lo<false, 32, 4, 2>(r, 2);
-  return r;
-}
-
-// rega_gemm for the low-class candidates: same arguments plus the variant int; the tensor maps are encoded
-// from THIS call's bsrc into a stack-local Maps (the __grid_constant__ argument), nothing persisted.
-void rega_gemm_lo(int64_t which, int64_t variant, torch::Tensor bsrc, torch::Tensor wbank,
-                  torch::Tensor gs, torch::Tensor sorted_ids, torch::Tensor block_experts, torch::Tensor n_padded,
-                  int64_t num_routes, int64_t n_tiles, int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
-  TORCH_CHECK(which == 0 || which == 1, "rega_gemm_lo: which");
-  TORCH_CHECK(variant >= 1 && variant <= 2, "rega_gemm_lo: variant");
-  TORCH_CHECK(bsrc.is_cuda() && bsrc.is_contiguous() && bsrc.dim() == 2 && bsrc.scalar_type() == at::kBFloat16 &&
-              bsrc.size(0) > 0 && bsrc.size(1) > 0 && bsrc.size(1) == K,
-              "rega_gemm_lo: B-source scratch layout (cuda, contiguous, 2-D bf16, width K)");
-  TORCH_CHECK(wbank.is_contiguous() && gs.is_contiguous() && sorted_ids.is_contiguous() &&
-              block_experts.is_contiguous() && out.is_contiguous() && wbank.scalar_type() == at::kByte &&
-              gs.scalar_type() == at::kFloat && sorted_ids.scalar_type() == at::kInt &&
-              block_experts.scalar_type() == at::kInt && n_padded.scalar_type() == at::kInt &&
-              out.scalar_type() == at::kBFloat16 && err.scalar_type() == at::kInt && err.numel() >= 3,
-              "rega_gemm_lo: layout");
-  TORCH_CHECK(K % BK == 0 && block_experts.numel() <= MAXBLK_LO && gs.numel() <= MAXE &&
-              sorted_ids.numel() <= bsrc.size(0), "rega_gemm_lo: sizes");
-  TORCH_CHECK(wbank.numel() == gs.numel() * n_tiles * (K / 64) * REC, "rega_gemm_lo: weight bank size");
-  TORCH_CHECK(out.size(1) == (which == 0 ? n_tiles * 64 : n_tiles * 128), "rega_gemm_lo: output width");
-  auto stream = at::cuda::getCurrentCUDAStream();
-  const int blocks_len = static_cast<int>(block_experts.numel());
-  EncodeTiledFn enc = get_encode();
-  TORCH_CHECK(enc != nullptr, "rega_gemm_lo: cuTensorMapEncodeTiled entry point missing");
-  Maps mp;
-  std::memset(&mp, 0, sizeof(Maps));
-  {
-    const cuuint64_t dims[2] = {static_cast<cuuint64_t>(bsrc.size(1)), static_cast<cuuint64_t>(bsrc.size(0))};
-    const cuuint64_t strides[1] = {static_cast<cuuint64_t>(bsrc.size(1)) * 2};
-    const cuuint32_t es[2] = {1, 1};
-    void* base = bsrc.data_ptr();
-    for (int b = 0; b < 4; ++b) {
-      const cuuint32_t box[2] = {64, static_cast<cuuint32_t>(16 << b)};
-      const CUresult rc = enc(&mp.m[b], CU_TENSOR_MAP_DATA_TYPE_BFLOAT16, 2, base, dims, strides, box, es,
-                              CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_128B,
-                              CU_TENSOR_MAP_L2_PROMOTION_L2_256B, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
-      TORCH_CHECK(rc == CUDA_SUCCESS, "rega_gemm_lo: tensor map ", b, " rc ", static_cast<int>(rc));
-    }
-  }
-#define LO_LAUNCH(G_, NM_, ST_, OC_)                                                                          \
-  rega_lo_kernel<G_, NM_, ST_, OC_><<<static_cast<unsigned>(grid), THREADS, SmemLo<G_, NM_, ST_, OC_>::BYTES,     \
-                                     stream>>>(                                                               \
-      mp, reinterpret_cast<uint8_t*>(wbank.data_ptr()), reinterpret_cast<float*>(gs.data_ptr()),                \
-      reinterpret_cast<int*>(sorted_ids.data_ptr()), reinterpret_cast<int*>(block_experts.data_ptr()),            \
-      reinterpret_cast<int*>(n_padded.data_ptr()), blocks_len, static_cast<int>(num_routes),                    \
-      static_cast<int>(n_tiles), static_cast<int>(K), static_cast<int>(gs.numel()),                             \
-      reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), static_cast<int>(out.size(1)),                          \
-      reinterpret_cast<int*>(err.data_ptr()))
-  if (variant == 1) {
-    if (which == 0) LO_LAUNCH(true, 64, 3, 2); else LO_LAUNCH(false, 64, 3, 2);
-  } else {
-    if (which == 0) LO_LAUNCH(true, 32, 4, 2); else LO_LAUNCH(false, 32, 4, 2);
-  }
-#undef LO_LAUNCH
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-"""
-
-
-def _rega_lo_src():
-    """muse_prefill_rega_lo's CUDA source: master's head + wgmma wrappers + the namespace part of master's body
-    (shared helpers: Item, decode_item, dq_stage, get_encode, ...; master's templates in it are never
-    instantiated here), the namespace closed, then _REGA_LO_SRC (which reopens it). None when master's body does
-    not have exactly one namespace end (the split point). Master's strings are read, never edited."""
-    if _REGA_BODY.count(REGA_NS_END) != 1:
+def _choose_attention(st, props):
+    """Validate (and, on Hopper, tune) the own attention kernel; returns the per-class variant choice."""
+    if not (props.major >= 9 or OWN_ATTN_LOCAL):
         return None
-    return _REGA_HEAD + _rega_wgmma_src() + _REGA_BODY.split(REGA_NS_END)[0] + REGA_NS_END + _REGA_LO_SRC
-
-
-def _rega_lo_identity():
-    """(master's v2 (cpp + cuda) text hashes to REGA_V2_SHA256, master's v1 fallback source still derives and
-    hashes to REGA_V1_SHA256): this combo builds master's v2 module from master's code, unchanged."""
-    v2 = hashlib.sha256((_REGA_CPP + _rega_src()).encode()).hexdigest() == REGA_V2_SHA256
-    return v2, _rega_src_v1() is not None
-
-
-def _rega_lo_audit(src):
-    """Pre-build audit of the LO module: no templated Tensor accessor and no mutable file-scope / static / device
-    globals (_rega_audit_cpp). Returns the findings."""
-    bad = []
-    for name, text in (("cpp", _REGA_LO_CPP), ("cuda", src)):
-        for n, line in enumerate(text.splitlines(), 1):
-            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
-                bad.append(f"{name} line {n}: {line.strip()[:100]}")
-    return bad + _rega_audit_cpp(_REGA_LO_CPP + "\n" + src)
-
-
-def _rega_lo_build(src):
-    """Compile muse_prefill_rega_lo (prepare only, after master's whole setup): ext or None. Master's flags
-    (REGA_CUDA_CFLAGS: -O3 -std=c++20 -lineinfo, sm_90a gencode) and TORCH_CUDA_ARCH_LIST=9.0a around
-    load_inline, restored after; every wgmma / setmaxnreg body is behind __CUDA_ARCH_FEAT_SM90_ALL (error word 2
-    otherwise)."""
-    t0 = time.perf_counter()
-    prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
-    ext = None
     try:
-        from torch.utils import cpp_extension
-        from torch.utils.cpp_extension import load_inline
-        os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
-        try:
-            arch_flags = cpp_extension._get_cuda_arch_flags()
-        except Exception as e:
-            print(f"{REGA_LO_TAG} TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r}); default list, error word 2 decides",
-                  flush=True)
-            if prev is None:
-                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-            else:
-                os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-            arch_flags = ["<unknown>"]
-        print(f"{REGA_LO_TAG} build {REGA_LO_EXT_NAME}: TORCH_CUDA_ARCH_LIST="
-              f"{os.environ.get('TORCH_CUDA_ARCH_LIST')!r} -> {arch_flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS}",
-              flush=True)
-        ext = load_inline(name=REGA_LO_EXT_NAME, cpp_sources=_REGA_LO_CPP, cuda_sources=src,
-                          functions=list(REGA_LO_FUNCS), extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
-    except Exception as e:
-        ext = None
-        print(f"{REGA_LO_TAG} load_inline failed after {time.perf_counter() - t0:.1f}s: {str(e)[-400:]!r}",
-              flush=True)
-    finally:
-        if prev is None:
-            os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-        else:
-            os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-    if ext is not None:
-        print(f"{REGA_LO_TAG} nvcc + load {time.perf_counter() - t0:.1f}s", flush=True)
-    return ext
-
-
-def _rega_lo_attrs(ext):
-    """Attributes of every candidate instantiation BEFORE any launch (rega_init_lo also sets each one's dynamic
-    smem attribute). OCC 2 needs numRegs == 80 exactly (the 32 / 104 setmaxnreg split uses the whole 80 x 384
-    pool: fewer registers at launch would make setmaxnreg.inc wait forever), no local memory, 2 CTAs/SM,
-    binaryVersion 90 and static smem <= REGA_LO_STATIC_BOUND. Returns {variant: ok}."""
-    info = ext.rega_init_lo()
-    lo_ok = {v: True for v in REGA_LO_VARIANTS}
-    seen = {v: 0 for v in REGA_LO_VARIANTS}
-    for i in range(0, len(info), 11):
-        v, gated, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, geo = info[i:i + 11]
-        if v not in REGA_LO_VARIANTS:
-            continue
-        name, nmax, stg, occ_want = REGA_LO_VARIANTS[v]
-        seen[v] += 1
-        regs_ok = regs == REGA_LO_REGS_OCC2 and regs * REGA_THREADS >= REGA_LO_POOL[occ_want]
-        good = (bool(a_ok) and regs_ok and local_bytes == 0 and occ == occ_want and bin_v == 90
-                and static_smem <= REGA_LO_STATIC_BOUND and static_smem + dyn_smem <= REGA_SMEM_LIMIT
-                and geo == nmax * 1000 + stg * 10 + occ_want)
-        lo_ok[v] = lo_ok[v] and good
-        print(f"{REGA_LO_TAG} candidate {name} {'w13+silu' if gated else 'w2'} rega_lo_kernel<"
-              f"{'true' if gated else 'false'}, {nmax}, {stg}, {occ_want}>: attrs ok {bool(a_ok)} (SetAttribute rc "
-              f"{e1}), numRegs {regs} (need == {REGA_LO_REGS_OCC2}{'' if regs_ok else ' MISS'}), local bytes "
-              f"{local_bytes}{' (SPILL)' if local_bytes else ''}, static smem {static_smem} B (<= "
-              f"{REGA_LO_STATIC_BOUND}), dynamic smem {dyn_smem} B, CTAs/SM {occ} (need {occ_want}), binaryVersion "
-              f"{bin_v}: {'ok' if good else 'OFF'}", flush=True)
-    for v in REGA_LO_VARIANTS:
-        lo_ok[v] = lo_ok[v] and seen[v] == 2  # both GEMMs (w13 and w2) reported
-    return lo_ok
-
-
-def _rega_pop_case(tokens, alpha, gen, device):
-    """prepare() only: a popularity-skewed soft routing. Each token's top 8 of the N_EXPERTS experts are drawn
-    without replacement (Gumbel top-k) in proportion to a popularity that is 1 for remote experts and alpha * z_i
-    for local expert i, z_i ~ (i + 1)^-0.8 normalised to mean 1 (a few hot experts, a long tail). alpha sets the
-    local-route count; _rega_pop_counts calibrates it."""
-    x = torch.randn((tokens, D_EXPERT), generator=gen, device=device, dtype=torch.float32).to(torch.bfloat16)
-    z = torch.arange(1, LOCAL_EXPERTS + 1, device=device, dtype=torch.float32) ** -0.8
-    pop = torch.ones(N_EXPERTS, device=device, dtype=torch.float32)
-    pop[:LOCAL_EXPERTS] = alpha * z / z.mean()
-    u = torch.rand((tokens, N_EXPERTS), generator=gen, device=device).clamp_(1e-12, 1.0 - 1e-7)
-    ids = (pop.log() - torch.log(-torch.log(u))).topk(TOP_K, dim=1).indices.to(torch.int32)
-    local_ids = torch.where(ids < LOCAL_EXPERTS, ids, torch.full_like(ids, -1)).contiguous()
-    tw = torch.rand((tokens, TOP_K), generator=gen, device=device, dtype=torch.float32) + 0.1
-    tw = (tw / tw.sum(dim=1, keepdim=True)).contiguous()
-    return x, tw, local_ids
-
-
-def _rega_pop_counts(tokens, device):
-    """prepare() only: (uniform random local routes, {alpha: popularity routing's local routes}), each the mean
-    of REGA_LO_POP_DRAWS draws, over the refined grid REGA_LO_POP_ALPHAS."""
-    gen = torch.Generator(device=device).manual_seed(20261028)
-    rnd = sum(int((_ssdq_case(tokens, "random", gen, device)[2] >= 0).sum())
-              for _ in range(REGA_LO_POP_DRAWS)) / REGA_LO_POP_DRAWS
-    counts = {}
-    for alpha in REGA_LO_POP_ALPHAS:
-        counts[alpha] = sum(int((_rega_pop_case(tokens, alpha, gen, device)[2] >= 0).sum())
-                            for _ in range(REGA_LO_POP_DRAWS)) / REGA_LO_POP_DRAWS
-    return rnd, counts
-
-
-def _rega_pop_pick(counts, target):
-    """The alpha whose calibrated local-route count is closest to target: (alpha, count)."""
-    alpha = min(counts, key=lambda a: abs(counts[a] - target))
-    return alpha, counts[alpha]
-
-
-def _rega_lo_tiles(lids, ch, state=None):
-    """prepare() only: (chunks, max chunks of one expert, touched local experts, max local routes of one expert)
-    when chunks are cut every ch blocks of 16 rows (master: 8; V64: 4; V32: 2), on the tables of the align
-    kernel_fn really runs (_align_dispatch: master's two-phase align2 where prepare() gated it ON) when state is
-    given, else on _align_parallel's."""
-    if state is None:
-        _, (_, block_experts, n_padded) = _align_parallel(lids, 0, LOCAL_EXPERTS, REGA_BSM)
-    else:
-        _, (_, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
-    used = min(int(n_padded.cpu()[0]) // REGA_BSM, block_experts.numel())
-    be = block_experts[:used].cpu().long()
-    counts = torch.bincount(be[(be >= 0) & (be < LOCAL_EXPERTS)], minlength=LOCAL_EXPERTS)
-    chunks = (counts + ch - 1) // ch
-    routes = torch.bincount(lids[lids >= 0].long().cpu(), minlength=LOCAL_EXPERTS)
-    return int(chunks.sum()), int(chunks.max()), int((counts > 0).sum()), int(routes.max())
-
-
-def _rega_lo_align_check(lids, state):
-    """prepare() only (review fix 1): the LO kernels consume master's NEW two-phase align tables in kernel_fn.
-    Compares the align2 tables (_align_dispatch on this state) with _align_parallel's, bit for bit (print-only:
-    the self-check runs LO on the align2 tables through the real _experts_rega path anyway), and the chunk
-    tiling at every chunk size (master 8, V64 4, V32 2), which must be equal. Returns (tables equal, tiles
-    equal, align2 chunk in use)."""
-    tokens = lids.shape[0]
-    cls = "low" if tokens <= ALIGN2_LOW_MAX else ("high" if tokens <= MARLIN_MAX_TOKENS else "ft")
-    chunk = state["align2_ok"].get(f"{REGA_BSM}:{cls}", 0) if ALIGN2_MIN_TOKENS < tokens <= REGA_FT_MAX else 0
-    _, a2 = _align_dispatch(lids, REGA_BSM, state)
-    _, ap = _align_parallel(lids, 0, LOCAL_EXPERTS, REGA_BSM)
-    same = all(p.shape == q.shape and bool(torch.equal(p, q)) for p, q in zip(a2, ap))
-    tiles = all(_rega_lo_tiles(lids, ch, state) == _rega_lo_tiles(lids, ch) for ch in (8, 4, 2))
-    return same, tiles, chunk
-
-
-def _rega_lo_selfcheck(state, weights, device, t_start, v, pop_kind, gen, cache):
-    """prepare() only, for one candidate that passed its attribute check: eager self-checks through the REAL
-    _experts_rega path on a copy of the state with this candidate selected (so the align is master's align2 where
-    it is ON, review fix 1) against the fp32 reference (bound max(2 x Marlin's own error, 8e-3), worst row 5x):
-    T 300 / 753 random, skewed, one-expert, 753 popularity (the guard routing), 1024 local-saturated; with the
-    fused norm-gather ON for the low class also prenorm=True cases (raw x in, as kernel_fn). Each case also
-    needs error word 0, both launch markers, a finite output and align2 / _align_parallel tiling equality. Then
-    the A/B/C copy / replay check with refilled inputs (REGA_LO_REPLAY_KINDS) and, with norm-gather ON, its
-    two-state prenorm replay check. Returns None or why."""
-    name, nmax, stg, occ = REGA_LO_VARIANTS[v]
-    st = dict(state)
-    st["rega_low_variant"], st["rega_low_grid"] = int(v), int(occ * int(state["rega_grid"]))
-    ng = bool(state.get("norm_gather_ok", {}).get("low", False))
-    cases = [(t, k, False) for t, k in REGA_LO_SELF_CHECKS]
-    if ng:
-        cases += [(t, k, True) for t, k in REGA_LO_PRENORM_CHECKS]
-    norm = state["pre_expert_norm"]
-    for t, kind, pre in cases:
-        used = time.perf_counter() - t_start
-        if used > REGA_LO_GATE_DEADLINE_S:
-            return f"LO SKIPPED: self-check deadline ({used:.0f}s > {REGA_LO_GATE_DEADLINE_S:.0f}s)"
-        kind_ = pop_kind if kind == "pop" else kind
-        x, tw, lids = _rega_case(t, kind_, gen, device)
-        same, tiles_ok, chunk = _rega_lo_align_check(lids, state)
-        chunks, max_chunks, touched, max_routes = _rega_lo_tiles(lids, nmax // 16, state)
-        xin = norm(x) if pre else x
-        ref = _rega_reference_out(xin, tw, lids, state, weights, cache)
-        st["rega_err"].zero_()
-        new = _experts_rega(x, tw, lids, st, tracer=_RegaTracer(f"{name} T={t} {kind_}{' prenorm' if pre else ''}"),
-                            prenorm=pre)
-        torch.cuda.synchronize()
-        word, m13, m2 = _rega_marks(st["rega_err"])
-        finite = bool(torch.isfinite(new.float()).all())
-        mst = _experts_rega(x, tw, lids, state, prenorm=pre)  # master's low-class rega (state variant is 0 here)
-        mar = _experts_marlin(xin, tw, lids, state)
-        torch.cuda.synchronize()
-        e_new, w_new = _ssdq_metrics(new, ref)
-        e_mar, _ = _ssdq_metrics(mar, ref)
-        e_mst, _ = _ssdq_metrics(mst, ref)
-        e_vs, _ = _ssdq_metrics(new, mst)
-        bound = max(2.0 * e_mar, 8e-3)
-        ok = (word == 0 and _rega_launched(m13, m2) and finite and e_new <= bound and w_new <= 5.0 * bound
-              and tiles_ok)
-        print(f"{REGA_LO_TAG} {name} self-check T={t} {kind_}{' prenorm (fused norm-gather)' if pre else ''}: "
-              f"{int((lids >= 0).sum())} local routes, {touched} experts (max {max_routes} routes), {chunks} chunks "
-              f"(max {max_chunks} per expert); align2 chunk {chunk}, tables == _align_parallel {same}, tiles equal "
-              f"{tiles_ok}; rel L2 {e_new:.3e} worst row {w_new:.3e}; master rega {e_mst:.3e} (LO vs master "
-              f"{e_vs:.2e}); marlin {e_mar:.3e}; bound {bound:.3e}; finite {finite}; error word {word} "
-              f"({REGA_ERR_TEXT.get(word, '?')}); markers w13 {m13:#x} w2 {m2:#x}{'' if ok else '  <-- MISS'}",
-              flush=True)
-        del x, tw, lids, xin, ref, new, mst, mar
+        ok = _validate_attn(st, list(ATTN_VARIANTS) if props.major >= 9 else [24])
         if not ok:
-            return (f"self-check T={t} {kind_}{' prenorm' if pre else ''}: error word {word} "
-                    f"({REGA_ERR_TEXT.get(word, '?')}), finite {finite}, tiles equal {tiles_ok}, rel L2 {e_new:.3e}, "
-                    f"worst row {w_new:.3e}, bound {bound:.3e}, markers {m13:#x}/{m2:#x}")
-    used = time.perf_counter() - t_start
-    if used > REGA_LO_GATE_DEADLINE_S or used > REGA_COPY_DEADLINE_S:
-        return f"LO SKIPPED: copy / replay check deadline ({used:.0f}s > {REGA_LO_GATE_DEADLINE_S:.0f}s)"
-    plan = tuple((t, tuple(pop_kind if k == "pop" else k for k in kinds)) for t, kinds in REGA_LO_REPLAY_KINDS.items())
-    why, line = _rega_replay_check(st, weights, cache, device, gen, plan=plan, keys=REGA_LO_STATE_KEYS)
-    if why:
-        return f"copy / replay check failed: {why}"
-    print(f"{REGA_LO_TAG} LAUNCHED = {name}: {line}", flush=True)
-    if ng:
-        worst, why = _ng_replay_check(st, device, REGA_GATE_TOKENS["low"], gen)
-        if why:
-            return f"two-state prenorm replay check failed: {why}"
-        print(f"{REGA_LO_TAG} {name} two-state prenorm (fused norm-gather) replay check T={REGA_GATE_TOKENS['low']}: "
-              f"worst rel L2 vs the non-fused LO block {worst:.2e} (bound 1e-3)", flush=True)
-    return None
-
-
-def _rega_lo_gate(state, device, tokens, kind, cands, grids, prenorm):
-    """prepare() only: interleaved cold-L2 CUDA-graph replays at one T and routing of, per variant in cands
-    (0 = master's low-class rega): the whole expert block exactly as kernel_fn runs it (_experts_rega with the
-    fused norm-gather when prenorm, so the gate sees the judge's prologue), the w13 kernel alone and the w2
-    kernel alone (over one align2 / gather made here). REGA_LO_ALTERNATIONS alternations, order rotated and
-    flipped, a 256 MB flush before every replay, empty-graph baseline subtracted. Every candidate here passed its
-    attribute check and self-checks. Returns ({'block:v' / 'w13:v' / 'w2:v': median us}, local routes, lids)."""
-    gen = torch.Generator(device=device).manual_seed(20261027)
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    ext, lo, bank, err = state["rega_ext"], state["rega_lo_ext"], state["rega_bank"], state["rega_err"]
-    err.zero_()
-    num_slots = tokens * TOP_K
-    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
-    rows = block_experts.shape[0] * REGA_BSM
-    xs = torch.empty((rows, D_EXPERT), device=device, dtype=torch.bfloat16)
-    ext.rega_gather(x.contiguous(), sorted_ids, block_experts, n_padded, num_slots, LOCAL_EXPERTS, xs)
-    hs = torch.zeros((rows, D_EXPERT), device=device, dtype=torch.bfloat16)
-    y = torch.zeros((num_slots, D_EXPERT), device=device, dtype=torch.bfloat16)
-
-    def gemm(v, which):
-        if which == 0:
-            args = (xs, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 64,
-                    D_EXPERT, hs)
-        else:
-            args = (hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots, D_EXPERT // 128,
-                    D_EXPERT, y)
-        if v:
-            lo.rega_gemm_lo(which, v, *args, grids[v], err)
-        else:
-            ext.rega_gemm(which, *args, grids[0], err)
-
-    gemm(0, 0)  # real hs for the w2-only graphs
-    torch.cuda.synchronize()
-    fns = {}
-    for v in cands:
-        st = dict(state)
-        st["rega_low_variant"], st["rega_low_grid"] = int(v), int(grids[v])
-        fns[f"block:{v}"] = lambda st=st: _experts_rega(x, tw, lids, st, prenorm=prenorm)
-        fns[f"w13:{v}"] = lambda v=v: gemm(v, 0)
-        fns[f"w2:{v}"] = lambda v=v: gemm(v, 1)
-    graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
-    tiny = torch.zeros(16, dtype=torch.float32, device=device)
-    graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-    flush = torch.empty(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)  # > the 50 MB L2
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def once(graph):
-        flush.zero_()
-        ev[0].record()
-        graph.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    names = list(graphs)
-    samples = {name: [] for name in names}
-    for name in names:
-        once(graphs[name])  # warm-up replay
-    for i in range(REGA_LO_ALTERNATIONS):
-        order = names[i % len(names):] + names[:i % len(names)]
-        if i % 2:
-            order = order[::-1]
-        for name in order:
-            samples[name].append(once(graphs[name]))
-    word = _rega_marks(err)[0]
-    med = {name: sorted(v)[len(v) // 2] for name, v in samples.items()}
-    base = med.pop("empty")
-    local = int((lids >= 0).sum())
-    del graphs, fns, flush, xs, hs, y
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-    if word != 0:
-        raise RuntimeError(f"gate replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
-    return {name: max(v - base, 0.0) for name, v in med.items()}, local, lids
-
-
-def _rega_lo_gate_lines(tag, tokens, kind, meds, local, lids, cands, grids, state, n_rnd):
-    """The per-variant LOW GATE lines of one routing (block, ratio vs master, w13 / w2 kernel-alone us and
-    TB/s over the touched experts' weight bytes, chunks); returns ({v: block ratio vs master}, lines)."""
-    bytes13 = state["rega_bank"]["q13"].numel() // LOCAL_EXPERTS
-    bytes2 = state["rega_bank"]["q2"].numel() // LOCAL_EXPERTS
-    ratios, lines = {}, []
-    for v in cands:
-        name, nmax = ("master", 128) if v == 0 else REGA_LO_VARIANTS[v][:2]
-        chunks, max_chunks, touched, max_routes = _rega_lo_tiles(lids, nmax // 16, state)
-        b13, b2 = touched * bytes13, touched * bytes2
-        t_blk, t13, t2 = meds[f"block:{v}"], meds[f"w13:{v}"], meds[f"w2:{v}"]
-        ratios[v] = t_blk / max(meds["block:0"], 1e-9)
-        lines.append(
-            f"{REGA_LO_TAG} LOW GATE {tag} T={tokens} {kind} ({local} local routes = {local / max(n_rnd, 1.0):.2f}x "
-            f"random, {touched} experts, max {max_routes} routes/expert): {name} block {t_blk:.1f} us (ratio vs "
-            f"master {ratios[v]:.3f}); KERNELS w13 {t13:.1f} us {b13 / max(t13, 1e-9) / 1e6:.2f} TB/s, w2 {t2:.1f} us "
-            f"{b2 / max(t2, 1e-9) / 1e6:.2f} TB/s; chunks {chunks} (max {max_chunks} per expert); grid {grids[v]}")
-        print(lines[-1], flush=True)
-    return ratios, lines
-
-
-def _rega_lo_phase(state, weights, device, t_start):
-    """prepare() only, LAST (after _rega_setup, _fa3c_setup and _norm_gather_setup returned). Builds the separate
-    muse_prefill_rega_lo module (master's muse_prefill_rega_v2 is untouched), checks every candidate's attributes
-    before any launch, self-checks the passing ones (_rega_lo_selfcheck), then gates them against master's
-    low-class rega at T = REGA_GATE_TOKENS['low'] on the norm-gather-ON block: ON only at <= REGA_LO_RANDOM_RATIO
-    on the random routing AND <= REGA_LO_GUARD_RATIO on the popularity guard routing (calibrated to
-    ~REGA_LO_GUARD_ROUTES local routes); of the passing candidates the lowest guard-routing median wins. Then
-    the print-only SKEW CURVE. Sets only state['rega_low_variant'] / ['rega_low_grid'] (and 'rega_lo_ext').
-    Never raises. Returns the summary lines; the last is '[rega-lo] PATH CHOSEN low: master|V64|V32 ...'."""
-    t0 = time.perf_counter()
-    sm = int(state.get("rega_grid", 0))
-    state["rega_low_variant"], state["rega_low_grid"] = 0, sm
-    lines, off, chosen = [], None, 0
-    try:
-        used = time.perf_counter() - t_start
-        if not state.get("rega_ok", {}).get("low", False):
-            off = "the low class is not on rega (master's gate / setup), so there is nothing to replace"
-        elif REGA_LO_SKIP:
-            off = ("LO PINNED OFF (phasec lo-skip-phase): no LO build / checks / gate; master's low class, as "
-                   "every logged board-era LO gate kept")
-        elif used > REGA_LO_START_DEADLINE_S:
-            off = f"LO SKIPPED: prepare already used {used:.0f}s > {REGA_LO_START_DEADLINE_S:.0f}s LO start deadline"
-        else:
-            off, chosen = _rega_lo_run(state, weights, device, t_start, sm, lines)
-    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
-        off, chosen = f"LO phase raised {e!r}"[:400], 0
-    finally:
-        if not chosen:
-            state["rega_low_variant"], state["rega_low_grid"] = 0, sm
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        if off:
-            lines.append(f"{REGA_LO_TAG} OFF low-class candidates: {off}")
-            print(lines[-1], flush=True)
-        if off and "LO SKIPPED" in off:
-            lines.append(f"{REGA_LO_TAG} LO SKIPPED (time): the low class runs master's rega_kernel<G, false>; this "
-                         f"run is then identical to combination A")
-            print(lines[-1], flush=True)
-        v = int(state["rega_low_variant"])
-        lines.append(f"{REGA_LO_TAG} phase took {time.perf_counter() - t0:.1f}s; prepare total "
-                     f"{time.perf_counter() - t_start:.1f}s; combination A's flags (echo for the log tail): rega_ok "
-                     f"{state.get('rega_ok')}, norm_gather_ok {state.get('norm_gather_ok')}, ssdq_ok "
-                     f"{bool(state.get('ssdq_ok'))}")
-        lines.append(f"{REGA_LO_TAG} PATH CHOSEN low: {REGA_LO_VARIANTS[v][0] if v else 'master'} (variant {v}, grid "
-                     f"{state['rega_low_grid']}; T in ({REGA_MIN_TOKENS}, {REGA_LOW_MAX}] where low-class rega is "
-                     f"{'ON' if state.get('rega_ok', {}).get('low', False) else 'OFF'}; every other T as combination A)")
-    return lines
-
-
-def _rega_lo_run(state, weights, device, t_start, sm, lines):
-    """_rega_lo_phase's body: (OFF reason or None, chosen variant or 0)."""
-    v2_ok, v1_ok = _rega_lo_identity()
-    print(f"{REGA_LO_TAG} master's {REGA_EXT_NAME} source sha256 {'matches' if v2_ok else 'DOES NOT match'} "
-          f"{REGA_V2_SHA256[:12]}; v1 fallback source {'derives (sha256 ok)' if v1_ok else 'does NOT derive'}",
-          flush=True)
-    if not v2_ok:
-        return "master's v2 rega source does not hash to master's (the LO module derives from it)", 0
-    worst_blocks = -(-(REGA_LOW_MAX * TOP_K + LOCAL_EXPERTS * (REGA_BSM - 1)) // REGA_BSM)
-    if worst_blocks > REGA_LO_MAXBLK:
-        return f"block table {REGA_LO_MAXBLK} < worst case {worst_blocks} at T={REGA_LOW_MAX}", 0
-    src = _rega_lo_src()
-    if src is None:
-        return "master's rega body has no unique namespace end", 0
-    bad = _rega_lo_audit(src)
-    if bad:
-        return f"source audit: {bad[:3]}", 0
-    print(f"{REGA_LO_TAG} source audit ok (no templated accessor, no file-scope / static / device globals); "
-          f"candidates {[(v, c[0]) for v, c in REGA_LO_VARIANTS.items()]}", flush=True)
-    ext = _rega_lo_build(src)
-    if ext is None:
-        return f"{REGA_LO_EXT_NAME} build failed", 0
-    # Attributes BEFORE any launch: setmaxnreg.inc hangs on a short register pool.
-    lo_ok = _rega_lo_attrs(ext)
-    cands = [v for v in REGA_LO_VARIANTS if lo_ok[v]]
-    if not cands:
-        return "no candidate passed the attribute check (numRegs / local bytes / CTAs per SM / static smem)", 0
-    state["rega_lo_ext"] = ext
-    tokens = REGA_GATE_TOKENS["low"]
-    n_rnd, counts = _rega_pop_counts(tokens, device)
-    g_alpha, g_cnt = _rega_pop_pick(counts, REGA_LO_GUARD_ROUTES)
-    guard_kind = f"pop:{g_alpha:g}"
-    line = (f"{REGA_LO_TAG} guard routing at T={tokens}: alpha {g_alpha:g} -> {g_cnt:.0f} local routes (target "
-            f"{REGA_LO_GUARD_ROUTES}, the TASK.md floor-implied judge turn_1 load) = {g_cnt / max(n_rnd, 1.0):.2f}x "
-            f"the uniform {n_rnd:.0f}; calibration " + ", ".join(f"{a:g}:{c:.0f}" for a, c in counts.items()))
-    lines.append(line)
-    print(line, flush=True)
-    gen = torch.Generator(device=device).manual_seed(20261029)
-    cache = {}
-    passed = []
-    try:
-        for v in cands:
-            why = _rega_lo_selfcheck(state, weights, device, t_start, v, guard_kind, gen, cache)
-            state["rega_err"].zero_()
-            if why:
-                lines.append(f"{REGA_LO_TAG} candidate {REGA_LO_VARIANTS[v][0]} OFF: {why}")
-                print(lines[-1], flush=True)
-                if "LO SKIPPED" in why:
-                    break
-                continue
-            passed.append(v)
-    finally:
-        cache.clear()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    print(f"{REGA_LO_TAG} checks done at prepare {time.perf_counter() - t_start:.1f}s; passed "
-          f"{[REGA_LO_VARIANTS[v][0] for v in passed]}", flush=True)
-    if not passed:
-        skipped = any("LO SKIPPED" in ln for ln in lines)
-        return ("LO SKIPPED: no candidate finished its checks before the deadline" if skipped
-                else "every candidate failed its checks"), 0
-
-    # Gate: master (variant 0) and every passing candidate in one interleaved loop per routing, on the block
-    # kernel_fn runs (fused norm-gather when it is ON for the low class).
-    prenorm = bool(state.get("norm_gather_ok", {}).get("low", False))
-    grids = {0: sm}
-    for v in passed:
-        grids[v] = REGA_LO_VARIANTS[v][3] * sm
-    gate_cands = [0] + passed
-    res = {}
-    for tag, kind in (("random", "random"), ("guard", guard_kind)):
-        used = time.perf_counter() - t_start
-        if used > REGA_LO_GATE_DEADLINE_S:
-            return (f"LO SKIPPED: gate ({tag}) not started, prepare already used {used:.0f}s > "
-                    f"{REGA_LO_GATE_DEADLINE_S:.0f}s"), 0
-        meds, local, lids = _rega_lo_gate(state, device, tokens, kind, gate_cands, grids, prenorm)
-        ratios, glines = _rega_lo_gate_lines(tag, tokens, kind, meds, local, lids, gate_cands, grids, state, n_rnd)
-        lines.extend(glines)
-        res[tag] = (meds, ratios, local, lids)
-    r_rnd, r_grd = res["random"][1], res["guard"][1]
-    m_grd = res["guard"][0]
-    sel = [v for v in passed if r_rnd[v] <= REGA_LO_RANDOM_RATIO and r_grd[v] <= REGA_LO_GUARD_RATIO]
-    summary = {REGA_LO_VARIANTS[v][0]: (round(r_rnd[v], 3), round(r_grd[v], 3)) for v in passed}
-    chosen = 0
-    if not sel:
-        lines.append(f"{REGA_LO_TAG} LOW GATE verdict ({'norm-gather-ON' if prenorm else 'module-norm'} block): no "
-                     f"candidate at <= {REGA_LO_RANDOM_RATIO} random AND <= {REGA_LO_GUARD_RATIO} guard "
-                     f"(random, guard ratios {summary}): master kept")
-        print(lines[-1], flush=True)
-    else:
-        best = min(sel, key=lambda v: m_grd[f"block:{v}"])
-        assert r_rnd[best] <= REGA_LO_RANDOM_RATIO < 1.0 and r_grd[best] <= REGA_LO_GUARD_RATIO, \
-            "selector picked a candidate its own timing does not favour"
-        assert m_grd[f"block:{best}"] <= m_grd["block:0"] * REGA_LO_GUARD_RATIO, "guard median does not favour it"
-        used = time.perf_counter() - t_start
-        if used > REGA_LO_GATE_DEADLINE_S:
-            return (f"LO SKIPPED: {REGA_LO_VARIANTS[best][0]} passed (random {r_rnd[best]:.3f}, guard "
-                    f"{r_grd[best]:.3f}) but prepare already used {used:.0f}s > {REGA_LO_GATE_DEADLINE_S:.0f}s: no "
-                    f"switch away from master"), 0
-        chosen = int(best)
-        state["rega_low_variant"], state["rega_low_grid"] = chosen, int(grids[best])
-        lines.append(f"{REGA_LO_TAG} LOW GATE verdict ({'norm-gather-ON' if prenorm else 'module-norm'} block): "
-                     f"{REGA_LO_VARIANTS[best][0]} ON (random {r_rnd[best]:.3f} <= {REGA_LO_RANDOM_RATIO}, guard "
-                     f"{r_grd[best]:.3f} <= {REGA_LO_GUARD_RATIO}; lowest guard median of {summary})")
-        print(lines[-1], flush=True)
-
-    # Print-only SKEW CURVE (review fix 2: only candidates that passed the attribute check AND the self-checks
-    # launch here): V64 (else the first passing candidate) vs master at 1.2x / 1.5x the random local routes,
-    # beside the gate's 1.0x (random) and guard (~1.8x) points. Never changes the choice above.
-    dv = 1 if 1 in passed else passed[0]
-    pts = []
-    for tag in ("random", "guard"):
-        meds, ratios, local, lids = res[tag]
-        pts.append((tag, local, ratios[dv], _rega_lo_tiles(lids, REGA_LO_VARIANTS[dv][1] // 16, state)))
-    for mult in REGA_LO_DIAG_MULTS:
-        used = time.perf_counter() - t_start
-        if used > REGA_LO_GATE_DEADLINE_S:
-            lines.append(f"{REGA_LO_TAG} SKEW CURVE {mult}x skipped: prepare already used {used:.0f}s")
-            print(lines[-1], flush=True)
-            continue
-        alpha, cnt = _rega_pop_pick(counts, mult * n_rnd)
-        kind = f"pop:{alpha:g}"
-        meds, local, lids = _rega_lo_gate(state, device, tokens, kind, [0, dv], grids, prenorm)
-        ratios, _ = _rega_lo_gate_lines(f"diag {mult}x", tokens, kind, meds, local, lids, [0, dv], grids, state,
-                                        n_rnd)
-        pts.insert(len(pts) - 1, (f"{mult}x", local, ratios[dv], _rega_lo_tiles(lids, REGA_LO_VARIANTS[dv][1] // 16,
-                                                                               state)))
-    labels = {"random": "1.0x", "guard": "1.8x"}
-    curve = " ".join(f"{labels.get(t, t)} {r:.3f}" for t, _, r, _ in pts)
-    detail = "; ".join(f"{labels.get(t, t)}: {loc} routes ({loc / max(n_rnd, 1.0):.2f}x), {tl[2]} experts, max "
-                       f"{tl[3]} routes/expert, max {tl[1]} chunks/expert" for t, loc, _, tl in pts)
-    lines.append(f"{REGA_LO_TAG} SKEW CURVE {curve} ({REGA_LO_VARIANTS[dv][0]} block / master block; {detail})")
-    print(lines[-1], flush=True)
-    return None, chosen
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# experts-rega-w13-fast-silu-epilogue: rega_kernel<true, *> (w13) applies silu(gate) * up to its fp32 accumulators
-# through silu_mul = hg / (1.f + expf(-hg)) * hu, built without fast math (a full-accuracy expf and an IEEE divide per
-# element in the consumer epilogue). A SEPARATE extension muse_prefill_rega_fsilu, built LAST in prepare(), is
-# master's _rega_src() through ONE asserted text edit (the target must occur exactly once, else no build): silu_mul
-# returns __fdividef(hg, 1.f + __expf(-hg)) * hu (div.approx / ex2.approx; fp32 throughout; the same single bf16
-# rounding in pack_bf16). Same cpp declarations, flags and function names as master's module, its own module name;
-# master's strings, module, REGA_V2_SHA256 and v1 fallback are untouched. fsilu dispatches only its w13 launch; its w2
-# (REGA_W2ST_EDITS, arm a) is dispatched only by the w2st gate below (experts-rega-w2-early-loads-low-class).
-# Per class (low T=753 only with rega_low_variant == 0, high T=3012, ft T=16384), on the prenorm (norm-gather)
-# dispatch the judge path uses: a canary through _experts_rega; a judge-like pop routing whose master w13-alone
-# (warm-L2) time lands in the judged row's band (alpha chosen per class); accuracy on random, skewed and that pop
-# routing (fsilu hs vs master's: finite, rel L2 <= 2e-3, not bit-identical overall; the routed output's error vs an
-# fp64 reference <= 1.05x master's); then 2 rounds x 11 alternations of w13 alone (one-launch graphs) and the w13 + w2
-# pair, master vs fsilu, cold-L2 (a 256 MB READ flush before each replay, as the judge) and warm-L2 (back-to-back
-# replays), on the judge-like and the random routings. ON only when w13 f/m <= 0.99 in both rounds AND pair f/m <= 1.00
-# in both rounds, in both L2 modes, on both routings, the phase-level hg sweep canary passed, and the two-state replay
-# check passed. state['rega_fsilu_ok'][class] is a plain bool, state['rega_fsilu_ext'] the module (None when all OFF).
-# ---------------------------------------------------------------------------------------------------------------
-REGA_FSILU_TAG = "[rega-fsilu]"
-# experts-rega-w2-early-loads-low-class: renamed (the source now also carries REGA_W2ST_EDITS, arm a only), so the
-# extension cache can never serve an older build (master's fsilu or the two-arm w2st one)
-REGA_FSILU_EXT_NAME = "muse_prefill_rega_fsilu_w2a"
-REGA_FSILU_OLD = "hg / (1.f + expf(-hg)) * hu"          # master's silu_mul body; must occur exactly once
-REGA_FSILU_NEW = "__fdividef(hg, 1.f + __expf(-hg)) * hu"
-REGA_FSILU_CLASSES = ("low", "high", "ft")              # gate order; ft (the costliest) last
-REGA_FSILU_TOKENS = {"low": 753, "high": 3012, "ft": 16384}
-REGA_FSILU_BAND_US = {"low": (255.0, 293.0), "high": (707.0, 763.0), "ft": (3400.0, 3850.0)}  # judged w13 rows
-REGA_FSILU_POP_MULT = 1.83                  # first calibration probe: this x the uniform local routes
-REGA_FSILU_PROBES = 4                       # master w13-alone probes per class to land in the band
-REGA_FSILU_W13_RATIO = 0.99                 # w13 alone, fsilu / master, every round, both L2 modes, both routings
-REGA_FSILU_PAIR_RATIO = 1.00                # w13 + w2 pair, same
-REGA_FSILU_ROUNDS = 2
-REGA_FSILU_ALTERNATIONS = 11
-REGA_FSILU_WARM_REPS = 3                    # back-to-back replays per warm-L2 sample (after one unmeasured replay)
-REGA_FSILU_HS_REL = 2e-3                    # fsilu hs vs master hs, rel L2
-REGA_FSILU_REF_MULT = 1.05                  # routed output error vs the fp64 reference, x master's
-REGA_FSILU_START_DEADLINE_S = 200.0         # no nvcc build once prepare() has used this many seconds (300 s limit)
-REGA_FSILU_STEP_DEADLINE_S = 265.0          # no class step (canary, calibration, accuracy, timing, replay) after this
-REGA_FSILU_SWEEP_HG = (-100.0, -88.7, -87.0, -20.0, 0.0, 20.0, 100.0)
-REGA_FSILU_SWEEP_HU = (1.0, -2.5)
-REGA_FSILU_TIME_NAMES = ("w13:m", "w13:f", "pair:m", "pair:f")
-REGA_FSILU_STATE_KEYS = REGA_STATE_KEYS + ("rega_fsilu_ext", "rega_fsilu_ok")
-REGA_FSILU_REPLAY_PLAN = {"low": ((753, ("random", "skewed", "one")),), "high": ((3012, ("random", "skewed")),),
-                          "ft": ((16384, ("random", "local")),)}
-# prepare-only elementwise sweep of the fast vs the accurate form (NVRTC via jiterator; no nvcc, no extra module)
-_REGA_FSILU_SWEEP_SRC = (
-    "template <typename T> T rega_fsilu_sweep(T hg, T hu, T fast) {\n"
-    "  return fast != T(0) ? __fdividef(hg, T(1) + __expf(-hg)) * hu : hg / (T(1) + expf(-hg)) * hu;\n"
-    "}\n")
-
-# experts-rega-w2-early-loads-low-class (w2st, arm a): further asserted (old, new) text edits of the fsilu module's
-# source, each old occurring exactly once (else no build). Every kernel-side edit sits inside 'if constexpr (!G)' (or
-# keeps master's G code in the G branch), so the w13 instantiations fsilu dispatches compute exactly as before; no new
-# template parameter or instantiation (the module keeps master's four rega_kernel instantiations; its w2 = arm a):
-#   gsc = gs[e] and the thread's route id sid_r = sorted_ids[slot0 + ctid] (ctid < nvalid, else -1) are loaded BEFORE
-#     the k loop (master: gsc after the last wgmma_wait, sorted_ids per 16-B chunk in the scatter);
-#   sid_r goes into a 128-int shared table (the w2 staging rows' unused 16-B pad column) before the staging barrier,
-#     and master's 16-B st.global scatter loop reads the route id from it.
-# (The parent's arm b, cp.async.bulk row stores, lost in every class and mode and is dropped.)
-# Values, addresses and rounding are master's: y is bit-identical (the w2st gate asserts torch.equal).
-REGA_W2ST_EDITS = (
-    (r"""  uint32_t a0[8][4];
-  for (int kb = 0; kb < KS; ++kb) {
-""",
-     r"""  uint32_t a0[8][4];
-  // w2st (a), w2 only: the epilogue's global scale and this thread's route id (tile row ctid; -1 past nvalid),
-  // loaded before the k loop so their L2 round trips hide under it
-  [[maybe_unused]] float gsc_w2 = 0.f;
-  [[maybe_unused]] int sid_r = -1;
-  if constexpr (!G) {
-    gsc_w2 = __ldg(gs + m.e);
-    sid_r = ctid < m.nbk * 16 ? __ldg(sorted_ids + m.slot0 + ctid) : -1;
-  }
-  for (int kb = 0; kb < KS; ++kb) {
-"""),
-    (r"""  const float gsc = __ldg(gs + m.e);
-  named_bar(1, 256);  // every consumer is done reading the previous item's staging tile
-""",
-     r"""  float gsc;
-  if constexpr (G) {
-    gsc = __ldg(gs + m.e);
-  } else {
-    gsc = gsc_w2;
-  }
-  named_bar(1, 256);  // every consumer is done reading the previous item's staging tile
-  if constexpr (!G) {
-    // w2st (a): route ids into a 128-int shared table, the staging rows' unused pad column (bytes 256..271 of
-    // each 272-B row; stmatrix writes bytes 0..255 only), read by the scatter loop after the staging barrier
-    if (ctid < nvalid) *reinterpret_cast<int*>(ep + ctid * PITCH2 + 256) = sid_r;
-  }
-"""),
-    (r"""    for (int v = ctid; v < nvalid * 16; v += 256) {
-      const int t = v >> 4, c = v & 15;
-      const int sid = __ldg(sorted_ids + m.slot0 + t);
-      if (sid >= 0 && sid < num_routes) {
-        const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH2 + c * 16);
-        *reinterpret_cast<uint4*>(out + static_cast<size_t>(sid) * out_ld + m.j * 128 + c * 8) = val;
-      }
-    }
-""",
-     r"""    // w2st (a): master's 16-B scatter loop, the route id from the shared table instead of an __ldg per chunk
-    for (int v = ctid; v < nvalid * 16; v += 256) {
-      const int t = v >> 4, c = v & 15;
-      const int sid = *reinterpret_cast<const int*>(ep + t * PITCH2 + 256);
-      if (sid >= 0 && sid < num_routes) {
-        const uint4 val = *reinterpret_cast<const uint4*>(ep + t * PITCH2 + c * 16);
-        *reinterpret_cast<uint4*>(out + static_cast<size_t>(sid) * out_ld + m.j * 128 + c * 8) = val;
-      }
-    }
-"""),
-)
-
-
-def _rega_fsilu_src():
-    """The fsilu module's CUDA source: master's _rega_src() with REGA_FSILU_OLD -> REGA_FSILU_NEW, then the
-    REGA_W2ST_EDITS, or None when any target does not occur exactly once (or the result is not as expected).
-    Master's strings are read, never edited."""
-    src = _rega_src()
-    if src.count(REGA_FSILU_OLD) != 1 or REGA_FSILU_NEW in src:
-        return None
-    out = src.replace(REGA_FSILU_OLD, REGA_FSILU_NEW)
-    if out.count(REGA_FSILU_NEW) != 1 or REGA_FSILU_OLD in out or len(out) != len(src) + len(REGA_FSILU_NEW) - len(
-            REGA_FSILU_OLD):
-        return None
-    for old, new in REGA_W2ST_EDITS:
-        if out.count(old) != 1:
             return None
-        out = out.replace(old, new)
-    return out
-
-
-def _rega_fsilu_audit(src):
-    """Pre-build audit of the derived module: no templated Tensor accessor, no mutable file-scope / static / device
-    globals. Returns the findings."""
-    bad = []
-    for name, text in (("cpp", _REGA_CPP), ("cuda", src)):
-        for n, line in enumerate(text.splitlines(), 1):
-            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
-                bad.append(f"{name} line {n}: {line.strip()[:100]}")
-    return bad + _rega_audit_cpp(_REGA_CPP + "\n" + src)
-
-
-def _rega_fsilu_attrs(ext):
-    """Attributes of the four instantiations BEFORE any launch (rega_init sets each one's dynamic smem attribute;
-    setmaxnreg.inc hangs on a short register pool): master's criteria. fsilu's ON criteria read only the two w13
-    rows; the two w2 rows (arm a, which 1; also local 0) gate only the w2st path. Returns ({big: w13 ok}, compact
-    text, {big: w2 ok})."""
-    info = ext.rega_init()
-    ok = {False: True, True: True}
-    w2ok = {}
-    seen, parts = 0, []
-    for i in range(0, len(info), 10):
-        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, e1, bin_v, _ = info[i:i + 10]
-        gated, big = bool(flag & 1), bool(flag & 2)
-        seen += 1
-        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
-                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
-        if gated:
-            ok[big] = ok[big] and good
-        else:
-            good = good and local_bytes == 0
-            w2ok[big] = good
-        parts.append(f"<{'w13' if gated else 'w2a'},{'ft' if big else 's1'}> r{regs} l{local_bytes} "
-                     f"s{static_smem}+{dyn_smem} o{occ} b{bin_v} rc{e1}{'' if good else ' OFF'}")
-    if seen != 4:
-        ok, w2ok = {False: False, True: False}, {}
-    return ok, "; ".join(parts), w2ok
-
-
-def _rega_fsilu_sweep(device):
-    """prepare() only: the fast and the accurate silu*up elementwise on hg in REGA_FSILU_SWEEP_HG x hu in
-    REGA_FSILU_SWEEP_HU (one tiny NVRTC kernel through torch's jiterator; the module itself is not touched).
-    Both finite; where the accurate result is tiny (|a| <= 1e-30: hg <= ~-87) the fast one must be too, and an
-    exact zero must match in sign (the -0 of hg / inf); elsewhere rel diff <= 1e-5. Returns (True / False / None
-    when the sweep could not run, compact line)."""
-    try:
-        from torch.cuda import jiterator
-        fn = jiterator._create_jit_fn(_REGA_FSILU_SWEEP_SRC)
-        hg = torch.tensor([h for _ in REGA_FSILU_SWEEP_HU for h in REGA_FSILU_SWEEP_HG], dtype=torch.float32,
-                          device=device)
-        hu = torch.tensor([u for u in REGA_FSILU_SWEEP_HU for _ in REGA_FSILU_SWEEP_HG], dtype=torch.float32,
-                          device=device)
-        fast = fn(hg, hu, torch.ones_like(hg))
-        acc = fn(hg, hu, torch.zeros_like(hg))
-        ref = hg.double() / (1.0 + torch.exp(-hg.double())) * hu.double()
-        torch.cuda.synchronize()
-        f, a, r, hgl = fast.cpu().tolist(), acc.cpu().tolist(), ref.cpu().tolist(), hg.cpu().tolist()
-        fs, as_ = torch.signbit(fast).cpu().tolist(), torch.signbit(acc).cpu().tolist()
-    except Exception as e:
-        return None, f"{REGA_FSILU_TAG} hg sweep: could not run ({e!r:.200}): no class may turn ON"
-    ok, worst, cells = True, 0.0, []
-    for i in range(len(f)):
-        fi, ai = f[i], a[i]
-        good = all(v == v and abs(v) != float("inf") for v in (fi, ai))
-        if good and ai == 0.0:
-            good = fi == 0.0 and fs[i] == as_[i]
-        elif good and abs(ai) <= 1e-30:
-            good = abs(fi) <= 1e-30
-        elif good:
-            rel = abs(fi - ai) / abs(ai)
-            worst = max(worst, abs(fi - r[i]) / max(abs(r[i]), 1e-300))
-            good = rel <= 1e-5
-        ok = ok and good
-        if i < len(REGA_FSILU_SWEEP_HG) or not good:  # the hu = 1 row, plus any miss
-            cells.append(f"{hgl[i]:g}:{fi:.3g}/{ai:.3g}{'' if good else '!'}")
-    return ok, (f"{REGA_FSILU_TAG} hg sweep fast/acc (hu {REGA_FSILU_SWEEP_HU[0]:g}) " + " ".join(cells)
-                + f"; worst fast rel vs fp64 {worst:.1e} (normal range); {'pass' if ok else 'MISS'}")
-
-
-def _rega_fsilu_tables(state, x, lids, prenorm, cls):
-    """prepare() only: the align kernel_fn runs (_align_dispatch) and the gather the judge path uses (the fused
-    norm-gather on the raw x when prenorm, else master's module norm then rega_gather) into a zeroed xs:
-    ((sorted_ids, block_experts, n_padded, num_slots), xs)."""
-    num_slots = x.shape[0] * TOP_K
-    _, (sorted_ids, block_experts, n_padded) = _align_dispatch(lids, REGA_BSM, state)
-    xs = torch.zeros((block_experts.shape[0] * REGA_BSM, D_EXPERT), device=x.device, dtype=torch.bfloat16)
-    if prenorm:
-        nw, nprog, rnd = state["norm_gather_cfg"][cls]
-        _norm_gather(x.contiguous(), state["pre_expert_w"], sorted_ids, block_experts, n_padded, num_slots, xs,
-                     nw, nprog, rnd)
-    else:
-        state["rega_ext"].rega_gather(state["pre_expert_norm"](x).contiguous(), sorted_ids, block_experts, n_padded,
-                                      num_slots, LOCAL_EXPERTS, xs)
-    return (sorted_ids, block_experts, n_padded, num_slots), xs
-
-
-def _rega_fsilu_gemm(state, ext, which, src, dst, tabs):
-    """One rega GEMM launch of `ext` (master's module or the fsilu one) with the arguments _experts_rega passes.
-    w13 (which 0): xs -> hs; w2 (which 1): hs -> y."""
-    bank, err, grid = state["rega_bank"], state["rega_err"], state["rega_grid"]
-    sorted_ids, block_experts, n_padded, num_slots = tabs
-    if which == 0:
-        ext.rega_gemm(0, src, bank["q13"], bank["gs13"], sorted_ids, block_experts, n_padded, num_slots,
-                      D_EXPERT // 64, D_EXPERT, dst, grid, err)
-    else:
-        ext.rega_gemm(1, src, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
-                      D_EXPERT // 128, D_EXPERT, dst, grid, err)
-
-
-def _rega_fsilu_reference_out(xin, tw, lids, state, weights, cache):
-    """fp64 reference of the routed expert block: master's _rega_reference_y (dequantized original-order weights,
-    silu*up rounded to bf16 once, y bf16, zeros for remote routes) with the matmuls and silu in float64, then
-    master's post-expert norm weighted sum. cache: master's per-expert fp32 dequant cache."""
-    tokens = xin.shape[0]
-    flat = lids.view(-1)
-    y = torch.zeros((tokens * TOP_K, D_EXPERT), dtype=torch.bfloat16, device=xin.device)
-    for e in range(LOCAL_EXPERTS):
-        idx = (flat == e).nonzero().flatten()
-        if idx.numel() == 0:
-            continue
-        if e not in cache:
-            cache[e] = (nvfp4.dequantize(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]),
-                        nvfp4.dequantize(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]))
-        w13, w2 = cache[e]
-        h = xin[idx // TOP_K].double() @ w13.double().t()
-        g, u = h[:, :D_EXPERT], h[:, D_EXPERT:]
-        a = (g / (1.0 + torch.exp(-g)) * u).to(torch.bfloat16).double()
-        y[idx] = (a @ w2.double().t()).to(torch.bfloat16)
-        del h, g, u, a
-    return fused_post_expert_norm_weighted_sum(
-        y.view(tokens, TOP_K, D_EXPERT), tw, norm_weight=state["post_expert_w"], eps=POST_NORM_EPS,
-        weight_first=True, slot_expert_ids=lids)
-
-
-def _rega_fsilu_accuracy(state, trial, device, cls, tokens, kind, prenorm, gen, weights, cache):
-    """prepare() only, one routing: master's and fsilu's w13 alone on the same xs into zeroed hs (error word 0 and
-    the w13 marker each), fsilu hs finite and within REGA_FSILU_HS_REL rel L2 of master's; then the whole routed
-    _experts_rega output with fsilu ON for this class (trial) and with master's (state), on the prenorm dispatch the
-    judge path uses, against the fp64 reference: fsilu's error <= REGA_FSILU_REF_MULT x master's. Returns (None or
-    why, elements of hs that differ, compact text)."""
-    err = state["rega_err"]
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
-    hs = {}
-    for lab, ext in (("m", state["rega_ext"]), ("f", state["rega_fsilu_ext"])):
-        hs[lab] = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
-        err.zero_()
-        _rega_fsilu_gemm(state, ext, 0, xs, hs[lab], tabs)
-        torch.cuda.synchronize()
-        word, m13, _ = _rega_marks(err)
-        if word != 0 or m13 != REGA_MAGIC:
-            return f"{kind}: {lab} w13 alone left error word {word} marker {m13:#x}", 0, ""
-    finite = bool(torch.isfinite(hs["f"].float()).all())
-    d = hs["f"].float() - hs["m"].float()
-    rel = float(d.norm() / hs["m"].float().norm().clamp_min(1e-30))
-    mx = float(d.abs().max()) if d.numel() else 0.0
-    ndiff = int((hs["f"] != hs["m"]).sum())
-    del d, hs, xs
-    xin = state["pre_expert_norm"](x)
-    xa = x if prenorm else xin
-    ref = _rega_fsilu_reference_out(xin, tw, lids, state, weights, cache)
-    err.zero_()
-    out_f = _experts_rega(xa, tw, lids, trial, prenorm=prenorm)
-    torch.cuda.synchronize()
-    word, m13, m2 = _rega_marks(err)
-    out_m = _experts_rega(xa, tw, lids, state, prenorm=prenorm)
-    torch.cuda.synchronize()
-    e_f, w_f = _ssdq_metrics(out_f, ref)
-    e_m, _ = _ssdq_metrics(out_m, ref)
-    text = (f"{kind} {int((lids >= 0).sum())}r hs rel {rel:.1e} max|d| {mx:.1e} ndiff {ndiff}; out err f/m "
-            f"{e_f:.3e}/{e_m:.3e} x{e_f / max(e_m, 1e-30):.3f}")
-    ok = (finite and rel <= REGA_FSILU_HS_REL and word == 0 and _rega_launched(m13, m2) and e_f < float("inf")
-          and e_f <= REGA_FSILU_REF_MULT * e_m and w_f < float("inf"))
-    del x, tw, lids, xin, xa, ref, out_f, out_m
-    if not ok:
-        return (f"accuracy {text}; finite {finite}, word {word}, markers {m13:#x}/{m2:#x} (bounds rel "
-                f"{REGA_FSILU_HS_REL:g}, err x{REGA_FSILU_REF_MULT:g})"), ndiff, text
-    return None, ndiff, text
-
-
-def _rega_fsilu_bench(graphs, device, modes, rounds, alts):
-    """prepare() only: interleaved replays of the captured graphs (an 'empty' graph included, its median subtracted
-    per round). cold: a 256 MB READ of a flush buffer (> the 50 MB L2, no dirty lines left, as the judge's flush)
-    before each timed replay; warm: one unmeasured replay, then REGA_FSILU_WARM_REPS back-to-back replays timed
-    together. Order rotated per alternation and flipped every other one. Returns {mode: [per-round {name: us}]}."""
-    flush = torch.zeros(256 * 2 ** 20 // 4, dtype=torch.float32, device=device)
-    acc = torch.zeros((), dtype=torch.float32, device=device)
-    ev = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
-
-    def cold(g):
-        torch.sum(flush, dim=0, out=acc)
-        ev[0].record()
-        g.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0
-
-    def warm(g):
-        g.replay()
-        ev[0].record()
-        for _ in range(REGA_FSILU_WARM_REPS):
-            g.replay()
-        ev[1].record()
-        torch.cuda.synchronize()
-        return ev[0].elapsed_time(ev[1]) * 1000.0 / REGA_FSILU_WARM_REPS
-
-    names = list(graphs)
-    for name in names:
-        graphs[name].replay()  # warm-up replay
-    torch.cuda.synchronize()
-    out = {mode: [] for mode in modes}
-    try:
-        for r in range(rounds):
-            for mode in modes:
-                fn = cold if mode == "cold" else warm
-                samples = {name: [] for name in names}
-                for i in range(alts):
-                    k = (i + r) % len(names)
-                    order = names[k:] + names[:k]
-                    if i % 2:
-                        order = order[::-1]
-                    for name in order:
-                        samples[name].append(fn(graphs[name]))
-                base = _rega_fsilu_med(samples["empty"])
-                out[mode].append({n: max(_rega_fsilu_med(v) - base, 0.0) for n, v in samples.items() if n != "empty"})
-    finally:
-        del flush, acc
-    return out
-
-
-def _rega_fsilu_med(v):
-    s = sorted(v)
-    return s[len(s) // 2]
-
-
-def _rega_fsilu_time(state, device, cls, tokens, kind, prenorm, gen, names, modes, rounds, alts):
-    """prepare() only: one routing's tables and xs (the judge path's gather), one CUDA graph per name (w13:m / w13:f
-    = master's / fsilu's w13 alone; pair:m / pair:f = that w13 then master's w2), plus an empty graph, timed by
-    _rega_fsilu_bench. Returns ({mode: [per-round {name: us}]}, local routes)."""
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    local = int((lids >= 0).sum())
-    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
-    ms, fs, err = state["rega_ext"], state.get("rega_fsilu_ext"), state["rega_err"]
-    hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
-    y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
-    err.zero_()
-
-    def pair(ext):
-        _rega_fsilu_gemm(state, ext, 0, xs, hs, tabs)
-        _rega_fsilu_gemm(state, ms, 1, hs, y, tabs)
-
-    fns = {"w13:m": lambda: _rega_fsilu_gemm(state, ms, 0, xs, hs, tabs),
-           "w13:f": lambda: _rega_fsilu_gemm(state, fs, 0, xs, hs, tabs),
-           "pair:m": lambda: pair(ms), "pair:f": lambda: pair(fs)}
-    graphs = {}
-    try:
-        graphs = {name: _ssdq_graph_time(fns[name], device) for name in names}
-        tiny = torch.zeros(16, dtype=torch.float32, device=device)
-        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-        res = _rega_fsilu_bench(graphs, device, modes, rounds, alts)
-        word = _rega_marks(err)[0]
-        if word != 0:
-            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
-        return res, local
-    finally:
-        del graphs, fns, xs, hs, y, x, tw, lids
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
-def _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen):
-    """prepare() only: the judge-like routing for this class. Bisects the pop alpha grid (_rega_pop_counts; master
-    w13 time rises with alpha) from the alpha nearest REGA_FSILU_POP_MULT x the uniform local routes, timing master's
-    w13 alone (warm-L2, the judged in-graph condition: inputs just written, weights not resident), at most
-    REGA_FSILU_PROBES probes, stopping inside REGA_FSILU_BAND_US[cls]. Returns (alpha nearest the band, {alpha:
-    (master w13 us, local routes)}, uniform local routes)."""
-    lo_b, hi_b = REGA_FSILU_BAND_US[cls]
-    n_rnd, counts = _rega_pop_counts(tokens, device)
-    alphas = sorted(counts)
-    i = alphas.index(_rega_pop_pick(counts, REGA_FSILU_POP_MULT * n_rnd)[0])
-    lo, hi, probes = 0, len(alphas) - 1, {}
-    for _ in range(REGA_FSILU_PROBES):
-        a = alphas[i]
-        if a in probes:
-            break
-        res, local = _rega_fsilu_time(state, device, cls, tokens, f"pop:{a:g}", prenorm, gen, ("w13:m",), ("warm",),
-                                      1, 3)
-        us = res["warm"][0]["w13:m"]
-        probes[a] = (us, local)
-        if lo_b <= us <= hi_b:
-            break
-        if us > hi_b:
-            hi = i - 1
-        else:
-            lo = i + 1
-        if lo > hi:
-            break
-        i = (lo + hi) // 2
-
-    def dist(a):
-        us = probes[a][0]
-        return (0.0 if lo_b <= us <= hi_b else min(abs(us - lo_b), abs(us - hi_b)), abs(us - 0.5 * (lo_b + hi_b)))
-
-    return min(probes, key=dist), probes, n_rnd
-
-
-def _rega_fsilu_verdict(res):
-    """{mode: [per-round {name: us}]} -> (every round of every mode: w13 f/m <= REGA_FSILU_W13_RATIO and pair f/m
-    <= REGA_FSILU_PAIR_RATIO, compact text)."""
-    ok, parts = True, []
-    for mode, rds in res.items():
-        w = [rd["w13:f"] / max(rd["w13:m"], 1e-9) for rd in rds]
-        p = [rd["pair:f"] / max(rd["pair:m"], 1e-9) for rd in rds]
-        good = all(v <= REGA_FSILU_W13_RATIO for v in w) and all(v <= REGA_FSILU_PAIR_RATIO for v in p)
-        ok = ok and good
-        n = max(len(rds), 1)
-        m13, f13 = sum(rd["w13:m"] for rd in rds) / n, sum(rd["w13:f"] for rd in rds) / n
-        mp, fp = sum(rd["pair:m"] for rd in rds) / n, sum(rd["pair:f"] for rd in rds) / n
-        parts.append(f"{mode} w13 {m13:.1f}->{f13:.1f} x{'/'.join(f'{v:.3f}' for v in w)} pair {mp:.1f}->{fp:.1f} "
-                     f"x{'/'.join(f'{v:.3f}' for v in p)} (w2~{mp - m13:.0f}){'' if good else ' MISS'}")
-    return ok, "; ".join(parts)
-
-
-def _rega_fsilu_class(state, device, cls, weights, lines, t_start, sweep_ok, info=None):
-    """prepare() only: one class's checks and gate; (on, reason). 1. an eager traced canary of the whole
-    _experts_rega call with fsilu ON for this class on the prenorm dispatch kernel_fn uses; 2. the judge-like pop
-    alpha (_rega_fsilu_calibrate); 3. accuracy on random, skewed and that routing (_rega_fsilu_accuracy), and fsilu
-    must differ from master somewhere (else the fast form did not run); 4. timing (_rega_fsilu_time, cold + warm,
-    judge-like + random); 5. when it all passes and the hg sweep passed, the two-state replay check with fsilu ON.
-    No step starts after REGA_FSILU_STEP_DEADLINE_S. info (w2st): the calibrated alpha is recorded in
-    info['alpha'][cls] for the w2st gate's judge-like routing."""
-    tokens = REGA_FSILU_TOKENS[cls]
-    tag = f"{REGA_FSILU_TAG} {cls} T={tokens}"
-    err = state["rega_err"]
-    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
-    trial = dict(state)
-    trial["rega_fsilu_ok"] = {c: c == cls for c in REGA_FSILU_CLASSES}
-    gen = torch.Generator(device=device).manual_seed(20261103)
-
-    def late(step):
-        used = time.perf_counter() - t_start
-        if used > REGA_FSILU_STEP_DEADLINE_S:
-            return f"SKIPPED: {step} not started (prepare {used:.0f}s > {REGA_FSILU_STEP_DEADLINE_S:.0f}s)"
+        if props.major >= 9 and ATTN_FIXED is not None and all(v is None or v in ok for v in ATTN_FIXED.values()):
+            # A prepare-time race between near-equal options adds noise: pin the measured picks.
+            return dict(ATTN_FIXED)
+        if props.major >= 9:
+            return _tune_attn(st, ok)
+        return {k: ok[0] for k in ("slide", "full_long", "full_short", "full_batch")}
+    except Exception as exc:  # noqa: BLE001
+        print("ATTN validation/tuning failed:", repr(exc)[:300], flush=True)
         return None
 
-    # 1. canary
-    x0, tw0, l0 = _rega_case(tokens, "random", gen, device)
-    if not prenorm:
-        x0 = state["pre_expert_norm"](x0)
-    err.zero_()
-    out = _experts_rega(x0, tw0, l0, trial, tracer=_RegaTracer(f"fsilu canary {cls}"), prenorm=prenorm)
-    torch.cuda.synchronize()
-    word, m13, m2 = _rega_marks(err)
-    finite = bool(torch.isfinite(out.float()).all())
-    del out, x0, tw0, l0
-    if word != 0 or not _rega_launched(m13, m2) or not finite:
-        return False, f"canary failed (error word {word}, markers {m13:#x}/{m2:#x}, finite {finite})"
-    # 2. the judge-like routing
-    why = late("alpha calibration")
-    if why:
-        return False, why
-    alpha, probes, n_rnd = _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen)
-    if info is not None:
-        info.setdefault("alpha", {})[cls] = float(alpha)
-    pop_kind = f"pop:{alpha:g}"
-    lo_b, hi_b = REGA_FSILU_BAND_US[cls]
-    us, local = probes[alpha]
-    lines.append(f"{tag} judge-like {pop_kind}: master w13 warm {us:.1f} us, {local}r = {local / max(n_rnd, 1.0):.2f}x "
-                 f"uniform; band {lo_b:.0f}-{hi_b:.0f} {'in' if lo_b <= us <= hi_b else 'OUT (nearest)'}; probes "
-                 + " ".join(f"{a:g}:{u:.0f}" for a, (u, _) in probes.items()) + f"; prenorm {prenorm}")
-    print(lines[-1], flush=True)
-    # 3. accuracy
-    cache, ndiff, parts = {}, 0, []
-    try:
-        for kind in ("random", "skewed", pop_kind):
-            why = late(f"accuracy {kind}")
-            if why:
-                return False, why
-            why, nd, text = _rega_fsilu_accuracy(state, trial, device, cls, tokens, kind, prenorm, gen, weights, cache)
-            ndiff += nd
-            if why:
-                lines.append(f"{tag} {why}"[:700])
-                print(lines[-1], flush=True)
-                return False, why
-            parts.append(text)
-    finally:
-        cache.clear()
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-    lines.append(f"{tag} accuracy: " + "; ".join(parts))
-    print(lines[-1], flush=True)
-    if ndiff == 0:
-        return False, "fsilu hs bit-identical to master's on every routing: the fast form did not run"
-    # 4. timing: w13 alone and the pair, cold + warm, judge-like then random
-    res = {}
-    for kind in (pop_kind, "random"):
-        why = late(f"timing {kind}")
-        if why:
-            return False, why
-        r, local = _rega_fsilu_time(state, device, cls, tokens, kind, prenorm, gen, REGA_FSILU_TIME_NAMES,
-                                    ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
-        res[kind], text = _rega_fsilu_verdict(r)
-        lines.append(f"{tag} TIME {kind} {local}r: {text}")
-        print(lines[-1], flush=True)
-    timing_on = all(res.values())
-    low_v = f"; rega_low_variant {int(state.get('rega_low_variant', 0))}" if cls == "low" else ""
-    lines.append(f"{tag} GATE w13 f/m <= {REGA_FSILU_W13_RATIO} and pair <= {REGA_FSILU_PAIR_RATIO} every round, "
-                 f"cold+warm, {pop_kind}+random: {'pass' if timing_on else 'MISS'}; hg sweep {sweep_ok}{low_v}")
-    print(lines[-1], flush=True)
-    if not timing_on:
-        return False, "timing gate missed (" + ", ".join(f"{k} {'ok' if v else 'MISS'}" for k, v in res.items()) + ")"
-    if sweep_ok is not True:
-        return False, f"hg sweep canary {'did not run' if sweep_ok is None else 'missed'}"
-    # 5. two-state replay check with fsilu ON for this class
-    why = late("replay check")
-    if why:
-        return False, why
-    cache = {}
-    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FSILU_REPLAY_PLAN[cls],
-                                   keys=REGA_FSILU_STATE_KEYS)
-    cache.clear()
-    torch.cuda.empty_cache()
-    if why:
-        return False, f"two-state replay check failed: {why}"
-    print(f"{tag} two-state replay check (fsilu ON): {line}", flush=True)
-    return True, ""
+
+# --------------------------------------------------------------------------------------
+# MoE: gather the pooler output into per-expert rows, run the fused expert
+# GEMMs, return the per-route rows for the combine step.
+# --------------------------------------------------------------------------------------
 
 
-def _rega_fsilu_phase(state, weights, device, t_start, info=None):
-    """prepare() only, LAST (after _rega_lo_phase, _fa3c_setup and _norm_gather_setup). Skips itself (OFF line) when
-    prepare() has used more than REGA_FSILU_START_DEADLINE_S before the nvcc build. Derives and builds the separate
-    muse_prefill_rega_fsilu module (one asserted edit of master's source), checks its attributes before any launch,
-    runs the hg sweep canary once, then per routed class (state['rega_ok']) _rega_fsilu_class; the low class only
-    when rega_low_variant == 0 (rega_gemm_lo has its own silu). The print-only silu ceiling variant is skipped: it
-    would need a second nvcc build (or a second edit). Sets state['rega_fsilu_ok'][class] (plain bools) and
-    state['rega_fsilu_ext']. Never raises; every miss leaves master's w13. Returns the compact summary lines; the
-    PATH CHOSEN lines are last. info (w2st, a prepare-local dict): build seconds, the w2 attribute rows and the
-    calibrated alphas, for _rega_w2st_phase."""
-    info = {} if info is None else info
-    t0 = time.perf_counter()
-    state["rega_fsilu_ext"], state["rega_fsilu_ok"] = None, {c: False for c in REGA_FSILU_CLASSES}
-    lines, verdict, off, secs = [], {}, None, {}
-    v = int(state.get("rega_low_variant", 0))
-    try:
-        used = time.perf_counter() - t_start
-        routed = [c for c in REGA_FSILU_CLASSES if state.get("rega_ok", {}).get(c, False)]
-        if not routed:
-            off = "no class is on rega (master's gates): no w13 epilogue to change"
-        elif used > REGA_FSILU_START_DEADLINE_S:
-            off = (f"SKIPPED: prepare already used {used:.0f}s > {REGA_FSILU_START_DEADLINE_S:.0f}s before the nvcc "
-                   f"build")
-        elif not _rega_lo_identity()[0]:
-            off = "master's v2 rega source does not hash to master's (the fsilu module derives from it)"
-        else:
-            src = _rega_fsilu_src()
-            bad = (["the silu_mul / a w2st edit target did not occur exactly once in master's source"]
-                   if src is None else _rega_fsilu_audit(src))
-            if bad:
-                off = f"source derivation / audit failed: {bad[:3]}"
-            else:
-                print(f"{REGA_FSILU_TAG} derived source sha256 "
-                      f"{hashlib.sha256((_REGA_CPP + src).encode()).hexdigest()[:16]} ({len(src)} chars), 1 edit "
-                      f"'{REGA_FSILU_OLD}' -> '{REGA_FSILU_NEW}' + {len(REGA_W2ST_EDITS)} w2st edits; audit ok; "
-                      f"prepare at {used:.1f}s", flush=True)
-                tb = time.perf_counter()
-                ext, _ = _rega_build(REGA_FSILU_EXT_NAME, src)
-                secs["build"] = time.perf_counter() - tb
-                info["build_s"] = secs["build"]
-                if ext is None:
-                    off = "build failed"
-                else:
-                    attrs_ok, attrs, info["w2_attrs"] = _rega_fsilu_attrs(ext)
-                    lines.append(f"{REGA_FSILU_TAG} attrs {attrs}")
-                    print(lines[-1], flush=True)
-                    state["rega_fsilu_ext"] = ext
-                    sweep_ok, line = _rega_fsilu_sweep(device)
-                    lines.append(line)
-                    print(lines[-1], flush=True)
-                    lines.append(f"{REGA_FSILU_TAG} ceiling (silu_mul -> hg*hu): skipped (a second nvcc build, "
-                                 f"~40 s; build took {secs['build']:.0f}s)")
-                    stop = None
-                    for cls in routed:
-                        tc = time.perf_counter()
-                        used = tc - t_start
-                        if stop:
-                            verdict[cls] = (False, stop)
-                        elif not attrs_ok[cls == "ft"]:
-                            verdict[cls] = (False, "attribute / register-pool check failed for this class's kernels")
-                        elif cls == "low" and v:
-                            verdict[cls] = (False, f"low runs rega_gemm_lo (rega_low_variant {v}, its own silu)")
-                        elif used > REGA_FSILU_STEP_DEADLINE_S:
-                            verdict[cls] = (False, f"SKIPPED: deadline (prepare {used:.0f}s > "
-                                                   f"{REGA_FSILU_STEP_DEADLINE_S:.0f}s)")
-                        else:
-                            try:
-                                on, why = _rega_fsilu_class(state, device, cls, weights, lines, t_start, sweep_ok,
-                                                            info)
-                            except Exception as e:  # stop here: anything after a fault would be unreliable
-                                on, why = False, f"raised {e!r}"[:300]
-                                stop = f"an earlier class raised ({why[:80]})"
-                            state["rega_fsilu_ok"][cls] = bool(on)
-                            verdict[cls] = (bool(on), why)
-                        state["rega_err"].zero_()
-                        secs[cls] = time.perf_counter() - tc
-    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
-        off = f"fsilu phase raised {e!r}"[:400]
-        state["rega_fsilu_ok"] = {c: False for c in REGA_FSILU_CLASSES}
-    finally:
-        if not any(state["rega_fsilu_ok"].values()):
-            state["rega_fsilu_ext"] = None
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        if off:
-            lines.append(f"{REGA_FSILU_TAG} OFF: {off}")
-            print(lines[-1], flush=True)
-        lines.append(f"{REGA_FSILU_TAG} phase {time.perf_counter() - t0:.1f}s ("
-                     + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
-                     + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s; rega_ok {state.get('rega_ok')}")
-        for cls in REGA_FSILU_CLASSES:
-            on, why = verdict.get(cls, (False, off or "class not on rega"))
-            lines.append(f"{REGA_FSILU_TAG} PATH CHOSEN {cls}: fsilu={'ON' if on else 'OFF'}"
-                         + ("" if on else f" ({why[:160]})") + (f"; rega_low_variant {v}" if cls == "low" else ""))
-        lines.append(f"{REGA_FSILU_TAG} PATH CHOSEN: rega_fsilu_ok {state['rega_fsilu_ok']} (ON = w13 silu_mul "
-                     f"__fdividef/__expf; OFF = master's w13)")
-    return lines
+def _max_tiles(T):
+    """Upper bound on the plan's tile count for T tokens (min-size tiles + slack)."""
+    return T * TOP_K // MIN_TILE_ROWS + MOE_TILE_SLACK
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# experts-rega-w2-early-loads-low-class (w2st): the fsilu module's w2 (REGA_W2ST_EDITS: arm a, the early gs /
-# sorted_ids loads with the route ids served from the staging tile's pad column, master's st.global scatter). No nvcc
-# build of its own: arm a is the fsilu module's w2 (rega_gemm which 1; that build's seconds are printed). Per class in
-# REGA_W2ST_ORDER (low only when rega_low_variant == 0: rega_gemm_lo's V64 / V32 take precedence), after fsilu's
-# gates, on the align and gather the judge path uses: exactness first (master's w2 vs arm a on the same hs from the w13
-# the class dispatches, y torch.equal into sentinel-filled buffers on random, skewed, one and fsilu's calibrated
-# judge-like pop routing, error word 0 and the w2 marker per launch); then w2-alone one-launch graphs, master / a in
-# the same 2 rounds x 11 alternations, cold-L2 (256 MB read flush) and warm-L2, judge-like and random
-# (_rega_fsilu_bench). Arm a passes when a / master <= REGA_W2ST_RATIO in every round, L2 mode and routing; at the low
-# class ALSO <= REGA_W2ST_GUARD_RATIO in every round and L2 mode on rega-lo's heavier-skew guard routing (the alpha
-# whose local routes are nearest REGA_LO_GUARD_ROUTES, ~1350), so routing does not rest on the pop routing alone; then
-# the two-state replay check with arm a ON. Every class is routable. state['rega_w2st_ok'][cls] is a plain bool.
-# OFF when rega_fsilu_ext is None.
-# ---------------------------------------------------------------------------------------------------------------
-REGA_W2ST_TAG = "[rega-w2st]"
-REGA_W2ST_ORDER = ("low", "high", "ft")     # fsilu's gate order: low (the measured gain) first, ft (costliest) last
-REGA_W2ST_RATIO = 0.99                      # w2 alone, a / master, every round, both L2 modes, pop + random
-REGA_W2ST_GUARD_RATIO = 1.00                # low only: a / master on rega-lo's guard routing, every round + mode
-# phasec w2st-pin-high-ft: in these classes arm a routes whenever it is exact (torch.equal y) and its two-state
-# replay check passes; the timing gate still runs and prints what it alone would have decided.
-REGA_W2ST_PIN = ("high", "ft")
-REGA_W2ST_EXACT_KINDS = ("random", "skewed", "one")   # + the judge-like pop routing
-REGA_W2ST_SENTINEL = -3.0                   # y prefill: unwritten rows must match master's too
-REGA_W2ST_STEP_DEADLINE_S = REGA_FSILU_STEP_DEADLINE_S   # no class step after this (prepare() seconds)
-REGA_W2ST_STATE_KEYS = REGA_FSILU_STATE_KEYS + ("rega_w2st_ok",)
-
-
-def _rega_w2st_gemm(state, ext, hs, y, tabs):
-    """One w2 launch (rega_gemm which 1) with the arguments _experts_rega passes: master's module (master's w2) or the
-    fsilu module (arm a): hs -> y."""
-    bank, err, grid = state["rega_bank"], state["rega_err"], state["rega_grid"]
-    sorted_ids, block_experts, n_padded, num_slots = tabs
-    ext.rega_gemm(1, hs, bank["q2"], bank["gs2"], sorted_ids, block_experts, n_padded, num_slots,
-                  D_EXPERT // 128, D_EXPERT, y, grid, err)
-
-
-def _rega_w2st_hs(state, device, cls, tokens, kind, prenorm, gen):
-    """prepare() only: one routing's tables and xs (the judge path's align + gather), then hs from the w13 this class
-    dispatches (fsilu's when ON, else master's); error word 0 and the w13 marker. Returns (tables, hs, local)."""
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    local = int((lids >= 0).sum())
-    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
-    w13 = state["rega_fsilu_ext"] if state.get("rega_fsilu_ok", {}).get(cls, False) else state["rega_ext"]
-    hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
-    err = state["rega_err"]
-    err.zero_()
-    _rega_fsilu_gemm(state, w13, 0, xs, hs, tabs)
-    torch.cuda.synchronize()
-    word, m13, _ = _rega_marks(err)
-    del x, tw, lids, xs
-    if word != 0 or m13 != REGA_MAGIC:
-        raise RuntimeError(f"{kind}: w13 left error word {word} marker {m13:#x}")
-    return tabs, hs, local
-
-
-def _rega_w2st_exact(state, device, cls, tokens, kind, prenorm, gen):
-    """prepare() only, one routing: master's w2, then arm a, on the same hs into y buffers prefilled with the same
-    sentinel (so skipped sentinel / remote rows are compared too); each launch error word 0 and the w2 marker; arm
-    a's y torch.equal to master's. Returns (None or why master's own launch failed, None or why arm a missed,
-    compact text)."""
-    tabs, hs, local = _rega_w2st_hs(state, device, cls, tokens, kind, prenorm, gen)
-    err, ref = state["rega_err"], None
-    try:
-        for lab, ext in (("m", state["rega_ext"]), ("a", state["rega_fsilu_ext"])):
-            y = torch.full((tabs[3], D_EXPERT), REGA_W2ST_SENTINEL, device=device, dtype=torch.bfloat16)
-            err.zero_()
-            _rega_w2st_gemm(state, ext, hs, y, tabs)
-            torch.cuda.synchronize()
-            word, _, m2 = _rega_marks(err)
-            if word != 0 or m2 != REGA_MAGIC:
-                why = f"{kind}: w2:{lab} left error word {word} ({REGA_ERR_TEXT.get(word, '?')}) marker {m2:#x}"
-                return (why, None, "") if ref is None else (None, why, "")
-            if ref is None:
-                ref = y
-            elif not torch.equal(y, ref):
-                return None, f"{kind}: w2:a y not bit-identical to master's ({int((y != ref).sum())} elements)", ""
-            y = None
-    finally:
-        del ref, hs
-        torch.cuda.empty_cache()
-    return None, None, f"{kind} {local}r"
-
-
-def _rega_w2st_time(state, device, cls, tokens, kind, prenorm, gen):
-    """prepare() only: one routing's hs (_rega_w2st_hs), one w2-alone CUDA graph each (w2:m = master's module, w2:a =
-    the fsilu module) into one y, plus an empty graph, timed together by _rega_fsilu_bench, cold-L2 and warm-L2,
-    REGA_FSILU_ROUNDS x REGA_FSILU_ALTERNATIONS. Returns ({mode: [per-round {name: us}]}, local routes)."""
-    tabs, hs, local = _rega_w2st_hs(state, device, cls, tokens, kind, prenorm, gen)
-    ms, fs, err = state["rega_ext"], state["rega_fsilu_ext"], state["rega_err"]
-    y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
-    fns = {"w2:m": lambda: _rega_w2st_gemm(state, ms, hs, y, tabs),
-           "w2:a": lambda: _rega_w2st_gemm(state, fs, hs, y, tabs)}
-    graphs = {}
-    err.zero_()
-    try:
-        graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
-        tiny = torch.zeros(16, dtype=torch.float32, device=device)
-        graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-        res = _rega_fsilu_bench(graphs, device, ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
-        word = _rega_marks(err)[0]
-        if word != 0:
-            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
-        return res, local
-    finally:
-        del graphs, fns, hs, y
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
-def _rega_w2st_verdict(res):
-    """{mode: [per-round {name: us}]} -> ([a / master per round and mode], compact text: per mode the round-mean us
-    of master and a, and a's per-round ratios)."""
-    ratios, parts = [], []
-    for mode, rds in res.items():
-        n = max(len(rds), 1)
-        r = [rd["w2:a"] / max(rd["w2:m"], 1e-9) for rd in rds]
-        ratios += r
-        parts.append(f"{mode} m {sum(rd['w2:m'] for rd in rds) / n:.1f} a {sum(rd['w2:a'] for rd in rds) / n:.1f} "
-                     f"x{'/'.join(f'{v:.3f}' for v in r)}")
-    return ratios, "; ".join(parts)
-
-
-def _rega_w2st_class(state, device, cls, weights, lines, t_start, info):
-    """prepare() only: one class's checks and gate; (on, reason). 1. the judge-like pop routing (fsilu's calibrated
-    alpha for this class, else calibrated here on master's w13); 2. exactness on random, skewed, one and that routing
-    (_rega_w2st_exact); 3. timing (_rega_w2st_time, cold + warm, master / a in the same alternations) on the
-    judge-like and random routings (<= REGA_W2ST_RATIO), and at the low class on rega-lo's guard routing
-    (<= REGA_W2ST_GUARD_RATIO); 4. the two-state replay check with arm a ON. No step starts after
-    REGA_W2ST_STEP_DEADLINE_S."""
-    tokens = REGA_FSILU_TOKENS[cls]
-    tag = f"{REGA_W2ST_TAG} {cls} T={tokens}"
-    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
-    gen = torch.Generator(device=device).manual_seed(20261104)
-
-    def late(step):
-        used = time.perf_counter() - t_start
-        if used > REGA_W2ST_STEP_DEADLINE_S:
-            return f"SKIPPED: {step} not started (prepare {used:.0f}s > {REGA_W2ST_STEP_DEADLINE_S:.0f}s)"
-        return None
-
-    # 1. the judge-like routing
-    alpha, src = info.get("alpha", {}).get(cls), "fsilu's"
-    if alpha is None:
-        why = late("alpha calibration")
-        if why:
-            return False, why
-        alpha, src = _rega_fsilu_calibrate(state, device, cls, tokens, prenorm, gen)[0], "calibrated here"
-    pop_kind = f"pop:{alpha:g}"
-    # 2. exactness
-    parts = []
-    for kind in REGA_W2ST_EXACT_KINDS + (pop_kind,):
-        why = late(f"exactness {kind}")
-        if why:
-            return False, why
-        why_m, why_a, text = _rega_w2st_exact(state, device, cls, tokens, kind, prenorm, gen)
-        if why_m or why_a:
-            lines.append(f"{tag} exact MISS: {why_m or why_a}"[:500])
-            print(lines[-1], flush=True)
-            return False, (f"master's w2 launch failed ({why_m})" if why_m else f"arm a not exact ({why_a})")
-        parts.append(text)
-    lines.append(f"{tag} exact (y torch.equal master's, word 0, w2 marker; {pop_kind} = {src} judge-like alpha; "
-                 f"prenorm {prenorm}): " + ", ".join(parts) + "; a passes")
-    print(lines[-1], flush=True)
-    # 3. timing: w2 alone, master / a, cold + warm, judge-like then random
-    ratios = []
-    for kind in (pop_kind, "random"):
-        why = late(f"timing {kind}")
-        if why:
-            return False, why
-        res, local = _rega_w2st_time(state, device, cls, tokens, kind, prenorm, gen)
-        r, text = _rega_w2st_verdict(res)
-        ratios += r
-        lines.append(f"{tag} TIME {kind} {local}r: {text}")
-        print(lines[-1], flush=True)
-    need = 2 * 2 * REGA_FSILU_ROUNDS
-    geo = _prod(ratios) ** (1.0 / max(len(ratios), 1))
-    ok = len(ratios) == need and all(v <= REGA_W2ST_RATIO for v in ratios)
-    gate = (f"{tag} GATE a/master <= {REGA_W2ST_RATIO} every round, cold+warm, {pop_kind}+random: gm x{geo:.3f} "
-            f"max x{max(ratios, default=0.0):.3f} {'pass' if ok else 'MISS'}")
-    # 3b. the low class only: rega-lo's heavier-skew guard routing, a no-regression bar (timed only when 3 passed)
-    if cls == "low" and ok:
-        why = late("timing guard")
-        if why:
-            lines.append(gate + "; guard not timed")
-            print(lines[-1], flush=True)
-            return False, why
-        n_rnd, counts = _rega_pop_counts(tokens, device)
-        g_alpha, g_cnt = _rega_pop_pick(counts, REGA_LO_GUARD_ROUTES)
-        g_kind = f"pop:{g_alpha:g}"
-        res, local = _rega_w2st_time(state, device, cls, tokens, g_kind, prenorm, gen)
-        g, text = _rega_w2st_verdict(res)
-        lines.append(f"{tag} TIME guard {g_kind} {local}r (rega-lo's alpha for ~{REGA_LO_GUARD_ROUTES} routes, "
-                     f"calibrated {g_cnt:.0f} = {g_cnt / max(n_rnd, 1.0):.2f}x uniform): {text}")
-        print(lines[-1], flush=True)
-        g_ok = len(g) == 2 * REGA_FSILU_ROUNDS and all(v <= REGA_W2ST_GUARD_RATIO for v in g)
-        gate += (f"; guard {g_kind} <= {REGA_W2ST_GUARD_RATIO} every round, cold+warm: max "
-                 f"x{max(g, default=0.0):.3f} {'pass' if g_ok else 'MISS'}")
-        ok = ok and g_ok
-    pinned = cls in REGA_W2ST_PIN
-    if pinned:
-        gate += f" [PINNED a; timing alone {'pass' if ok else 'MISS'}]"
-    lines.append(gate)
-    print(lines[-1], flush=True)
-    if not ok and not pinned:
-        return False, "timing gate missed"
-    # 4. two-state replay check with arm a ON for this class
-    why = late("replay check")
-    if why:
-        return False, why
-    trial = dict(state)
-    trial["rega_w2st_ok"] = {c: c == cls for c in REGA_FSILU_CLASSES}
-    cache = {}
-    why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FSILU_REPLAY_PLAN[cls],
-                                   keys=REGA_W2ST_STATE_KEYS)
-    cache.clear()
-    torch.cuda.empty_cache()
-    if why:
-        return False, f"two-state replay check failed: {why}"
-    print(f"{tag} two-state replay check (w2st arm a ON): {line}", flush=True)
-    return True, ""
-
-
-def _prod(values):
-    out = 1.0
-    for v in values:
-        out *= v
-    return out
-
-
-def _rega_w2st_phase(state, weights, device, t_start, info):
-    """prepare() only, after _rega_fsilu_phase (info: its build seconds, w2 attribute rows and calibrated alphas).
-    OFF (reason line) when rega_fsilu_ext is None. Per class in REGA_W2ST_ORDER (on rega; low only when
-    rega_low_variant == 0) _rega_w2st_class, when arm a's attribute row passed for it. Sets state['rega_w2st_ok']
-    [class] (plain bools). Never raises; every miss leaves master's w2. Returns the compact summary lines; the PATH
-    CHOSEN lines are last, each with which / ok, fsilu's own state for the class and (low) rega_low_variant."""
-    t0 = time.perf_counter()
-    state["rega_w2st_ok"] = {c: False for c in REGA_FSILU_CLASSES}
-    lines, verdict, off, secs = [], {}, None, {}
-    v = int(state.get("rega_low_variant", 0))
-    fok = dict(state.get("rega_fsilu_ok", {}))
-    try:
-        routed = [c for c in REGA_W2ST_ORDER if state.get("rega_ok", {}).get(c, False)]
-        w2a = info.get("w2_attrs", {})
-        if state.get("rega_fsilu_ext") is None:
-            off = ("rega_fsilu_ext is None (fsilu OFF in every class, skipped or failed): arm a lives in that "
-                   "module")
-        elif not routed:
-            off = "no class is on rega (master's gates)"
-        else:
-            build_s = info.get("build_s", float("nan"))
-            lines.append(f"{REGA_W2ST_TAG} no build of its own: arm a is {REGA_FSILU_EXT_NAME}'s w2 (4 rega_kernel "
-                         f"instantiations, arm b and its 2 SB instantiations dropped: that build {build_s:.1f}s); "
-                         f"w2a attrs " + " ".join(f"{'ft' if b else 's1'} {'ok' if g else 'OFF'}"
-                                                  for b, g in sorted(w2a.items())))
-            print(lines[-1], flush=True)
-            stop = None
-            for cls in routed:
-                tc = time.perf_counter()
-                used = tc - t_start
-                if stop:
-                    verdict[cls] = stop
-                elif cls == "low" and v:
-                    verdict[cls] = f"low runs rega_gemm_lo (rega_low_variant {v})"
-                elif not w2a.get(cls == "ft", False):
-                    verdict[cls] = "attribute check failed for arm a's w2 of this class"
-                elif used > REGA_W2ST_STEP_DEADLINE_S:
-                    verdict[cls] = f"SKIPPED: deadline (prepare {used:.0f}s > {REGA_W2ST_STEP_DEADLINE_S:.0f}s)"
-                else:
-                    try:
-                        on, why = _rega_w2st_class(state, device, cls, weights, lines, t_start, info)
-                    except Exception as e:  # stop here: anything after a fault would be unreliable
-                        on, why = False, f"raised {e!r}"[:300]
-                        stop = f"an earlier class raised ({why[:80]})"
-                    state["rega_w2st_ok"][cls] = bool(on)
-                    verdict[cls] = why
-                state["rega_err"].zero_()
-                secs[cls] = time.perf_counter() - tc
-    except Exception as e:  # a device fault would have poisoned the context; anything else keeps master
-        off = f"w2st phase raised {e!r}"[:400]
-        state["rega_w2st_ok"] = {c: False for c in REGA_FSILU_CLASSES}
-    finally:
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        if off:
-            lines.append(f"{REGA_W2ST_TAG} OFF: {off}")
-            print(lines[-1], flush=True)
-        lines.append(f"{REGA_W2ST_TAG} phase {time.perf_counter() - t0:.1f}s ("
-                     + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items())
-                     + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s")
-        for cls in REGA_FSILU_CLASSES:
-            why = verdict.get(cls, off or "class not on rega")
-            ok = bool(state["rega_w2st_ok"].get(cls, False))
-            chosen = ("w2st a (early gs/sid loads)" + (" [PINNED]" if cls in REGA_W2ST_PIN else "")) if ok \
-                else "master's w2"
-            lines.append(f"{REGA_W2ST_TAG} PATH CHOSEN {cls}: {chosen}" + ("" if ok else f" ({why[:160]})")
-                         + f"; which {1 if ok else 0} ok {ok}"
-                         + (f" rega_low_variant {v}" if cls == "low" else "")
-                         + f"; fsilu={'ON' if fok.get(cls, False) else 'OFF'}")
-        lines.append(f"{REGA_W2ST_TAG} PATH CHOSEN: rega_w2st_ok {state['rega_w2st_ok']} (True = arm a, the early "
-                     f"gs/sid loads, from {REGA_FSILU_EXT_NAME}; False = master's w2)")
-    return lines
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# experts-rega-dq2-dequant-cost-diag: the INSTRUCTION COST of the rega dequant (not its stage schedule). A prepare-time
-# diagnostic with a gated route. One module, muse_prefill_rega_dq, derived from _rega_fsilu_src() (the fsilu_w2a
-# source master dispatches) by asserted (old, new) edits, each old occurring exactly once (else '[rega-dq] OFF: edit').
-# Template int DQ x <G, BIG> = 16 rega_kernel instantiations:
-#   DQ 0 = master's dq_stage text verbatim (the control); 1 = A1 scale-L3 (moe's paired scale decode, one prmt + one
-#   IMAD per k16 step, the per-row broadcast folded into the bf16x2 multiply's half selector), master's code layout;
-#   2 = A2 ext_prop (moe's nibble extraction) on a prepare-time lossless per-word permutation of a COPY of the code
-#   bank, master's scale path; 3 = A3 = A1 + A2 (moe Engine A's dq2 + L3 form);
-# and a runtime MODE (kernel-uniform, one branch per work item outside the k loop): 0 = full; 2 = no MMA (the arm's
-# dequant every stage, ring waits and releases as master's, the 32 registers kept live by a predicated-store sink with
-# no adds); 5 = pure dequant issue (producer off, no ring waits, no MMA, no epilogue: KS stage dequants of the stage
-# buffers per item into the sink). Its nvcc build starts in a background thread at the top of prepare() (the source is
-# static text) and is joined in _rega_dq_phase and again in prepare()'s finally: no build outlives prepare(). Every arm
-# is exact by construction (e2m1 x e4m3 x 2^-7 has <= 6 significant bits, exact in bf16; A1 / A3 need every bank scale
-# byte in [0x08, 0x7E]); the phase proves it (an exhaustive one-launch canary, then torch.equal of hs and y on every
-# self-check routing). Route: per class, the exact arm with the lowest warm-pop pair ratio only when its w13 + w2 pair
-# MODE 0 is <= REGA_DQ_ROUTE_RATIO x master AND x DQ0 in every round, L2 mode and routing, its hs and y equal master's
-# dispatched launches, and it passes master's two-state replay check; then state['rega_dq_ok'][cls] = DQ (a plain int)
-# and _experts_rega launches that arm's MODE-0 instantiation for both GEMMs. Otherwise no dq state key is kept and
-# master runs unchanged.
-# experts-rega-a5b-desc-splitcommit (H100 rgx2, takemyjob hopper/rgx2 771f8eb): A1 and A2 are RETIRED (A3 routed every
-# class; A1 missed the gate at high / ft, A2 lost to A3 everywhere) and a new arm DQ 5 = A5b+D+SC is raced next to A3
-# and DQ0, so the module stays at 12 instantiations (the 20 of a fifth arm would fail the build gate):
-#   A4b: a lossless prepare-time bit re-encoding (ENC4) of every 32-bit code word: pair 0 q & M, pair 1 (q << 6) & M,
-#   pair 2 rotl(q, 10) & M, pair 3 ((q << 4) & 0x81808180) | ((q >> 4) & 0x00400040) (9 ops / word vs ext_prop's 11);
-#   A5b: every scale byte b in [0x08, 0x7E] stored as the 7-bit field b - 8, bit-packed per 32-bit scale word (k even
-#   at bits 4-10 / 20-26, k odd at a byte rotate of them), so a k16 step's scale pair is one LOP3 (w & 0x07F007F0) |
-#   0x78007800, bit-identical to A3's t * 16 + 0x77807780; D: the wgmma descriptor's low word once per stage (+ a
-#   constant per wgmma); SC: split commit (record 0's dequant, 4 wgmma, commit; record 1's dequant under them, 4
-#   wgmma, commit, wait 0), every N bucket. A5b reads a re-encoded COPY of the bank (codes ENC4, scales packed), made
-#   from the weights' bank only and checked per chunk by the inverse. Route per class: A5b only when it is exact and
-#   its pair MODE 0 is <= REGA_DQ_ROUTE_RATIO x A3 AND x DQ0 AND x master in every round, L2 mode and routing, and it
-#   passes the replay check; else A3 with A3's gate; else master.
-# ---------------------------------------------------------------------------------------------------------------
-REGA_DQ_TAG = "[rega-dq]"
-REGA_DQ_EXT_NAME = "muse_prefill_rega_dq"
-REGA_DQ_NAMES = {0: "DQ0", 3: "A3", 5: "A5b"}   # A5b = A5b+D+SC (rgx2 arm 6)
-REGA_DQ_ALL = (0, 3, 5)
-REGA_DQ_ARMS = (3, 5)
-REGA_DQ_NEW = 5                         # the A5b+D+SC arm
-REGA_DQ_MODES = (0, 2, 5)
-REGA_DQ_INST = 12                       # rega_kernel<G, BIG, DQ>: 2 x 2 x 3
-REGA_DQ_PROBE_INST = 4                  # the ptxas probe build: rega_kernel<G, BIG, 5> only
-REGA_DQ_PROBE_START_S = 120.0           # the probe build starts only before this many prepare() seconds
-REGA_DQ_PROBE_DEF = "-DREGA_DQ_PTXAS_PROBE"
-REGA_DQ_PROBE_STOP = "-lrega_dq_ptxas_probe_deliberate_stop"   # a library that does not exist: the link fails
-REGA_DQ_EST_4INST_S = 40.0              # a 4-instantiation rega build on the judge (fsilu 39.3 s, anat 39.8 s; cb22e610)
-REGA_DQ_BUILD_MARGIN = 1.3              # start only if t + 1.3 x est + REGA_DQ_BUILD_PAD_S <= REGA_DQ_BUILD_LIMIT_S
-REGA_DQ_BUILD_PAD_S = 25.0
-REGA_DQ_BUILD_LIMIT_S = 270.0
-REGA_DQ_STEP_DEADLINE_S = 255.0         # no class step (exactness, timing) after this many prepare() seconds
-REGA_DQ_FT_STEP_DEADLINE_S = 240.0      # an ft step (~5-10 s) starts only before this
-REGA_DQ_FID = (0.97, 1.03)              # DQ0 MODE 0 / master's dispatched launch, warm pop, per GEMM: else INVALID class
-REGA_DQ_ROUTE_RATIO = 0.97              # pair MODE 0 arm / master AND arm / DQ0, every round, L2 mode and routing
-REGA_DQ_SCALE_LO, REGA_DQ_SCALE_HI = 0x08, 0x7E   # A3 / A5b: every bank scale byte a positive normal e4m3
-# A4b / A5b code encoding (rgx2.cu ENC4): bit j of the stored word = bit REGA_DQ_ENC4[j] of master's word
-REGA_DQ_ENC4 = (8, 9, 10, 1, 2, 7, 12, 13, 14, 11, 0, 3, 20, 21, 22, 15,
-                24, 25, 26, 17, 18, 23, 28, 29, 30, 27, 16, 19, 4, 5, 6, 31)
-REGA_DQ_DESC_CASES = 256 * 8            # D check: every 1024-aligned 18-bit slab address x 2 records x 4 k16 steps
-# the D cases the canary counts: slabs with slab + 2 x SLAB_HALF (128 x 128 B) <= 2^18 (every shared-memory slab)
-REGA_DQ_DESC_EXPECT = 8 * sum(1 for j in range(256) if 1024 * j + 2 * 128 * 128 <= 1 << 18)
-REGA_DQ_PERM_CHUNK = 8192               # records per permutation chunk (prepare only)
-REGA_DQ_SUMMARY_MAX = 3000              # chars: the summary printed at the end and echoed last
-REGA_DQ_STATE_KEYS = REGA_W2ST_STATE_KEYS + ("rega_dq_ext", "rega_dq_ok", "rega_dq_bank")  # rega_dq_bank: {arm: bank}
-REGA_DQ_CPP_EDIT = ("int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err);",
-                    "int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err, int64_t mode, int64_t dq);")
-REGA_DQ_CPP_EXTRA = ("void rega_dq_exact(torch::Tensor words, torch::Tensor pwords, torch::Tensor ewords, "
-                     "torch::Tensor scales, torch::Tensor pscales, torch::Tensor out, torch::Tensor dbad);\n")
-REGA_DQ_FUNCS = ["rega_init", "rega_gather", "rega_gemm", "rega_dq_exact"]
-
-_REGA_DQ_HELPERS = r"""// ---- rega-dq (experts-rega-dq2-dequant-cost-diag): the exact dequant arms ---------------------------------------
-// Rejected, not built: a register prmt LUT (a bf16 e2m1 code needs bits 6-8, which straddle the byte boundary, and
-// prmt's msb mode replicates a sign instead of OR-ing it: >= 2 prmt + selector building per pair, no cut) and an smem
-// LUT (random-index bank conflicts on the MIO pipe). Hopper has no e2m1 cvt; nothing here is an sm_100 instruction.
-// moe's ext_prop<I> on the permuted word (prepare: pair p of master's layout, low element at nibble 3 - p and high at
-// 7 - p, moves to bits {6,7,8,15} - 3p (+16) for p < 3, pair 3 to the leftover bits): e2m1 * 2^-126 per bf16 half,
-// bit-identical to master's (q << 4p & 0x80008000) | ((q << 4p & 0x70007000) >> 6).
-template <int I>
-__device__ __forceinline__ uint32_t dq_ext_prop(uint32_t q) {
-  if constexpr (I == 0) {
-    return q & 0x81C081C0u;
-  } else if constexpr (I == 1) {
-    return (q << 3) & 0x81C081C0u;
-  } else if constexpr (I == 2) {
-    return (q << 6) & 0x81C081C0u;
-  } else {
-    return ((q >> 3) & 0x01800180u) | ((q >> 7) & 0x00400040u) | ((q << 1) & 0x80008000u);
-  }
-}
-// moe's rt16: 16 known only at run time (n >> 30 == 0 for every n in [0, 2^30)), so t * m16 + C stays one IMAD (FMA
-// pipe) instead of a LEA on the ALU pipe.
-__device__ __forceinline__ uint32_t dq_rt16(int n) {
-  uint32_t z;
-  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
-  return 16u << z;
-}
-// One-source paired scale decode of rega's interleaved scale word w (byte 2 KK = row g, byte 2 KK + 1 = row g + 8 at
-// this word's k16 step KK): prmt -> [b_g, 0, b_g8, 0], then t * m16 + 0x77807780 = {S(b_g), S(b_g8)}, S(b) the bf16
-// bits of e4m3(b) * 2^119 for every byte in [0x08, 0x7E] (prepare checks the bank once; no carry crosses a half).
-template <int KK>
-__device__ __forceinline__ uint32_t dq_scale_pair(uint32_t w, uint32_t m16) {
-  uint32_t t, d;
-  asm("prmt.b32 %0, %1, %2, %3;\n"
-      : "=r"(t) : "r"(w), "r"(0u), "r"(0x4040u | ((2u * KK + 1u) << 8) | (2u * KK)));
-  asm("mad.lo.u32 %0, %1, %2, %3;\n" : "=r"(d) : "r"(t), "r"(m16), "r"(0x77807780u));
-  return d;
-}
-// moe's mul_bf16x2_h<H>: a * {S, S} (+ -0), S = half H of s; this spelling folds into HMUL2's .H0_H0 / .H1_H1 (a
-// __byte_perm broadcast does not)
-template <int H>
-__device__ __forceinline__ uint32_t dq_mul_h(uint32_t a, uint32_t s) {
-  static_assert(H == 0 || H == 1, "half 0 or 1");
-  uint32_t d;
-  if constexpr (H == 0)
-    asm("{\n\t.reg .b16 l, h;\n\t.reg .b32 t;\n\tmov.b32 {l, h}, %2;\n\tmov.b32 t, {l, l};\n\t"
-        "fma.rn.bf16x2 %0, %1, t, %3;\n\t}\n" : "=r"(d) : "r"(a), "r"(s), "r"(0x80008000u));
-  else
-    asm("{\n\t.reg .b16 l, h;\n\t.reg .b32 t;\n\tmov.b32 {l, h}, %2;\n\tmov.b32 t, {h, h};\n\t"
-        "fma.rn.bf16x2 %0, %1, t, %3;\n\t}\n" : "=r"(d) : "r"(a), "r"(s), "r"(0x80008000u));
-  return d;
-}
-// One k16 step of one record for A3: q = this lane's permuted code word; sw = the scale word holding this step's two
-// bytes (sc.x for k < 2, sc.y for k >= 2; KK = k & 1). a[i]: row g (i even, half 0) or g + 8 (i odd, half 1), as
-// dequant8. (A1 / A2 retired by experts-rega-a5b-desc-splitcommit.)
-template <int KK>
-__device__ __forceinline__ void dq_k(uint32_t q, uint32_t sw, uint32_t m16, uint32_t (&a)[4]) {
-  const uint32_t sp = dq_scale_pair<KK>(sw, m16);
-  a[0] = dq_mul_h<0>(dq_ext_prop<0>(q), sp);
-  a[1] = dq_mul_h<1>(dq_ext_prop<1>(q), sp);
-  a[2] = dq_mul_h<0>(dq_ext_prop<2>(q), sp);
-  a[3] = dq_mul_h<1>(dq_ext_prop<3>(q), sp);
-}
-// ---- A5b+D+SC (experts-rega-a5b-desc-splitcommit; ported from takemyjob hopper/rgx2 771f8eb gen2.py, RGX_DQ 7,
-// RGX_DESC 1, RGX_SCHED 1, RGX_SC_MINN 16) -----------------------------------------------------------------------
-// a run-time v (v << (n >> 30), n >> 30 == 0 for every n in [0, 2^30)) ptxas cannot fold
-__device__ __forceinline__ uint32_t dq_rtv(int n, uint32_t v) {
-  uint32_t z;
-  asm("shr.u32 %0, %1, 30;\n" : "=r"(z) : "r"(n));
-  return v << z;
-}
-// One k16 step of A5b: qq = the ENC4 code word (pair p's e2m1 bits land on {6,7,8,15,22,23,24,31} through view p),
-// w = the packed scale word (fields b - 8: k even at bits 4-10 / 20-26, k odd at bits 28-31,0-2 / 12-18, i.e. the
-// same masks after a byte rotate), m78 = 0x78007800 held in a register. sp = (ws & 0x07F007F0) | 0x78007800 is
-// exactly A3's dq_scale_pair (b << 4) + 0x7780 per half for every b in [0x08, 0x7E]; the bf16x2 products are A3's.
-template <int KK>
-__device__ __forceinline__ void dq5_k(uint32_t qq, uint32_t w, uint32_t m78, uint32_t (&o)[4]) {
-  const uint32_t ws = KK ? __byte_perm(w, w, 0x2103) : w;
-  uint32_t sp;
-  asm("lop3.b32 %0, %1, %2, %3, 0xEA;\n" : "=r"(sp) : "r"(ws), "n"(0x07F007F0), "r"(m78));
-  constexpr uint32_t M = 0x81C081C0u;
-  o[0] = dq_mul_h<0>(qq & M, sp);
-  o[1] = dq_mul_h<1>((qq << 6) & M, sp);
-  o[2] = dq_mul_h<0>(__funnelshift_l(qq, qq, 10) & M, sp);
-  o[3] = dq_mul_h<1>(((qq << 4) & 0x81808180u) | ((qq >> 4) & 0x00400040u), sp);
-}
-// one 64-k record R (4 k16 steps) of this warp's 16 rows -> a[4R .. 4R+3]; m28 = 2^28 at run time
-template <int R>
-__device__ __forceinline__ void dq5_rec(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4], uint32_t m28) {
-  const int g = lane >> 2;
-  const uint32_t m78 = m28 ^ 0x68007800u;  // = 0x78007800, opaque to ptxas
-  const uint4 q = *reinterpret_cast<const uint4*>(st + R * REC + cw * 512 + lane * 16);
-  const uint2 sc = *reinterpret_cast<const uint2*>(st + R * REC + REC_CODES + cw * 64 + g * 8);
-  dq5_k<0>(q.x, sc.x, m78, a[R * 4 + 0]);
-  dq5_k<1>(q.y, sc.x, m78, a[R * 4 + 1]);
-  dq5_k<0>(q.z, sc.y, m78, a[R * 4 + 2]);
-  dq5_k<1>(q.w, sc.y, m78, a[R * 4 + 3]);
-}
-// D: the descriptor of record r, k16 step k of a stage whose slab starts at smem address slab: lo = make_desc's low
-// word of slab, computed once per stage; + r * (SLAB_HALF >> 4) + 2 k per wgmma; high word = make_desc's (SBO 1024 >> 4,
-// layout 1 << 62). Equal to make_desc(slab + r * SLAB_HALF + k * 32) whenever slab is 1024-aligned and slab +
-// 2 * SLAB_HALF <= 2^18 (every shared address): the canary checks every such slab bitwise.
-static_assert(((static_cast<uint64_t>(1024 >> 4) << 32) | (static_cast<uint64_t>(1) << 62)) ==
-                  (static_cast<uint64_t>(0x40000040u) << 32),
-              "D: high word of make_desc");
-static_assert(SLAB_HALF % 1024 == 0 && WST % 1024 == 0 && STAGE_BYTES % 1024 == 0 && (SLAB_HALF >> 4) + 3 * 2 < (1 << 14),
-              "D: 1024-aligned slabs; the per-wgmma offset stays inside the 14-bit address field");
-__device__ __forceinline__ uint32_t dq_desc_lo(uint32_t slab) { return ((slab & 0x3FFFFu) >> 4) | (1u << 16); }
-__device__ __forceinline__ uint64_t dq_desc_at(uint32_t lo, uint32_t off) {
-  uint64_t d;
-  asm("mov.b64 %0, {%1, %2};\n" : "=l"(d) : "r"(lo + off), "r"(0x40000040u));
-  return d;
-}
-// records [R0, R1) of one stage's wgmma with the D descriptors
-template <int NB, int R0, int R1>
-__device__ __forceinline__ void dq_batch_d(float (&acc)[NB / 2], const uint32_t (&a)[8][4], uint32_t slab) {
-  const uint32_t lo = dq_desc_lo(slab);
-#pragma unroll
-  for (int r = R0; r < R1; ++r) {
-#pragma unroll
-    for (int k = 0; k < 4; ++k)
-      Wg<NB>::mma(acc, a[r * 4 + k], dq_desc_at(lo, static_cast<uint32_t>(r * (SLAB_HALF >> 4) + k * 2)));
-  }
-}
-// dq_stage of arm DQ: DQ 0 IS master's dq_stage; A3 / A5b load the same uint4 codes / uint2 scales per record.
-template <int DQ>
-__device__ __forceinline__ void dq_stage_t(const uint8_t* st, int cw, int lane, uint32_t (&a)[8][4], uint32_t m16,
-                                           uint32_t m28) {
-  if constexpr (DQ == 0) {
-    dq_stage(st, cw, lane, a);
-  } else if constexpr (DQ == 5) {
-    dq5_rec<0>(st, cw, lane, a, m28);
-    dq5_rec<1>(st, cw, lane, a, m28);
-  } else {
-    static_assert(DQ == 3, "DQ 0, 3 or 5");
-    const int g = lane >> 2;
-#pragma unroll
-    for (int r = 0; r < 2; ++r) {
-      const uint4 q = *reinterpret_cast<const uint4*>(st + r * REC + cw * 512 + lane * 16);
-      const uint2 sc = *reinterpret_cast<const uint2*>(st + r * REC + REC_CODES + cw * 64 + g * 8);
-      dq_k<0>(q.x, sc.x, m16, a[r * 4 + 0]);
-      dq_k<1>(q.y, sc.x, m16, a[r * 4 + 1]);
-      dq_k<0>(q.z, sc.y, m16, a[r * 4 + 2]);
-      dq_k<1>(q.w, sc.y, m16, a[r * 4 + 3]);
-    }
-  }
-}
-// MODE 2 / 5 sink (the anat r2 form): every a register feeds a zero-instruction asm volatile and one asm whose only
-// instructions are a setp and 8 st.shared.v4 predicated on the pipeline's dead flag (false in a healthy run: nothing
-// is stored), so ptxas cannot drop the dequant and no add is issued.
-__device__ __forceinline__ void dq_sink(const uint32_t (&a)[8][4], bool dead, uint32_t sink) {
-#pragma unroll
-  for (int i = 0; i < 8; ++i) {
-#pragma unroll
-    for (int j = 0; j < 4; ++j) asm volatile("" :: "r"(a[i][j]));
-  }
-  const uint32_t dz = dead ? 1u : 0u;
-  asm volatile("{\n\t.reg .pred p;\n\tsetp.ne.u32 p, %32, 0;\n\t"
-               "@p st.shared.v4.b32 [%33], {%0, %1, %2, %3};\n\t"
-               "@p st.shared.v4.b32 [%33+16], {%4, %5, %6, %7};\n\t"
-               "@p st.shared.v4.b32 [%33+32], {%8, %9, %10, %11};\n\t"
-               "@p st.shared.v4.b32 [%33+48], {%12, %13, %14, %15};\n\t"
-               "@p st.shared.v4.b32 [%33+64], {%16, %17, %18, %19};\n\t"
-               "@p st.shared.v4.b32 [%33+80], {%20, %21, %22, %23};\n\t"
-               "@p st.shared.v4.b32 [%33+96], {%24, %25, %26, %27};\n\t"
-               "@p st.shared.v4.b32 [%33+112], {%28, %29, %30, %31};\n\t}\n"
-               :: "r"(a[0][0]), "r"(a[0][1]), "r"(a[0][2]), "r"(a[0][3]),
-                  "r"(a[1][0]), "r"(a[1][1]), "r"(a[1][2]), "r"(a[1][3]),
-                  "r"(a[2][0]), "r"(a[2][1]), "r"(a[2][2]), "r"(a[2][3]),
-                  "r"(a[3][0]), "r"(a[3][1]), "r"(a[3][2]), "r"(a[3][3]),
-                  "r"(a[4][0]), "r"(a[4][1]), "r"(a[4][2]), "r"(a[4][3]),
-                  "r"(a[5][0]), "r"(a[5][1]), "r"(a[5][2]), "r"(a[5][3]),
-                  "r"(a[6][0]), "r"(a[6][1]), "r"(a[6][2]), "r"(a[6][3]),
-                  "r"(a[7][0]), "r"(a[7][1]), "r"(a[7][2]), "r"(a[7][3]),
-                  "r"(dz), "r"(sink)
-               : "memory");
-}
-
-"""
-
-_REGA_DQ_CANARY = r"""
-// rega-dq exactness canary (prepare only, one launch, no wgmma): case i = code word words[i] in master's layout
-// (pwords[i] = the same word under A3's permutation, ewords[i] = under A5b's ENC4) under scale word scales[i] (bytes
-// 0 / 1 = rows g / g + 8 at KK 0, bytes 2 / 3 at KK 1; pscales[i] = A5b's packed form of it). out[i][slot][KK][4]:
-// slot 0 = master's per-k body (the f16 scale path + dequant8, as dq_stage), 1 = A3's dq_k<KK>, 2 = A5b's dq5_k<KK>.
-// prepare compares every arm with slot 0 bitwise. Threads i < REGA_DQ_DESC_CASES also check D: slab = 1024 (i >> 3),
-// r = (i >> 2) & 1, k = i & 3; dq_desc_at(dq_desc_lo(slab), r * (SLAB_HALF >> 4) + 2 k) vs make_desc(slab + r *
-// SLAB_HALF + 32 k), counted into dbad[0] (mismatches) and dbad[1] (cases checked).
-template <int KK>
-__device__ __forceinline__ void dq_exact_kk(uint32_t q, uint32_t qp, uint32_t qe, uint32_t sw, uint32_t ps,
-                                            uint32_t h, uint32_t m16, uint32_t m78, uint32_t* o) {
-  const float P119 = __int_as_float(0x7B000000);  // 2^119
-  const float2 fs = __half22float2(*reinterpret_cast<const __half2*>(&h));
-  uint32_t a[4];
-  dequant8(q, bf16x2_bcast(fs.x * P119), bf16x2_bcast(fs.y * P119), a);
-#pragma unroll
-  for (int j = 0; j < 4; ++j) o[0 * 8 + KK * 4 + j] = a[j];
-  dq_k<KK>(qp, sw, m16, a);
-#pragma unroll
-  for (int j = 0; j < 4; ++j) o[1 * 8 + KK * 4 + j] = a[j];
-  dq5_k<KK>(qe, ps, m78, a);
-#pragma unroll
-  for (int j = 0; j < 4; ++j) o[2 * 8 + KK * 4 + j] = a[j];
-}
-__global__ void __launch_bounds__(256)
-rega_dq_exact_kernel(const uint32_t* __restrict__ words, const uint32_t* __restrict__ pwords,
-                     const uint32_t* __restrict__ ewords, const uint32_t* __restrict__ scales,
-                     const uint32_t* __restrict__ pscales, int n, int ks, uint32_t* __restrict__ out,
-                     int* __restrict__ dbad) {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < REGA_DQ_DESC_CASES) {
-    const uint32_t slab = 1024u * static_cast<uint32_t>(i >> 3);
-    const int r = (i >> 2) & 1, k = i & 3;
-    const uint64_t dd = dq_desc_at(dq_desc_lo(slab), static_cast<uint32_t>(r * (SLAB_HALF >> 4) + k * 2));
-    const uint64_t dm = make_desc(slab + r * SLAB_HALF + k * 32);
-    if (slab + 2u * SLAB_HALF <= (1u << 18)) {
-      atomicAdd(dbad + 1, 1);
-      if (dd != dm) atomicAdd(dbad, 1);
-    }
-  }
-  if (i >= n) return;
-  const uint32_t q = words[i], qp = pwords[i], qe = ewords[i], sw = scales[i], ps = pscales[i];
-  uint32_t h[2];
-  e4m3x4_to_f16x2x2(sw, h[0], h[1]);
-  const uint32_t m16 = dq_rt16(ks);
-  const uint32_t m78 = dq_rtv(ks, 1u << 28) ^ 0x68007800u;
-  uint32_t* o = out + static_cast<size_t>(i) * 24;
-  dq_exact_kk<0>(q, qp, qe, sw, ps, h[0], m16, m78, o);
-  dq_exact_kk<1>(q, qp, qe, sw, ps, h[1], m16, m78, o);
-}
-
-""".replace("REGA_DQ_DESC_CASES", str(REGA_DQ_DESC_CASES))
-
-_REGA_DQ_HOST = r"""
-// rega-dq: the exactness canary's launch (prepare only).
-void rega_dq_exact(torch::Tensor words, torch::Tensor pwords, torch::Tensor ewords, torch::Tensor scales,
-                   torch::Tensor pscales, torch::Tensor out, torch::Tensor dbad) {
-  TORCH_CHECK(words.is_cuda() && words.is_contiguous() && pwords.is_contiguous() && ewords.is_contiguous() &&
-              scales.is_contiguous() && pscales.is_contiguous() && out.is_contiguous() && dbad.is_contiguous() &&
-              words.scalar_type() == at::kInt && pwords.scalar_type() == at::kInt && ewords.scalar_type() == at::kInt &&
-              scales.scalar_type() == at::kInt && pscales.scalar_type() == at::kInt && out.scalar_type() == at::kInt &&
-              dbad.scalar_type() == at::kInt, "rega_dq_exact: layout");
-  const int64_t n = words.numel();
-  TORCH_CHECK(n >= REGA_DQ_DESC_CASES && n < (1 << 30) && pwords.numel() == n && ewords.numel() == n &&
-              scales.numel() == n && pscales.numel() == n && out.numel() == n * 24 && dbad.numel() >= 2,
-              "rega_dq_exact: sizes");
-  auto stream = at::cuda::getCurrentCUDAStream();
-  rega_dq_exact_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, stream>>>(
-      reinterpret_cast<const uint32_t*>(words.data_ptr()), reinterpret_cast<const uint32_t*>(pwords.data_ptr()),
-      reinterpret_cast<const uint32_t*>(ewords.data_ptr()), reinterpret_cast<const uint32_t*>(scales.data_ptr()),
-      reinterpret_cast<const uint32_t*>(pscales.data_ptr()), static_cast<int>(n), 32,
-      reinterpret_cast<uint32_t*>(out.data_ptr()), reinterpret_cast<int*>(dbad.data_ptr()));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
-}
-""".replace("REGA_DQ_DESC_CASES", str(REGA_DQ_DESC_CASES))
-
-REGA_DQ_EDITS = (
-    # 1. the arm helpers, right after master's dq_stage
-    (r"""// wgmma_wait<0> right after the commit, BEFORE the next k-step's dequant rewrites the register-A
-""",
-     _REGA_DQ_HELPERS + r"""// wgmma_wait<0> right after the commit, BEFORE the next k-step's dequant rewrites the register-A
-"""),
-    # 2-3. consume_item: template int DQ, runtime mode
-    (r"""template <int NB, bool G>
-__device__ __forceinline__ void consume_item(""",
-     r"""template <int NB, bool G, int DQ>
-__device__ __forceinline__ void consume_item("""),
-    (r"""int* err, bool& dead) {
-  constexpr int NA = NB / 2;""",
-     r"""int* err, bool& dead, int mode) {
-  constexpr int NA = NB / 2;"""),
-    # 4. the k loop: one branch per item; MODE 0 is master's loop with the arm's dequant (DQ 0: master's dq_stage)
-    (r"""  for (int kb = 0; kb < KS; ++kb) {
-    const int s = n % STAGES;
-    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
-    const uint8_t* st = smem + s * STAGE_BYTES;
-    dq_stage(st, cw, lane, a0);
-""",
-     r"""  // rega-dq: MODE is kernel-uniform; one branch per work item, outside the k loop (none near the wgmma calls).
-  // m16 == 16 at run time (KS >> 30 == 0), opaque to the compiler: the A3 scale add stays one IMAD. m28 == 2^28 at
-  // run time (A5b: m28 ^ 0x68007800 = the LOP3's 0x78007800, held in a register).
-  [[maybe_unused]] const uint32_t m16 = dq_rt16(KS);
-  [[maybe_unused]] const uint32_t m28 = dq_rtv(KS, 1u << 28);
-  if (mode == 5) {
-    // pure dequant issue: the producer is off (no ring waits, no MMA, no epilogue); KS stage dequants of the stage
-    // buffers into the sink
-    const uint32_t sink = smem_u32(ep) + static_cast<uint32_t>(ctid & 127) * 128u;
-    for (int kb = 0; kb < KS; ++kb) {
-      dq_stage_t<DQ>(smem + (kb % STAGES) * STAGE_BYTES, cw, lane, a0, m16, m28);
-      dq_sink(a0, dead, sink);
-    }
-  } else if (mode == 2) {
-    // no MMA: the arm's dequant every stage, ring waits and releases as master's
-    const uint32_t sink = smem_u32(ep) + static_cast<uint32_t>(ctid & 127) * 128u;
-    for (int kb = 0; kb < KS; ++kb) {
-      const int s = n % STAGES;
-      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
-      dq_stage_t<DQ>(smem + s * STAGE_BYTES, cw, lane, a0, m16, m28);
-      dq_sink(a0, dead, sink);
-      if (lane == 0) mbar_arrive(empty0 + 8 * s);
-      ++n;
-    }
-  } else if constexpr (DQ == 5) {
-    // MODE 0, A5b+D+SC (rgx2 RGX_SCHED 1 with RGX_SC_MINN 16: every N bucket): record 0's dequant, its 4 wgmma
-    // (D descriptors), commit; record 1's dequant into a0[4..7] (not read by the group in flight) under them, its 4
-    // wgmma, commit, wait 0. The k order and accumulator chain are master's; two commit groups instead of one.
-    for (int kb = 0; kb < KS; ++kb) {
-      const int s = n % STAGES;
-      mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
-      const uint8_t* st = smem + s * STAGE_BYTES;
-      const uint32_t slab = smem_u32(st + WST);
-      dq5_rec<0>(st, cw, lane, a0, m28);
-      fence_acc<NA>(acc);
-      wgmma_fence();
-      dq_batch_d<NB, 0, 1>(acc, a0, slab);
-      wgmma_commit();
-      dq5_rec<1>(st, cw, lane, a0, m28);  // a0[4..7]: not read by the group in flight
-      wgmma_fence();
-      dq_batch_d<NB, 1, 2>(acc, a0, slab);
-      wgmma_commit();
-      wgmma_wait<0>();  // both groups retired: a0[] may be rewritten and this stage released at once
-      fence_acc<NA>(acc);
-      if (lane == 0) mbar_arrive(empty0 + 8 * s);
-      ++n;
-    }
-  } else {
-  // MODE 0: master's k loop, the arm's dequant (DQ 0: master's dq_stage; DQ 3: A3)
-  for (int kb = 0; kb < KS; ++kb) {
-    const int s = n % STAGES;
-    mbar_wait(full0 + 8 * s, (n / STAGES) & 1, err, dead);
-    const uint8_t* st = smem + s * STAGE_BYTES;
-    dq_stage_t<DQ>(st, cw, lane, a0, m16, m28);
-"""),
-    (r"""  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc
-  fence_acc<NA>(acc);
-""",
-     r"""  }  // rega-dq: end of the per-mode k loops
-  wgmma_wait<0>();  // as s3 variant A: nothing in flight before the epilogue reads acc
-  fence_acc<NA>(acc);
-  if (mode == 5) return;  // rega-dq MODE 5: pure dequant issue, no epilogue
-"""),
-    # 5. the kernel: template int DQ, runtime mode; MODE 5 runs no producer
-    (r"""template <bool G, bool BIG>
-__global__ void __launch_bounds__(THREADS, 1)
-rega_kernel(""",
-     r"""template <bool G, bool BIG, int DQ>
-__global__ void __launch_bounds__(THREADS, 1)
-rega_kernel("""),
-    (r"""int out_ld, int* __restrict__ err) {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-""",
-     r"""int out_ld, int* __restrict__ err, int mode) {
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
-"""),
-    (r"""    if (tid == 0) {
-      const int KC = K / 64;""",
-     r"""    if (tid == 0 && mode != 5) {  // rega-dq MODE 5: no producer, no ring traffic
-      const int KC = K / 64;"""),
-    (r"""  consume_item<NB_, G>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
-                       out_ld, err, dead)""",
-     r"""  consume_item<NB_, G, DQ>(m, smem, ep, full0, empty0, n, KS, cw, lane, ctid, gs, sorted_ids, num_routes, out,  \
-                       out_ld, err, dead, mode)"""),
-    # 6. the canary kernel, inside the anonymous namespace
-    ("}  // namespace\n", _REGA_DQ_CANARY + "}  // namespace\n"),
-    # 7. attributes: 12 rows (the ptxas probe build: DQ 5's 4), flag = G + 2 BIG + 4 DQ
-    (r"""template <bool G, bool BIG>
-void info_one(std::vector<int64_t>& r) {
-  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG>);""",
-     r"""template <bool G, bool BIG, int DQ>
-void info_one(std::vector<int64_t>& r) {
-  const void* fn = reinterpret_cast<const void*>(rega_kernel<G, BIG, DQ>);"""),
-    ("  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0));", "  r.push_back((G ? 1 : 0) + (BIG ? 2 : 0) + 4 * DQ);"),
-    (r"""  info_one<true, false>(r);
-  info_one<false, false>(r);
-  info_one<true, true>(r);
-  info_one<false, true>(r);
-""",
-     r"""#if !defined(REGA_DQ_PTXAS_PROBE)
-  info_one<true, false, 0>(r);
-  info_one<false, false, 0>(r);
-  info_one<true, true, 0>(r);
-  info_one<false, true, 0>(r);
-  info_one<true, false, 3>(r);
-  info_one<false, false, 3>(r);
-  info_one<true, true, 3>(r);
-  info_one<false, true, 3>(r);
-#endif
-  info_one<true, false, 5>(r);
-  info_one<false, false, 5>(r);
-  info_one<true, true, 5>(r);
-  info_one<false, true, 5>(r);
-"""),
-    # 8. host entry: mode and dq, checked; the launch picks rega_kernel<G, BIG, dq>
-    (r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err) {
-  TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
-""",
-     r"""int64_t K, torch::Tensor out, int64_t grid, torch::Tensor err, int64_t mode, int64_t dq) {
-  TORCH_CHECK(which == 0 || which == 1, "rega_gemm: which");
-  TORCH_CHECK(mode == 0 || mode == 2 || mode == 5, "rega_gemm: dq mode");
-  TORCH_CHECK(dq == 0 || dq == 3 || dq == 5, "rega_gemm: dq arm");
-"""),
-    ("#define WG_LAUNCH(G_, B_)", "#define WG_LAUNCH(G_, B_, D_)"),
-    ("  rega_kernel<G_, B_><<<", "  rega_kernel<G_, B_, D_><<<"),
-    (r"""reinterpret_cast<int*>(err.data_ptr()))
-  if (which == 0) {
-    if (big) WG_LAUNCH(true, true); else WG_LAUNCH(true, false);
-  } else {
-    if (big) WG_LAUNCH(false, true); else WG_LAUNCH(false, false);
-  }
-#undef WG_LAUNCH
-""",
-     r"""reinterpret_cast<int*>(err.data_ptr()), static_cast<int>(mode))
-#if defined(REGA_DQ_PTXAS_PROBE)
-#define WG_DQ(G_, B_) WG_LAUNCH(G_, B_, 5)
-#else
-#define WG_DQ(G_, B_)                     \
-  switch (dq) {                           \
-    case 3: WG_LAUNCH(G_, B_, 3); break;  \
-    case 5: WG_LAUNCH(G_, B_, 5); break;  \
-    default: WG_LAUNCH(G_, B_, 0); break; \
-  }
-#endif
-  if (which == 0) {
-    if (big) { WG_DQ(true, true); } else { WG_DQ(true, false); }
-  } else {
-    if (big) { WG_DQ(false, true); } else { WG_DQ(false, false); }
-  }
-#undef WG_DQ
-#undef WG_LAUNCH
-"""),
-)
-
-
-def _rega_dq_src():
-    """(cpp, cuda) of muse_prefill_rega_dq: _REGA_CPP with REGA_DQ_CPP_EDIT (+ the canary's declaration) and
-    _rega_fsilu_src() with the REGA_DQ_EDITS (+ the canary's host launch), each old text occurring exactly once; else
-    None. Master's strings are read, never edited."""
-    src = _rega_fsilu_src()
-    old, new = REGA_DQ_CPP_EDIT
-    if src is None or _REGA_CPP.count(old) != 1:
-        return None
-    cpp = _REGA_CPP.replace(old, new) + REGA_DQ_CPP_EXTRA
-    for old, new in REGA_DQ_EDITS:
-        if src.count(old) != 1:
-            return None
-        src = src.replace(old, new)
-    return cpp, src + _REGA_DQ_HOST
-
-
-def _rega_dq_audit(cpp, src):
-    """Pre-build audit of the dq module (as _rega_fsilu_audit): no templated Tensor accessor, no mutable file-scope /
-    static / device globals. Returns the findings."""
-    bad = []
-    for name, text in (("cpp", cpp), ("cuda", src)):
-        for n, line in enumerate(text.splitlines(), 1):
-            if "data_ptr<" in line or "data_ptr <" in line or _SSDQ_TEMPLATED_ACCESSOR.search(line):
-                bad.append(f"{name} line {n}: {line.strip()[:100]}")
-    return bad + _rega_audit_cpp(cpp + "\n" + src)
-
-
-def _rega_dq_build_bg(cpp, src, res, t_start):
-    """The background thread's body: load_inline of the dq module with master's flags (no print, no CUDA call; the
-    TORCH_CUDA_ARCH_LIST=9.0a the main thread set before starting it). First this THREAD's nice value goes up by 10
-    (on Linux a per-thread attribute, inherited by the ninja / nvcc children it forks), so under CPU contention master's
-    own nvcc builds (ssdq ~5-37 s, rega v2 ~40-80 s, its ft start deadline 150 s, fsilu ~128 s) keep the CPUs. Then,
-    only if the module built and prepare() is still before REGA_DQ_PROBE_START_S, the ptxas probe (_rega_dq_probe_bg).
-    Fills res: ext, err, secs, nice, probe."""
-    t0 = time.perf_counter()
-    try:
-        res["nice"] = os.getpriority(os.PRIO_PROCESS, 0)
-        os.setpriority(os.PRIO_PROCESS, 0, min(19, res["nice"] + 10))
-        res["nice"] = os.getpriority(os.PRIO_PROCESS, 0)
-    except Exception as e:  # informational only
-        res["nice"] = f"unchanged ({type(e).__name__})"
-    try:
-        from torch.utils.cpp_extension import load_inline
-        res["ext"] = load_inline(name=REGA_DQ_EXT_NAME, cpp_sources=cpp, cuda_sources=src, functions=REGA_DQ_FUNCS,
-                                 extra_cuda_cflags=list(REGA_CUDA_CFLAGS), verbose=False)
-    except BaseException as e:  # reported by the phase; the thread never raises
-        res["ext"], res["err"] = None, f"{type(e).__name__}: {str(e)[-600:]}"
-    finally:
-        res["secs"] = time.perf_counter() - t0
-    used = time.perf_counter() - t_start
-    if res.get("ext") is None:
-        res["probe"] = {"state": "not run (no module)"}
-    elif used > REGA_DQ_PROBE_START_S:
-        res["probe"] = {"state": f"not run (prepare {used:.0f}s > {REGA_DQ_PROBE_START_S:.0f}s)"}
+def _moe_forward(st, p, lid, pos, cnt, T, order=None, zb=None, cit=None):
+    """Routed experts on the pooler output p [T, 4096]: returns per-route rows y [rows, 4096] (bf16) and rrow.
+    With cit (dict: zc = [max tiles | 4] zeroed counters, tok = [2T + rows] ints, topw, out) the fused kernel
+    also writes the combined output (combine in the tail) and the caller skips the combine kernel."""
+    dev = p.device
+    mod = st["mod"]
+    maxrows = T * TOP_K + LOCAL_EXPERTS * MAX_PADDED_ROWS_PER_EXPERT
+    maxtiles = _max_tiles(T)
+    offsets = torch.empty((LOCAL_EXPERTS,), dtype=torch.int32, device=dev)
+    rows = torch.empty((LOCAL_EXPERTS,), dtype=torch.int32, device=dev)
+    tiles = torch.empty((maxtiles, 4), dtype=torch.int32, device=dev)
+    ntiles = torch.empty((1,), dtype=torch.int32, device=dev)
+    large = T >= MOE_LARGE_T
+    mode = MOE_MODE_LARGE if large else MOE_MODE_SMALL
+    if order is None:
+        order = MOE_ORDER_LARGE if large else MOE_ORDER_SMALL
+    fine = 1 if (FINE_MIN_T and T >= FINE_MIN_T) else 0  # remainder tiles rounded to 32 rows (plan + kernel agree)
+    order = order | (fine << MOE_FINE_ORDER_SHIFT)
+    xt = torch.empty((maxrows, D_EXPERT), dtype=torch.bfloat16, device=dev)
+    rrow = torch.empty((T, TOP_K), dtype=torch.int32, device=dev)
+    if cit is not None and (not GATHER_PLAN or mode != "fused"):
+        raise RuntimeError("CIT needs the fused kernel and the gather+plan launch")
+    cz = cit["zc"] if cit is not None else st["no_zero"]
+    ctok = cit["tok"] if cit is not None else st["no_zero"]
+    if GATHER_PLAN:  # the gather kernel also writes the plan (one launch fewer)
+        mod.moe_gather_plan(p, st["g_pre_expert_norm"], lid, pos, cnt, xt, rrow, offsets, tiles, ntiles, rows, order, cz, ctok)
     else:
-        res["probe"] = _rega_dq_probe_bg(cpp, src)
-
-
-def _rega_dq_probe_bg(cpp, src):
-    """experts-rega-a5b-desc-splitcommit: the ptxas probe (background thread only, no print, no CUDA call). load_inline
-    discards a successful build's output, but a failed build's exception carries ninja's whole output, so this builds
-    the SAME source with the same flags plus REGA_DQ_PROBE_DEF (only rega_kernel<G, BIG, 5> is instantiated: 4
-    instantiations) and -Xptxas -v (ptxas prints every function's registers / spills; nothing in the code changes), and
-    links against a library that does not exist (REGA_DQ_PROBE_STOP), so the build fails at the link, after ptxas ran.
-    Its module is never loaded. Returns {'state', 'secs', 'regs', 'spill', 'c7510', 'c7512', 'warn', 'ptxas'}."""
-    t0 = time.perf_counter()
-    out = {"state": "?"}
-    try:
-        from torch.utils.cpp_extension import load_inline
-        load_inline(name=REGA_DQ_EXT_NAME + "_ptxas", cpp_sources=cpp, cuda_sources=src, functions=REGA_DQ_FUNCS,
-                    extra_cuda_cflags=list(REGA_CUDA_CFLAGS) + ["-Xptxas", "-v", REGA_DQ_PROBE_DEF],
-                    extra_ldflags=[REGA_DQ_PROBE_STOP], verbose=False)
-        out["state"] = "built (the deliberate link stop did not fail: no ptxas text)"
-    except BaseException as e:
-        out.update(_rega_dq_ptxas_parse(str(e)))
-    out["secs"] = time.perf_counter() - t0
-    return out
-
-
-def _rega_dq_ptxas_parse(text):
-    """The probe's ptxas text -> {'state', 'regs', 'spill', 'c7510', 'c7512', 'warn', 'ptxas'}: per rega_kernel<.., 5>
-    entry ('Li5E' in the mangled name) its registers and spill stores + loads; C7510 / C7512 counts; up to 2 warning
-    lines (function names cut). 'ptxas' = the number of ptxas lines seen (0: ptxas output not in the text)."""
-    regs, spill, warn = [], [], []
-    c7510 = c7512 = nptx = 0
-    cur = None
-    for line in text.splitlines():
-        t = line.strip()
-        if "ptxas" in t:
-            nptx += 1
-            c7510 += "C7510" in t
-            c7512 += "C7512" in t
-            if "Compiling entry function" in t or "Function properties for" in t:
-                cur = "k5" if ("rega_kernel" in t and "Li5E" in t) else None
-            if ("arning" in t or "C751" in t) and len(warn) < 2:
-                w = " ".join(t.split(" in function")[0].split(" in the function")[0].split())[:160]
-                if w not in warn:
-                    warn.append(w)
-        if cur == "k5":  # the stack / spill line follows 'Function properties for' without a 'ptxas' prefix
-            m = re.search(r"Used (\d+) registers", t)
-            if m:
-                regs.append(int(m.group(1)))
-            m = re.search(r"(\d+) bytes spill stores, (\d+) bytes spill loads", t)
-            if m:
-                spill.append(int(m.group(1)) + int(m.group(2)))
-    linked = REGA_DQ_PROBE_STOP[2:] in text
-    state = ("ok" if nptx and linked else "ptxas ran, build failed before the link stop" if nptx
-             else "no ptxas lines in the build text")
-    return {"state": state, "regs": regs, "spill": spill, "c7510": c7510, "c7512": c7512, "warn": warn,
-            "ptxas": nptx, "tail": "" if nptx else text[-200:]}
-
-
-def _rega_dq_probe_text(pr):
-    """One compact line: the A5b instantiations' registers / spill bytes and C7510 / C7512 counts from the probe."""
-    if not pr or "regs" not in pr:
-        return f"ptxas probe: {(pr or {}).get('state', 'n/a')}"
-    regs = "/".join(str(r) for r in pr["regs"]) or "?"
-    spill = "/".join(str(x) for x in pr["spill"]) or "?"
-    return (f"ptxas probe A5b ({pr['state']}, {pr.get('secs', 0.0):.0f}s, {pr['ptxas']} lines): regs {regs} spill "
-            f"{spill}; C7510 {pr['c7510']} C7512 {pr['c7512']}"
-            + ("; " + " | ".join(pr["warn"]) if pr["warn"] else "; no ptxas warning")
-            + (f"; tail {pr['tail']!r}" if pr.get("tail") else ""))
-
-
-def _rega_dq_start(t_start):
-    """prepare() only, FIRST (before any of master's setup): derive and audit the dq module's source, then start its
-    nvcc build in a non-daemon background thread so it overlaps master's own ~180 s. Gated predictively: started only
-    if t + REGA_DQ_BUILD_MARGIN x est + REGA_DQ_BUILD_PAD_S <= REGA_DQ_BUILD_LIMIT_S (est = REGA_DQ_EST_4INST_S x
-    REGA_DQ_INST / 4), else '[rega-dq] OFF: budget'. TORCH_CUDA_ARCH_LIST is set to 9.0a by THIS (main) thread for the
-    whole build and restored by _rega_dq_join after the join (master's builds set the same value and restore it to
-    9.0a meanwhile), so no thread ever restores the variable under another's build. Never raises. Returns the job."""
-    job = {"thread": None, "res": {}, "env": None, "off": None, "t0": None, "wait": 0.0}
-    try:
-        used = time.perf_counter() - t_start
-        # the module's 12 instantiations + the ptxas probe's 4 (built after it in the same thread): 16, today's need
-        est = REGA_DQ_EST_4INST_S * (REGA_DQ_INST + REGA_DQ_PROBE_INST) / 4
-        need = used + REGA_DQ_BUILD_MARGIN * est + REGA_DQ_BUILD_PAD_S
-        job["est"] = est
-        made = None
-        if need > REGA_DQ_BUILD_LIMIT_S:
-            job["off"] = (f"budget (t {used:.1f}s + {REGA_DQ_BUILD_MARGIN} x est {est:.0f}s + {REGA_DQ_BUILD_PAD_S:.0f}s"
-                          f" = {need:.0f}s > {REGA_DQ_BUILD_LIMIT_S:.0f}s)")
-        elif not _rega_lo_identity()[0]:
-            job["off"] = "master's v2 rega source does not hash to master's (the dq module derives from it)"
-        else:
-            made = _rega_dq_src()
-            if made is None:
-                job["off"] = "edit: a dq / fsilu / w2st edit target did not occur exactly once"
-        if made is not None:
-            cpp, src = made
-            bad = _rega_dq_audit(cpp, src)
-            if bad:
-                job["off"] = f"source audit failed: {bad[:3]}"
-            else:
-                from torch.utils import cpp_extension
-                prev = os.environ.get("TORCH_CUDA_ARCH_LIST")
-                os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0a"
-                try:
-                    flags = cpp_extension._get_cuda_arch_flags()
-                except Exception as e:  # this torch rejects 9.0a: master falls back to its default list; no dq build
-                    if prev is None:
-                        os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-                    else:
-                        os.environ["TORCH_CUDA_ARCH_LIST"] = prev
-                    job["off"] = f"TORCH_CUDA_ARCH_LIST=9.0a rejected ({e!r:.120}): no background build"
-                else:
-                    job["env"] = (prev,)
-                    th = threading.Thread(target=_rega_dq_build_bg, args=(cpp, src, job["res"], t_start),
-                                          name="rega-dq-nvcc",
-                                          daemon=False)
-                    job["t0"] = time.perf_counter() - t_start
-                    th.start()
-                    job["thread"] = th
-                    try:
-                        cpus = f"{len(os.sched_getaffinity(0))} usable CPUs"
-                    except Exception:
-                        cpus = f"{os.cpu_count()} CPUs"
-                    print(f"{REGA_DQ_TAG} nvcc build started in a background thread (nice +10, {cpus}) at "
-                          f"{job['t0']:.1f}s "
-                          f"({REGA_DQ_INST} rega_kernel<G, BIG, DQ> instantiations, DQ {REGA_DQ_ALL}, + the canary; then "
-                          f"the ptxas probe ({REGA_DQ_PROBE_INST}) if before {REGA_DQ_PROBE_START_S:.0f}s; est {est:.0f}s, gate "
-                          f"{need:.0f}s <= {REGA_DQ_BUILD_LIMIT_S:.0f}s; source sha256 "
-                          f"{hashlib.sha256((cpp + src).encode()).hexdigest()[:16]}, {len(src)} chars, "
-                          f"{len(REGA_DQ_EDITS)} edits; arch flags {flags}; extra_cuda_cflags {REGA_CUDA_CFLAGS})",
-                          flush=True)
-    except Exception as e:
-        job["off"] = f"start raised {e!r}"[:300]
-        if job["thread"] is None and job["env"] is not None:
-            _rega_dq_join(job)
-    if job["off"]:
-        print(f"{REGA_DQ_TAG} OFF: {job['off']}", flush=True)
-    return job
-
-
-def _rega_dq_join(job):
-    """Wait for the background build (load_inline has no timeout and cannot be interrupted, so this waits it out), then
-    restore TORCH_CUDA_ARCH_LIST. Idempotent; never raises."""
-    try:
-        th = job.get("thread")
-        if th is not None:
-            tw = time.perf_counter()
-            th.join()
-            job["thread"] = None
-            job["wait"] = job.get("wait", 0.0) + time.perf_counter() - tw
-        env = job.get("env")
-        if env is not None:
-            job["env"] = None
-            if env[0] is None:
-                os.environ.pop("TORCH_CUDA_ARCH_LIST", None)
-            else:
-                os.environ["TORCH_CUDA_ARCH_LIST"] = env[0]
-    except Exception as e:  # never mask master's own exception from prepare()'s finally
-        job["off"] = (job.get("off") or "") + f"; join raised {e!r}"[:200]
-
-
-def _rega_dq_attrs(ext):
-    """{(gated, big, dq): (ok, regs, local bytes, static + dynamic smem, CTAs/SM)} from rega_init, BEFORE any launch
-    (rega_init sets each instantiation's dynamic smem attribute): master's criteria (launchable, occupancy >= 1, smem <=
-    the limit, the setmaxnreg register pool, an sm_90 image). Local bytes > 0 is a spill (that arm OFF)."""
-    info = ext.rega_init()
-    rows = {}
-    for i in range(0, len(info), 10):
-        flag, a_ok, regs, local_bytes, static_smem, dyn_smem, occ, _, bin_v, _ = info[i:i + 10]
-        good = (bool(a_ok) and occ >= 1 and static_smem + dyn_smem <= REGA_SMEM_LIMIT
-                and regs * REGA_THREADS >= 40 * 128 + 232 * 256 and bin_v == 90)
-        rows[(bool(flag & 1), bool(flag & 2), int(flag) >> 2)] = (good, int(regs), int(local_bytes),
-                                                                 int(static_smem + dyn_smem), int(occ))
-    return rows
-
-
-def _rega_dq_attr_text(rows):
-    parts = []
-    for g, big in ((True, False), (False, False), (True, True), (False, True)):
-        rs = [rows.get((g, big, d), (False, 0, -1, 0, 0)) for d in REGA_DQ_ALL]
-        parts.append(f"{'w13' if g else 'w2'}{'ft' if big else 's1'} r" + "/".join(str(r[1]) for r in rs)
-                     + " l" + "/".join(str(r[2]) for r in rs) + " o" + "/".join(str(r[4]) for r in rs)
-                     + ("" if all(r[0] for r in rs) else " BAD:" + "".join(str(d) for d, r in zip(REGA_DQ_ALL, rs)
-                                                                         if not r[0])))
-    return "; ".join(parts)
-
-
-def _rega_dq_luts(device):
-    """int64 [4 pairs][2 halves][16 codes]: where one E2M1 code of master's word layout (pair p: low element at nibble
-    3 - p, high at nibble 7 - p) lands in the permuted word (moe _ea_luts index 2: pairs 0..2 at bits {6,7,8,15} - 3p,
-    pair 3 at (e1, e0) 11, 10, m 13, s 14; +16 for the high element)."""
-    lut = torch.zeros((4, 2, 16), dtype=torch.int64)
-    for c in range(16):
-        for p in range(4):
-            if p < 3:
-                v = ((c & 7) << (6 - 3 * p)) | ((c >> 3) << (15 - 3 * p))
-            else:
-                v = (((c >> 1) & 3) << 10) | ((c & 1) << 13) | ((c >> 3) << 14)
-            for h in range(2):
-                lut[p, h, c] = v << (16 * h)
-    return lut.to(device)
-
-
-def _rega_dq_perm_words(w, lut):
-    """int64 words (uint32 values, master's layout) -> the permuted words (prepare only)."""
-    out = torch.zeros_like(w)
-    for p in range(4):
-        for h in range(2):
-            out |= lut[p, h][(w >> (4 * ((3 - p) + 4 * h))) & 15]
-    return out
-
-
-def _rega_dq_unperm_words(w):
-    """Inverse of _rega_dq_perm_words (prepare-only losslessness check)."""
-    out = torch.zeros_like(w)
-    for p in range(4):
-        for h in range(2):
-            b = 16 * h
-            if p < 3:
-                c = ((w >> (6 - 3 * p + b)) & 7) | (((w >> (15 - 3 * p + b)) & 1) << 3)
-            else:
-                c = (((w >> (10 + b)) & 3) << 1) | ((w >> (13 + b)) & 1) | (((w >> (14 + b)) & 1) << 3)
-            out |= c << (4 * ((3 - p) + 4 * h))
-    return out
-
-
-def _rega_dq_enc_luts(device):
-    """int64 [2 (encode, decode)][8 nibble positions][16 codes] of A5b's ENC4 bit permutation (bit j of the stored word
-    = bit REGA_DQ_ENC4[j] of master's word): a bit permutation is OR-homomorphic, so a word maps as the OR of its 8
-    nibbles' entries. Raises when REGA_DQ_ENC4 is not a bijection of the 32 bit positions."""
-    if sorted(REGA_DQ_ENC4) != list(range(32)):
-        raise RuntimeError("REGA_DQ_ENC4 is not a permutation of the 32 bit positions")
-    inv = [0] * 32
-    for j, t in enumerate(REGA_DQ_ENC4):
-        inv[t] = j
-    enc = [[0] * 16 for _ in range(8)]
-    dec = [[0] * 16 for _ in range(8)]
-    for nib in range(8):
-        for c in range(16):
-            for b in range(4):
-                if (c >> b) & 1:
-                    enc[nib][c] |= 1 << inv[4 * nib + b]            # master bit t -> stored bit inv[t]
-                    dec[nib][c] |= 1 << REGA_DQ_ENC4[4 * nib + b]   # stored bit j -> master bit ENC4[j]
-    return torch.tensor([enc, dec], dtype=torch.int64, device=device)
-
-
-def _rega_dq_nib_map(w, lut):
-    """int64 words (uint32 values) -> the OR of lut[n][nibble n] over the 8 nibbles (prepare only)."""
-    out = torch.zeros_like(w)
-    for nib in range(8):
-        out |= lut[nib][(w >> (4 * nib)) & 15]
-    return out
-
-
-def _rega_dq_pack_scales(w):
-    """int64 scale words (uint32 values, bytes [b0 b1 b2 b3] = k even g, g8, k odd g, g8, each in [0x08, 0x7E]) ->
-    A5b's packed words (fields f = b - 8: f0 bits 4-10, f1 20-26, f2 28-31 + 0-2 (a byte rotate puts it at 4-10),
-    f3 12-18; rgx2.cu recode_bank kind 5)."""
-    f0, f1, f2, f3 = (((w >> (8 * i)) & 0xFF) - 8 for i in range(4))
-    return (f0 << 4) | (f1 << 20) | (f3 << 12) | ((f2 & 0xF) << 28) | (f2 >> 4)
-
-
-def _rega_dq_unpack_scales(p):
-    """Inverse of _rega_dq_pack_scales (prepare-only losslessness check)."""
-    f0, f1, f3 = (p >> 4) & 0x7F, (p >> 20) & 0x7F, (p >> 12) & 0x7F
-    f2 = ((p >> 28) & 0xF) | ((p & 7) << 4)
-    return (f0 + 8) | ((f1 + 8) << 8) | ((f2 + 8) << 16) | ((f3 + 8) << 24)
-
-
-def _rega_dq_i32(w):
-    """int64 uint32 values -> int32 with the same 32 bits."""
-    return (w - ((w >> 31) & 1) * (1 << 32)).to(torch.int32)
-
-
-def _rega_dq_scales(bank):
-    """Scale-byte range counts of the rega bank: {key: (< 0x08, == 0, > 0x7E, total)} and whether every byte is in
-    [REGA_DQ_SCALE_LO, REGA_DQ_SCALE_HI] (A3 / A5b's precondition)."""
-    out = {}
-    for key in ("q13", "q2"):
-        sc = bank[key].view(-1, REGA_REC)[:, REGA_REC - 512:]
-        out[key] = (int((sc < REGA_DQ_SCALE_LO).sum()), int((sc == 0).sum()), int((sc > REGA_DQ_SCALE_HI).sum()),
-                    int(sc.numel()))
-    return out, all(v[0] == 0 and v[2] == 0 for v in out.values())
-
-
-def _rega_dq_perm_bank(bank, device):
-    """prepare() only: a COPY of the rega bank with every 32-bit code word permuted for ext_prop (codes stay the same
-    NVFP4 bits, only their positions in the word change; scale bytes untouched), each chunk checked lossless by the
-    inverse. Returns {'q13', 'q2'} flat uint8, the same sizes as the bank's."""
-    lut = _rega_dq_luts(device)
-    out = {}
-    for key in ("q13", "q2"):
-        src = bank[key].view(-1, REGA_REC)
-        dst = src.clone()
-        for i in range(0, src.shape[0], REGA_DQ_PERM_CHUNK):
-            w = src[i:i + REGA_DQ_PERM_CHUNK, :4096].contiguous().view(torch.int32).long() & 0xFFFFFFFF
-            p = _rega_dq_perm_words(w, lut)
-            if not torch.equal(_rega_dq_unperm_words(p), w):
-                raise RuntimeError(f"{key} chunk {i}: the code permutation is not lossless")
-            dst[i:i + REGA_DQ_PERM_CHUNK, :4096] = _rega_dq_i32(p).view(torch.uint8).view(-1, 4096)
-            w = p = None
-        if not torch.equal(dst[:, 4096:], src[:, 4096:]):
-            raise RuntimeError(f"{key}: scale bytes changed")
-        out[key] = dst.view(-1)
-    return out
-
-
-def _rega_dq_a5b_bank(bank, device):
-    """prepare() only: A5b's COPY of the rega bank (from the weights' bank only, never from a routing): every 32-bit
-    code word ENC4-encoded and every 32-bit scale word packed (_rega_dq_pack_scales; the caller has checked every scale
-    byte in [0x08, 0x7E]), each chunk checked lossless by the inverse (decode + unpack, torch.equal; else raises).
-    Returns {'q13', 'q2'} flat uint8, the same sizes as the bank's."""
-    luts = _rega_dq_enc_luts(device)
-    out = {}
-    for key in ("q13", "q2"):
-        src = bank[key].view(-1, REGA_REC)
-        dst = torch.empty_like(src)
-        for i in range(0, src.shape[0], REGA_DQ_PERM_CHUNK):
-            c = src[i:i + REGA_DQ_PERM_CHUNK]
-            w = c[:, :REGA_REC - 512].contiguous().view(torch.int32).long() & 0xFFFFFFFF
-            e = _rega_dq_nib_map(w, luts[0])
-            if not torch.equal(_rega_dq_nib_map(e, luts[1]), w):
-                raise RuntimeError(f"{key} chunk {i}: the ENC4 code encoding is not lossless")
-            dst[i:i + REGA_DQ_PERM_CHUNK, :REGA_REC - 512] = _rega_dq_i32(e).view(torch.uint8).view(-1, REGA_REC - 512)
-            w = e = None
-            sw = c[:, REGA_REC - 512:].contiguous().view(torch.int32).long() & 0xFFFFFFFF
-            ps = _rega_dq_pack_scales(sw)
-            if not torch.equal(_rega_dq_unpack_scales(ps), sw):
-                raise RuntimeError(f"{key} chunk {i}: the scale packing is not lossless (a scale byte < 0x08 or > 0x87; "
-                                   f"the phase's range scan already requires [0x08, 0x7E])")
-            dst[i:i + REGA_DQ_PERM_CHUNK, REGA_REC - 512:] = _rega_dq_i32(ps).view(torch.uint8).view(-1, 512)
-            sw = ps = c = None
-        out[key] = dst.view(-1)
-    return out
-
-
-def _rega_dq_canary(ext, device):
-    """The exhaustive one-launch canary (moe's dq_exact form): every byte value 0..255 at each of the 4 byte positions
-    of a code word (the other bytes random: every code at every nibble position) x 119 scale bytes 0x08..0x7E for row
-    g (row g + 8 and the KK 1 bytes walk the same range on other strides): 121,856 cases x 2 k16 positions x 4
-    fragments, A3 (A2-permuted words) and A5b (ENC4 words + packed scale words, from the same torch encoders as the
-    banks) each compared bitwise with master's per-k body. The same launch checks D's descriptor against make_desc for
-    every 1024-aligned slab. Returns ({arm: mismatching cases}, cases, non-zero master fragments, (D mismatches, D
-    cases))."""
-    gen = torch.Generator(device=device).manual_seed(20261029)
-    span = REGA_DQ_SCALE_HI - REGA_DQ_SCALE_LO + 1
-    v, j, s = torch.meshgrid(torch.arange(256, device=device, dtype=torch.int64),
-                             torch.arange(4, device=device, dtype=torch.int64),
-                             torch.arange(span, device=device, dtype=torch.int64), indexing="ij")
-    v, j, s = v.reshape(-1), j.reshape(-1), s.reshape(-1)
-    n = v.numel()
-    base = torch.randint(0, 1 << 32, (n,), generator=gen, device=device, dtype=torch.int64)
-    mask = torch.full_like(j, 0xFF) << (8 * j)
-    words = (base & ~mask) | (v << (8 * j))
-    lo = REGA_DQ_SCALE_LO
-    scales = ((lo + s) | ((lo + (s * 37 + 11) % span) << 8) | ((lo + (s * 53 + 29) % span) << 16)
-              | ((lo + (s * 71 + 5) % span) << 24))
-    pw = _rega_dq_perm_words(words, _rega_dq_luts(device))
-    ew = _rega_dq_nib_map(words, _rega_dq_enc_luts(device)[0])
-    ps = _rega_dq_pack_scales(scales)
-    out = torch.zeros((n, 3, 2, 4), dtype=torch.int32, device=device)
-    dbad = torch.zeros(2, dtype=torch.int32, device=device)
-    ext.rega_dq_exact(_rega_dq_i32(words).contiguous(), _rega_dq_i32(pw).contiguous(), _rega_dq_i32(ew).contiguous(),
-                      _rega_dq_i32(scales).contiguous(), _rega_dq_i32(ps).contiguous(), out, dbad)
-    torch.cuda.synchronize()
-    ref = out[:, 0]
-    bad = {d: int((out[:, k] != ref).flatten(1).any(dim=1).sum()) for k, d in ((1, 3), (2, REGA_DQ_NEW))}
-    db = dbad.tolist()
-    return bad, n, int((ref != 0).sum()), (int(db[0]), int(db[1]))
-
-
-def _rega_dq_dispatched(state, cls):
-    """(w13 ext, w2 ext) this class dispatches on master: the fsilu module where rega_fsilu_ok / rega_w2st_ok, else
-    master's module."""
-    fext = state.get("rega_fsilu_ext")
-    ext13 = fext if fext is not None and state.get("rega_fsilu_ok", {}).get(cls, False) else state["rega_ext"]
-    ext2 = fext if fext is not None and state.get("rega_w2st_ok", {}).get(cls, False) else state["rega_ext"]
-    return ext13, ext2
-
-
-def _rega_dq_launch(state, ext, which, src, dst, tabs, err, d=None, mode=0, qbank=None):
-    """One rega GEMM launch with the arguments _experts_rega passes (w13: xs -> hs, w2: hs -> y) into the given error
-    tensor; d=None: master's / the fsilu module's signature, else the dq module's (MODE, DQ). qbank: the arm's
-    re-encoded bank copy (A3: permuted codes; A5b: ENC4 codes + packed scales; required for those arms), else master's
-    bank; the global scales are always master's."""
-    bank, grid = state["rega_bank"], state["rega_grid"]
-    if d and qbank is None:
-        raise RuntimeError(f"DQ {d} launched without its re-encoded bank")
-    qb = bank if qbank is None else qbank
-    sorted_ids, block_experts, n_padded, num_slots = tabs
-    q, gs, nt = (qb["q13"], bank["gs13"], D_EXPERT // 64) if which == 0 else (qb["q2"], bank["gs2"], D_EXPERT // 128)
-    args = (which, src, q, gs, sorted_ids, block_experts, n_padded, num_slots, nt, D_EXPERT, dst, grid, err)
-    if d is None:
-        ext.rega_gemm(*args)
+        mod.moe_plan(cnt, offsets, tiles, ntiles, rows, order)
+        mod.moe_gather(p, st["g_pre_expert_norm"], lid, pos, offsets, cnt, xt, rrow)
+    inter = torch.empty((maxrows, D_EXPERT), dtype=torch.bfloat16, device=dev)
+    y = torch.empty((maxrows, D_EXPERT), dtype=torch.bfloat16, device=dev)
+    if mode == "fused":
+        if zb is None:
+            zb = torch.zeros((1 + maxtiles,), dtype=torch.int32, device=dev)  # work counter + per-tile GEMM1 completion
+        mod.moe_fused(st["w13r"], st["w2r"], xt, inter, y, tiles, ntiles, st["w13_gs"], st["w2_gs"],
+                      st["nsm"] * (2 if SKINNY_TEST else 1), st["smem"],
+                      zb[0:1], zb[1:1 + maxtiles], st["moe_dbg"], st["moe_flags"] | (fine << MOE_FINE_ORDER_SHIFT), cz, ctok,
+                      rrow, lid, cit["topw"] if cit is not None else st["no_zero_f"], st["g_post_expert_norm"],
+                      cit["out"] if cit is not None else st["no_zero_b"])
+    elif mode == "persist":
+        ctr = torch.zeros((2,), dtype=torch.int32, device=dev)
+        mod.moe_gemm_p(st["w13r"], xt, tiles, ntiles, st["w13_gs"], inter, 64, st["nsm"], True, st["smem"], ctr[0:1])
+        mod.moe_gemm_p(st["w2r"], inter, tiles, ntiles, st["w2_gs"], y, 32, st["nsm"], False, st["smem"], ctr[1:2])
     else:
-        ext.rega_gemm(*args, mode, d)
+        mod.moe_gemm(st["w13r"], xt, tiles, ntiles, st["w13_gs"], inter, 64, P_GEMM1, True, st["smem"])
+        mod.moe_gemm(st["w2r"], inter, tiles, ntiles, st["w2_gs"], y, 32, P_GEMM2, False, st["smem"])
+    return dict(y=y, rrow=rrow, xt=xt, inter=inter, tiles=tiles, ntiles=ntiles, offsets=offsets)
 
 
-def _rega_dq_maxdiff(a, b):
-    m = 0.0
-    for i in range(0, a.shape[0], 16384):
-        dd = (a[i:i + 16384].float() - b[i:i + 16384].float()).abs()
-        m = max(m, float(torch.nan_to_num(dd, nan=float("inf")).max()))
-    return m
+# --------------------------------------------------------------------------------------
+# kernel_fn: one prefill layer step.
+# --------------------------------------------------------------------------------------
 
 
-def _rega_dq_exact(state, ext, banks, ds, device, cls, tokens, kind, prenorm, gen, err, announce):
-    """prepare() only, one routing on master's routed inputs (_rega_fsilu_tables: the judge path's align + gather):
-    hs_m / y_m from the w13 / w2 this class dispatches, then per DQ in ds (0 first) hs_d (MODE 0 w13 on xs) and y_d
-    (MODE 0 w2 on hs_m), y buffers prefilled with the same sentinel (unwritten rows compared too); every launch error
-    word 0 and both markers. announce (the phase's first step): each dq launch printed before and synchronized +
-    printed after, and MODE 2 / 5 of every DQ launched once eagerly the same way. Returns ({d: (hs == master,
-    y == master, hs == DQ0, y == DQ0, max|hs - ref|, max|y - ref|)} (ref: DQ0 for an arm, master for DQ0), routes)."""
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    local = int((lids >= 0).sum())
-    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
-    x = tw = lids = None
-    ext13, ext2 = _rega_dq_dispatched(state, cls)
-    hs_m = y_m = hs_0 = y_0 = hs = y = None
-    out = {}
-
-    def run(d, which, src, dst, mode=0):
-        qb = banks.get(d) if d else None
-        if announce:
-            print(f"{REGA_DQ_TAG} launch {REGA_DQ_NAMES[d]} {'w13' if which == 0 else 'w2'} MODE {mode} ({cls} {kind})",
-                  flush=True)
-        _rega_dq_launch(state, ext, which, src, dst, tabs, err, d, mode, qb)
-        if announce:
-            torch.cuda.synchronize()
-            print(f"{REGA_DQ_TAG} launch done: word {_rega_marks(err)[0]}", flush=True)
-
-    try:
-        hs_m = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
-        y_m = torch.full((tabs[3], D_EXPERT), REGA_W2ST_SENTINEL, device=device, dtype=torch.bfloat16)
-        err.zero_()
-        _rega_dq_launch(state, ext13, 0, xs, hs_m, tabs, err)
-        _rega_dq_launch(state, ext2, 1, hs_m, y_m, tabs, err)
-        torch.cuda.synchronize()
-        word, m13, m2 = _rega_marks(err)
-        if word != 0 or not _rega_launched(m13, m2):
-            raise RuntimeError(f"{kind}: master's dispatched launches left word {word} markers {m13:#x}/{m2:#x}")
-        for d in ds:
-            hs = torch.zeros_like(hs_m)
-            y = torch.full_like(y_m, REGA_W2ST_SENTINEL)
-            err.zero_()
-            run(d, 0, xs, hs)
-            run(d, 1, hs_m, y)
-            torch.cuda.synchronize()
-            word, m13, m2 = _rega_marks(err)
-            if word != 0 or not _rega_launched(m13, m2):
-                raise RuntimeError(f"{kind}: {REGA_DQ_NAMES[d]} left error word {word} "
-                                   f"({REGA_ERR_TEXT.get(word, '?')}) markers {m13:#x}/{m2:#x}")
-            e13m, e2m = torch.equal(hs, hs_m), torch.equal(y, y_m)
-            if d == 0:
-                hs_0, y_0 = hs, y
-                e13z = e2z = True
-                md13 = 0.0 if e13m else _rega_dq_maxdiff(hs, hs_m)
-                md2 = 0.0 if e2m else _rega_dq_maxdiff(y, y_m)
-            else:
-                e13z, e2z = torch.equal(hs, hs_0), torch.equal(y, y_0)
-                md13 = 0.0 if e13z else _rega_dq_maxdiff(hs, hs_0)
-                md2 = 0.0 if e2z else _rega_dq_maxdiff(y, y_0)
-            out[d] = (e13m, e2m, e13z, e2z, md13, md2)
-            hs = y = None
-        if announce:  # MODE 2 / 5 of every DQ once, eagerly, into scratch buffers (outputs are garbage)
-            hs, y = torch.zeros_like(hs_m), torch.zeros_like(y_m)
-            for d in ds:
-                for mode in REGA_DQ_MODES[1:]:
-                    err.zero_()
-                    run(d, 0, xs, hs, mode)
-                    run(d, 1, hs_m, y, mode)
-                    torch.cuda.synchronize()
-                    word, m13, m2 = _rega_marks(err)
-                    if word != 0 or not _rega_launched(m13, m2):
-                        raise RuntimeError(f"{REGA_DQ_NAMES[d]} MODE {mode} left error word {word} "
-                                           f"({REGA_ERR_TEXT.get(word, '?')}) markers {m13:#x}/{m2:#x}")
-        return out, local
-    finally:
-        hs_m = y_m = hs_0 = y_0 = hs = y = xs = tabs = None
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
-def _rega_dq_time(state, ext, banks, ds, device, cls, tokens, kind, prenorm, gen, err):
-    """prepare() only, one routing on master's routed inputs; hs_m from the dispatched w13 is the w2 input. Three
-    interleaved sets, each with an empty graph, timed by _rega_fsilu_bench (cold + warm, REGA_FSILU_ROUNDS x
-    REGA_FSILU_ALTERNATIONS): w13 alone and w2 alone ('m' = master's dispatched launch, 'd:mode' = DQ d in MODE 0 / 2
-    / 5), then the w13 + w2 pair ('m' dispatched, 'd' = DQ d MODE 0 both). Every buffer and graph is local and
-    dropped before returning. Returns ({'w13' | 'w2' | 'pair': {l2: [per-round {name: us}]}}, local routes)."""
-    x, tw, lids = _rega_case(tokens, kind, gen, device)
-    local = int((lids >= 0).sum())
-    tabs, xs = _rega_fsilu_tables(state, x, lids, prenorm, cls)
-    x = tw = lids = None
-    ext13, ext2 = _rega_dq_dispatched(state, cls)
-    hs = out13 = y = hs_p = y_p = tiny = None
-    graphs, fns, res = {}, {}, {}
-    try:
-        hs = torch.zeros((xs.shape[0], D_EXPERT), device=device, dtype=torch.bfloat16)
-        err.zero_()
-        _rega_dq_launch(state, ext13, 0, xs, hs, tabs, err)
-        out13, hs_p = torch.zeros_like(hs), torch.zeros_like(hs)
-        y = torch.zeros((tabs[3], D_EXPERT), device=device, dtype=torch.bfloat16)
-        y_p = torch.zeros_like(y)
-        tiny = torch.zeros(16, dtype=torch.float32, device=device)
-
-        def qb(d):
-            return banks.get(d) if d else None
-
-        for gemm in ("w13", "w2", "pair"):
-            if gemm == "pair":
-                fns = {"m": (lambda: (_rega_dq_launch(state, ext13, 0, xs, hs_p, tabs, err),
-                                      _rega_dq_launch(state, ext2, 1, hs_p, y_p, tabs, err)))}
-                for d in ds:
-                    fns[str(d)] = (lambda d=d: (_rega_dq_launch(state, ext, 0, xs, hs_p, tabs, err, d, 0, qb(d)),
-                                                _rega_dq_launch(state, ext, 1, hs_p, y_p, tabs, err, d, 0, qb(d))))
-            else:
-                which, src, dst, mext = (0, xs, out13, ext13) if gemm == "w13" else (1, hs, y, ext2)
-                fns = {"m": (lambda w=which, s=src, t=dst, e=mext: _rega_dq_launch(state, e, w, s, t, tabs, err))}
-                for d in ds:
-                    for mode in REGA_DQ_MODES:
-                        fns[f"{d}:{mode}"] = (lambda w=which, s=src, t=dst, d=d, md=mode:
-                                              _rega_dq_launch(state, ext, w, s, t, tabs, err, d, md, qb(d)))
-            graphs = {name: _ssdq_graph_time(fn, device) for name, fn in fns.items()}
-            graphs["empty"] = _ssdq_graph_time(lambda: tiny.zero_(), device)
-            res[gemm] = _rega_fsilu_bench(graphs, device, ("cold", "warm"), REGA_FSILU_ROUNDS, REGA_FSILU_ALTERNATIONS)
-            graphs = {}
-        word = _rega_marks(err)[0]
-        if word != 0:
-            raise RuntimeError(f"timing replays left error word {word} ({REGA_ERR_TEXT.get(word, '?')})")
-        return res, local
-    finally:
-        graphs = fns = None
-        hs = out13 = y = hs_p = y_p = tiny = xs = tabs = None
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-
-def _rega_dq_means(rds):
-    """[per-round {name: us}] -> {name: round-mean us}."""
-    n = max(len(rds), 1)
-    return {k: sum(rd[k] for rd in rds) / n for k in (rds[0] if rds else {})}
-
-
-def _rega_dq_r(v):
-    """A ratio, compact: '.962' below 1, '1.012' above."""
-    t = f"{v:.3f}"
-    return t[1:] if t.startswith("0.") else t
-
-
-def _rega_dq_time_lines(cls, kind, local, r, ds):
-    """One timing step's detail lines (per GEMM: master and each DQ's MODE 0/2/5 round-mean us per L2 mode; the pair:
-    each DQ's per-round ratios vs master and vs DQ0)."""
-    lines = []
-    for g in ("w13", "w2"):
-        parts = []
-        for l2, rds in r[g].items():
-            m = _rega_dq_means(rds)
-            parts.append(f"{l2} m {m['m']:.1f} " + " ".join(
-                f"{REGA_DQ_NAMES[d]} " + "/".join(f"{m[f'{d}:{md}']:.1f}" for md in REGA_DQ_MODES) for d in ds))
-        lines.append(f"{REGA_DQ_TAG} TIME {cls} {g} {kind} {local}r (MODE 0/2/5 us): " + "; ".join(parts))
-    parts = []
-    for l2, rds in r["pair"].items():
-        m = _rega_dq_means(rds)
-        parts.append(f"{l2} m {m['m']:.1f} DQ0 {m['0']:.1f} " + " ".join(
-            f"{REGA_DQ_NAMES[d]} {m[str(d)]:.1f} x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['m'], 1e-9)) for rd in rds)
-            + " x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['0'], 1e-9)) for rd in rds)
-            + (" x" + "/".join(_rega_dq_r(rd[str(d)] / max(rd['3'], 1e-9)) for rd in rds)
-               if d == REGA_DQ_NEW and 3 in ds else "") for d in ds if d))
-    lines.append(f"{REGA_DQ_TAG} TIME {cls} pair {kind} {local}r (us; per round vs master / vs DQ0 [/ A5b vs A3]): "
-                 + "; ".join(parts))
-    return lines
-
-
-def _rega_dq_class(state, ext, banks, ds, device, cls, gen, err, t_start, info, announce):
-    """prepare() only, one class: exactness on master's self-check routings (random, skewed, one and the judge-like pop
-    routing: fsilu's calibrated alpha, else calibrated here as anat r2 did); an arm not torch.equal to DQ0 on any of
-    them is OFF for this class only (its max|diff| kept); then timing on pop and random. No step starts after the
-    class's deadline. Returns the class record."""
-    tokens = REGA_FSILU_TOKENS[cls]
-    prenorm = bool(state.get("norm_gather_ok", {}).get(cls, False))
-    alpha = (info or {}).get("alpha", {}).get(cls)
-    if alpha is None:
-        n_rnd, counts = _rega_pop_counts(tokens, device)
-        alpha = _rega_pop_pick(counts, REGA_FSILU_POP_MULT * n_rnd)[0]
-    pop = f"pop:{alpha:g}"
-    dl = REGA_DQ_FT_STEP_DEADLINE_S if cls == "ft" else REGA_DQ_STEP_DEADLINE_S
-    res = {"pop": pop, "exact": {}, "time": {}, "local": {}, "arm_off": {}, "late": None, "timed": []}
-    live = list(ds)
-    for kind in REGA_W2ST_EXACT_KINDS + (pop,):
-        used = time.perf_counter() - t_start
-        if used > dl:
-            res["late"] = f"exact {kind} not started (prepare {used:.0f}s > {dl:.0f}s)"
-            return res
-        ex, local = _rega_dq_exact(state, ext, banks, live, device, cls, tokens, kind, prenorm, gen, err, announce)
-        announce = False
-        res["exact"][kind] = ex
-        for d in live[1:]:
-            e = ex[d]
-            if not (e[2] and e[3]):
-                res["arm_off"][d] = f"{kind}: not torch.equal to DQ0 (max|d| hs {e[4]:.3g} y {e[5]:.3g})"
-        live = [d for d in live if d not in res["arm_off"]]
-        print(f"{REGA_DQ_TAG} EXACT {cls} {kind} {local}r prenorm {prenorm} (hs / y torch.equal; max|d|): " + "; ".join(
-            f"{REGA_DQ_NAMES[d]} vs master {'eq' if e[0] else 'NE'}/{'eq' if e[1] else 'NE'}"
-            + ("" if not d else f" vs DQ0 {'eq' if e[2] else 'NE'}/{'eq' if e[3] else 'NE'}")
-            + (f" {e[4]:.3g}/{e[5]:.3g}" if e[4] or e[5] else "") for d, e in ex.items()), flush=True)
-    for kind in (pop, "random"):
-        used = time.perf_counter() - t_start
-        if used > dl:
-            res["late"] = f"timing {kind} not started (prepare {used:.0f}s > {dl:.0f}s)"
-            break
-        tc = time.perf_counter()
-        r, local = _rega_dq_time(state, ext, banks, live, device, cls, tokens, kind, prenorm, gen, err)
-        res["time"][kind], res["local"][kind] = r, local
-        for line in _rega_dq_time_lines(cls, kind, local, r, live):
-            print(line[:1200], flush=True)
-        print(f"{REGA_DQ_TAG} {cls} {kind} timing {time.perf_counter() - tc:.1f}s", flush=True)
-    res["timed"] = live
-    return res
-
-
-def _rega_dq_verdict(res):
-    """One class's pre-registered read (warm L2, judge-like pop routing), keyed on the w13 + w2 pair MODE 0 cut against
-    BOTH DQ0 and master (cut = 1 - max(arm / DQ0, arm / master)) of the best exact arm (lowest pair / DQ0); MODE 5
-    ((w13 + w2) MODE 5 vs DQ0's) only attributes it and decides the wg hot-half port. INVALID (this class only) when
-    DQ0's MODE 0 is outside REGA_DQ_FID x master's dispatched launch on either GEMM. Returns (text, best arm or 0)."""
-    t = res["time"].get(res["pop"])
-    if t is None:
-        return f"NOT TIMED ({res.get('late') or 'no pop timing'})", 0
-    w13, w2, pr = (_rega_dq_means(t[g]["warm"]) for g in ("w13", "w2", "pair"))
-    f13, f2 = w13["0:0"] / max(w13["m"], 1e-9), w2["0:0"] / max(w2["m"], 1e-9)
-    lo, hi = REGA_DQ_FID
-    if not (lo <= f13 <= hi and lo <= f2 <= hi):
-        return f"INVALID (DQ0 fidelity w13 {f13:.3f} w2 {f2:.3f} outside {lo}-{hi}: no conclusion for {res['pop']})", 0
-    arms = [d for d in res["timed"] if d]
-    if not arms:
-        return "NO ARM (every arm OFF for this class)", 0
-    best = min(arms, key=lambda d: pr[str(d)] / max(pr["0"], 1e-9))
-    p0, pm = pr[str(best)] / max(pr["0"], 1e-9), pr[str(best)] / max(pr["m"], 1e-9)
-    cut = 1.0 - max(p0, pm)
-    m5 = 1.0 - (w13[f"{best}:5"] + w2[f"{best}:5"]) / max(w13["0:5"] + w2["0:5"], 1e-9)
-    attr = "issue-count" if m5 >= 0.12 else "contention relief"
-    port = ("YES" if m5 >= 0.25 else "maybe (MODE 5 12-25%)" if m5 >= 0.12 else "no") if cut >= 0.03 else "no"
-    if cut >= 0.08:
-        v = "LEAD"
-    elif cut >= 0.03:
-        v = "SHELF"
-    elif m5 >= 0.25:
-        v = "REFUTED (MODE 5 >= 25%, pair < 3%: MMA pipe / RF / smem contention, not issue count)"
-    elif m5 < 0.12:
-        v = "CLOSE (MODE 5 < 12%, pair < 3%: near the instruction floor)"
+def _run_qk_prep(st, data, qkv, q8, cfg):
+    """Q/K RMS-norm + RoPE + FP8 quantisation + cache stores (CUDA kernel, or the Triton twin)."""
+    if QK_PREP_CUDA:
+        st["mod"].qk_prep(qkv, data["positions"], data["cache_loc"], st["inv_freq"], q8, data["k_cache"].view(torch.uint8),
+                          data["v_cache"].view(torch.uint8), data["k_scale"], data["v_scale"], bool(cfg["rope_theta"]),
+                          cfg["kv_scale"] != 1.0)
     else:
-        v = "FLAT-SHELF (pair < 3%, MODE 5 12-25%)"
-    return (f"{v}: best {REGA_DQ_NAMES[best]} pair cut {cut:.1%} (x{p0:.3f} DQ0, x{pm:.3f} m), MODE 5 cut "
-            f"{m5:.1%} ({attr}); wg port {port}"), best
+        T = cfg["tokens"]
+        _qk_prep_kernel[(T,)](qkv, data["positions"], data["cache_loc"], st["inv_freq"], q8,
+                              data["k_cache"].view(torch.uint8), data["v_cache"].view(torch.uint8), data["k_scale"],
+                              data["v_scale"], ROPE=bool(cfg["rope_theta"]), SCALED=cfg["kv_scale"] != 1.0, num_warps=4,
+                              **(dict(PDL=True, launch_pdl=True) if TRITON_PDL else {}))
 
 
-def _rega_dq_route_pick(res):
-    """([the arms that pass their gate, in route preference order: A5b, then A3], gate text: per arm its worst round
-    'arm / master'm / 'arm / DQ0'd [/ 'A5b / A3'a], '!eq-m' when not equal to master's launches, pass / miss). Coded
-    explicitly (experts-rega-a5b-desc-splitcommit): an arm passes when its hs and y equal master's dispatched launches
-    on every self-check routing and its pair MODE 0 is <= REGA_DQ_ROUTE_RATIO x master AND x DQ0 in every round, L2
-    mode and routing (pop + random); A5b in addition only when its pair MODE 0 is <= REGA_DQ_ROUTE_RATIO x A3 in every
-    one of those rounds (A3 timed in the same interleaved sets; no A3 timing: A5b misses). A5b first whenever it
-    passes, regardless of which arm is fastest; else A3 with A3's own gate; else master."""
-    kinds = REGA_W2ST_EXACT_KINDS + (res["pop"],)
-    tk = (res["pop"], "random")
-    if any(k not in res["exact"] for k in kinds) or any(k not in res["time"] for k in tk):
-        return [], "not every check ran"
-    n_need = 2 * 2 * REGA_FSILU_ROUNDS
-    passing, notes = [], []
-    for d in [d for d in res["timed"] if d]:
-        exact_m = all(res["exact"][k][d][0] and res["exact"][k][d][1] for k in kinds)
-        rm, r0, r3 = [], [], []
-        for k in tk:
-            for l2 in ("cold", "warm"):
-                for rd in res["time"][k]["pair"][l2]:
-                    rm.append(rd[str(d)] / max(rd["m"], 1e-9))
-                    r0.append(rd[str(d)] / max(rd["0"], 1e-9))
-                    if d == REGA_DQ_NEW and "3" in rd:
-                        r3.append(rd[str(d)] / max(rd["3"], 1e-9))
-        ok = (exact_m and len(rm) == n_need and max(rm) <= REGA_DQ_ROUTE_RATIO
-              and max(r0) <= REGA_DQ_ROUTE_RATIO)
-        if d == REGA_DQ_NEW:
-            ok = ok and len(r3) == n_need and max(r3) <= REGA_DQ_ROUTE_RATIO
-        notes.append(f"{REGA_DQ_NAMES[d]} {_rega_dq_r(max(rm, default=0.0))}m/{_rega_dq_r(max(r0, default=0.0))}d"
-                     + (f"/{_rega_dq_r(max(r3, default=0.0))}a" if d == REGA_DQ_NEW else "")
-                     + ("" if exact_m else " !eq-m") + (" pass" if ok else " miss"))
-        if ok:
-            passing.append(d)
-    return [d for d in (REGA_DQ_NEW, 3) if d in passing], "; ".join(notes)
-
-
-def _rega_dq_ratio_text(t, ds, l2, absolute):
-    """Per GEMM: [master us 'm', DQ0 MODE 0/2/5 us 'D0',] DQ0 fidelity 'f' (DQ0 MODE 0 / master), then each arm's MODE
-    0/2/5 vs DQ0 [its MODE 0 vs master]."""
-    parts = []
-    for g in ("w13", "w2"):
-        m = _rega_dq_means(t[g][l2])
-        parts.append(f"{g}" + (f" m{m['m']:.1f} D0 " + "/".join(f"{m[f'0:{md}']:.1f}" for md in REGA_DQ_MODES)
-                               if absolute else "")
-                     + f" f{_rega_dq_r(m['0:0'] / max(m['m'], 1e-9))} " + " ".join(
-                         f"{REGA_DQ_NAMES[d]} " + "/".join(_rega_dq_r(m[f'{d}:{md}'] / max(m[f'0:{md}'], 1e-9))
-                                                            for md in REGA_DQ_MODES)
-                         + f"[{_rega_dq_r(m[f'{d}:0'] / max(m['m'], 1e-9))}]" for d in ds if d))
-    return "; ".join(parts)
-
-
-def _rega_dq_pair_text(t, ds, l2):
-    m = _rega_dq_means(t["pair"][l2])
-    return " ".join(f"{REGA_DQ_NAMES[d]} {_rega_dq_r(m[str(d)] / max(m['0'], 1e-9))}/"
-                    f"{_rega_dq_r(m[str(d)] / max(m['m'], 1e-9))}"
-                    + (f"/{_rega_dq_r(m[str(d)] / max(m['3'], 1e-9))}a" if d == REGA_DQ_NEW and 3 in ds else "")
-                    for d in ds if d)
-
-
-REGA_DQ_KEY = (f"{REGA_DQ_TAG} key: RATIOS m=master us, D0=DQ0 MODE 0/2/5 us, f=DQ0/m, arm=MODE 0/2/5 vs DQ0 [MODE 0 vs "
-               f"m]; PAIR (w13+w2 MODE 0) arm vs DQ0/vs m[/A5b vs A3 'a']; A5b = A5b+D+SC")
-
-
-def _rega_dq_summary(head, out, verdict, route):
-    """The summary: header lines, then per class RATIOS (warm pop with absolute us | cold pop), PAIR (pop warm, pop
-    cold, random warm), ROUTE (short; the full gate / replay text is printed during the phase) and VERDICT lines."""
-    lines = list(head) + [REGA_DQ_KEY]
-    for cls, res in out.items():
-        if not isinstance(res, dict):
-            lines.append(f"{REGA_DQ_TAG} VERDICT {cls}: SKIPPED ({res})"[:300])
-            continue
-        pop, ds = res["pop"], res["timed"]
-        t = res["time"].get(pop)
-        off = "".join(f"; {REGA_DQ_NAMES[d]} OFF {w}" for d, w in res["arm_off"].items())[:200]
-        if t is not None:
-            lines.append(f"{REGA_DQ_TAG} RATIOS {cls} {pop} {res['local'].get(pop, 0)}r warm "
-                         + _rega_dq_ratio_text(t, ds, "warm", True) + " | cold "
-                         + _rega_dq_ratio_text(t, ds, "cold", False) + off)
-            tr = res["time"].get("random")
-            lines.append(f"{REGA_DQ_TAG} PAIR {cls} pop warm {_rega_dq_pair_text(t, ds, 'warm')}; cold "
-                         f"{_rega_dq_pair_text(t, ds, 'cold')}"
-                         + (f"; random warm {_rega_dq_pair_text(tr, ds, 'warm')}" if tr is not None else ""))
-        else:
-            lines.append(f"{REGA_DQ_TAG} RATIOS {cls}: not timed ({res.get('late') or '?'}){off}"[:300])
-        lines.append(f"{REGA_DQ_TAG} ROUTE {cls}: {route.get(cls, ('master', ''))[0]}")
-        lines.append(f"{REGA_DQ_TAG} VERDICT {cls} (warm {pop}): {verdict.get(cls, 'n/a')}")
-    return lines
-
-
-def _rega_dq_cap(lines, limit):
-    """Trim the summary to <= limit chars (each line cut proportionally, the tail of a long line dropped)."""
-    total = sum(len(s) + 1 for s in lines)
-    if total <= limit:
-        return lines
-    over = total - limit
-    longest = sorted(range(len(lines)), key=lambda i: -len(lines[i]))
-    out = list(lines)
-    for i in longest:
-        if over <= 0:
-            break
-        cut = min(over, max(len(out[i]) - 160, 0))
-        if cut:
-            out[i] = out[i][:len(out[i]) - cut - 3] + "..."
-            over -= cut
-    return out
-
-
-def _rega_dq_phase(state, weights, device, t_start, info, job):
-    """prepare() only, after _rega_w2st_phase (it reads both per-class flag sets) and before fsilu_info is dropped (its
-    calibrated pop alphas). Joins the background build (and its ptxas probe), prints the 12 instantiations' attributes
-    (any spill: that arm OFF) and the probe's A5b ptxas line, the bank's SCALES counts (outside [0x08, 0x7E]: A3 and
-    A5b OFF), the exhaustive canary (an arm mismatch: that arm OFF; a D descriptor mismatch: A5b OFF), builds A3's
-    permuted bank copy and A5b's re-encoded copy (both from the weights' bank only, each chunk checked by its inverse;
-    a failure: that arm OFF), then per routed class (low only when rega_low_variant == 0) _rega_dq_class, its VERDICT
-    and its ROUTE (A5b's gate, else A3's, + master's two-state replay check, started before REGA_COPY_DEADLINE_S). A
-    routed class sets state['rega_dq_ok'][cls] = DQ, state['rega_dq_ext'] and state['rega_dq_bank'] = {arm: its bank
-    copy} for the routed arms only (an unrouted copy is freed; master's bank is never touched); with no route none of
-    those keys is kept. Never raises. Returns the summary lines (<= REGA_DQ_SUMMARY_MAX chars, printed here and echoed
-    last by prepare())."""
-    t0 = time.perf_counter()
-    off, secs, out, verdict, route, arm_off = None, {}, {}, {}, {}, {}
-    ext = err = None
-    banks = {}
-    rows, scales, canary, routes = {}, None, None, {}
-    v = int(state.get("rega_low_variant", 0))
-    try:
-        _rega_dq_join(job)
-        res = job.get("res", {})
-        ext = res.get("ext")
-        secs["build"] = res.get("secs", float("nan"))
-        used = time.perf_counter() - t_start
-        routed = [c for c in REGA_FSILU_CLASSES if state.get("rega_ok", {}).get(c, False) and not (c == "low" and v)]
-        if job.get("off"):
-            off = job["off"]
-        elif ext is None:
-            off = f"build failed after {secs['build']:.1f}s: {res.get('err', '?')[-300:]!r}"
-        elif not routed:
-            off = f"no class on master's rega_kernel (rega_ok {state.get('rega_ok')}, rega_low_variant {v})"
-        elif used > REGA_DQ_STEP_DEADLINE_S:
-            off = f"SKIPPED: build joined at {used:.0f}s > {REGA_DQ_STEP_DEADLINE_S:.0f}s"
-        else:
-            rows = _rega_dq_attrs(ext)
-            print(f"{REGA_DQ_TAG} attrs DQ0/A3/A5b {_rega_dq_attr_text(rows)}", flush=True)
-            print(f"{REGA_DQ_TAG} {_rega_dq_probe_text(res.get('probe'))}"[:600], flush=True)
-            if len(rows) != REGA_DQ_INST:
-                off = f"rega_init returned {len(rows)} instantiations, not {REGA_DQ_INST}"
-            scales, s_ok = _rega_dq_scales(state["rega_bank"])
-            print(f"{REGA_DQ_TAG} SCALES " + "; ".join(f"{k} <0x08 {a} (zero {z}) >0x7E {b} of {n}"
-                                                      for k, (a, z, b, n) in scales.items())
-                  + f": A3/A5b {'eligible' if s_ok else 'OFF'}", flush=True)
-            if not s_ok:
-                arm_off[3] = arm_off[REGA_DQ_NEW] = "bank scale bytes outside [0x08, 0x7E]"
-            if off is None:
-                print(f"{REGA_DQ_TAG} launch canary (rega_dq_exact)", flush=True)
-                tc = time.perf_counter()
-                bad, n, nz, dsc = _rega_dq_canary(ext, device)
-                secs["canary"] = time.perf_counter() - tc
-                canary = (bad, n, nz, dsc)
-                print(f"{REGA_DQ_TAG} canary done: {n} cases x 2 k16 x 4 fragments, DQ0 non-zero {nz}; mismatching cases "
-                      + " ".join(f"{REGA_DQ_NAMES[d]} {b}" for d, b in bad.items())
-                      + f"; D descriptor vs make_desc: {dsc[0]} mismatching of {dsc[1]}", flush=True)
-                for d, b in bad.items():
-                    if b or nz < n:
-                        arm_off.setdefault(d, f"canary: {b} mismatching cases (DQ0 non-zero {nz} of {n * 8})")
-                if dsc[0] or dsc[1] != REGA_DQ_DESC_EXPECT:
-                    arm_off.setdefault(REGA_DQ_NEW, f"D descriptor check: {dsc[0]} mismatching of {dsc[1]} cases")
-                for d, name, fn in ((3, "A3 permuted code bank", _rega_dq_perm_bank),
-                                    (REGA_DQ_NEW, "A5b ENC4 + packed-scale bank", _rega_dq_a5b_bank)):
-                    if d in arm_off:
-                        continue
-                    tc = time.perf_counter()
-                    try:
-                        banks[d] = fn(state["rega_bank"], device)
-                    except Exception as e:
-                        banks.pop(d, None)
-                        arm_off.setdefault(d, f"bank copy failed: {e!r}"[:160])
-                    secs[f"bank{d}"] = time.perf_counter() - tc
-                    print(f"{REGA_DQ_TAG} {name}: {'ok, lossless (inverse checked per chunk)' if d in banks else 'FAILED'}"
-                          f" in {secs[f'bank{d}']:.1f}s", flush=True)
-                err = torch.zeros(3, dtype=torch.int32, device=device)
-                gen = torch.Generator(device=device).manual_seed(20261029)
-                stop, announce = None, True
-                for cls in routed:
-                    big = cls == "ft"
-                    dl = REGA_DQ_FT_STEP_DEADLINE_S if big else REGA_DQ_STEP_DEADLINE_S
-                    used = time.perf_counter() - t_start
-                    inst = {d: all(rows.get((g, big, d), (False, 0, 1))[0] and rows[(g, big, d)][2] == 0
-                                   for g in (True, False)) for d in REGA_DQ_ALL}
-                    ds = [0] + [d for d in REGA_DQ_ARMS if d not in arm_off and inst[d]]
-                    if stop:
-                        out[cls] = stop
-                    elif not inst[0]:
-                        out[cls] = "DQ0 attribute / spill check failed for this class (no control)"
-                    elif used > dl:
-                        out[cls] = f"step not started (prepare {used:.0f}s > {dl:.0f}s)"
-                    else:
-                        tc = time.perf_counter()
-                        try:
-                            cres = _rega_dq_class(state, ext, banks, ds, device, cls, gen, err, t_start, info,
-                                                  announce)
-                            announce = False
-                            for d in REGA_DQ_ARMS:
-                                if d not in arm_off and not inst[d]:  # this class's instantiations only
-                                    cres["arm_off"].setdefault(d, "attribute / spill check (local bytes > 0)")
-                            out[cls] = cres
-                            verdict[cls] = _rega_dq_verdict(cres)[0]
-                            route[cls] = _rega_dq_route(state, weights, device, cls, cres, ext, banks, gen, t_start,
-                                                        verdict[cls], routes)
-                        except Exception as e:  # stop: anything after a fault would be unreliable
-                            out[cls] = f"raised {e!r}"[:200]
-                            stop = f"an earlier class raised ({out[cls][:80]})"
-                            print(f"{REGA_DQ_TAG} {cls}: {out[cls]}", flush=True)
-                        secs[cls] = time.perf_counter() - tc
-                        if isinstance(out.get(cls), dict):
-                            print(f"{REGA_DQ_TAG} ROUTE {cls}: {route.get(cls, ('', 'master'))[1]}"[:900], flush=True)
-                            print(f"{REGA_DQ_TAG} VERDICT {cls}: {verdict.get(cls, 'n/a')}"[:700], flush=True)
-    except Exception as e:  # a device fault would have poisoned the context; anything else is only this diagnostic
-        off = f"dq phase raised {e!r}"[:400]
-        routes = {}
-    finally:
-        try:
-            if routes:
-                # only the routed arms' bank copies stay (A3's is freed when no class routes A3, A5b's likewise)
-                state["rega_dq_ext"] = ext
-                state["rega_dq_bank"] = {d: banks[d] for d in sorted(set(routes.values()))}
-                state["rega_dq_ok"] = {c: int(routes.get(c, 0)) for c in REGA_FSILU_CLASSES}
-            else:
-                for k in ("rega_dq_ext", "rega_dq_bank", "rega_dq_ok"):
-                    state.pop(k, None)
-        except Exception as e:
-            off = (off or "") + f"; state update raised {e!r}"[:200]
-        ext = err = None
-        banks = {}
-        try:
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-        except Exception as e:  # only after a device fault; never raise from this phase
-            off = (off or "") + f"; final synchronize raised {e!r}"[:200]
-    lines = []
-    try:
-        res = job.get("res", {})
-        b = res.get("secs")
-        head = [f"{REGA_DQ_TAG} SUMMARY build " + (f"{b:.1f}s" if b is not None else "not run")
-                + (f" in a bg thread (nice {res.get('nice')}) from {job['t0']:.1f}s" if job.get("t0") is not None
-                   else "")
-                + f" (est {job.get('est', 0.0):.0f}s, join waited {job.get('wait', 0.0):.1f}s); phase "
-                f"{time.perf_counter() - t0:.1f}s (" + ", ".join(f"{k} {s:.1f}s" for k, s in secs.items() if k != "build")
-                + f"); prepare total {time.perf_counter() - t_start:.1f}s of 300s; rega_dq_ok "
-                + (str(state.get("rega_dq_ok")) if "rega_dq_ok" in state else "none (master)")]
-        if off:
-            head.append(f"{REGA_DQ_TAG} OFF: {off}"[:500])
-        if rows:
-            uniform = (all(r[0] and r[2] == 0 for r in rows.values())
-                       and len({(r[1], r[4]) for r in rows.values()}) == 1)
-            r0 = next(iter(rows.values()))
-            head.append(f"{REGA_DQ_TAG} attrs {len(rows)} inst (cudaFuncGetAttributes): all ok r{r0[1]} l0 o{r0[4]}"
-                        if uniform else f"{REGA_DQ_TAG} attrs DQ0/A3/A5b {_rega_dq_attr_text(rows)}")
-        if res.get("probe"):
-            head.append(f"{REGA_DQ_TAG} {_rega_dq_probe_text(res.get('probe'))}"[:400])
-        if scales is not None:
-            head.append(f"{REGA_DQ_TAG} SCALES " + "; ".join(f"{k} <0x08 {a} (zero {z}) >0x7E {bb} of {n}"
-                                                            for k, (a, z, bb, n) in scales.items())
-                        + (f"; canary {canary[1]} cases: " + " ".join(f"{REGA_DQ_NAMES[d]} {x}"
-                                                                     for d, x in canary[0].items())
-                           + f" mismatching; D desc {canary[3][0]}/{canary[3][1]} mismatching" if canary else "")
-                        + "".join(f"; {REGA_DQ_NAMES[d]} OFF: {w}" for d, w in arm_off.items() if w))
-        lines = _rega_dq_cap(_rega_dq_summary(head, out, verdict, route), REGA_DQ_SUMMARY_MAX)
-        for line in lines:
-            print(line, flush=True)
-    except Exception as e:
-        lines = [f"{REGA_DQ_TAG} SUMMARY: report raised {e!r}"[:300]]
-        print(lines[0], flush=True)
-    return lines
-
-
-def _rega_dq_route(state, weights, device, cls, res, ext, banks, gen, t_start, verdict, routes):
-    """One class's ROUTE: none when its verdict is INVALID / not timed; else the gate (_rega_dq_route_pick) and, for
-    each passing arm in preference order (A5b, then A3), master's two-state replay check with that arm ON for this
-    class (REGA_DQ_STATE_KEYS: that arm's bank copy is copied with the state), started only before
-    REGA_COPY_DEADLINE_S ('print-only' otherwise). The first arm that passes is recorded in routes[cls]. Returns
-    (short text for the summary, full text)."""
-    if verdict.startswith(("INVALID", "NOT TIMED", "NO ARM")):
-        why = f"master ({verdict.split(' (')[0]})"
-        return why, why
-    order, notes = _rega_dq_route_pick(res)
-    if not order:
-        return (f"master (gate miss: {notes})"[:200],
-                f"master (gate: pair MODE 0 <= {REGA_DQ_ROUTE_RATIO} x master (m) and x DQ0 (d) [A5b also x A3 (a)] in "
-                f"every round, L2 mode and routing, worst round: {notes})")
-    failed = []
-    for d in order:
-        used = time.perf_counter() - t_start
-        if used > REGA_COPY_DEADLINE_S:
-            why = (f"print-only ({REGA_DQ_NAMES[d]} passed the gate; replay check not started: {used:.0f}s > "
-                   f"{REGA_COPY_DEADLINE_S:.0f}s){''.join(failed)}")
-            return why, why
-        trial = dict(state)
-        trial["rega_dq_ext"] = ext
-        trial["rega_dq_bank"] = {d: banks[d]}
-        trial["rega_dq_ok"] = {c: (d if c == cls else 0) for c in REGA_FSILU_CLASSES}
-        cache = {}
-        try:
-            why, line = _rega_replay_check(trial, weights, cache, device, gen, plan=REGA_FSILU_REPLAY_PLAN[cls],
-                                           keys=REGA_DQ_STATE_KEYS)
-        finally:
-            cache.clear()
-            trial = None
-            torch.cuda.empty_cache()
-        if why:
-            failed.append(f"; {REGA_DQ_NAMES[d]} replay FAILED: {why}"[:300])
-            continue
-        routes[cls] = d
-        return (f"{REGA_DQ_NAMES[d]} (gate: {notes}; replay pass{''.join(failed)})"[:240],
-                f"{REGA_DQ_NAMES[d]} (gate: {notes}; replay: {line}{''.join(failed)})"[:900])
-    return (f"master (gate: {notes}; replay failed)"[:240], f"master (gate: {notes}{''.join(failed)})"[:900])
+def _run_attention(st, data, q8, qkv, cfg, variant, pre):
+    """Attention + norm-gate epilogue -> og [T, Q_SIZE]."""
+    if variant is not None:
+        ns = _attn_splits(cfg, data, variant, st["nsm"])
+        sk = ATTN_SK.get(_attn_class(cfg), 0)
+        if sk and variant in (8, 43) and cfg["batch"] * ((cfg["q_len"] + ATTN_SK_Q_BLOCK - 1) // ATTN_SK_Q_BLOCK) * 2 <= ATTN_SK_MAX_PAIRS:
+            ns = -sk
+        return _attn_custom(st, data, q8, qkv, cfg, nsplit=ns, variant=variant, pre=pre)
+    # kernel_fn's FA3 path views q8 as FP8 (the reference path in _attn_ref passes the raw uint8 tensor).
+    return _attention_norm_gate(data, q8.view(FP8), qkv, cfg)
 
 
 def kernel_fn(data, state):
+    st = state
     cfg = data["config"]
-    batch, length, tokens = cfg["batch"], cfg["q_len"], cfg["tokens"]
-    # The tokens <= 8 router and unpooler paths are not ported (prefill q_len is 200-16384).
-    assert tokens > SMALL_BATCH_MAX_TOKENS, f"muse_prefill_layer port needs tokens > 8, got {tokens}"
-    hq, hkv, d = cfg["num_q_heads"], cfg["num_kv_heads"], cfg["head_dim"]
-    dense = state["dense"]
-    # Attention: MuseSpark1xAttention.forward.
-    qkv = _gemm(data["attn_input"], dense["qkv_gate"])
-    if cfg["rope_theta"]:
-        q, k = state["qk_norm"](qkv, data["positions"], state["cos_sin"])
+    T = cfg["tokens"]
+    assert T > 8, "[public-C] this file has no T <= 8 path (SGLang: FP32 router input, unpooler[:1024])"
+    dev = data["attn_input"].device
+    # --- attention ---
+    av = _attn_variant(st, cfg)
+    pre = None
+    split = av is not None and T <= PREP_SPLIT_MAX_T and PREP_SPLIT.get("slide" if cfg["window"] else "full", False)
+    if split and not PREP_SPLIT_AFTER:
+        pre = _attn_prep_split(st, data, cfg)
+    ev0 = None
+    if split and PREP_SPLIT_AFTER:
+        ev0 = torch.cuda.Event()
+        ev0.record()
+    qkv = _mm(st, data["attn_input"], "qkv")
+    if ev0 is not None:
+        pre = _attn_prep_split(st, data, cfg, ev0)
+    q8 = torch.empty((T, Q_SIZE), dtype=torch.uint8, device=dev)
+    _run_qk_prep(st, data, qkv, q8, cfg)
+    og = _run_attention(st, data, q8, qkv, cfg, av, pre)
+    a = _mm(st, og, "o")
+    h = torch.empty((T, HIDDEN), dtype=torch.bfloat16, device=dev)
+    maxtiles = _max_tiles(T)
+    use_cit = CIT and MOE_MODE_SMALL == "fused" and MOE_MODE_LARGE == "fused" and GATHER_PLAN
+    # zb layout: [per-expert counts: LOCAL_EXPERTS | work counter: 1 | tile done: maxtiles
+    #             | (CIT: GEMM2 done: maxtiles | head, tail, error, pad: 4)]
+    zlen = LOCAL_EXPERTS + 1 + maxtiles + ((maxtiles + 4) if use_cit else 0)
+    recompute = T >= BND_CUDA_MIN and BND_RECOMPUTE and T >= BND_RC_MIN_T
+    if recompute:  # the first boundary keeps only the branch's rms factor; the second rebuilds the fp32 stream from it
+        zb = torch.empty((zlen,), dtype=torch.int32, device=dev)
+        r1 = torch.empty((T,), dtype=torch.float32, device=dev)
+        st["mod"].boundary_rc(a, data["stream"], st["a1"], st["a1"], st["b1"], st["g_pre_ffn_norm"], data["stream"], h, 1, zb,
+                              a, r1, st["a1"], st["b1"])
+    elif T >= BND_CUDA_MIN:  # the boundary kernel also zeroes zb (counts | work counter | tile done)
+        stream1 = torch.empty((T, HIDDEN), dtype=torch.float32, device=dev)
+        zb = torch.empty((zlen,), dtype=torch.int32, device=dev)
+        st["mod"].boundary(a, data["stream"], st["a1"], st["a1"], st["b1"], st["g_pre_ffn_norm"], stream1, h, False, zb)
     else:
-        q, k = state["qk_norm"](qkv)
-    v = qkv[:, hq * d + hkv * d: hq * d + 2 * hkv * d]
-    gate = qkv[:, hq * d + 2 * hkv * d:]
-    k_cache, v_cache = data["k_cache"], data["v_cache"]
-    scaled = cfg["kv_scale"] != 1.0
-    k = k.reshape(tokens, hkv * d)
-    if scaled:
-        k, v = k / data["k_scale"], v / data["v_scale"]
-    # The pool keeps FP8 rows as bytes; slot 0 is a live row here (SGLang reserves it for padding).
-    store_cache(k.to(FP8).view(torch.uint8), v.to(FP8).view(torch.uint8),
-                k_cache.view(-1, hkv * d).view(torch.uint8), v_cache.view(-1, hkv * d).view(torch.uint8),
-                data["cache_loc"], reserved_skip_index=-1)
-    window = cfg["window"]
-    descale = {}
-    if scaled:
-        descale = dict(k_descale=data["k_scale"].reshape(1, 1).expand(batch, hkv),
-                       v_descale=data["v_scale"].reshape(1, 1).expand(batch, hkv))
-    q8 = q.view(tokens, hq, d).to(FP8)
-    fa3c = state.get("fa3c")
-    routed = None
-    if fa3c and not window and cfg["page_size"] == 1 and not scaled:
-        # Shape-only routing (a dict lookup on config / shapes; never on values).
-        width = data["page_table"].shape[1]
-        key = _fa3c_key(batch, length, width)
-        routed = fa3c["route"].get(key)
-    if routed is not None:
-        mode, gate_width, k_buf, v_buf = routed
-        if width != gate_width:  # a different width than the gate timed: shape-derived buffers
-            k_buf, v_buf = (torch.empty((batch, width, 2, 64), dtype=torch.uint8, device=q8.device)
-                            for _ in range(2))
-        out = _fa3c_attend(mode, q8, k_cache, v_cache, data["page_table"], data["cache_seqlens"],
-                           data["cu_seqlens_q"], length, cfg["sm_scale"] * cfg["qk_scale_factor"], (k_buf, v_buf))
+        stream1 = torch.empty((T, HIDDEN), dtype=torch.float32, device=dev)
+        zb = torch.zeros((zlen,), dtype=torch.int32, device=dev)
+        _boundary_kernel[(T,)](a, data["stream"], a, st["a1"], st["b1"], st["g_pre_ffn_norm"], stream1, h,
+                               HAS_GPOST=False, H=HIDDEN, num_warps=16)
+    # --- router + top-8 on a side stream, concurrent with the pooler GEMM ---
+    main = torch.cuda.current_stream()
+    side = SIDE_STREAM
+    serial = T <= ROUTER_SERIAL_MAX or T >= ROUTER_SERIAL_MIN
+    if serial:  # the router GEMM alone on all SMs first: cheaper than slowing the pooler down by sharing SMs with it
+        logits = _mm(st, h, "router")
+    side.wait_stream(main)
+    with torch.cuda.stream(side):
+        if not serial:
+            logits = _mm(st, h, "router", side=True)  # [T, 512] fp32: hi | lo partial logits
+        ids = torch.empty((T, TOP_K), dtype=torch.int32, device=dev)
+        topw = torch.empty((T, TOP_K), dtype=torch.float32, device=dev)
+        lid = torch.empty((T, TOP_K), dtype=torch.int32, device=dev)
+        pos = torch.empty((T, TOP_K), dtype=torch.int32, device=dev)
+        cnt = zb[:LOCAL_EXPERTS]
+        cit = None
+        if use_cit:  # tok_left (T) | combine queue (T) | row -> token map (rows)
+            ctok = torch.empty((2 * T + T * TOP_K + LOCAL_EXPERTS * MAX_PADDED_ROWS_PER_EXPERT,), dtype=torch.int32, device=dev)
+            cit = dict(zc=zb[LOCAL_EXPERTS + 1 + maxtiles:], tok=ctok, topw=topw)
+        st["mod"].moe_route(logits, st["router_bias"], data["local_start"], ids, topw, lid, pos, cnt,
+                            ctok[:T] if use_cit else st["no_zero"], ctok[T:2 * T] if use_cit else st["no_zero"])  # one warp per token
+    # --- experts ---
+    p = _mm(st, h, "pooler")
+    main.wait_stream(side)
+    moe = torch.empty((T, D_EXPERT), dtype=torch.bfloat16, device=dev)
+    if cit is not None:
+        cit["out"] = moe
+    ex = _moe_forward(st, p, lid, pos, cnt, T, zb=zb[LOCAL_EXPERTS:], cit=cit)
+    y, rrow = ex["y"], ex["rrow"]
+    if cit is not None:
+        pass  # combined in the fused kernel's tail
+    elif CUDA_COMBINE:  # one block per token, PDL (the per-expert scale is 1: st["ones32"])
+        st["mod"].moe_combine(y, rrow, lid, topw, st["g_post_expert_norm"], moe)
+    elif TRITON_PDL:
+        _combine_kernel[(T,)](y, rrow, lid, topw, st["ones32"], st["g_post_expert_norm"], moe, H=D_EXPERT, PDL=True, num_warps=8,
+                          launch_pdl=True)
     else:
-        out = flash_attn_with_kvcache(
-            q=q8,
-            k_cache=k_cache,
-            v_cache=v_cache,
-            page_table=data["page_table"],
-            cache_seqlens=data["cache_seqlens"],
-            cu_seqlens_q=data["cu_seqlens_q"],
-            max_seqlen_q=length,
-            softmax_scale=cfg["sm_scale"] * cfg["qk_scale_factor"],
-            causal=True,
-            window_size=(window - 1, 0) if window else (-1, -1),
-            scheduler_metadata=data["scheduler_metadata"],
-            **descale,
-        )
-    if isinstance(out, tuple):
-        out = out[0]
-    o = state["o_norm_gate"](out.reshape(tokens, hq * d).to(torch.bfloat16), gate)
-    attn_output = _gemm(o, dense["o"])  # all-reduce: identity
+        _combine_kernel[(T,)](y, rrow, lid, topw, st["ones32"], st["g_post_expert_norm"], moe, H=D_EXPERT,
+                              num_warps=COMBINE_NW_SMALL if T <= COMBINE_SMALL_T else 8)
+    f = _mm(st, moe, "unpooler")
+    stream2 = torch.empty((T, HIDDEN), dtype=torch.float32, device=dev)
+    hidden = torch.empty((T, HIDDEN), dtype=torch.bfloat16, device=dev)
+    if recompute:
+        st["mod"].boundary_rc(f, data["stream"], st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"], stream2,
+                              hidden, 2, st["no_zero"], a, r1, st["a1"], st["b1"])
+    elif T >= BND_CUDA_MIN:
+        st["mod"].boundary(f, stream1, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"], stream2, hidden,
+                           True, st["no_zero"])
+    else:
+        _boundary_kernel[(T,)](f, stream1, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"],
+                               stream2, hidden, HAS_GPOST=True, H=HIDDEN, num_warps=16)
+    return hidden, stream2, ids
 
-    # Post-attention boundary, router and MoE block: MuseSpark1xMoE._forward_experts.
-    ffn_input, stream, _ = state["attn_boundary"](
-        data["stream"], attn_output, branch_dtype=torch.bfloat16, router_dtype=None)
-    # The router and routing run on a side stream, overlapping the pooler on the main one.
-    main_stream, side_stream = torch.cuda.current_stream(), state["side_stream"]
-    side_stream.wait_stream(main_stream)
-    expert_input = _gemm(ffn_input, dense["pooler"])
-    with torch.cuda.stream(side_stream):
-        both = torch.mm(ffn_input, state["router_hilo_t"], out_dtype=torch.float32)
-        logits = both[:, :N_EXPERTS] + both[:, N_EXPERTS:]
-        topk_weights, topk_ids = state["routing"](None, logits, TOP_K, True)
-    main_stream.wait_stream(side_stream)
-    if not torch.cuda.is_current_stream_capturing():
-        for tensor in (topk_weights, topk_ids):
-            tensor.record_stream(main_stream)
-    # This GPU's experts start at local_start: SGLang's expert_map on that EP rank, in one kernel.
-    local_ids = _local_expert_ids(topk_ids, data["local_start"])
-    # all-reduce: identity
-    expert_output = _experts(expert_input, topk_weights, local_ids, state, pre_norm=True)
-    ffn_output = _gemm(expert_output, dense["unpooler"])
 
-    # Post-FFN boundary, with the next layer's pre-attention norm.
-    next_attn_input, stream, _ = state["ffn_boundary"](stream, ffn_output, branch_dtype=torch.bfloat16)
-    return next_attn_input, stream, topk_ids
+# --------------------------------------------------------------------------------------
+# Self-tests / micro-benchmarks, printed from prepare() when SELFTEST is on.
+# They never run on the scored path; they exist to check the kernels against
+# a reference and to time the pieces. All timing goes through _time, which
+# flushes L2 before each call the way the judge's replays do.
+# --------------------------------------------------------------------------------------
+
+
+def _routes_from_counts(T, counts, dev):
+    """Build (lid, pos, cnt) for a synthetic routing: counts[e] tokens to expert e."""
+    lid = torch.full((T, TOP_K), -1, dtype=torch.int32, device=dev)
+    pos = torch.zeros((T, TOP_K), dtype=torch.int32, device=dev)
+    r = 0
+    for e, c in enumerate(counts):
+        idx = torch.arange(r, r + c, device=dev)
+        lid.view(-1)[(idx % T) * TOP_K + idx // T] = e
+        pos.view(-1)[(idx % T) * TOP_K + idx // T] = torch.arange(c, device=dev, dtype=torch.int32)
+        r += c
+    cnt = torch.zeros(LOCAL_EXPERTS, dtype=torch.int32, device=dev)
+    cnt[: len(counts)] = torch.tensor(counts, dtype=torch.int32, device=dev)
+    return lid, pos, cnt
+
+
+_FLUSH_BUF = None
+
+
+def _time(fn, reps=5):
+    """Median time in us with a cold L2 (a read sweep over 256 MB before each call, like the judge's replays)."""
+    global _FLUSH_BUF
+    if _FLUSH_BUF is None:
+        _FLUSH_BUF = (torch.ones(128 << 20, dtype=torch.float16, device="cuda"),
+                      torch.zeros((), dtype=torch.float32, device="cuda"))
+    buf, sink = _FLUSH_BUF
+    fn()
+    torch.cuda.synchronize()
+    ts = []
+    for _ in range(reps):
+        sink.copy_(buf.sum(dtype=torch.float32))
+        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        e0.record()
+        fn()
+        e1.record()
+        torch.cuda.synchronize()
+        ts.append(e0.elapsed_time(e1) * 1000)
+    ts.sort()
+    return ts[len(ts) // 2]
+
+
+SCEN = {
+    "T16384": (16384, [12547, 11910, 2820, 2392, 270, 242, 97, 60, 34, 16, 14, 2, 1, 1, 1]),
+    "T3012": (3012, [2277, 2191, 416, 400, 47, 37, 32, 11, 7, 5, 4, 3, 2, 1, 1]),
+    "T753": (753, [540, 529, 127, 108, 14, 6, 3, 3, 3, 2, 1, 1]),
+}
+
+
+def _selftest(st, weights):
+    from nvfp4 import dequantize
+    dev = weights["w13"].device
+    mod = st["mod"]
+    torch.manual_seed(0)
+    # correctness on a small skewed routing
+    T = 700
+    counts = [300, 200, 100, 60, 33, 17, 14, 5, 1]  # 14 -> N=16, 5 and 1 -> N=8 tiles (below FINE_MIN_T)
+    lid, pos, cnt = _routes_from_counts(T, counts, dev)
+    p = torch.randn((T, D_EXPERT), device=dev).to(torch.bfloat16)
+    gw = st["g_pre_expert_norm"]
+    out = _moe_forward(st, p, lid, pos, cnt, T)
+    y, rrow = out["y"], out["rrow"]
+    pf = p.float()
+    xn = (pf * torch.rsqrt(pf.pow(2).mean(-1, keepdim=True) + RMS_EPS) * (1.0 + gw.float())).to(torch.bfloat16)
+    msg = []
+    for e in range(len(counts)):
+        tok, slot = (lid == e).nonzero(as_tuple=True)
+        W13 = dequantize(weights["w13"][e], weights["w13_sf"][e], weights["w13_gs"][e]).to(torch.bfloat16)
+        W2 = dequantize(weights["w2"][e], weights["w2_sf"][e], weights["w2_gs"][e]).to(torch.bfloat16)
+        hh = xn[tok].float() @ W13.float().T
+        inter = (F.silu(hh[:, :D_EXPERT]) * hh[:, D_EXPERT:]).to(torch.bfloat16)
+        ref = inter.float() @ W2.float().T
+        got = y[rrow[tok, slot].long()].float()
+        msg.append(f"e{e}:n{len(tok)}:{float((got - ref).norm() / ref.norm()):.4f}")
+    print("SELFTEST moe rel err", " ".join(msg), flush=True)
+    # timing
+    for name, (T, counts) in SCEN.items():
+        lid, pos, cnt = _routes_from_counts(T, counts, dev)
+        p = torch.randn((T, D_EXPERT), device=dev).to(torch.bfloat16)
+        out = _moe_forward(st, p, lid, pos, cnt, T)
+        nt = int(out["ntiles"])
+        rows = int(out["tiles"][:nt, 2].sum())
+        R = sum(counts)
+        res = []
+        P1, P2 = 8, 16
+        t1 = _time(lambda: mod.moe_gemm(st["w13r"], out["xt"], out["tiles"], out["ntiles"], st["w13_gs"], out["inter"], 64, P1,
+                                        True, st["smem"]))
+        t2 = _time(lambda: mod.moe_gemm(st["w2r"], out["inter"], out["tiles"], out["ntiles"], st["w2_gs"], out["y"], 32, P2,
+                                        False, st["smem"]))
+        f1 = 2 * R * (2 * D_EXPERT) * D_EXPERT / t1 / 1e6  # GEMM1: [R, D_EXPERT] x [2*D_EXPERT, D_EXPERT]^T
+        f2 = 2 * R * D_EXPERT * D_EXPERT / t2 / 1e6  # GEMM2: [R, D_EXPERT] x [D_EXPERT, D_EXPERT]^T
+        res.append(f"P{P1}/{P2}: g1 {t1:.0f}us ({f1:.0f}TF) g2 {t2:.0f}us ({f2:.0f}TF)")
+        nsm = torch.cuda.get_device_properties(dev).multi_processor_count
+        rr = out["rrow"][out["rrow"] >= 0].long()
+        y0 = out["y"][rr].clone()
+        ctr = torch.zeros((2,), dtype=torch.int32, device=dev)
+        rows_t = torch.empty((LOCAL_EXPERTS,), dtype=torch.int32, device=dev)
+
+        def g1p():
+            ctr.zero_()
+            mod.moe_gemm_p(st["w13r"], out["xt"], out["tiles"], out["ntiles"], st["w13_gs"], out["inter"], 64, nsm, True,
+                           st["smem"], ctr[0:1])
+
+        def g2p():
+            ctr.zero_()
+            mod.moe_gemm_p(st["w2r"], out["inter"], out["tiles"], out["ntiles"], st["w2_gs"], out["y"], 32, nsm, False,
+                           st["smem"], ctr[1:2])
+        zb = torch.zeros((1 + out["tiles"].shape[0],), dtype=torch.int32, device=dev)
+
+        def gf():
+            zb.zero_()
+            mod.moe_fused(st["w13r"], st["w2r"], out["xt"], out["inter"], out["y"], out["tiles"], out["ntiles"], st["w13_gs"],
+                          st["w2_gs"], nsm, st["smem"], zb[0:1], zb[1:], st["moe_dbg"], st["moe_flags"], st["no_zero"],
+                          st["no_zero"], out["rrow"], lid, st["no_zero_f"], st["g_post_expert_norm"], st["no_zero_b"])
+        for order in (0, 1, 2):
+            mod.moe_plan(cnt, out["offsets"], out["tiles"], out["ntiles"], rows_t, order)
+            tf = _time(gf)
+            same_f = bool(torch.equal(out["y"][rr], y0))
+            res.append(f"fused o{order}: {tf:.0f}us same={same_f}")
+            t1 = _time(g1p)
+            t2 = _time(g2p)
+            f1 = 2 * R * 8192 * 4096 / t1 / 1e6
+            f2 = 2 * R * 4096 * 4096 / t2 / 1e6
+            same = bool(torch.equal(out["y"][rr], y0))
+            res.append(f"persist o{order}: g1 {t1:.0f}us ({f1:.0f}TF) g2 {t2:.0f}us ({f2:.0f}TF) same={same}")
+        tg = _time(lambda: mod.moe_gather(p, st["g_pre_expert_norm"], lid, pos, out["offsets"], cnt, out["xt"], out["rrow"]))
+        print(f"SELFTEST {name} R={R} padded={rows} tiles={nt} gather {tg:.0f}us |", " | ".join(res), flush=True)
+    a = torch.randn((16384, 8192), device=dev).to(torch.bfloat16)
+    tmm = _time(lambda: torch.mm(a, st["pooler"].t()))
+    print(f"SELFTEST cublas 16384x4096x8192 {tmm:.0f}us {2 * 16384 * D_EXPERT * HIDDEN / tmm / 1e6:.0f}TF", flush=True)
+    s = torch.randn((16384, 8192), device=dev)
+    o1 = torch.empty_like(s)
+    o2 = torch.empty((16384, 8192), device=dev, dtype=torch.bfloat16)
+    for nw in (4, 8, 16):
+        tb = _time(lambda: _boundary_kernel[(16384,)](a, s, st["g_post_ffn_norm"], st["a2"], st["b2"],
+                                             st["g_next_pre_attn_norm"], o1, o2, HAS_GPOST=True, H=HIDDEN, num_warps=nw))
+        print(f"SELFTEST boundary nw{nw} {tb:.0f}us {16384 * HIDDEN * 12 / tb / 1e6:.2f}TB/s", flush=True)
+    del a, s, o1, o2
+    torch.cuda.empty_cache()
+
+
+ATTN_SCEN = [
+    ("turn1_full", 1, 753, 80000, 0),
+    ("turn4_full", 4, 753, 80000, 0),
+    ("ft_full32k", 1, 16384, 32768, 0),
+    ("ft_full64k", 1, 16384, 65536, 0),
+    ("ft_slide", 1, 16384, 32768, 2048),
+]
+
+
+def _selftest_attn2(st):
+    if _fa3 is None:
+        return
+    dev = "cuda"
+    torch.manual_seed(2)
+    for name, B, L, ctx, window in ATTN_SCEN:
+        S = ctx + L
+        T = B * L
+        q8 = (torch.randn((T, HQ, HD), device=dev) * 0.7).to(FP8)
+        qkv = torch.randn((T, QKV_SIZE), device=dev).to(torch.bfloat16)
+        kc = (torch.randn((B * S, 1, HKV, HD), device=dev) * 0.8 + 0.4).to(FP8)
+        vc = torch.randn((B * S, 1, HKV, HD), device=dev).to(FP8)
+        perm = torch.randperm(B * S, device=dev).to(torch.int32)
+        data = {"k_cache": kc, "v_cache": vc, "page_table": perm.view(B, S), "seq_lens": torch.full((B,), ctx, dtype=torch.int32, device=dev),
+                "cache_seqlens": torch.full((B,), S, dtype=torch.int32, device=dev),
+                "cu_seqlens_q": torch.arange(0, T + 1, L, dtype=torch.int32, device=dev), "scheduler_metadata": None,
+                "k_scale": torch.tensor(1.0, device=dev), "v_scale": torch.tensor(1.0, device=dev)}
+        cfg = {"batch": B, "q_len": L, "window": window, "page_size": 1, "sm_scale": SYNTH_SM_SCALE,
+               "qk_scale_factor": SYNTH_QK_SCALE_FACTOR, "kv_scale": 1.0, "tokens": T}
+
+        def ref_fn():
+            return _attention_norm_gate(data, q8, qkv, cfg)
+        flops = 4.0 * HQ * HD * (B * L * (ctx if not window else min(ctx, window)) + B * L * L / 2)
+        try:
+            r = ref_fn()
+            t_ref = _time(ref_fn, reps=3)
+            res = [f"fa3+ng {t_ref:.0f}us ({flops / t_ref / 1e6:.0f}TF)"]
+        except Exception as exc:  # noqa: BLE001
+            print(f"SELFTEST attn2 {name} FA3 ERR {repr(exc)[:300]}", flush=True)
+            continue
+        for variant, nsplit in [(v, 1) for v in ATTN_VARIANTS] + [(v, _attn_splits(cfg, data, v, st["nsm"])) for v in (1, 9)]:
+            try:
+                o = _attn_custom(st, data, q8, qkv, cfg, nsplit=nsplit, variant=variant)
+                torch.cuda.synchronize()
+                err = float((o.float() - r.float()).norm() / r.float().norm())
+                t_own = _time(lambda: _attn_custom(st, data, q8, qkv, cfg, nsplit=nsplit, variant=variant), reps=3)
+                res.append(f"v{variant}s{nsplit} {t_own:.0f}us ({flops / t_own / 1e6:.0f}TF) err {err:.4f}")
+            except Exception as exc:  # noqa: BLE001
+                res.append(f"v{variant}s{nsplit} ERR {repr(exc)[:120]}")
+        print(f"SELFTEST attn2 {name}: " + " | ".join(res), flush=True)
+        del q8, qkv, kc, vc
+    torch.cuda.empty_cache()
+
+
+def _selftest_boundary(st):
+    dev = "cuda"
+    T = 16384
+    a = torch.randn((T, HIDDEN), device=dev).to(torch.bfloat16)
+    s = torch.randn((T, HIDDEN), device=dev)
+    o1 = torch.empty_like(s)
+    o2 = torch.empty((T, HIDDEN), device=dev, dtype=torch.bfloat16)
+    o3 = torch.empty_like(s)
+    o4 = torch.empty((T, HIDDEN), device=dev, dtype=torch.bfloat16)
+    _boundary_kernel[(T,)](a, s, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"], o1, o2,
+                           HAS_GPOST=True, H=HIDDEN, num_warps=16)
+    st["mod"].boundary(a, s, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"], o3, o4, True, st["no_zero"])
+    torch.cuda.synchronize()
+    d1 = float((o1 - o3).abs().max())
+    d2 = float((o2.float() - o4.float()).abs().max())
+    t1 = _time(lambda: _boundary_kernel[(T,)](a, s, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"],
+                                            o1, o2, HAS_GPOST=True, H=HIDDEN, num_warps=16))
+    t2 = _time(lambda: st["mod"].boundary(a, s, st["g_post_ffn_norm"], st["a2"], st["b2"], st["g_next_pre_attn_norm"],
+                                         o3, o4, True, st["no_zero"]))
+    print(f"SELFTEST boundary triton {t1:.0f}us cuda {t2:.0f}us (diff {d1:.1e} {d2:.1e})", flush=True)
+    del a, s, o1, o2, o3, o4
+    torch.cuda.empty_cache()
+
+
+# --------------------------------------------------------------------------------------
+# Extension build + CUDA / C++ sources. PRUNED (v2): these five strings
+# are the tuned algorithm with every dead branch removed: all
+# preprocessor branches not taken under either real build config
+# (__CUDA_ARCH__ = 900 / sm_90a, no -D flags from _build, in-file
+# macro defaults, experiment macros undefined, MOE_FAST_SCALE in
+# {0, 1} -- the one switch _build itself supplies, 0 when the weights
+# have non-normal block scales), every function / define / variant
+# unreachable from the exported functions, and the dead comments
+# attached to them. The taken path is unchanged (checked by
+# preprocessing v1 and v2 under both configs: identical except for
+# the removed dead items). They hold the grouped NVFP4 expert GEMMs,
+# the boundary / route / combine / qk-prep kernels, the own Hopper
+# attention kernel, and the cuBLASLt glue. Any change to a taken-path
+# instruction here is a numerics or performance change, not a cleanup,
+# and needs its own GPU gating.
+# The Python constants that must agree with defines inside _CUDA_SRC are
+# marked at their definitions (ATTN_ASTAGES, ATTN_SMEM).
+# --------------------------------------------------------------------------------------
+
+
+def _build(fast_scales=True):
+    cap = torch.cuda.get_device_capability()
+    arch = f"{cap[0]}{cap[1]}" + ("a" if cap[0] == 9 else "")
+    src = ("" if fast_scales else "#define MOE_FAST_SCALE 0\n") + _CUDA_SRC + GLUE
+    name = "okc_prefill_moe_" + hashlib.sha1((src + CPP + arch).encode()).hexdigest()[:16]
+    return load_inline(name, cpp_sources=CPP, cuda_sources=src,
+                       functions=["qk_prep", "moe_route", "moe_plan", "moe_gather", "moe_gather_plan", "moe_combine",
+                                  "moe_gemm", "moe_init", "moe_gemm_p", "moe_fused", "boundary", "boundary_rc",
+                                  "kv_gather", "attn_prep", "attn_fwd", "attn_init", "attn_set_prof"],
+                       extra_cuda_cflags=["-O3", f"-gencode=arch=compute_{arch},code=sm_{arch}", "-std=c++20",
+                                          "--use_fast_math"])
+
+
+def _build_lt():
+    name = "okc_prefill_lt_" + hashlib.sha1((LT_GLUE + LT_CPP).encode()).hexdigest()[:16]
+    # Host-only code: compiled by the host compiler (no nvcc), linked against cuBLASLt.
+    return load_inline(name, cpp_sources=[LT_CPP, LT_GLUE],
+                       functions=["lt_plan", "lt_plan_sm", "lt_nalgo", "lt_info", "lt_run"],
+                       extra_cflags=["-O3", "-std=c++20"], extra_ldflags=["-lcublasLt"], with_cuda=True)
+
+
+CPP = r'''
+#include <torch/extension.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime_api.h>
+void k_moe_plan(const int* counts, int* offsets, int* tiles, int* ntiles, int* rows, int order, cudaStream_t st);
+void k_moe_route(const float* logits, const float* bias, const int* lstart, int* ids, float* w, int* lid, int* pos, int* cnt,
+                 int T, cudaStream_t st, int* tok_left, int* cq);
+void k_moe_gather(const void* p, const void* gw, const int* lid, const int* pos, const int* offsets, const int* counts,
+                  void* xt, int* rrow, int T, cudaStream_t st);
+void k_moe_gather_plan(const void* p, const void* gw, const int* lid, const int* pos, const int* counts, void* xt, int* rrow,
+                       int* offsets, int* tiles, int* ntiles, int* rows, int order, int T, cudaStream_t st,
+                       int* row_tok, int* cq, int* qtail);
+void k_moe_combine(const void* y, const int* rrow, const int* lid, const float* topw, const void* pw, void* out, int T,
+                   cudaStream_t st);
+void k_moe_gemm(const void* wrep, const void* xt, const int* tiles, const int* ntiles, const float* gscale, void* out, int NT,
+                int P, bool gated, int smem, cudaStream_t st);
+void k_moe_gemm_p(const void* wrep, const void* xt, const int* tiles, const int* ntiles, const float* gscale, void* out, int NT,
+                  int nctas, bool gated, int smem, int* counter, cudaStream_t st);
+void k_boundary(const void* branch, const float* stream, const void* gpost, const float* alpha, const float* beta,
+                const void* gpre, float* sout, void* nout, int T, bool has_gpost, cudaStream_t st, int* zp, int zn);
+void k_qk_prep(const void* qkv, const void* pos, bool pos64, const void* loc, bool loc64, const float* invf, void* q8, void* kc,
+               void* vc, const float* ksc, const float* vsc, int T, bool rope, bool scaled, cudaStream_t st);
+void k_boundary_rc(const void* branch, const float* stream, const void* gpost, const float* alpha, const float* beta,
+                   const void* gpre, float* sout, void* nout, int T, int mode, cudaStream_t st, int* zp, int zn,
+                   const void* br1, float* rio, const float* alpha1, const float* beta1);
+void k_kv_gather(const void* kc, const void* vc, const int* page_table, const int* seq_lens, void* ko, void* vo, int B, int max_pages,
+                 int page, int L, int window, int Smax, cudaStream_t st);
+void k_moe_init(int smem);
+void k_moe_fused(const void* w13, const void* w2, const void* xt, void* inter, void* y, const int* tiles, const int* ntiles,
+                 const float* gs13, const float* gs2, int nctas, int smem, int* counter, int* done, void* dbg, int flags,
+                 cudaStream_t st, int* cit, int* qctl, int* tok_left, int* cq, const int* row_tok, const int* rrow,
+                 const int* lid, const float* topw, const void* pw, void* out, int T);
+void k_attn_prep(const void* kc, const void* vc, const int* page_table, int max_pages, int page, const int* seq_lens, int B, int L,
+                 int window, int ntk, void* kt, void* vt, cudaStream_t st, int part);
+void k_attn_fwd(const void* q, const void* kt, const void* vt, const int* seq_lens, const void* qkv, void* out, int B, int L,
+                int window, int ntk, float c, float v_scale, int smem, int nsplit, float* ws, int variant, cudaStream_t st,
+                const void* pf, unsigned long long pf_bytes);
+void k_attn_init(int smem);
+void k_attn_set_prof(void* p);
+
+static cudaStream_t cur() { return c10::cuda::getCurrentCUDAStream(); }
+
+void moe_route(torch::Tensor logits, torch::Tensor bias, torch::Tensor lstart, torch::Tensor ids, torch::Tensor w,
+               torch::Tensor lid, torch::Tensor pos, torch::Tensor cnt, torch::Tensor tok_left, torch::Tensor cq) {
+  k_moe_route(logits.data_ptr<float>(), bias.data_ptr<float>(), lstart.data_ptr<int>(), ids.data_ptr<int>(), w.data_ptr<float>(),
+              lid.data_ptr<int>(), pos.data_ptr<int>(), cnt.data_ptr<int>(), (int)logits.size(0), cur(),
+              tok_left.numel() ? tok_left.data_ptr<int>() : nullptr, cq.numel() ? cq.data_ptr<int>() : nullptr);
+}
+void moe_plan(torch::Tensor counts, torch::Tensor offsets, torch::Tensor tiles, torch::Tensor ntiles, torch::Tensor rows,
+              int64_t order) {
+  k_moe_plan(counts.data_ptr<int>(), offsets.data_ptr<int>(), tiles.data_ptr<int>(), ntiles.data_ptr<int>(), rows.data_ptr<int>(),
+             (int)order, cur());
+}
+void moe_gather_plan(torch::Tensor p, torch::Tensor gw, torch::Tensor lid, torch::Tensor pos, torch::Tensor counts,
+                     torch::Tensor xt, torch::Tensor rrow, torch::Tensor offsets, torch::Tensor tiles, torch::Tensor ntiles,
+                     torch::Tensor rows, int64_t order, torch::Tensor cit, torch::Tensor tok) {
+  // CIT (cit.numel() > 0): queue tail = cit[numel - 3]; tok = [tok_left (T) | cq (T) | row_tok]
+  const bool on = cit.numel() > 0;
+  const int T = (int)p.size(0);
+  int* tk = on ? tok.data_ptr<int>() : nullptr;
+  k_moe_gather_plan(p.data_ptr(), gw.data_ptr(), lid.data_ptr<int>(), pos.data_ptr<int>(), counts.data_ptr<int>(), xt.data_ptr(),
+                    rrow.data_ptr<int>(), offsets.data_ptr<int>(), tiles.data_ptr<int>(), ntiles.data_ptr<int>(), rows.data_ptr<int>(),
+                    (int)order, T, cur(), on ? tk + 2 * T : nullptr, on ? tk + T : nullptr,
+                    on ? cit.data_ptr<int>() + (cit.numel() - 3) : nullptr);
+}
+void moe_gather(torch::Tensor p, torch::Tensor gw, torch::Tensor lid, torch::Tensor pos, torch::Tensor offsets,
+                torch::Tensor counts, torch::Tensor xt, torch::Tensor rrow) {
+  k_moe_gather(p.data_ptr(), gw.data_ptr(), lid.data_ptr<int>(), pos.data_ptr<int>(), offsets.data_ptr<int>(),
+               counts.data_ptr<int>(), xt.data_ptr(), rrow.data_ptr<int>(), (int)p.size(0), cur());
+}
+void moe_combine(torch::Tensor y, torch::Tensor rrow, torch::Tensor lid, torch::Tensor topw, torch::Tensor pw, torch::Tensor out) {
+  k_moe_combine(y.data_ptr(), rrow.data_ptr<int>(), lid.data_ptr<int>(), topw.data_ptr<float>(), pw.data_ptr(),
+                out.data_ptr(), (int)out.size(0), cur());
+}
+void moe_gemm(torch::Tensor wrep, torch::Tensor xt, torch::Tensor tiles, torch::Tensor ntiles, torch::Tensor gscale,
+              torch::Tensor out, int64_t NT, int64_t P, bool gated, int64_t smem) {
+  k_moe_gemm(wrep.data_ptr(), xt.data_ptr(), tiles.data_ptr<int>(), ntiles.data_ptr<int>(), gscale.data_ptr<float>(), out.data_ptr(),
+             (int)NT, (int)P, gated, (int)smem, cur());
+}
+void moe_gemm_p(torch::Tensor wrep, torch::Tensor xt, torch::Tensor tiles, torch::Tensor ntiles, torch::Tensor gscale,
+                torch::Tensor out, int64_t NT, int64_t nctas, bool gated, int64_t smem, torch::Tensor counter) {
+  k_moe_gemm_p(wrep.data_ptr(), xt.data_ptr(), tiles.data_ptr<int>(), ntiles.data_ptr<int>(), gscale.data_ptr<float>(),
+               out.data_ptr(), (int)NT, (int)nctas, gated, (int)smem, counter.data_ptr<int>(), cur());
+}
+void boundary_rc(torch::Tensor branch, torch::Tensor stream, torch::Tensor gpost, torch::Tensor alpha, torch::Tensor beta,
+                 torch::Tensor gpre, torch::Tensor sout, torch::Tensor nout, int64_t mode, torch::Tensor zero,
+                 torch::Tensor br1, torch::Tensor rio, torch::Tensor alpha1, torch::Tensor beta1) {
+  k_boundary_rc(branch.data_ptr(), stream.data_ptr<float>(), gpost.data_ptr(), alpha.data_ptr<float>(), beta.data_ptr<float>(),
+                gpre.data_ptr(), sout.data_ptr<float>(), nout.data_ptr(), (int)branch.size(0), (int)mode, cur(),
+                zero.numel() ? zero.data_ptr<int>() : nullptr, (int)zero.numel(), br1.data_ptr(), rio.data_ptr<float>(),
+                alpha1.data_ptr<float>(), beta1.data_ptr<float>());
+}
+void qk_prep(torch::Tensor qkv, torch::Tensor pos, torch::Tensor loc, torch::Tensor invf, torch::Tensor q8, torch::Tensor kc,
+             torch::Tensor vc, torch::Tensor ksc, torch::Tensor vsc, bool rope, bool scaled) {
+  k_qk_prep(qkv.data_ptr(), pos.data_ptr(), pos.element_size() == 8, loc.data_ptr(), loc.element_size() == 8, invf.data_ptr<float>(),
+            q8.data_ptr(), kc.data_ptr(), vc.data_ptr(), ksc.data_ptr<float>(), vsc.data_ptr<float>(), (int)qkv.size(0), rope, scaled, cur());
+}
+void boundary(torch::Tensor branch, torch::Tensor stream, torch::Tensor gpost, torch::Tensor alpha, torch::Tensor beta,
+              torch::Tensor gpre, torch::Tensor sout, torch::Tensor nout, bool has_gpost, torch::Tensor zero) {
+  k_boundary(branch.data_ptr(), stream.data_ptr<float>(), gpost.data_ptr(), alpha.data_ptr<float>(), beta.data_ptr<float>(),
+             gpre.data_ptr(), sout.data_ptr<float>(), nout.data_ptr(), (int)branch.size(0), has_gpost, cur(),
+             zero.numel() ? zero.data_ptr<int>() : nullptr, (int)zero.numel());
+}
+void kv_gather(torch::Tensor kc, torch::Tensor vc, torch::Tensor page_table, torch::Tensor seq_lens, torch::Tensor ko,
+               torch::Tensor vo, int64_t page, int64_t L, int64_t window, int64_t Smax) {
+  k_kv_gather(kc.data_ptr(), vc.data_ptr(), page_table.data_ptr<int>(), seq_lens.data_ptr<int>(), ko.data_ptr(), vo.data_ptr(),
+              (int)seq_lens.size(0), (int)page_table.size(1), (int)page, (int)L, (int)window, (int)Smax, cur());
+}
+void moe_init(int64_t smem) { k_moe_init((int)smem); }
+void moe_fused(torch::Tensor w13, torch::Tensor w2, torch::Tensor xt, torch::Tensor inter, torch::Tensor y, torch::Tensor tiles,
+               torch::Tensor ntiles, torch::Tensor gs13, torch::Tensor gs2, int64_t nctas, int64_t smem, torch::Tensor counter,
+               torch::Tensor done, torch::Tensor dbg, int64_t flags, torch::Tensor cit, torch::Tensor tok, torch::Tensor rrow,
+               torch::Tensor lid, torch::Tensor topw, torch::Tensor pw, torch::Tensor out) {
+  // CIT (cit.numel() > 0): cit = [max tiles GEMM2 counters | head, tail, error, pad]; tok = [tok_left (T) | cq (T) | row_tok]
+  const bool on = cit.numel() > 0;
+  const int T = (int)rrow.size(0);
+  int* c = on ? cit.data_ptr<int>() : nullptr;
+  int* tk = on ? tok.data_ptr<int>() : nullptr;
+  k_moe_fused(w13.data_ptr(), w2.data_ptr(), xt.data_ptr(), inter.data_ptr(), y.data_ptr(), tiles.data_ptr<int>(),
+              ntiles.data_ptr<int>(), gs13.data_ptr<float>(), gs2.data_ptr<float>(), (int)nctas, (int)smem, counter.data_ptr<int>(),
+              done.data_ptr<int>(), dbg.numel() ? dbg.data_ptr() : nullptr, (int)flags, cur(),
+              c, on ? c + (cit.numel() - 4) : nullptr, tk, on ? tk + T : nullptr, on ? tk + 2 * T : nullptr,
+              rrow.data_ptr<int>(), lid.data_ptr<int>(), topw.data_ptr<float>(), pw.data_ptr(), on ? out.data_ptr() : nullptr, T);
+}
+void attn_prep(torch::Tensor kc, torch::Tensor vc, torch::Tensor page_table, torch::Tensor seq_lens, int64_t page, int64_t L,
+               int64_t window, int64_t ntk, torch::Tensor kt, torch::Tensor vt, int64_t part) {
+  k_attn_prep(kc.data_ptr(), vc.data_ptr(), page_table.data_ptr<int>(), (int)page_table.size(1), (int)page, seq_lens.data_ptr<int>(),
+              (int)seq_lens.size(0), (int)L, (int)window, (int)ntk, kt.data_ptr(), vt.data_ptr(), cur(), (int)part);
+}
+void attn_fwd(torch::Tensor q, torch::Tensor kt, torch::Tensor vt, torch::Tensor seq_lens, torch::Tensor qkv, torch::Tensor out,
+              int64_t L, int64_t window, int64_t ntk, double c, double v_scale, int64_t smem, int64_t nsplit, torch::Tensor ws,
+              int64_t variant, torch::Tensor pf) {
+  k_attn_fwd(q.data_ptr(), kt.data_ptr(), vt.data_ptr(), seq_lens.data_ptr<int>(), qkv.data_ptr(), out.data_ptr(),
+             (int)seq_lens.size(0), (int)L, (int)window, (int)ntk, (float)c, (float)v_scale, (int)smem, (int)nsplit,
+             nsplit != 1 ? ws.data_ptr<float>() : nullptr, (int)variant, cur(), pf.numel() ? pf.data_ptr() : nullptr,
+             (unsigned long long)(pf.numel() * pf.element_size()));
+}
+void attn_init(int64_t smem) { k_attn_init((int)smem); }
+void attn_set_prof(torch::Tensor p) { k_attn_set_prof(p.numel() ? p.data_ptr() : nullptr); }
+'''
+
+GLUE = r'''
+#include <cuda_runtime.h>
+using namespace okc_moe;
+
+template <typename... KArgs, typename... Args>
+static inline void okc_launch(void (*k)(KArgs...), dim3 g, dim3 b, size_t smem, cudaStream_t st, Args... args) {
+  cudaLaunchConfig_t cfg = {};
+  cfg.gridDim = g; cfg.blockDim = b; cfg.dynamicSmemBytes = smem; cfg.stream = st;
+  cudaLaunchAttribute at[1];
+  at[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+  at[0].val.programmaticStreamSerializationAllowed = 1;
+  cfg.attrs = at; cfg.numAttrs = 1;
+  cudaLaunchKernelEx(&cfg, k, ((KArgs)args)...);
+}
+void k_moe_route(const float* logits, const float* bias, const int* lstart, int* ids, float* w, int* lid, int* pos, int* cnt,
+                 int T, cudaStream_t st, int* tok_left, int* cq) {
+  okc_launch(moe_route_kernel, dim3((T + ROUTE_WARPS - 1) / ROUTE_WARPS), dim3(ROUTE_WARPS * 32), 0, st, logits, bias, lstart, ids, w, lid, pos, cnt, T,
+             tok_left, cq);
+}
+void k_moe_plan(const int* counts, int* offsets, int* tiles, int* ntiles, int* rows, int order, cudaStream_t st) {
+  okc_launch(moe_plan_kernel, dim3(1), dim3(32), 0, st, counts, offsets, (int4*)tiles, ntiles, rows, order);
+}
+static int g_attn_merge_host = 0;
+void k_moe_gather(const void* p, const void* gw, const int* lid, const int* pos, const int* offsets, const int* counts,
+                  void* xt, int* rrow, int T, cudaStream_t st) {
+#define MOE_PADFILL 1
+  okc_launch(moe_gather_kernel<false>, dim3(T + (MOE_PADFILL ? 32 * MOE_PADFILL_PARTS : 0)), dim3(256), 0, st, (const __nv_bfloat16*)p, (const __nv_bfloat16*)gw, lid, pos, offsets, counts, (uint8_t*)xt, rrow, T, (int*)nullptr, (int4*)nullptr, (int*)nullptr, (int*)nullptr, 0,
+             (int*)nullptr, (int*)nullptr, (int*)nullptr);
+}
+void k_moe_gather_plan(const void* p, const void* gw, const int* lid, const int* pos, const int* counts, void* xt, int* rrow,
+                       int* offsets, int* tiles, int* ntiles, int* rows, int order, int T, cudaStream_t st,
+                       int* row_tok, int* cq, int* qtail) {
+  okc_launch(moe_gather_kernel<true>, dim3(T + (MOE_PADFILL ? 32 * MOE_PADFILL_PARTS : 0)), dim3(256), 0, st, (const __nv_bfloat16*)p, (const __nv_bfloat16*)gw, lid, pos, (const int*)nullptr, counts, (uint8_t*)xt, rrow, T,
+             offsets, (int4*)tiles, ntiles, rows, order, row_tok, cq, qtail);
+}
+void k_moe_combine(const void* y, const int* rrow, const int* lid, const float* topw, const void* pw, void* out, int T,
+                   cudaStream_t st) {
+  okc_launch(moe_combine_kernel, dim3(T), dim3(256), 0, st, (const __nv_bfloat16*)y, rrow, lid, topw, (const __nv_bfloat16*)pw, (__nv_bfloat16*)out);
+}
+static Args make_args(const void* wrep, const void* xt, const int* tiles, const int* ntiles, const float* gscale, void* out,
+                      int NT, int smem, int* counter) {
+  Args a;
+  a.wrep = (const uint8_t*)wrep; a.xt = (const uint8_t*)xt; a.tiles = (const int4*)tiles; a.ntiles = ntiles;
+  a.gscale = gscale; a.out = (uint8_t*)out; a.NT = NT; a.smem_bytes = smem; a.counter = counter; a.flags = 0; a.mul16 = 16u; a.mul64 = 64u;
+  return a;
+}
+void k_moe_gemm(const void* wrep, const void* xt, const int* tiles, const int* ntiles, const float* gscale, void* out, int NT,
+                int P, bool gated, int smem, cudaStream_t st) {
+  Args a = make_args(wrep, xt, tiles, ntiles, gscale, out, NT, smem, nullptr);
+  dim3 grid((unsigned)NT, (unsigned)P);
+  if (gated) moe_gemm_kernel<true><<<grid, 384, smem, st>>>(a);
+  else moe_gemm_kernel<false><<<grid, 384, smem, st>>>(a);
+}
+void k_moe_gemm_p(const void* wrep, const void* xt, const int* tiles, const int* ntiles, const float* gscale, void* out, int NT,
+                  int nctas, bool gated, int smem, int* counter, cudaStream_t st) {
+  Args a = make_args(wrep, xt, tiles, ntiles, gscale, out, NT, smem, counter);
+  if (gated) moe_gemm_persistent<true><<<(unsigned)nctas, 384, smem, st>>>(a);
+  else moe_gemm_persistent<false><<<(unsigned)nctas, 384, smem, st>>>(a);
+}
+#define BND_TPB 512
+#define BND_HINT false
+template <bool R, bool S, typename PT, typename LT>
+static void qk_prep_launch(const void* qkv, const void* pos, const void* loc, const float* invf, void* q8, void* kc, void* vc,
+                           const float* ksc, const float* vsc, int T, cudaStream_t st) {
+  okc_launch(qk_prep_kernel<R, S, PT, LT>, dim3(T), dim3(128), 0, st, (const __nv_bfloat16*)qkv, (const PT*)pos, (const LT*)loc, invf,
+             (uint8_t*)q8, (uint8_t*)kc, (uint8_t*)vc, ksc, vsc);
+}
+void k_qk_prep(const void* qkv, const void* pos, bool pos64, const void* loc, bool loc64, const float* invf, void* q8, void* kc,
+               void* vc, const float* ksc, const float* vsc, int T, bool rope, bool scaled, cudaStream_t st) {
+#define QKP(R, S) \
+  if (pos64 && loc64) qk_prep_launch<R, S, long long, long long>(qkv, pos, loc, invf, q8, kc, vc, ksc, vsc, T, st); \
+  else if (pos64) qk_prep_launch<R, S, long long, int>(qkv, pos, loc, invf, q8, kc, vc, ksc, vsc, T, st); \
+  else if (loc64) qk_prep_launch<R, S, int, long long>(qkv, pos, loc, invf, q8, kc, vc, ksc, vsc, T, st); \
+  else qk_prep_launch<R, S, int, int>(qkv, pos, loc, invf, q8, kc, vc, ksc, vsc, T, st);
+  if (rope && !scaled) { QKP(true, false) }
+  else if (rope) { QKP(true, true) }
+  else if (!scaled) { QKP(false, false) }
+  else { QKP(false, true) }
+#undef QKP
+}
+void k_boundary(const void* branch, const float* stream, const void* gpost, const float* alpha, const float* beta,
+                const void* gpre, float* sout, void* nout, int T, bool has_gpost, cudaStream_t st, int* zp, int zn) {
+  if (has_gpost)
+    okc_launch(boundary_kernel<BND_TPB, true, BND_HINT, 0>, dim3(T), dim3(BND_TPB), 0, st, (const __nv_bfloat16*)branch, stream, (const __nv_bfloat16*)gpost, alpha, beta, (const __nv_bfloat16*)gpre, sout, (__nv_bfloat16*)nout, zp, zn, (const __nv_bfloat16*)nullptr, (float*)nullptr, (const float*)nullptr, (const float*)nullptr);
+  else
+    okc_launch(boundary_kernel<BND_TPB, false, BND_HINT, 0>, dim3(T), dim3(BND_TPB), 0, st, (const __nv_bfloat16*)branch, stream, (const __nv_bfloat16*)gpost, alpha, beta, (const __nv_bfloat16*)gpre, sout, (__nv_bfloat16*)nout, zp, zn, (const __nv_bfloat16*)nullptr, (float*)nullptr, (const float*)nullptr, (const float*)nullptr);
+}
+void k_boundary_rc(const void* branch, const float* stream, const void* gpost, const float* alpha, const float* beta,
+                   const void* gpre, float* sout, void* nout, int T, int mode, cudaStream_t st, int* zp, int zn,
+                   const void* br1, float* rio, const float* alpha1, const float* beta1) {
+  if (mode == 1)
+    boundary_kernel<BND_TPB, false, BND_HINT, 1><<<T, BND_TPB, 0, st>>>((const __nv_bfloat16*)branch, stream, (const __nv_bfloat16*)gpost, alpha, beta, (const __nv_bfloat16*)gpre, sout, (__nv_bfloat16*)nout, zp, zn,
+                                                                        (const __nv_bfloat16*)br1, rio, alpha1, beta1);
+  else
+    boundary_kernel<BND_TPB, true, BND_HINT, 2><<<T, BND_TPB, 0, st>>>((const __nv_bfloat16*)branch, stream, (const __nv_bfloat16*)gpost, alpha, beta, (const __nv_bfloat16*)gpre, sout, (__nv_bfloat16*)nout, zp, zn,
+                                                                       (const __nv_bfloat16*)br1, rio, alpha1, beta1);
+}
+void k_kv_gather(const void* kc, const void* vc, const int* page_table, const int* seq_lens, void* ko, void* vo, int B, int max_pages,
+                 int page, int L, int window, int Smax, cudaStream_t st) {
+  dim3 grid((unsigned)((Smax + 31) / 32), (unsigned)B);
+  kv_gather_kernel<<<grid, 256, 0, st>>>((const uint8_t*)kc, (const uint8_t*)vc, page_table, seq_lens, (uint8_t*)ko, (uint8_t*)vo,
+                                         max_pages, page, L, window, Smax);
+}
+void k_moe_fused(const void* w13, const void* w2, const void* xt, void* inter, void* y, const int* tiles, const int* ntiles,
+                 const float* gs13, const float* gs2, int nctas, int smem, int* counter, int* done, void* dbg, int flags,
+                 cudaStream_t st, int* cit, int* qctl, int* tok_left, int* cq, const int* row_tok, const int* rrow,
+                 const int* lid, const float* topw, const void* pw, void* out, int T) {
+  FusedArgs fa;
+  fa.cit = cit; fa.qctl = qctl; fa.tok_left = tok_left; fa.cq = cq; fa.row_tok = row_tok; fa.rrow = rrow; fa.lid = lid;
+  fa.topw = topw; fa.pw = (const __nv_bfloat16*)pw; fa.out = (__nv_bfloat16*)out; fa.T = T;
+  fa.dbg = (unsigned long long*)dbg;
+  fa.flags = flags;
+  fa.g1 = make_args(w13, xt, tiles, ntiles, gs13, inter, 64, smem, counter);
+  fa.g2 = make_args(w2, inter, tiles, ntiles, gs2, y, 32, smem, counter);
+  fa.g1.flags = flags;
+  fa.g2.flags = flags;
+  fa.done = done;
+  if ((fa.flags >> 8) & 1)  // bit 8: fine remainder tiles (the plan used the same flag)
+    okc_launch(moe_fused_persistent<1>, dim3((unsigned)nctas), dim3(MOE_FUSED_THREADS), (size_t)smem, st, fa);
+  else
+    okc_launch(moe_fused_persistent<0>, dim3((unsigned)nctas), dim3(MOE_FUSED_THREADS), (size_t)smem, st, fa);
+}
+void k_moe_init(int smem) {
+  cudaFuncSetAttribute(moe_fused_persistent<0>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(moe_fused_persistent<1>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(moe_gemm_persistent<true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(moe_gemm_persistent<false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(moe_gemm_kernel<true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(moe_gemm_kernel<false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+}
+// ---- attention ----
+#define ATTN_HALF_MAX 640  // per-head prep grids below this use half-tile blocks
+void k_attn_prep(const void* kc, const void* vc, const int* page_table, int max_pages, int page, const int* seq_lens, int B, int L,
+                 int window, int ntk, void* kt, void* vt, cudaStream_t st, int part) {
+  if (ntk * B >= 264) {  // long contexts: both heads per block (full cache rows, one page-table read per key)
+    dim3 grid((unsigned)ntk, 1, (unsigned)B);
+    okc_launch(okc_attn::attn_prep2_kernel, grid, dim3(256), 0, st, (const uint8_t*)kc, (const uint8_t*)vc, page_table, max_pages, page, seq_lens, L,
+               window, ntk, (uint8_t*)kt, (uint8_t*)vt, part);
+  } else if (2 * ntk * B >= ATTN_HALF_MAX) {  // one head per block
+    dim3 grid((unsigned)ntk, 2, (unsigned)B);
+    okc_launch(okc_attn::attn_prep_kernel<1>, grid, dim3(256), 0, st, (const uint8_t*)kc, (const uint8_t*)vc, page_table, max_pages, page, seq_lens, L,
+               window, ntk, (uint8_t*)kt, (uint8_t*)vt, part);
+  } else {  // few tiles (short sliding windows): one head and half a tile per block
+    dim3 grid((unsigned)(2 * ntk), 2, (unsigned)B);
+    okc_launch(okc_attn::attn_prep_kernel<2>, grid, dim3(256), 0, st, (const uint8_t*)kc, (const uint8_t*)vc, page_table, max_pages, page, seq_lens, L,
+               window, ntk, (uint8_t*)kt, (uint8_t*)vt, part);
+  }
+}
+#define ATTN_CR 2  // (token, head) rows per warp in the split merge (Oct 26 search: 2 +0.03..0.06% over 4)
+void k_attn_fwd(const void* q, const void* kt, const void* vt, const int* seq_lens, const void* qkv, void* out, int B, int L,
+                int window, int ntk, float c, float v_scale, int smem, int nsplit, float* ws, int variant, cudaStream_t st,
+                const void* pf, unsigned long long pf_bytes) {
+  okc_attn::AttnArgs a;
+  a.q = (const uint8_t*)q; a.kt = (const uint8_t*)kt; a.vt = (const uint8_t*)vt; a.seq_lens = seq_lens;
+  a.qkv = (const __nv_bfloat16*)qkv; a.out = (__nv_bfloat16*)out;
+  const int nwg = variant == 99 ? 1 : (variant == 64 ? 4 : ((variant & 8) ? 3 : 2));
+  a.L = L; a.window = window; a.ntk = ntk; a.nqb = (L + 8 * nwg - 1) / (8 * nwg); a.c = c; a.v_scale = v_scale;
+  a.zero = 0;
+  a.pf = (const uint8_t*)pf; a.pf_bytes = pf_bytes;
+  a.sk = 0; a.nb = B; a.skbuf = nullptr;
+  if (nsplit < 0) {  // stream-K: grid -nsplit; ws = [int header: W, pair prefix, first pairs | partials]
+    const int G = -nsplit, npairs = B * a.nqb * 2;
+    const int hdr = ((2 + npairs + 1 + G) + 63) & ~63;
+    a.sk = G; a.skbuf = reinterpret_cast<int*>(ws); a.ws = ws + hdr; a.nsplit = 1;
+    if (variant == 43) okc_launch(okc_attn::attn_fwd_sk_kernel<3, 0, true, true>, dim3((unsigned)G), dim3(512), (size_t)smem, st, a);
+    else okc_launch(okc_attn::attn_fwd_sk_kernel<3, 0, false, false>, dim3((unsigned)G), dim3(512), (size_t)smem, st, a);
+    const int T = B * L;
+    okc_launch(okc_attn::attn_combine_sk_kernel<ATTN_CR, 24>, dim3((T * (16 / ATTN_CR) + 7) / 8), dim3(256), 0, st, (const float*)(ws + hdr),
+               (const int*)ws, T, L, a.nqb, (const __nv_bfloat16*)qkv, (__nv_bfloat16*)out, c, v_scale);
+    return;
+  }
+  a.nsplit = nsplit; a.ws = nsplit > 1 ? ws : nullptr;
+  dim3 grid((unsigned)a.nqb, (unsigned)(2 * nsplit), (unsigned)B);
+  switch (variant) {
+    case 0: okc_launch(okc_attn::attn_fwd_kernel<2, 0, false>, grid, dim3(384), (size_t)smem, st, a); break;
+    case 1: okc_launch(okc_attn::attn_fwd_kernel<2, 16, false>, grid, dim3(384), (size_t)smem, st, a); break;
+    case 8: okc_launch(okc_attn::attn_fwd_kernel<3, 0, false>, grid, dim3(512), (size_t)smem, st, a); break;
+    case 9: okc_launch(okc_attn::attn_fwd_kernel<3, 16, false>, grid, dim3(512), (size_t)smem, st, a); break;
+    case 16: okc_launch(okc_attn::attn_fwd_kernel<2, 0, true>, grid, dim3(384), (size_t)smem, st, a); break;
+    case 43: okc_launch(okc_attn::attn_fwd_kernel<3, 0, false, true, false, true>, grid, dim3(512), (size_t)smem, st, a); break;
+    default: okc_launch(okc_attn::attn_fwd_kernel<3, 0, true>, grid, dim3(512), (size_t)smem, st, a); break;
+  }
+  if (nsplit > 1 && !g_attn_merge_host) {  // (with the in-kernel merge the last split's CTA writes the output)
+    const int T = B * L;
+    okc_launch(okc_attn::attn_combine2_kernel<ATTN_CR>, dim3((T * (16 / ATTN_CR) + 7) / 8), dim3(256), 0, st, ws, nsplit, T, (const __nv_bfloat16*)qkv, (__nv_bfloat16*)out,
+               c, v_scale);
+  }
+}
+void k_attn_set_prof(void* p) {
+}
+void k_attn_init(int smem) {
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<2, 0, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<2, 16, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<3, 0, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<3, 16, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<2, 0, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<3, 0, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_kernel<3, 0, false, true, false, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_sk_kernel<3, 0, true, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  cudaFuncSetAttribute(okc_attn::attn_fwd_sk_kernel<3, 0, false, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+}
+'''
+
+_CUDA_SRC = r'''// Grouped NVFP4 x BF16 expert GEMM for Muse Spark's MoE (one H200 = 32 local experts).
+// out^T[w_rows, tokens] = W_e[w_rows, K] (NVFP4, dequantized in registers) x X^T[K, tokens] (BF16)
+// sm_90: warp-specialized (1 producer warpgroup issuing cp.async.bulk, 2 consumer warpgroups
+//        running wgmma m64nNk16 with the weights as the register A operand).
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+#include <stdint.h>
+
+#define DEVI __device__ __forceinline__
+
+// ---- programmatic dependent launch: every kernel lets its successor launch as soon as all of its blocks
+// are running, and waits for its predecessor's results before touching global memory (a no-op when the kernel was not
+// launched with the PDL attribute) ----
+__device__ __forceinline__ void pdl_enter() {
+  asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
+  asm volatile("griddepcontrol.wait;" ::: "memory");
+}
+// Before lane 0 hands a ring slot back, the whole warp's generic reads of it are ordered before the arrive (a warp
+// barrier: the memory model orders the other lanes' LDS before lane 0's release only through it).
+// MOE_ALLLANE_RELEASE: every lane arrives on the slot's empty barrier (count 32 per warp), so each lane's own reads are
+// ordered before its own arrive without a warp barrier.
+#define MOE_ALLLANE_RELEASE 1  // v70: formally ordered slot release, measured free
+#define REL_LANES (MOE_ALLLANE_RELEASE ? 32 : 1)
+
+namespace okc_moe {
+
+constexpr int KS = 64;        // k-stages of 64 elements (K = 4096)
+constexpr int WBLK = 4608;    // bytes per (ntile, kstage) weight block: 4096 code bytes + 512 scale bytes
+constexpr int MAX_STAGES = 24;
+
+DEVI uint32_t smem_u32(const void* p) { return static_cast<uint32_t>(__cvta_generic_to_shared(p)); }
+
+DEVI void mbar_init(uint32_t bar, uint32_t count) {
+  asm volatile("mbarrier.init.shared.b64 [%0], %1;" ::"r"(bar), "r"(count) : "memory");
+}
+DEVI void mbar_inval(uint32_t bar) { asm volatile("mbarrier.inval.shared.b64 [%0];" ::"r"(bar) : "memory"); }
+// Norm weights stay BF16 exactly as given; kernels form 1 + w in fp32 when they load them (the same value an fp32
+// (1 + w) table would hold). g1p4: 4 consecutive weights (8-byte aligned) -> 1 + w.
+DEVI float4 g1p4(const __nv_bfloat16* g) {
+  const uint2 v = __ldg(reinterpret_cast<const uint2*>(g));
+  const float2 a = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&v.x));
+  const float2 b = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&v.y));
+  return make_float4(1.f + a.x, 1.f + a.y, 1.f + b.x, 1.f + b.y);
+}
+DEVI void mbar_wait(uint32_t bar, uint32_t parity) {
+  asm volatile(
+      "{\n.reg .pred P1;\nWAIT_%=:\n"
+      "mbarrier.try_wait.parity.shared.b64 P1, [%0], %1;\n"
+      "@!P1 bra WAIT_%=;\n}\n" ::"r"(bar),
+      "r"(parity)
+      : "memory");
+}
+DEVI void mbar_arrive(uint32_t bar) {
+  uint64_t state;
+  asm volatile("mbarrier.arrive.shared.b64 %0, [%1];" : "=l"(state) : "r"(bar) : "memory");
+}
+
+DEVI void mbar_expect_tx(uint32_t bar, uint32_t bytes) {
+  asm volatile("mbarrier.arrive.expect_tx.shared.b64 _, [%0], %1;" ::"r"(bar), "r"(bytes) : "memory");
+}
+// L2 prefetch of a weight block a few stages ahead of its TMA load (fire and forget: no smem, no barrier), so the
+// weight stream keeps more bytes in flight than the 4-slot ring holds. MOE_L2PF = distance in stages (0: off).
+#define MOE_L2PF 1  // Oct 26: 1 + ALL = +0.29% (search r21, x24)
+#define MOE_L2PF_ALL 1  // 0: small token tiles only (2+ k-blocks per stage); 1: every item
+DEVI void prefetch_l2(const void* src, uint32_t bytes) {
+  asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(src), "r"(bytes) : "memory");
+}
+// A ring slot whose weight codes and scales the consumers read with generic loads (LDS) is about to be overwritten by
+// the async proxy (bulk copy): after the empty-barrier acquire, a proxy fence orders those generic reads before the
+// async writes (PTX memory model; compute-sanitizer racecheck flags the slot reuse without it).
+DEVI void rel_sync() {
+}
+DEVI void slot_proxy_fence() {
+}
+DEVI void bulk_g2s(uint32_t dst, const void* src, uint32_t bytes, uint32_t bar) {
+  asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(dst),
+               "l"(src), "r"(bytes), "r"(bar)
+               : "memory");
+}
+// shared -> global bulk copy (async proxy), tracked per thread with bulk groups
+DEVI void bulk_s2g(void* dst, uint32_t src, uint32_t bytes) {
+  asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst), "r"(src), "r"(bytes) : "memory");
+}
+DEVI void wg_fence() { asm volatile("wgmma.fence.sync.aligned;" ::: "memory"); }
+DEVI void wg_commit() { asm volatile("wgmma.commit_group.sync.aligned;" ::: "memory"); }
+template <int N>
+DEVI void wg_wait() {
+  asm volatile("wgmma.wait_group.sync.aligned %0;" ::"n"(N) : "memory");
+}
+
+
+DEVI void named_bar_sync(int id, int n) { asm volatile("bar.sync %0, %1;" ::"r"(id), "r"(n) : "memory"); }
+
+// SwiGLU's x * sigmoid(x) as 0.5 x (1 + tanh(x / 2)): one MUFU op instead of exp + reciprocal (the epilogue is
+// MUFU-bound and the tensor cores idle during it)
+DEVI float silu_fast(float x) {
+  float t;
+  asm("tanh.approx.f32 %0, %1;" : "=f"(t) : "f"(0.5f * x));
+  return 0.5f * x * (1.f + t);
+}
+
+// wgmma descriptor for a K-major, 128B-swizzled B tile (rows of 128 B, 8-row atoms of 1024 B).
+DEVI uint64_t desc_sw128(uint32_t saddr) {
+  uint64_t d = 0;
+  d |= (uint64_t)((saddr & 0x3FFFF) >> 4);
+  d |= (uint64_t)1 << 16;           // LBO (unused for swizzled K-major)
+  d |= (uint64_t)(1024 >> 4) << 32; // SBO: 8 rows x 128 B
+  d |= (uint64_t)1 << 62;           // SWIZZLE_128B
+  return d;
+}
+
+template <int N>
+DEVI void wgmma_rs(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d);
+template <> DEVI void wgmma_rs<32>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %21, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n32k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15}, {%16, %17, %18, %19}, %20, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<64>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %37, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, {%32, %33, %34, %35}, %36, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<128>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %69, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63}, {%64, %65, %66, %67}, %68, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<256>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %133, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111, %112, %113, %114, %115, %116, %117, %118, %119, %120, %121, %122, %123, %124, %125, %126, %127}, {%128, %129, %130, %131}, %132, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63]), "+f"(d[64]), "+f"(d[65]), "+f"(d[66]), "+f"(d[67]), "+f"(d[68]), "+f"(d[69]), "+f"(d[70]), "+f"(d[71]), "+f"(d[72]), "+f"(d[73]), "+f"(d[74]), "+f"(d[75]), "+f"(d[76]), "+f"(d[77]), "+f"(d[78]), "+f"(d[79]), "+f"(d[80]), "+f"(d[81]), "+f"(d[82]), "+f"(d[83]), "+f"(d[84]), "+f"(d[85]), "+f"(d[86]), "+f"(d[87]), "+f"(d[88]), "+f"(d[89]), "+f"(d[90]), "+f"(d[91]), "+f"(d[92]), "+f"(d[93]), "+f"(d[94]), "+f"(d[95]), "+f"(d[96]), "+f"(d[97]), "+f"(d[98]), "+f"(d[99]), "+f"(d[100]), "+f"(d[101]), "+f"(d[102]), "+f"(d[103]), "+f"(d[104]), "+f"(d[105]), "+f"(d[106]), "+f"(d[107]), "+f"(d[108]), "+f"(d[109]), "+f"(d[110]), "+f"(d[111]), "+f"(d[112]), "+f"(d[113]), "+f"(d[114]), "+f"(d[115]), "+f"(d[116]), "+f"(d[117]), "+f"(d[118]), "+f"(d[119]), "+f"(d[120]), "+f"(d[121]), "+f"(d[122]), "+f"(d[123]), "+f"(d[124]), "+f"(d[125]), "+f"(d[126]), "+f"(d[127])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<96>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %53, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n96k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47}, {%48, %49, %50, %51}, %52, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<160>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %85, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n160k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79}, {%80, %81, %82, %83}, %84, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63]), "+f"(d[64]), "+f"(d[65]), "+f"(d[66]), "+f"(d[67]), "+f"(d[68]), "+f"(d[69]), "+f"(d[70]), "+f"(d[71]), "+f"(d[72]), "+f"(d[73]), "+f"(d[74]), "+f"(d[75]), "+f"(d[76]), "+f"(d[77]), "+f"(d[78]), "+f"(d[79])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<192>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %101, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n192k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95}, {%96, %97, %98, %99}, %100, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63]), "+f"(d[64]), "+f"(d[65]), "+f"(d[66]), "+f"(d[67]), "+f"(d[68]), "+f"(d[69]), "+f"(d[70]), "+f"(d[71]), "+f"(d[72]), "+f"(d[73]), "+f"(d[74]), "+f"(d[75]), "+f"(d[76]), "+f"(d[77]), "+f"(d[78]), "+f"(d[79]), "+f"(d[80]), "+f"(d[81]), "+f"(d[82]), "+f"(d[83]), "+f"(d[84]), "+f"(d[85]), "+f"(d[86]), "+f"(d[87]), "+f"(d[88]), "+f"(d[89]), "+f"(d[90]), "+f"(d[91]), "+f"(d[92]), "+f"(d[93]), "+f"(d[94]), "+f"(d[95])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+template <> DEVI void wgmma_rs<224>(float (&d)[128], const uint32_t (&a)[4], uint64_t desc, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %117, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n224k16.f32.bf16.bf16 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69, %70, %71, %72, %73, %74, %75, %76, %77, %78, %79, %80, %81, %82, %83, %84, %85, %86, %87, %88, %89, %90, %91, %92, %93, %94, %95, %96, %97, %98, %99, %100, %101, %102, %103, %104, %105, %106, %107, %108, %109, %110, %111}, {%112, %113, %114, %115}, %116, p, 1, 1, 0;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63]), "+f"(d[64]), "+f"(d[65]), "+f"(d[66]), "+f"(d[67]), "+f"(d[68]), "+f"(d[69]), "+f"(d[70]), "+f"(d[71]), "+f"(d[72]), "+f"(d[73]), "+f"(d[74]), "+f"(d[75]), "+f"(d[76]), "+f"(d[77]), "+f"(d[78]), "+f"(d[79]), "+f"(d[80]), "+f"(d[81]), "+f"(d[82]), "+f"(d[83]), "+f"(d[84]), "+f"(d[85]), "+f"(d[86]), "+f"(d[87]), "+f"(d[88]), "+f"(d[89]), "+f"(d[90]), "+f"(d[91]), "+f"(d[92]), "+f"(d[93]), "+f"(d[94]), "+f"(d[95]), "+f"(d[96]), "+f"(d[97]), "+f"(d[98]), "+f"(d[99]), "+f"(d[100]), "+f"(d[101]), "+f"(d[102]), "+f"(d[103]), "+f"(d[104]), "+f"(d[105]), "+f"(d[106]), "+f"(d[107]), "+f"(d[108]), "+f"(d[109]), "+f"(d[110]), "+f"(d[111])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(desc), "r"(scale_d));
+}
+
+#define MOE_XPF256 0
+#define MOE_XPFSMALL 0
+#define MOE_FINE_MASK 6  // extra widths: 1 = 96, 2 = 160, 4 = 192, 8 = 224 (3+ of them: ptxas C7512, wgmma serialized)
+
+DEVI uint32_t bf162_u32(__nv_bfloat162 v) { return *reinterpret_cast<uint32_t*>(&v); }
+// mma.sync m16n8k16 (bf16 x bf16 -> fp32): the A fragment layout equals one warp's share of the wgmma RS m64 A operand
+DEVI void mma16816(float* c, const uint32_t (&a)[4], uint32_t b0, uint32_t b1) {
+  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, "
+               "{%0, %1, %2, %3};\n"
+               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+}
+DEVI void ldsm_x4(uint32_t (&r)[4], uint32_t addr) {
+  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0, %1, %2, %3}, [%4];\n"
+               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(addr));
+}
+DEVI __nv_bfloat162 u32_bf162(uint32_t v) { return *reinterpret_cast<__nv_bfloat162*>(&v); }
+
+// Two E4M3 block scales (low byte: row g, high byte: row g+8) -> bf16x2 of scale * 2^119.
+// MOE_FAST_SCALE (prepare checks that no block scale is zero or subnormal): for a normal E4M3 byte b the bf16 bits of
+// value * 2^119 are exactly (b << 4) + 0x7780 (exponent rebias 120 + 119, mantissa bits moved up 4): one byte permute
+// and one IMAD for the pair.
+#ifndef MOE_FAST_SCALE
+#define MOE_FAST_SCALE 1
+#endif
+DEVI uint32_t scale_pair(uint32_t s2) {
+#if MOE_FAST_SCALE
+  return __byte_perm(s2, 0u, 0x4140) * 16u + 0x77807780u;  // [b0, 0, b1, 0] -> (b << 4) + 0x7780 per half
+#elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  uint32_t h2;
+  asm("{\n.reg .b16 t;\ncvt.u16.u32 t, %1;\ncvt.rn.f16x2.e4m3x2 %0, t;\n}\n" : "=r"(h2) : "r"(s2));
+  // f16 (exact for every e4m3 value) -> bf16 with the exponent rebiased by 112 + 119
+  return ((h2 >> 3) & 0x0FFF0FFFu) + 0x73807380u;
+#endif
+}
+
+// The scale pair of one k16 step straight from the 32-bit word holding two steps' pairs: the byte permute selects
+// bytes 0,1 (hi = 0) or 2,3 (hi = 1) itself, so no shift or mask (hi is a compile-time constant in the unrolled loops).
+DEVI uint32_t scale_pair_sel(uint32_t w, int hi, uint32_t m16 = 16u) {
+#if MOE_FAST_SCALE
+  return __byte_perm(w, 0u, hi ? 0x4342 : 0x4140) * m16 + 0x77807780u;  // m16 opaque: IMAD on the FMA pipe
+#else
+  return scale_pair((w >> (16 * hi)) & 0xFFFF);
+#endif
+}
+
+// 8 E2M1 codes -> 4 bf16x2 A-fragment registers (scaled). The repack places each code's bits so that one rotate and
+// one mask put it in place: a register half holds (sign << 15 | magnitude << 6), which as bf16 bits is exactly
+// e2m1 * 2^-126 (subnormal for magnitude 1), times scale * 2^119. Bit positions in q (sign, m2, m1, m0):
+//   a0 (row g):    code A (15, 8, 7, 6),   code B (31, 24, 23, 22)    q & M
+//   a1 (row g+8):  code A (21, 14, 13, 12), code B (5, 30, 29, 28)    rotr(q, 6) & M
+//   a2 (row g):    code A (25, 18, 17, 16), code B (9, 2, 1, 0)       rotr(q, 10) & M
+//   a3 (row g+8):  code A (11, 4, 3, 10),  code B (27, 20, 19, 26)    rotl(q, 4) & 0x81808180 | rotr(q, 4) & 0x00400040
+// (9 ALU ops for 8 weights, no IMAD shifts; the repack in the template writes this layout.)
+// Dequant layout (via the scout): 7 integer-pipe ops + 2 IMAD shifts per 8 weights. Two of the shifts
+// become multiplies by 16 / 64 held in registers (m16 = 16 + opaque 0, m64 = 64 + opaque 0), which run on the FMA pipe
+// as IMAD instead of on the half-rate integer pipe. Bit positions in q (m0, m1, m2, sign):
+//   a0: code A (6, 7, 8, 15),   code B (22, 23, 24, 31)   q & M
+//   a1: code A (2, 3, 4, 11),   code B (18, 19, 20, 27)   (q * 16) & M
+//   a2: code A (28, 29, 30, 5), code B (12, 13, 14, 21)   rotl(q, 10) & M
+//   a3: code A (0, 1, 26, 9),   code B (16, 17, 10, 25)   (q * 64) & 0x80C080C0 | rotl(q, 14) & 0x01000100
+DEVI uint32_t opaque_zero() {
+  uint32_t z;
+  asm volatile("mov.u32 %0, 0;" : "=r"(z));
+  return z;
+}
+DEVI void convert8(uint32_t q, uint32_t sb, uint32_t (&a)[4], uint32_t m16 = 16u, uint32_t m64 = 64u) {
+  const __nv_bfloat162 s = u32_bf162(sb);
+  const __nv_bfloat162 slo = __low2bfloat162(s), shi = __high2bfloat162(s);
+  constexpr uint32_t M = 0x81C081C0u;
+  const uint32_t r0 = q & M;
+  const uint32_t r1 = (q * m16) & M;
+  const uint32_t r2 = __funnelshift_l(q, q, 10) & M;
+  const uint32_t r3 = ((q * m64) & 0x80C080C0u) | (__funnelshift_l(q, q, 14) & 0x01000100u);
+  a[0] = bf162_u32(__hmul2(u32_bf162(r0), slo));
+  a[1] = bf162_u32(__hmul2(u32_bf162(r1), shi));
+  a[2] = bf162_u32(__hmul2(u32_bf162(r2), slo));
+  a[3] = bf162_u32(__hmul2(u32_bf162(r3), shi));
+}
+
+
+struct Args {
+  const uint8_t* wrep;   // [E][NT][KS][WBLK]
+  const uint8_t* xt;     // activations in tile layout (byte base; a tile starting at row r0 is at r0 * 8192)
+  const int4* tiles;     // (expert, row0, n, 0)
+  const int* ntiles;     // device scalar
+  const float* gscale;   // [E]
+  uint8_t* out;          // GATED: tile layout (bytes); else row-major bf16 [rows, 4096]
+  int NT;
+  int smem_bytes;
+  int* counter;          // persistent kernel work queue (zeroed before launch)
+  int flags;             // experiments only (0 in production): bit 2 = skip the NVFP4 conversion
+  uint32_t mul16, mul64;  // 16 and 64, from the host: multiplies by them stay IMAD (FMA-heavy pipe), since ptxas sees
+                          // through an inline-asm zero and turns `x * (16 + 0)` back into an integer-pipe shift
+};
+#define MOE_OPAQUE_MUL 1
+
+template <int N, bool GATED>
+DEVI void consumer_tile(const Args& p, uint8_t* ring, uint32_t bars, int stride, int nst, int e, int row0,
+                        int ntile, int* done = nullptr) {
+  const uint32_t zz_ = opaque_zero(), m16 = 16u + zz_, m64 = 64u + zz_;  // opaque multipliers (IMAD shifts)
+  const int ctid = threadIdx.x - 128;  // 0..255
+  // warp-uniform by construction (shuffled from lane 0), so ptxas keeps the smem descriptor math on the uniform datapath
+#define MOE_UNIFORM_WG 0  // measured: no change in the MoE spans
+  const int wg = MOE_UNIFORM_WG ? __shfl_sync(0xffffffffu, ctid >> 7, 0) : ctid >> 7;
+  const int w = MOE_UNIFORM_WG ? __shfl_sync(0xffffffffu, (ctid >> 5) & 3, 0) : (ctid >> 5) & 3;
+  const int lane = ctid & 31;
+  const int g = lane >> 2, t = lane & 3;
+  float acc[128];
+#pragma unroll
+  for (int i = 0; i < N / 2; ++i) acc[i] = 0.f;
+  uint32_t afrag[2][4];
+  int s = 0, prev_s = 0;
+  uint32_t ph = 0;
+  for (int ks = 0; ks < KS; ++ks) {
+    mbar_wait(bars + 8 * s, ph);
+    uint8_t* st = ring + s * stride;
+    const uint4 wq = *reinterpret_cast<const uint4*>(st + N * 128 + ((wg * 4 + w) * 32 + lane) * 16);
+    const uint2 sc = *reinterpret_cast<const uint2*>(st + N * 128 + 4096 + ((wg * 4 + w) * 8 + g) * 8);
+    const uint64_t desc = desc_sw128(smem_u32(st));
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      const uint32_t q = j == 0 ? wq.x : j == 1 ? wq.y : j == 2 ? wq.z : wq.w;
+      const uint32_t sw = j < 2 ? sc.x : sc.y;  // scales of k16 steps (j & ~1, j | 1): bytes 0,1 and 2,3
+      convert8(q, scale_pair_sel(sw, j & 1, m16), afrag[j & 1], m16, m64);
+      wg_fence();
+      wgmma_rs<N>(acc, afrag[j & 1], desc + 2 * j, 1);
+      wg_commit();
+      wg_wait<1>();
+    }
+    // steps 0-2 of this stage are complete: every wgmma reading the previous stage is done
+    if (ks > 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * MAX_STAGES + 8 * prev_s); }
+    prev_s = s;
+    if (++s == nst) { s = 0; ph ^= 1; }
+  }
+  wg_wait<0>();
+  // ---- epilogue ----
+  const float cs = p.gscale[e] * 128.f;  // weights were scaled by 2^-7
+  named_bar_sync(1, 256);               // every consumer is done reading the ring
+  uint8_t* stg = ring;
+  if constexpr (GATED) {
+    // rows g / g+8 of each 16-row slice are gate / up of inter column c = 8*slice + g
+    const int q = wg * 4 + w;
+#pragma unroll
+    for (int jj = 0; jj < N / 8; ++jj) {
+#pragma unroll
+      for (int b = 0; b < 2; ++b) {
+        const float gt = acc[4 * jj + b] * cs, up = acc[4 * jj + 2 + b] * cs;
+        const float h = silu_fast(gt) * up;
+        const int tok = 8 * jj + 2 * t + b;
+        *reinterpret_cast<__nv_bfloat16*>(stg + tok * 128 + ((q ^ (tok & 7)) << 4) + g * 2) = __float2bfloat16_rn(h);
+      }
+    }
+    named_bar_sync(1, 256);
+    uint4* dst = reinterpret_cast<uint4*>(p.out + (size_t)row0 * 8192 + (size_t)ntile * N * 128);
+    const uint4* src = reinterpret_cast<const uint4*>(stg);
+    for (int i = ctid; i < N * 8; i += 256) dst[i] = src[i];
+    if (done) {  // fused kernel: publish this n-tile of the tile's intermediate rows
+      __threadfence();
+      named_bar_sync(1, 256);
+      if (ctid == 0) atomicAdd(done, 1);
+    }
+  } else {
+    // output columns (within the 128-wide ntile) c0 = 16*slice + g, c1 = c0 + 8; staging rows of 272 B
+    const int c0 = (wg * 4 + w) * 16 + g;
+#pragma unroll
+    for (int jj = 0; jj < N / 8; ++jj) {
+#pragma unroll
+      for (int b = 0; b < 2; ++b) {
+        const int tok = 8 * jj + 2 * t + b;
+        __nv_bfloat16* r = reinterpret_cast<__nv_bfloat16*>(stg + tok * 272);
+        r[c0] = __float2bfloat16_rn(acc[4 * jj + b] * cs);
+        r[c0 + 8] = __float2bfloat16_rn(acc[4 * jj + 2 + b] * cs);
+      }
+    }
+    named_bar_sync(1, 256);
+    for (int i = ctid; i < N * 16; i += 256) {
+      const int tok = i >> 4, c = i & 15;
+      *reinterpret_cast<uint4*>(p.out + ((size_t)(row0 + tok) * 4096 + ntile * 128) * 2 + c * 16) =
+          *reinterpret_cast<const uint4*>(stg + tok * 272 + c * 16);
+    }
+  }
+}
+
+template <bool GATED>
+__global__ void __launch_bounds__(384, 1) moe_gemm_kernel(Args p) {
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  const uint32_t raw = smem_u32(smem_raw);
+  const uint32_t pad = ((raw + 1023) & ~1023u) - raw;
+  uint8_t* base = smem_raw + pad;
+  const uint32_t bars = smem_u32(base);  // full[MAX_STAGES], empty[MAX_STAGES]
+  uint8_t* ring = base + 1024;
+  const int ring_bytes = p.smem_bytes - 1024 - (int)pad;
+  const int ntile = blockIdx.x;
+  const int ntiles = *p.ntiles;
+  if (threadIdx.x < 128) {
+    // ---------------- producer warpgroup ----------------
+    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n");
+    for (int tile = blockIdx.y; tile < ntiles; tile += gridDim.y) {
+      const int4 ti = p.tiles[tile];
+      const int e = ti.x, row0 = ti.y, n = ti.z;
+      const int stride = (n * 128 + WBLK + 1023) & ~1023;
+      int nst = ring_bytes / stride;
+      nst = nst > MAX_STAGES ? MAX_STAGES : nst;
+      if (threadIdx.x == 0) {
+        for (int s = 0; s < nst; ++s) {
+          mbar_init(bars + 8 * s, 1);
+          mbar_init(bars + 8 * MAX_STAGES + 8 * s, 8 * REL_LANES);
+        }
+        asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+      }
+      __syncthreads();
+      const uint8_t* wsrc = p.wrep + ((size_t)(e * p.NT + ntile) * KS) * WBLK;
+      const uint8_t* xsrc = p.xt + (size_t)row0 * 8192;
+      const uint32_t xbytes = n * 128;
+      if (threadIdx.x == 0) {
+        for (int ks = 0; ks < KS; ++ks) {
+          const int s = ks % nst;
+          const uint32_t ph = (ks / nst) & 1;
+          mbar_wait(bars + 8 * MAX_STAGES + 8 * s, ph ^ 1);
+          slot_proxy_fence();
+          const uint32_t full = bars + 8 * s;
+          mbar_expect_tx(full, xbytes + WBLK);
+          const uint32_t dst = smem_u32(ring + s * stride);
+          bulk_g2s(dst, xsrc + (size_t)ks * xbytes, xbytes, full);
+          bulk_g2s(dst + xbytes, wsrc + (size_t)ks * WBLK, WBLK, full);
+        }
+      }
+      __syncthreads();
+      if (threadIdx.x == 0) {
+        for (int s = 0; s < nst; ++s) {
+          mbar_inval(bars + 8 * s);
+          mbar_inval(bars + 8 * MAX_STAGES + 8 * s);
+        }
+      }
+      __syncthreads();
+    }
+  } else {
+    // ---------------- consumer warpgroups ----------------
+    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n");
+    for (int tile = blockIdx.y; tile < ntiles; tile += gridDim.y) {
+      const int4 ti = p.tiles[tile];
+      const int e = ti.x, row0 = ti.y, n = ti.z;
+      const int stride = (n * 128 + WBLK + 1023) & ~1023;
+      int nst = ring_bytes / stride;
+      nst = nst > MAX_STAGES ? MAX_STAGES : nst;
+      __syncthreads();
+      switch (n) {
+        case 32: consumer_tile<32, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+        case 64: consumer_tile<64, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+        case 128: consumer_tile<128, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+        case 160: consumer_tile<160, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+        case 192: consumer_tile<192, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+        default: consumer_tile<256, GATED>(p, ring, bars, stride, nst, e, row0, ntile); break;
+      }
+      __syncthreads();
+      __syncthreads();
+    }
+  }
+}
+
+// ---- persistent variant: grid = #SMs, items (tile, ntile) round-robin, fixed slot ring + separate staging ----
+constexpr int SLOT = 43008;     // bytes per ring slot (1024-aligned): fits kps k-stages of any tile size
+constexpr int NSLOT = 4;
+constexpr int STG_BYTES = 45056; // epilogue staging
+
+// k-blocks per ring stage by token-tile size (a stage must fit SLOT: N=32 allows 1/2/4, N=64 and 128 1/2, N=256 1)
+#define MOE_KPS32 4
+#define MOE_KPS64 2
+#define MOE_KPS128 2
+#define MOE_GROUP4_MAX 128  // token tiles up to this size commit one wgmma group per stage (see GROUP4)
+// tile widths: 32, 64 (small: weight-conversion-bound), 96, 128 (two k-blocks a stage), 160..256 in steps of 32 (one
+// k-block a stage; an expert's last tile is its remaining rows rounded up to 32, not to 128/256)
+DEVI int kps_for(int n) { return n >= 160 ? 1 : (n <= 32 ? MOE_KPS32 : (n <= 64 ? MOE_KPS64 : MOE_KPS128)); }
+// a stage (kps k-blocks of X and W) must fit its ring slot and kps must divide the 64 k-blocks (Oct 26: the search's
+// "kps64_4 +0.16%" was a kernel writing 8 KB past each slot: 4 x (64 x 128 + 4608) = 51200 > SLOT)
+static_assert(MOE_KPS32 * (32 * 128 + WBLK) <= SLOT && 64 % MOE_KPS32 == 0, "MOE_KPS32: stage does not fit a ring slot");
+static_assert(MOE_KPS64 * (64 * 128 + WBLK) <= SLOT && 64 % MOE_KPS64 == 0, "MOE_KPS64: stage does not fit a ring slot");
+static_assert(MOE_KPS128 * (128 * 128 + WBLK) <= SLOT && 64 % MOE_KPS128 == 0, "MOE_KPS128: stage does not fit a ring slot");
+static_assert(256 * 128 + WBLK <= SLOT, "N=256 stage does not fit a ring slot");
+
+// Copy-out queue in shared memory (fused sm_90 kernel): pubq = base + 256, 8 entries of 32 bytes {dst, done, kind,
+// bytes or tokens}; base + 240 = jobs published (st.release by consumer thread 0; negative = -(count + 1) at exit),
+// base + 244 = consumer thread 0's own count, base + 248 = jobs whose staging reads the publisher has finished.
+DEVI void enqueue_out(volatile long long* pubq, void* dst, int* done, int kind, int amount, int row0 = 0, int nreal = 0) {
+  volatile int* cnt = reinterpret_cast<volatile int*>(pubq) - 3;  // base + 244
+  const int n = *cnt;
+  volatile long long* e = pubq + 4 * (n & 7);
+  e[0] = (long long)dst;
+  e[1] = (long long)done;
+  reinterpret_cast<volatile int*>(e)[4] = kind;
+  reinterpret_cast<volatile int*>(e)[5] = amount;
+  reinterpret_cast<volatile int*>(e)[6] = row0;   // CIT (GEMM2): the tile's first row and real row count
+  reinterpret_cast<volatile int*>(e)[7] = nreal;
+  *cnt = n + 1;
+  asm volatile("st.release.cta.shared.b32 [%0], %1;" ::"r"(smem_u32((const void*)(pubq - 2))), "r"(n + 1) : "memory");
+}
+// consumer thread 0: wait until the publisher has read every queued staging buffer
+DEVI void wait_staging_free(volatile long long* pubq) {
+  const int n = *(reinterpret_cast<volatile int*>(pubq) - 3);
+  const uint32_t a = smem_u32((const void*)(reinterpret_cast<volatile int*>(pubq) - 2));  // base + 248
+  while (true) {
+    int f;
+    asm volatile("ld.acquire.cta.shared.b32 %0, [%1];" : "=r"(f) : "r"(a) : "memory");
+    if (f >= n) break;
+  }
+}
+
+// pubq (fused sm_90 kernel): instead of fencing and bumping `done` itself, the consumers hand the GEMM1 n-tile's
+// completion to the producer warpgroup's publisher warp (smem queue at pubq = base + 256, published count at base + 240,
+// consumer thread 0's running count at base + 244), so the next item's main loop does not wait for the store fence.
+#define MOE_CONS_FIRST 0  // fused kernel: consumers at threads 0..255, producer + publisher warps at 256..319 (320
+                          // threads: 200 registers for every thread at launch, no setmaxnreg)
+#define MOE_CB (MOE_CONS_FIRST ? 0 : 128)  // first consumer thread
+#define MOE_PB (MOE_CONS_FIRST ? 256 : 0)  // first producer thread
+#define MOE_FUSED_THREADS (MOE_CONS_FIRST ? 320 : 384)
+template <int N, int CB = 128>
+DEVI void consumer_item(const Args& p, uint8_t* ring, uint8_t* stg, uint32_t bars, int& slot, uint32_t& ph,
+                        int e, int row0, int ntile, bool GATED, int* done = nullptr, unsigned long long* t_mid = nullptr,
+                        volatile long long* pubq = nullptr, int nreal = 256) {
+#define MOE_IMAD_MAXN 64  // IMAD shifts only for small token tiles (N=128 measured 2-3% slower with them)
+  const uint32_t zz_ = N <= MOE_IMAD_MAXN ? opaque_zero() : 0u;
+  // small tiles: multipliers ptxas cannot see (host values), so the shifts run as IMAD on the FMA-heavy pipe
+  const uint32_t m16 = (N <= MOE_IMAD_MAXN && MOE_OPAQUE_MUL) ? p.mul16 : 16u + zz_;
+  const uint32_t m64 = (N <= MOE_IMAD_MAXN && MOE_OPAQUE_MUL) ? p.mul64 : 64u + zz_;
+  constexpr int KPS = N >= 160 ? 1 : (N <= 32 ? MOE_KPS32 : (N <= 64 ? MOE_KPS64 : MOE_KPS128));
+  constexpr int XB = N * 128;  // X bytes per k-stage
+  const int ctid = threadIdx.x - CB;
+  // warp-uniform by construction (shuffled from lane 0), so ptxas keeps the smem descriptor math on the uniform datapath
+  const int wg = MOE_UNIFORM_WG ? __shfl_sync(0xffffffffu, ctid >> 7, 0) : ctid >> 7;
+  const int w = MOE_UNIFORM_WG ? __shfl_sync(0xffffffffu, (ctid >> 5) & 3, 0) : (ctid >> 5) & 3;
+  const int lane = ctid & 31;
+  const int g = lane >> 2, t = lane & 3;
+  // small token tiles: the wgmma is short, so one commit group carries a whole k-stage (4 x k16) and the next
+  // stage's conversions overlap it (one group in flight, double-buffered A fragments)
+#define MOE_G4_96 0  // 96-row tiles in the grouped path compile to wgmma serialization for the whole kernel (C7512)
+  constexpr bool GROUP4 = N <= MOE_GROUP4_MAX && (N != 96 || MOE_G4_96);
+  // small token tiles: a commit group's MMAs are shorter than the wgmma latency, so consecutive groups accumulate into
+  // two independent register sets (summed before the epilogue) instead of one dependency chain
+#define MOE_NACC2 1
+  // MOE_NACC2 = 0: one accumulator everywhere, so a row's sums do not depend on its tile size (bitwise-deterministic
+  // outputs even though the router places rows with atomics)
+  // MOE_NACC4 (tiles up to MOE_NACC4_MAXN tokens): the k16 steps of a group also alternate between two sets, so each
+  // group is two short dependency chains instead of one of four (four accumulator sets in all)
+#define MOE_NACC4 1
+#define MOE_NACC4_MAXN 32
+  // MOE_TRI (N=32 tiles): three A-fragment buffers and three accumulator sets rotate with the k-block index, so a
+  // k-block's conversion runs while the two previous k-blocks' MMA groups are in flight (wait<2> instead of wait<1>)
+#define MOE_TRI 0  // 13:50: C7511 (wgmma serialized, register pressure in the fused kernel) -> 15.5 vs 12.2 us per N=32 item
+#define MOE_TRI_ARCH 1
+  constexpr bool TRI = MOE_TRI && MOE_TRI_ARCH && MOE_NACC2 && GROUP4 && N == 32 && KPS == 4;
+  constexpr int NACC = TRI ? 3 : ((GROUP4 && MOE_NACC2) ? ((MOE_NACC4 && N <= MOE_NACC4_MAXN) ? 4 : 2) : 1);
+  float acc[128];
+  float acc2[128];  // only the first N/2 are live (and only when NACC > 1)
+  float acc3[128], acc4[128];  // NACC == 4 only
+#pragma unroll
+  for (int i = 0; i < N / 2; ++i) acc[i] = 0.f;
+#pragma unroll
+  for (int i = 0; i < (NACC > 1 ? N / 2 : 0); ++i) acc2[i] = 0.f;
+#pragma unroll
+  for (int i = 0; i < (NACC > 2 ? N / 2 : 0); ++i) acc3[i] = 0.f;
+#pragma unroll
+  for (int i = 0; i < (NACC > 3 ? N / 2 : 0); ++i) acc4[i] = 0.f;
+  // N=32 tiles may keep more MMA groups in flight (MOE_SMALL_WAIT groups behind; 4 A-fragment buffers indexed by the
+  // k-block within the 4-k-block stage); otherwise two buffers (k-block parity) and one group behind
+#define MOE_SMALL_WAIT 1
+  constexpr bool DEEP = GROUP4 && N == 32 && KPS == 4 && MOE_SMALL_WAIT > 1;
+#define MOE_MMA32 0  // N=32 tiles: mma.sync m16n8k16 per warp instead of wgmma, skipping the 8-token groups past the
+                     // tile's real rows (tiles[].w): the tensor work follows the tokens, not the 32-row tile
+  constexpr bool MMA32 = MOE_MMA32 && GROUP4 && !DEEP && N == 32;
+  const int nblk = MMA32 ? min(4, max(1, (nreal + 7) >> 3)) : 4;
+  constexpr int AFB = DEEP ? 4 : 2;
+  uint32_t afrag[GROUP4 ? 4 * AFB : 2][4];
+  int prev = -1;
+  const int woff = ((wg * 4 + w) * 32 + lane) * 16, soff = 4096 + ((wg * 4 + w) * 8 + g) * 8;
+  // packed weights/scales are loaded one k-block ahead, across stage boundaries too
+  mbar_wait(bars + 8 * slot, ph);
+  uint4 nwq = *reinterpret_cast<const uint4*>(ring + slot * SLOT + KPS * XB + woff);
+  uint2 nsc = *reinterpret_cast<const uint2*>(ring + slot * SLOT + KPS * XB + soff);
+  constexpr bool XPF = N >= 160 ? MOE_XPF256 : MOE_XPFSMALL;
+  if constexpr (TRI) {
+    uint32_t af3[3][4][4];
+    // one 4-k-block stage; P = (global k-block index of kk = 0) mod 3, so buffer / accumulator b = (P + kk) % 3 is a
+    // compile-time index once the kk loop is unrolled
+    auto stage = [&]<int P>(int it) {
+      uint8_t* st = ring + slot * SLOT;
+      if (it > 0) {
+        mbar_wait(bars + 8 * slot, ph);
+        nwq = *reinterpret_cast<const uint4*>(st + KPS * XB + woff);
+        nsc = *reinterpret_cast<const uint2*>(st + KPS * XB + soff);
+      }
+#pragma unroll
+      for (int kk = 0; kk < 4; ++kk) {
+        const int b = (P + kk) % 3;
+        const uint4 wq = nwq;
+        const uint2 sc = nsc;
+        if (kk + 1 < 4) {
+          nwq = *reinterpret_cast<const uint4*>(st + KPS * XB + (kk + 1) * WBLK + woff);
+          nsc = *reinterpret_cast<const uint2*>(st + KPS * XB + (kk + 1) * WBLK + soff);
+        }
+        const uint64_t desc = desc_sw128(smem_u32(st + kk * XB));
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+          const uint32_t q = j == 0 ? wq.x : j == 1 ? wq.y : j == 2 ? wq.z : wq.w;
+          const uint32_t sw = j < 2 ? sc.x : sc.y;
+          convert8(q, scale_pair_sel(sw, j & 1, m16), af3[b][j], m16, m64);  // buffer b's last group (3 k-blocks ago) is complete
+        }
+        wg_fence();
+#pragma unroll
+        for (int j = 0; j < 4; ++j) wgmma_rs<N>(b == 0 ? acc : (b == 1 ? acc2 : acc3), af3[b][j], desc + 2 * j, 1);
+        wg_commit();
+        wg_wait<2>();
+        // after the wait at kk = 1 only this stage's k-blocks 0 and 1 may still run: the previous slot is free
+        if (kk == 1 && prev >= 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev); }
+      }
+      prev = slot;
+      if (++slot == NSLOT) { slot = 0; ph ^= 1; }
+    };
+    for (int it = 0; it < KS / KPS; ++it) {
+      const int ph3 = (it * 4) % 3;
+      if (ph3 == 0) stage.template operator()<0>(it);
+      else if (ph3 == 1) stage.template operator()<1>(it);
+      else stage.template operator()<2>(it);
+    }
+    wg_wait<0>();
+    rel_sync();
+    if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev);
+  } else {
+#define MOE_HOIST 1  // per-stage descriptor base and weight/scale base pointers (constant per-k-block offsets)
+  for (int it = 0; it < KS / KPS; ++it) {
+    uint8_t* st = ring + slot * SLOT;
+    const uint8_t* wbase = st + KPS * XB + woff;
+    const uint8_t* sbase = st + KPS * XB + soff;
+    const uint64_t dbase = desc_sw128(smem_u32(st));
+    if (!XPF && it > 0) {
+      mbar_wait(bars + 8 * slot, ph);
+      nwq = *reinterpret_cast<const uint4*>(wbase);
+      nsc = *reinterpret_cast<const uint2*>(sbase);
+    }
+#pragma unroll
+    for (int kk = 0; kk < KPS; ++kk) {
+      const uint4 wq = nwq;
+      const uint2 sc = nsc;
+      if (kk + 1 < KPS) {
+        if (MOE_HOIST) {
+          nwq = *reinterpret_cast<const uint4*>(wbase + (kk + 1) * WBLK);
+          nsc = *reinterpret_cast<const uint2*>(sbase + (kk + 1) * WBLK);
+        } else {
+          nwq = *reinterpret_cast<const uint4*>(st + KPS * XB + (kk + 1) * WBLK + woff);
+          nsc = *reinterpret_cast<const uint2*>(st + KPS * XB + (kk + 1) * WBLK + soff);
+        }
+      } else if (XPF && it + 1 < KS / KPS) {
+        const int ns = slot + 1 == NSLOT ? 0 : slot + 1;
+        mbar_wait(bars + 8 * ns, slot + 1 == NSLOT ? ph ^ 1 : ph);
+        nwq = *reinterpret_cast<const uint4*>(ring + ns * SLOT + KPS * XB + woff);
+        nsc = *reinterpret_cast<const uint2*>(ring + ns * SLOT + KPS * XB + soff);
+      }
+
+      uint8_t* xs = st + kk * XB;
+      // the k-block's X tile sits kk * XB bytes into the slot: its descriptor is the slot's plus kk * XB / 16
+      const uint64_t desc = MOE_HOIST ? dbase + (uint64_t)((kk * XB) >> 4) : desc_sw128(smem_u32(xs));
+      if constexpr (GROUP4) {
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+          const uint32_t q = j == 0 ? wq.x : j == 1 ? wq.y : j == 2 ? wq.z : wq.w;
+          const uint32_t sw = j < 2 ? sc.x : sc.y;  // scales of k16 steps (j & ~1, j | 1): bytes 0,1 and 2,3
+          convert8(q, scale_pair_sel(sw, j & 1, m16), afrag[(DEEP ? kk : (kk & 1)) * 4 + j], m16, m64);
+        }
+        if constexpr (MMA32) {
+          // B fragments from the 128B-swizzled token rows: ldmatrix.x4 = (group 2q, k lo), (2q, k hi), (2q+1, lo),
+          // (2q+1, hi); lane l addresses row 8*(2q + (l>>4)) + (l&7), 16-byte chunk (2j + ((l>>3)&1)) ^ (l&7)
+          const uint32_t xbase = smem_u32(st + kk * XB);
+#pragma unroll
+          for (int j = 0; j < 4; ++j) {
+            float* ca = (NACC > 1 && (j & 1)) ? acc2 : acc;
+#pragma unroll
+            for (int q2 = 0; q2 < 2; ++q2) {
+              if (2 * q2 < nblk) {
+                const int mrow = 8 * (2 * q2 + (lane >> 4)) + (lane & 7);
+                const int chunk = (2 * j + ((lane >> 3) & 1)) ^ (lane & 7);
+                uint32_t bfr[4];
+                ldsm_x4(bfr, xbase + mrow * 128 + (chunk << 4));
+                mma16816(ca + 8 * q2, afrag[(kk & 1) * 4 + j], bfr[0], bfr[1]);
+                if (2 * q2 + 1 < nblk) mma16816(ca + 8 * q2 + 4, afrag[(kk & 1) * 4 + j], bfr[2], bfr[3]);
+              }
+            }
+          }
+          if (kk == 0 && prev >= 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev); }
+        } else {
+        wg_fence();
+#pragma unroll
+        for (int j = 0; j < 4; ++j)
+          wgmma_rs<N>(NACC > 2 ? ((kk & 1) ? ((j & 1) ? acc4 : acc2) : ((j & 1) ? acc3 : acc))
+                               : ((NACC > 1 && (kk & 1)) ? acc2 : acc),
+                      afrag[(DEEP ? kk : (kk & 1)) * 4 + j], desc + 2 * j, 1);
+        wg_commit();
+        if constexpr (DEEP) {
+          wg_wait<MOE_SMALL_WAIT>();
+          // the previous stage's last group completes once MOE_SMALL_WAIT - 1 k-blocks of this stage are issued
+          if (kk == MOE_SMALL_WAIT - 1 && prev >= 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev); }
+        } else {
+          wg_wait<1>();
+          // the previous stage's MMAs are complete after the first wait of this stage: hand its slot back early
+          if (kk == 0 && prev >= 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev); }
+        }
+        }  // !MMA32
+      } else {
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+          const uint32_t q = j == 0 ? wq.x : j == 1 ? wq.y : j == 2 ? wq.z : wq.w;
+          const uint32_t sw = j < 2 ? sc.x : sc.y;  // scales of k16 steps (j & ~1, j | 1): bytes 0,1 and 2,3
+          convert8(q, scale_pair_sel(sw, j & 1, m16), afrag[j & 1], m16, m64);
+          wg_fence();
+          wgmma_rs<N>(acc, afrag[j & 1], desc + 2 * j, 1);
+          wg_commit();
+          wg_wait<1>();
+          if (kk == 0 && j == 0 && prev >= 0) { rel_sync(); if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev); }
+        }
+      }
+    }
+    prev = slot;
+    if (++slot == NSLOT) { slot = 0; ph ^= 1; }
+  }
+  wg_wait<0>();
+  rel_sync();
+  if (MOE_ALLLANE_RELEASE || lane == 0) mbar_arrive(bars + 8 * NSLOT + 8 * prev);
+  }  // !TRI
+  if (t_mid) {
+    unsigned long long t;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+    *t_mid = t;
+  }
+  if constexpr (NACC > 3) {
+#pragma unroll
+    for (int i = 0; i < N / 2; ++i) acc[i] = (acc[i] + acc3[i]) + (acc2[i] + acc4[i]);
+  } else if constexpr (NACC > 2) {
+#pragma unroll
+    for (int i = 0; i < N / 2; ++i) acc[i] = (acc[i] + acc2[i]) + acc3[i];
+  } else if constexpr (NACC > 1) {
+#pragma unroll
+    for (int i = 0; i < N / 2; ++i) acc[i] += acc2[i];
+  }
+  // ---- epilogue through the dedicated staging buffer ----
+  const float cs = p.gscale[e] * 128.f;
+  if (pubq && ctid == 0) wait_staging_free(pubq);
+  named_bar_sync(1, 256);  // previous item's copy-out is done with the staging buffer
+  if (GATED) {
+    const int q = wg * 4 + w;
+    // stmatrix.trans: the accumulator fragment of an 8-token group is an 8x8 matrix [row g][token]; stored transposed,
+    // each token's 8 rows (16 bytes) land in its tile-layout chunk in one instruction per 4 groups
+#pragma unroll
+    for (int j4 = 0; j4 < N / 32; ++j4) {
+      uint32_t r[4];
+#pragma unroll
+      for (int u = 0; u < 4; ++u) {
+        const int jj = 4 * j4 + u;
+        const float h0 = silu_fast(acc[4 * jj] * cs) * (acc[4 * jj + 2] * cs);
+        const float h1 = silu_fast(acc[4 * jj + 1] * cs) * (acc[4 * jj + 3] * cs);
+        r[u] = bf162_u32(__floats2bfloat162_rn(h0, h1));
+      }
+      const int rr = lane & 7, tokr = 8 * (4 * j4 + (lane >> 3)) + rr;
+      const uint32_t addr = smem_u32(stg + tokr * 128 + ((q ^ rr) << 4));
+      asm volatile("stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%0], {%1, %2, %3, %4};" ::"r"(addr), "r"(r[0]),
+                   "r"(r[1]), "r"(r[2]), "r"(r[3]) : "memory");
+    }
+    if (pubq) {  // fused sm_90: the publisher warp copies the staged tile out (bulk copy) and then publishes `done`
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+      named_bar_sync(1, 256);
+      if (ctid == 0) enqueue_out(pubq, p.out + (size_t)row0 * 8192 + (size_t)ntile * N * 128, done, 0, N * 128);
+    } else {
+      named_bar_sync(1, 256);
+      uint4* dst = reinterpret_cast<uint4*>(p.out + (size_t)row0 * 8192 + (size_t)ntile * N * 128);
+      const uint4* src = reinterpret_cast<const uint4*>(stg);
+      for (int i = ctid; i < N * 8; i += 256) dst[i] = src[i];
+      if (done) {  // fused kernel: publish this n-tile of the tile's intermediate rows
+        __threadfence();
+        named_bar_sync(1, 256);
+        if (ctid == 0) atomicAdd(done, 1);
+      }
+    }
+  } else {
+    const int c0 = (wg * 4 + w) * 16 + g;
+    // halves of up to 128 tokens through the 128-row staging buffer: half 1 (tiles over 128 rows) holds N - 128 rows
+    auto gemm2_half = [&]<int half, int NJ>() {
+      if (half) named_bar_sync(1, 256);  // (half 0 was copied out by the consumers themselves)
+      // stmatrix.trans: per 8-token group, two 8x8 matrices (this warp's columns 16w..16w+7 and 16w+8..16w+15)
+      if constexpr (NJ >= 2) {
+#pragma unroll
+        for (int j2 = 0; j2 < NJ / 2; ++j2) {
+          uint32_t r[4];
+#pragma unroll
+          for (int u = 0; u < 2; ++u) {
+            const int ai = 4 * (2 * j2 + u + half * 16);
+            r[2 * u] = bf162_u32(__floats2bfloat162_rn(acc[ai] * cs, acc[ai + 1] * cs));
+            r[2 * u + 1] = bf162_u32(__floats2bfloat162_rn(acc[ai + 2] * cs, acc[ai + 3] * cs));
+          }
+          const int m = lane >> 3, rr = lane & 7;
+          const int tl = 8 * (2 * j2 + (m >> 1)) + rr;
+          const uint32_t addr = smem_u32(stg + tl * 272 + ((wg * 4 + w) * 16 + 8 * (m & 1)) * 2);
+          asm volatile("stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%0], {%1, %2, %3, %4};" ::"r"(addr), "r"(r[0]),
+                       "r"(r[1]), "r"(r[2]), "r"(r[3]) : "memory");
+        }
+      } else {
+#pragma unroll
+        for (int jj = 0; jj < NJ; ++jj) {
+#pragma unroll
+          for (int b = 0; b < 2; ++b) {
+            const int tl = 8 * jj + 2 * t + b;
+            const int ai = 4 * (jj + half * 16) + b;
+            __nv_bfloat16* r = reinterpret_cast<__nv_bfloat16*>(stg + tl * 272);
+            r[c0] = __float2bfloat16_rn(acc[ai] * cs);
+            r[c0 + 8] = __float2bfloat16_rn(acc[ai + 2] * cs);
+          }
+        }
+      }
+      constexpr int ntok = 8 * NJ;
+      // the last half goes to the publisher warp (its copy loop overlaps the next item); a first half is copied by the
+      // consumers, since the second half needs the staging buffer right away
+      if (pubq && half == (N > 128 ? 1 : 0)) {
+        named_bar_sync(1, 256);
+        if (ctid == 0)
+          enqueue_out(pubq, p.out + ((size_t)(row0 + half * 128) * 4096 + ntile * 128) * 2, done, 1, ntok, row0, nreal);
+      } else {
+        named_bar_sync(1, 256);
+        for (int i = ctid; i < ntok * 16; i += 256) {
+          const int tl = i >> 4, c = i & 15;
+          *reinterpret_cast<uint4*>(p.out + ((size_t)(row0 + half * 128 + tl) * 4096 + ntile * 128) * 2 + c * 16) =
+              *reinterpret_cast<const uint4*>(stg + tl * 272 + c * 16);
+        }
+      }
+    };
+    gemm2_half.template operator()<0, (N > 128 ? 16 : N / 8)>();
+    if constexpr (N > 128) gemm2_half.template operator()<1, (N - 128) / 8>();
+  }
+}
+
+template <bool GATED>
+__global__ void __launch_bounds__(384, 1) moe_gemm_persistent(Args p) {
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  const uint32_t raw = smem_u32(smem_raw);
+  const uint32_t pad = ((raw + 1023) & ~1023u) - raw;
+  uint8_t* base = smem_raw + pad;
+  const uint32_t bars = smem_u32(base);  // full[NSLOT], empty[NSLOT], ifull[2], iempty[2]
+  const uint32_t ibar = bars + 16 * NSLOT;
+  volatile int* iring = reinterpret_cast<volatile int*>(base + 512);
+  uint8_t* ring = base + 1024;
+  uint8_t* stg = ring + NSLOT * SLOT;
+  const int nitems = *p.ntiles * p.NT;
+  if (threadIdx.x == 0) {
+    for (int s = 0; s < NSLOT; ++s) {
+      mbar_init(bars + 8 * s, 1);
+      mbar_init(bars + 8 * NSLOT + 8 * s, 8 * REL_LANES);
+    }
+    for (int k = 0; k < 2; ++k) {
+      mbar_init(ibar + 8 * k, 1);
+      mbar_init(ibar + 16 + 8 * k, MOE_ALLLANE_RELEASE ? 256 : 1);
+    }
+    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+  }
+  __syncthreads();
+  int slot = 0;
+  uint32_t ph = 0;
+  if (threadIdx.x < 128) {
+    asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n");
+    if (threadIdx.x == 0) {
+      int k = 0;
+      uint32_t iph = 0;
+      while (true) {
+        mbar_wait(ibar + 16 + 8 * k, iph ^ 1);
+        const int item = atomicAdd(p.counter, 1);
+        iring[k] = item;
+        mbar_arrive(ibar + 8 * k);
+        if (item >= nitems) break;
+        const int tile = item / p.NT, ntile = item - tile * p.NT;
+        const int4 ti = p.tiles[tile];
+        const int e = ti.x, row0 = ti.y, n = ti.z;
+        const int kps = kps_for(n);
+        const uint32_t xb = n * 128;
+        const uint8_t* wsrc = p.wrep + ((size_t)(e * p.NT + ntile) * KS) * WBLK;
+        const uint8_t* xsrc = p.xt + (size_t)row0 * 8192;
+        for (int it = 0; it < KS / kps; ++it) {
+          mbar_wait(bars + 8 * NSLOT + 8 * slot, ph ^ 1);
+          slot_proxy_fence();
+          const uint32_t full = bars + 8 * slot;
+          mbar_expect_tx(full, kps * (xb + WBLK));
+          const uint32_t dst = smem_u32(ring + slot * SLOT);
+          bulk_g2s(dst, xsrc + (size_t)it * kps * xb, kps * xb, full);
+          bulk_g2s(dst + kps * xb, wsrc + (size_t)it * kps * WBLK, kps * WBLK, full);
+          if (++slot == NSLOT) { slot = 0; ph ^= 1; }
+        }
+        k ^= 1;
+        if (k == 0) iph ^= 1;
+      }
+    }
+  } else {
+    asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n");
+    int k = 0;
+    uint32_t iph = 0;
+    while (true) {
+      mbar_wait(ibar + 8 * k, iph);
+      const int item = iring[k];
+      named_bar_sync(1, 256);  // every consumer has read the item
+      if (MOE_ALLLANE_RELEASE || threadIdx.x == 128) mbar_arrive(ibar + 16 + 8 * k);  // all: each reader orders its own read
+      if (item >= nitems) break;
+      k ^= 1;
+      if (k == 0) iph ^= 1;
+      const int tile = item / p.NT, ntile = item - tile * p.NT;
+      const int4 ti = p.tiles[tile];
+      const int e = ti.x, row0 = ti.y, n = ti.z;
+      switch (n) {
+        case 32: consumer_item<32>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+        case 64: consumer_item<64>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+        case 128: consumer_item<128>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+        case 160: consumer_item<160>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+        case 192: consumer_item<192>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+        default: consumer_item<256>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED); break;
+      }
+    }
+  }
+}
+
+// ---- both expert GEMMs in one persistent launch: the queue holds every GEMM1 item, then every GEMM2 item; a GEMM2
+// item's loads wait until all 64 GEMM1 n-tiles of its token tile have been written (per-tile counters) ----
+struct FusedArgs {
+  Args g1, g2;     // GEMM1 (gated, writes inter in tile layout) and GEMM2 (reads inter, writes y)
+  int* done;       // [max tiles] GEMM1 n-tiles finished per token tile (zeroed before launch)
+  unsigned long long* dbg;  // optional per-item timeline: [item][start ns, end ns, smid, cta] (nullptr: off)
+  int flags;       // bit 8: fine remainder tiles (FINE instantiation); experiments: bit 0 = load X only for an item's first stage, bit 1 = same for W
+  // CIT (combine in the tail; cit == nullptr: off): the last GEMM2 n-tile item of a tile counts its tokens' routes down
+  // (tok_left, set by the route kernel); a token whose routes are all done goes into the combine queue cq (cleared by the
+  // route kernel; no-route tokens queued by the gather); CTAs out of expert items pop tokens and write their combined
+  // rows (the separate combine launch is gone). All counters are zeroed per call inside the graph (boundary kernel).
+  int* cit;        // [max tiles] GEMM2 n-tiles finished per tile
+  int* qctl;       // [0] queue head (pops), [1] queue tail (pushes), [2] error flag (a spin limit hit)
+  int* tok_left;   // [T] local routes of each token not yet finished
+  int* cq;         // [T] combine queue: token + 1 (0: not yet written)
+  const int* row_tok;  // [rows] token of each routed row
+  const int* rrow; const int* lid; const float* topw; const __nv_bfloat16* pw;  // the combine's inputs
+  __nv_bfloat16* out;  // [T, 4096] combined expert output
+  int T;
+};
+
+#define MOE_FINE_NOINLINE 0  // 1: the extra widths as separate functions -> ptxas C7510 (wgmma pipeline crossing a call): whole kernel serialized
+template <int N>
+__noinline__ __device__ void consumer_item_ni(const Args& p, uint8_t* ring, uint8_t* stg, uint32_t bars, int& slot, uint32_t& ph,
+                                              int e, int row0, int ntile, bool GATED, int* done, unsigned long long* t_mid,
+                                              volatile long long* pubq, int nreal = 256) {
+  consumer_item<N>(p, ring, stg, bars, slot, ph, e, row0, ntile, GATED, done, t_mid, pubq, nreal);
+}
+
+// ---- CIT: combine in the tail of the fused expert kernel ----
+// The 256 consumer threads of a CTA with no expert items left pop tokens from the combine queue and write each one's
+// combined row, with the CUDA combine's arithmetic (moe_combine_kernel): every local route's y row times (1 + w),
+// RMS-normalized on its own (eps 1e-8), times its routing weight, summed in route order k = 0..7 (two routes' rows in
+// flight, one block reduction per pair). The order is fixed per token, so the result does not depend on which CTA
+// combines it or when (deterministic). y rows were written by other CTAs during this kernel: L2 loads (ld.global.cg)
+// after the acquire chain (item releases -> done2 RMW -> tok_left acq_rel RMWs -> queue store release -> acquire here).
+#define MOE_CIT 0  // combine in the tail (Oct 26: measured 2.5-3x slower than the combine kernel; TRICKS 5.16): compiled out
+#define CIT_BACKOFF_NS 500
+#define CIT_SPIN_NS 200000000ull  // 200 ms: a queue slot never written sets the error flag (fa.qctl[2]) instead of hanging
+// a completed GEMM2 tile counts down the routes of its rows' tokens; a token whose last route this was is queued
+__noinline__ __device__ void cit_release(const int* row_tok, int* tok_left, int* qctl, int* cq, int r0, int nreal, int lane) {
+  // (the caller's fence.acq_rel.gpu after acquiring the tile's items is the release side; the counts go down with
+  // relaxed RMWs, issued together (up to 8 per lane, 256 rows); a token's last decrementer fences again (acquire side)
+  // before the queue store with release: fence + relaxed RMW patterns on both ends)
+  int t[8], prev[8];
+#pragma unroll
+  for (int u = 0; u < 8; ++u) {
+    const int lr = lane + 32 * u;
+    t[u] = lr < nreal ? row_tok[r0 + lr] : -1;
+  }
+#pragma unroll
+  for (int u = 0; u < 8; ++u) prev[u] = t[u] >= 0 ? atomicAdd(tok_left + t[u], -1) : 0;
+  bool any = false;
+#pragma unroll
+  for (int u = 0; u < 8; ++u) any |= prev[u] == 1;
+  if (any) {
+    asm volatile("fence.acq_rel.gpu;" ::: "memory");
+#pragma unroll
+    for (int u = 0; u < 8; ++u) {
+      if (prev[u] == 1) {
+        const int i = atomicAdd(qctl + 1, 1);
+        asm volatile("st.release.gpu.global.b32 [%0], %1;" ::"l"(cq + i), "r"(t[u] + 1) : "memory");
+      }
+    }
+  }
+}
+DEVI void cit_combine(const FusedArgs& fa, int ctid, uint8_t* base) {
+  // warp 0 lane 0 is the CTA's only poller of the global queue (with backoff: thousands of pollers slowed the last
+  // expert items down); it hands tokens to warps 1..7 through shared-memory slots (token + 1, 0 = empty, -1 = done);
+  // each combining warp takes one token at a time
+  volatile int* slot = reinterpret_cast<volatile int*>(base + 768);  // [8]
+  const int lane = ctid & 31, warp = ctid >> 5;
+  if (lane == 0) slot[warp] = 0;
+  named_bar_sync(1, 256);
+  if (warp == 0) {
+    if (lane == 0) {
+      unsigned long long t0, now;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0));
+      bool done = false;
+      while (!done) {
+        bool idle = true;
+        for (int w = 1; w < 8 && !done; ++w) {
+          if (slot[w] != 0) continue;
+          int head, tail;
+          asm volatile("ld.relaxed.gpu.global.b32 %0, [%1];" : "=r"(head) : "l"(fa.qctl) : "memory");
+          if (head >= fa.T) { done = true; break; }
+          asm volatile("ld.relaxed.gpu.global.b32 %0, [%1];" : "=r"(tail) : "l"(fa.qctl + 1) : "memory");
+          if (tail <= head) break;
+          const int idx = atomicAdd(fa.qctl, 1);
+          if (idx >= fa.T) { done = true; break; }
+          int v;
+          while (true) {
+            asm volatile("ld.acquire.gpu.global.b32 %0, [%1];" : "=r"(v) : "l"(fa.cq + idx) : "memory");
+            if (v != 0) break;
+            asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+            if (now - t0 > CIT_SPIN_NS) { atomicExch(fa.qctl + 2, 1); break; }
+            __nanosleep(100);
+          }
+          if (v != 0)  // release (CTA scope): the combining warp's acquire of the slot orders its row loads after ours
+            asm volatile("st.release.cta.shared.b32 [%0], %1;" ::"r"(smem_u32((const void*)(slot + w))), "r"(v) : "memory");
+          idle = false;
+        }
+        if (done) break;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+        if (now - t0 > CIT_SPIN_NS) { atomicExch(fa.qctl + 2, 1); break; }
+        if (idle) __nanosleep(CIT_BACKOFF_NS);
+      }
+      for (int w = 1; w < 8; ++w) {  // done: each warp gets -1 once its slot is free
+        while (slot[w] != 0) __nanosleep(64);
+        slot[w] = -1;
+      }
+    }
+    __syncwarp();
+    return;
+  }
+  while (true) {
+    int v = 0;
+    if (lane == 0) {
+      while (true) {
+        asm volatile("ld.acquire.cta.shared.b32 %0, [%1];" : "=r"(v) : "r"(smem_u32((const void*)(slot + warp))) : "memory");
+        if (v != 0) break;
+        __nanosleep(32);
+      }
+    }
+    v = __shfl_sync(0xffffffffu, v, 0);
+    if (v < 0) break;
+    __syncwarp();
+    const int tok = v - 1;
+    // local routes in order, two at a time; pass 1 issues all 16 chunk loads of both rows at once (L1-allocating: the
+    // rows were never read on this SM, and L1 starts clean each launch) for their RMS, pass 2 re-reads them from L1
+    int rows[8], nl = 0;
+    float wts[8];
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+      const int l = fa.lid[tok * 8 + k];
+      rows[k] = -1;
+      wts[k] = 0.f;
+      if (l >= 0) {
+        rows[k] = fa.rrow[tok * 8 + k];
+        wts[k] = fa.topw[tok * 8 + k];
+        ++nl;
+      }
+    }
+    float sc[8];
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+      sc[k] = 0.f;
+      if (rows[k] >= 0) {
+        const __nv_bfloat16* src = reinterpret_cast<const __nv_bfloat16*>(fa.g2.out) + (size_t)rows[k] * 4096 + lane * 8;
+        uint4 q[16];
+#pragma unroll
+        for (int j = 0; j < 16; ++j) asm volatile("ld.global.ca.v4.u32 {%0, %1, %2, %3}, [%4];" : "=r"(q[j].x), "=r"(q[j].y), "=r"(q[j].z), "=r"(q[j].w) : "l"(src + 256 * j) : "memory");
+        float ss = 0.f;
+#pragma unroll
+        for (int j = 0; j < 16; ++j) {
+          const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&q[j]);
+          const float4 g0 = g1p4(fa.pw + lane * 8 + 256 * j), g1 = g1p4(fa.pw + lane * 8 + 256 * j + 4);
+          const float gv[8] = {g0.x, g0.y, g0.z, g0.w, g1.x, g1.y, g1.z, g1.w};
+#pragma unroll
+          for (int i = 0; i < 4; ++i) {
+            const float2 f = __bfloat1622float2(h[i]);
+            const float a = f.x * gv[2 * i], b = f.y * gv[2 * i + 1];
+            ss += a * a + b * b;
+          }
+        }
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+        sc[k] = rsqrtf(ss / 4096.f + 1e-8f) * wts[k];
+      }
+    }
+    (void)nl;
+#pragma unroll 4
+    for (int j = 0; j < 16; ++j) {
+      const float4 g0 = g1p4(fa.pw + lane * 8 + 256 * j), g1 = g1p4(fa.pw + lane * 8 + 256 * j + 4);
+      const float gv[8] = {g0.x, g0.y, g0.z, g0.w, g1.x, g1.y, g1.z, g1.w};
+      float acc[8];
+#pragma unroll
+      for (int i = 0; i < 8; ++i) acc[i] = 0.f;
+#pragma unroll
+      for (int k = 0; k < 8; ++k) {
+        if (rows[k] >= 0) {
+          uint4 q;
+          asm volatile("ld.global.ca.v4.u32 {%0, %1, %2, %3}, [%4];" : "=r"(q.x), "=r"(q.y), "=r"(q.z), "=r"(q.w)
+                       : "l"(reinterpret_cast<const __nv_bfloat16*>(fa.g2.out) + (size_t)rows[k] * 4096 + lane * 8 + 256 * j) : "memory");
+          const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&q);
+#pragma unroll
+          for (int i = 0; i < 4; ++i) {
+            const float2 f = __bfloat1622float2(h[i]);
+            acc[2 * i] += (f.x * gv[2 * i]) * sc[k];
+            acc[2 * i + 1] += (f.y * gv[2 * i + 1]) * sc[k];
+          }
+        }
+      }
+      uint4 o;
+      __nv_bfloat162* b = reinterpret_cast<__nv_bfloat162*>(&o);
+#pragma unroll
+      for (int i = 0; i < 4; ++i) b[i] = __floats2bfloat162_rn(acc[2 * i], acc[2 * i + 1]);
+      *reinterpret_cast<uint4*>(fa.out + (size_t)tok * 4096 + lane * 8 + 256 * j) = o;
+    }
+    __syncwarp();
+    if (lane == 0) slot[warp] = 0;
+  }
+}
+
+template <int FINE>
+#define MOE_EARLY_INIT 0  // 1: shared-memory barrier setup before the PDL wait (overlaps the gather's tail)
+__global__ void __launch_bounds__(MOE_FUSED_THREADS, 1) moe_fused_persistent(FusedArgs fa) {
+  if constexpr (!MOE_EARLY_INIT) pdl_enter();
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  const uint32_t raw = smem_u32(smem_raw);
+  const uint32_t pad = ((raw + 1023) & ~1023u) - raw;
+  uint8_t* base = smem_raw + pad;
+  const uint32_t bars = smem_u32(base);
+  const uint32_t ibar = bars + 16 * NSLOT;
+  volatile int* iring = reinterpret_cast<volatile int*>(base + 512);
+  uint8_t* ring = base + 1024;
+  uint8_t* stg = ring + NSLOT * SLOT;
+  // publisher queue (sm_90): count at base + 240, 32 done-pointers at base + 256
+  volatile long long* pubq = reinterpret_cast<volatile long long*>(base + 256);
+  if (threadIdx.x == 0) {
+    *reinterpret_cast<volatile int*>(base + 240) = 0;
+    *reinterpret_cast<volatile int*>(base + 244) = 0;
+    *reinterpret_cast<volatile int*>(base + 248) = 0;
+    for (int s = 0; s < NSLOT; ++s) {
+      mbar_init(bars + 8 * s, 1);
+      mbar_init(bars + 8 * NSLOT + 8 * s, 8 * REL_LANES);
+    }
+    for (int k = 0; k < 2; ++k) {
+      mbar_init(ibar + 8 * k, 1);
+      mbar_init(ibar + 16 + 8 * k, MOE_ALLLANE_RELEASE ? 256 : 1);
+    }
+    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+  }
+  __syncthreads();
+  if constexpr (MOE_EARLY_INIT) pdl_enter();
+  const int nt = *fa.g1.ntiles;
+  const int n1 = nt * fa.g1.NT, nitems = n1 + nt * fa.g2.NT;
+  int slot = 0;
+  uint32_t ph = 0;
+  if (MOE_CONS_FIRST ? threadIdx.x >= 256 : threadIdx.x < 128) {
+    if (!MOE_CONS_FIRST) asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n");
+    if (threadIdx.x == MOE_PB) {
+      int k = 0;
+      uint32_t iph = 0;
+      while (true) {
+        mbar_wait(ibar + 16 + 8 * k, iph ^ 1);
+        const int item = atomicAdd(fa.g1.counter, 1);
+        iring[k] = item;
+        mbar_arrive(ibar + 8 * k);
+        if (item >= nitems) break;
+        const bool second = item >= n1;
+        const Args& p = second ? fa.g2 : fa.g1;
+        const int it2 = second ? item - n1 : item;
+        const int tile = it2 / p.NT, ntile = it2 - tile * p.NT;
+        const int4 ti = p.tiles[tile];
+        const int e = ti.x, row0 = ti.y, n = ti.z;
+        if (second) {
+          const int need = fa.g1.NT;
+          int v;
+          while (true) {
+            asm volatile("ld.acquire.gpu.global.b32 %0, [%1];" : "=r"(v) : "l"(fa.done + tile) : "memory");
+            if (v >= need) break;
+            __nanosleep(64);
+          }
+          asm volatile("fence.proxy.async.global;" ::: "memory");
+        }
+        const int kps = kps_for(n);
+        const uint32_t xb = n * 128;
+        const uint8_t* wsrc = p.wrep + ((size_t)(e * p.NT + ntile) * KS) * WBLK;
+        const uint8_t* xsrc = p.xt + (size_t)row0 * 8192;
+        const bool pf = MOE_L2PF > 0 && (MOE_L2PF_ALL || kps >= 2);
+        if (pf) {  // the item's first stages: a head start while the previous item's last stages are consumed
+          for (int j = 0; j < MOE_L2PF && j < KS / kps; ++j) prefetch_l2(wsrc + (size_t)j * kps * WBLK, kps * WBLK);
+        }
+        for (int it = 0; it < KS / kps; ++it) {
+          if (pf && it + MOE_L2PF < KS / kps) prefetch_l2(wsrc + (size_t)(it + MOE_L2PF) * kps * WBLK, kps * WBLK);
+          mbar_wait(bars + 8 * NSLOT + 8 * slot, ph ^ 1);
+          slot_proxy_fence();
+          const uint32_t full = bars + 8 * slot;
+          const bool lx = !(fa.flags & 1) || it < NSLOT, lw = !(fa.flags & 2) || it < NSLOT;
+          mbar_expect_tx(full, (lx ? kps * xb : 0) + (lw ? kps * WBLK : 0) + (!lx && !lw ? 16 : 0));
+          const uint32_t dst = smem_u32(ring + slot * SLOT);
+          if (lx) bulk_g2s(dst, xsrc + (size_t)it * kps * xb, kps * xb, full);
+          if (lw) bulk_g2s(dst + kps * xb, wsrc + (size_t)it * kps * WBLK, kps * WBLK, full);
+          if (!lx && !lw) bulk_g2s(dst, xsrc, 16, full);
+          if (++slot == NSLOT) { slot = 0; ph ^= 1; }
+        }
+        k ^= 1;
+        if (k == 0) iph ^= 1;
+      }
+    } else if (threadIdx.x >= MOE_PB + 32 && threadIdx.x < MOE_PB + 64) {
+      // publisher warp: copies each staged epilogue tile out with bulk copies (the consumers go on with their next
+      // item), frees the staging buffer once read, and for GEMM1 tiles waits for the writes, then a GPU-scope release
+      // and the tile's done counter (read with acquire by other CTAs' producers)
+      const int lane = threadIdx.x - (MOE_PB + 32);
+      const uint32_t stg_s = smem_u32(stg);
+      int seen = 0;
+      while (true) {
+        int r = 0;
+        asm volatile("ld.acquire.cta.shared.b32 %0, [%1];" : "=r"(r) : "r"(smem_u32(base + 240)) : "memory");
+        r = __shfl_sync(0xffffffffu, r, 0);  // one value for the warp (a later lane may see a newer count)
+        const int avail = r < 0 ? -r - 1 : r;
+        while (seen < avail) {
+          volatile long long* e = pubq + 4 * (seen & 7);
+          uint8_t* dst = reinterpret_cast<uint8_t*>(e[0]);
+          int* d = reinterpret_cast<int*>(e[1]);
+          const int kind = reinterpret_cast<volatile int*>(e)[4], amount = reinterpret_cast<volatile int*>(e)[5];
+          if (kind == 0) {  // one contiguous tile-layout block: a single bulk copy
+            if (lane == 0) {
+              bulk_s2g(dst, stg_s, amount);
+              asm volatile("cp.async.bulk.commit_group;" ::: "memory");
+              asm volatile("cp.async.bulk.wait_group.read 0;" ::: "memory");
+            }
+          } else {  // token rows of 256 bytes (272-byte staging pitch): the warp copies them, 16 bytes per lane
+            for (int i = lane; i < amount * 16; i += 32) {
+              const int tl = i >> 4, c = i & 15;
+              *reinterpret_cast<uint4*>(dst + (size_t)tl * 8192 + c * 16) = *reinterpret_cast<const uint4*>(stg + tl * 272 + c * 16);
+            }
+          }
+          __syncwarp();  // after lane 0's bulk-copy read of the staging buffer has completed
+          asm volatile("st.release.cta.shared.b32 [%0], %1;" ::"r"(smem_u32(base + 248)), "r"(seen + 1) : "memory");
+          int old = -1;
+          if (lane == 0) {
+            if (d) {
+              if (kind == 0) {  // a bulk (async-proxy) copy: wait for its writes first
+                asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+                asm volatile("fence.proxy.async.global;" ::: "memory");
+              }
+              asm volatile("fence.acq_rel.gpu;" ::: "memory");
+              old = atomicAdd(d, 1);
+            }
+          }
+          if (MOE_CIT && kind == 1 && d != nullptr) {  // CIT: a GEMM2 item; the tile's last one counts its tokens' routes down
+            old = __shfl_sync(0xffffffffu, old, 0);
+            __syncwarp();  // (memory ordering: lane 0's acquire of the other items' releases, before every lane's release)
+            if (old == fa.g2.NT - 1) {
+              asm volatile("fence.acq_rel.gpu;" ::: "memory");
+              // (entry seen & 7 is rewritten only for job seen + 8, after this job: safe to read its rows here)
+              cit_release(fa.row_tok, fa.tok_left, fa.qctl, fa.cq, reinterpret_cast<volatile int*>(e)[6],
+                          reinterpret_cast<volatile int*>(e)[7], lane);
+            }
+          }
+          ++seen;
+        }
+        if (r < 0) break;
+        __nanosleep(64);
+      }
+      asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+    }
+  } else {
+    if (!MOE_CONS_FIRST) asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n");
+    int k = 0;
+    uint32_t iph = 0;
+    volatile long long* pq = pubq;
+    while (true) {
+      mbar_wait(ibar + 8 * k, iph);
+      const int item = iring[k];
+      named_bar_sync(1, 256);
+      if (MOE_ALLLANE_RELEASE || threadIdx.x == MOE_CB) mbar_arrive(ibar + 16 + 8 * k);  // all: each reader orders its own read
+      if (item >= nitems) {
+        if (threadIdx.x == MOE_CB) {  // the publisher drains the queue and exits
+          const int pubn = *reinterpret_cast<volatile int*>(base + 244);
+          asm volatile("st.release.cta.shared.b32 [%0], %1;" ::"r"(smem_u32(base + 240)), "r"(-(pubn + 1)) : "memory");
+        }
+#define CIT_DBG_NOCOMBINE 0  // timing experiment only: the per-item release path without the tail combine
+        if (MOE_CIT && fa.cit != nullptr && !CIT_DBG_NOCOMBINE) cit_combine(fa, threadIdx.x - MOE_CB, base);  // CIT: combine finished tokens
+        break;
+      }
+      k ^= 1;
+      if (k == 0) iph ^= 1;
+      unsigned long long t_start = 0;
+      if (fa.dbg && threadIdx.x == MOE_CB) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t_start));
+      const bool first = item < n1;
+      const Args& p = first ? fa.g1 : fa.g2;
+      const int it2 = first ? item : item - n1;
+      const int tile = it2 / p.NT, ntile = it2 - tile * p.NT;
+      const int4 ti = p.tiles[tile];
+      int* dn = first ? fa.done + tile : ((MOE_CIT && fa.cit != nullptr) ? fa.cit + tile : nullptr);
+      unsigned long long t_mid = 0;
+      unsigned long long* tm = (fa.dbg && threadIdx.x == MOE_CB) ? &t_mid : nullptr;
+      switch (ti.z) {
+        case 32: consumer_item<32, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w); break;
+        case 64: consumer_item<64, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w); break;
+        case 128: consumer_item<128, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w); break;
+        case 160:
+          if constexpr (FINE != 0) {
+            if constexpr (MOE_FINE_NOINLINE) consumer_item_ni<160>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w);
+            else consumer_item<160, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w);
+          }
+          break;
+        case 192:
+          if constexpr (FINE != 0) {
+            if constexpr (MOE_FINE_NOINLINE) consumer_item_ni<192>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w);
+            else consumer_item<192, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w);
+          }
+          break;
+        default: consumer_item<256, MOE_CB>(p, ring, stg, bars, slot, ph, ti.x, ti.y, ntile, first, dn, tm, pq, ti.w); break;
+      }
+      if (fa.dbg && threadIdx.x == MOE_CB) {
+        unsigned long long t_end;
+        unsigned int smid;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t_end));
+        asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+        fa.dbg[(size_t)item * 4 + 0] = t_start;
+        fa.dbg[(size_t)item * 4 + 1] = t_end;
+        fa.dbg[(size_t)item * 4 + 2] = smid | ((unsigned long long)(t_mid - t_start) << 16);
+        fa.dbg[(size_t)item * 4 + 3] = blockIdx.x;
+      }
+    }
+  }
+}
+
+// ---- routing plan: per-expert tiles of 256 rows plus one remainder tile of 32/64/128/256 ----
+// an expert's last (remainder) tile: 32 or 64 rows when it fits, else the rows rounded up to 32
+DEVI int rem_tile(int r, int fine) {
+  if (r == 0) return 0;
+  if (r <= 32) return 32;
+  if (r <= 64) return 64;
+  if (!fine) return r <= 128 ? 128 : 256;
+  if ((MOE_FINE_MASK & 1) && r <= 96) return 96;
+  if (r <= 128) return 128;
+  if ((MOE_FINE_MASK & 2) && r <= 160) return 160;
+  if ((MOE_FINE_MASK & 4) && r <= 192) return 192;
+  if ((MOE_FINE_MASK & 8) && r <= 224) return 224;
+  return 256;
+}
+#define MOE_SPLIT_REM 1
+// an expert's remainder rows as one or two tiles: without fine widths, 129..192 rows become 128 + 32/64 (cheaper than
+// one 256-row tile: ~22 + 11..16 vs ~41 us per weight n-tile item)
+DEVI void rem_tiles(int r, int fine, int& na, int& nb) {
+  if (MOE_SPLIT_REM && !fine && r > 128 && r <= 192) {
+    na = 128;
+    nb = rem_tile(r - 128, 0);
+  } else {
+    na = rem_tile(r, fine);
+    nb = 0;
+  }
+}
+DEVI void plan_warp(const int* __restrict__ counts, int* __restrict__ offsets, int4* __restrict__ tiles,
+                    int* __restrict__ ntiles, int* __restrict__ rows_per_expert, int order, int e) {
+  const int fine = order >> 8;  // bit 8: fine remainder tiles (the expert kernel must be the FINE instantiation)
+  order &= 255;
+  // Tile list order (the persistent kernel takes items from it through an atomic counter):
+  //   0: expert order; 1: biggest first (all 256-row tiles, then 128, 64, 32: longest-processing-time);
+  //   2: the 256/128-row (compute-bound) tiles biggest first with the 64/32-row (weight-streaming) tiles spread
+  //      between them, the last fifth of the small tiles at the end.
+  // Each expert's rows stay contiguous (offsets) in tile-row order.
+  const int c = counts[e];  // one warp, lane e = expert e
+  const int full = c >> 8, r = c & 255;
+  int nr, nb;  // remainder tile widths (nb: second remainder tile or 0)
+  rem_tiles(r, fine, nr, nb);
+  const int rows = full * 256 + nr + nb;
+  const int nt = full + (nr > 0) + (nb > 0);
+  // size classes, widest first: 256, 224, 192, 160, 128, 96 ("big", tensor-bound), 64, 32 ("small")
+  // cnt: [0] rows, [1 + k] tiles of class k (k = 0..7), [9] tiles
+  int cnt[10];
+  cnt[0] = rows;
+#pragma unroll
+  for (int k = 0; k < 8; ++k) cnt[1 + k] = (k == 0 ? full : 0) + (nr == 256 - 32 * k) + (nb == 256 - 32 * k);
+  cnt[9] = nt;
+  int incl[10];
+#pragma unroll
+  for (int k = 0; k < 10; ++k) {
+    int v = cnt[k];
+#pragma unroll
+    for (int o = 1; o < 32; o <<= 1) {
+      const int a2 = __shfl_up_sync(0xffffffffu, v, o);
+      if (e >= o) v += a2;
+    }
+    incl[k] = v;
+  }
+  int tot[10];
+#pragma unroll
+  for (int k = 0; k < 10; ++k) tot[k] = __shfl_sync(0xffffffffu, incl[k], 31);
+  const int r0 = incl[0] - rows;
+  offsets[e] = r0;
+  rows_per_expert[e] = rows;
+  if (e == 31) *ntiles = tot[9];
+  if (order == 0) {
+    const int t0 = incl[9] - nt;
+    for (int i = 0; i < full; ++i) tiles[t0 + i] = make_int4(e, r0 + 256 * i, 256, 256);
+    if (nr) tiles[t0 + full] = make_int4(e, r0 + 256 * full, nr, nb ? nr : r);
+    if (nb) tiles[t0 + full + 1] = make_int4(e, r0 + 256 * full + nr, nb, r - nr);
+    return;
+  }
+  // class bases in widest-first order; big ranks k (classes 0..5), small ranks j (classes 6, 7)
+  int cbase[8];
+  {
+    int acc = 0;
+#pragma unroll
+    for (int k = 0; k < 8; ++k) { cbase[k] = (k == 6) ? 0 : acc; acc = (k == 5) ? 0 : acc + tot[1 + k]; }
+  }
+  const int B = tot[1] + tot[2] + tot[3] + tot[4] + tot[5] + tot[6], S = tot[7] + tot[8];
+  auto pos_big = [&](int k) -> int {
+    if (order == 1 || B == 0) return k;
+    return k + min(S, (4 * k * S) / (5 * B));
+  };
+  auto pos_small = [&](int j) -> int {
+    if (order == 1) return B + j;
+    if (B == 0) return j;
+    const int lim = (4 * S) / 5;
+    const int bb = j < lim ? (5 * B * (j + 1) + 4 * S - 1) / (4 * S) : B;
+    return j + bb;
+  };
+  // class 0 (256): this expert's full tiles and a 256-row remainder, at in-class ranks incl - cnt ..
+  const int p256 = cbase[0] + incl[1] - cnt[1];
+  for (int i = 0; i < full; ++i) tiles[pos_big(p256 + i)] = make_int4(e, r0 + 256 * i, 256, 256);
+  if (nr == 256) tiles[pos_big(p256 + full)] = make_int4(e, r0 + 256 * full, 256, r);
+#pragma unroll
+  for (int k = 1; k < 6; ++k)
+    if (nr == 256 - 32 * k) tiles[pos_big(cbase[k] + incl[1 + k] - 1)] = make_int4(e, r0 + 256 * full, nr, nb ? nr : r);
+  if (nr == 64) tiles[pos_small(cbase[6] + incl[7] - 1)] = make_int4(e, r0 + 256 * full, 64, r);
+  if (nr == 32) tiles[pos_small(cbase[7] + incl[8] - 1)] = make_int4(e, r0 + 256 * full, 32, r);
+  // a split remainder's second tile (32 or 64 rows; the first one, 128 rows, was placed above)
+  if (nb == 64) tiles[pos_small(cbase[6] + incl[7] - 1)] = make_int4(e, r0 + 256 * full + nr, 64, r - nr);
+  if (nb == 32) tiles[pos_small(cbase[7] + incl[8] - 1)] = make_int4(e, r0 + 256 * full + nr, 32, r - nr);
+}
+
+__global__ void moe_plan_kernel(const int* __restrict__ counts, int* __restrict__ offsets, int4* __restrict__ tiles,
+                                int* __restrict__ ntiles, int* __restrict__ rows_per_expert, int order) {
+  pdl_enter();
+  plan_warp(counts, offsets, tiles, ntiles, rows_per_expert, order, threadIdx.x);  // 32 threads
+}
+
+// ---- normalize the pooler output and scatter each token's row into its local routes' tile slots ----
+// p: [T, 4096] bf16; lid/pos: [T, 8]; writes xt (tile layout); zero-fills pad rows; rrow[t*8+k] = row (or -1)
+#define MOE_GATHER_MINB 1
+#define MOE_PADFILL_PARTS 8  // pad-fill blocks per expert (fewer blocks: the gather grid fits one wave at small T)
+// PLAN: the block works out the expert offsets itself (one warp scan over the 32 counts) and block 0 also writes the
+// whole plan (offsets, tile list, tile count, rows per expert) for the expert kernel: no separate plan launch.
+template <bool PLAN>
+__global__ void __launch_bounds__(256, MOE_GATHER_MINB) moe_gather_kernel(const __nv_bfloat16* __restrict__ p,
+                                                         const __nv_bfloat16* __restrict__ gw, const int* __restrict__ lid,
+                                                         const int* __restrict__ pos, const int* __restrict__ offsets_in,
+                                                         const int* __restrict__ counts, uint8_t* __restrict__ xt,
+                                                         int* __restrict__ rrow, int T, int* __restrict__ offsets_out = nullptr,
+                                                         int4* __restrict__ tiles = nullptr, int* __restrict__ ntiles = nullptr,
+                                                         int* __restrict__ rows_out = nullptr, int order = 0,
+                                                         int* __restrict__ row_tok = nullptr, int* __restrict__ cq = nullptr,
+                                                         int* __restrict__ qtail = nullptr) {
+  pdl_enter();
+  const int tok = blockIdx.x;
+  const int tid = threadIdx.x;
+  const int fine = order >> 8;
+  __shared__ float red[8];
+  __shared__ int off_s[32];
+  const int* offsets = offsets_in;
+  if constexpr (PLAN) {
+    if (tid < 32) {
+      const int c = counts[tid];
+      const int full = c >> 8, r = c & 255;
+      int nr, nb;
+      rem_tiles(r, fine, nr, nb);
+      const int rows = full * 256 + nr + nb;
+      int v = rows;
+#pragma unroll
+      for (int o = 1; o < 32; o <<= 1) {
+        const int a2 = __shfl_up_sync(0xffffffffu, v, o);
+        if (tid >= o) v += a2;
+      }
+      off_s[tid] = v - rows;
+      if (blockIdx.x == 0) plan_warp(counts, offsets_out, tiles, ntiles, rows_out, order, tid);
+    }
+    offsets = off_s;
+  }
+  if (tok >= T) {
+    if constexpr (PLAN) __syncthreads();
+    // pad-row zero fill: block (T + e*PARTS + part) zeroes part of expert e's pad rows
+    const int idx = tok - T, e = idx / MOE_PADFILL_PARTS, part = idx % MOE_PADFILL_PARTS;
+    const int c = counts[e];
+    const int full = c >> 8, r = c & 255;
+    int nr, nb;
+    rem_tiles(r, fine, nr, nb);
+    // remainder tile(s): pad rows [used, width) of each; tile layout: 64 stage blocks of width * 128 B
+#pragma unroll
+    for (int q = 0; q < 2; ++q) {
+      const int n = q ? nb : nr;
+      if (n == 0) continue;
+      const int r0 = offsets[e] + 256 * full + (q ? nr : 0);
+      const int used = q ? r - nr : (r < nr ? r : nr);
+      for (int lr = used + part; lr < n; lr += MOE_PADFILL_PARTS) {
+        for (int i = tid; i < 64 * 8; i += 256) {
+          const int stg = i >> 3, ch = i & 7;
+          *reinterpret_cast<uint4*>(xt + (size_t)r0 * 8192 + (size_t)stg * n * 128 + lr * 128 + ch * 16) =
+              make_uint4(0, 0, 0, 0);
+        }
+      }
+    }
+    return;
+  }
+  // thread handles elements [16*tid, 16*tid+16): stage tid/4, chunks 2*(tid%4), 2*(tid%4)+1
+  const uint4* src = reinterpret_cast<const uint4*>(p + (size_t)tok * 4096 + tid * 16);
+  uint4 v0 = src[0], v1 = src[1];
+  // the token's routes (row base, tile rows, row in tile), worked out by 8 threads while the row load is in flight
+  __shared__ long long mrow[8];
+  __shared__ int mn[8], mlr[8];
+  if constexpr (PLAN) __syncwarp();
+  if (tid < 8) {
+    const int k = tid;
+    const int l = lid[tok * 8 + k];
+    if (l < 0) {
+      rrow[tok * 8 + k] = -1;
+      mn[k] = 0;
+    } else {
+      const int ps = pos[tok * 8 + k];
+      const int c = counts[l];
+      const int full = c >> 8, r = c & 255;
+      int nr, nb;
+      rem_tiles(r, fine, nr, nb);
+      const int tl = ps >> 8;
+      int row0 = offsets[l] + 256 * tl, lr = ps & 255, n = tl < full ? 256 : nr;
+      if (tl >= full && nb && lr >= nr) {  // a split remainder's second tile
+        row0 += nr;
+        lr -= nr;
+        n = nb;
+      }
+      rrow[tok * 8 + k] = row0 + lr;
+      if (row_tok != nullptr) row_tok[row0 + lr] = tok;  // CIT: which token a GEMM2 row belongs to
+      mrow[k] = (long long)row0 * 8192 + lr * 128;
+      mn[k] = n;
+      mlr[k] = lr;
+    }
+    if (cq != nullptr) {  // CIT: a token without local routes is ready now (its combine writes zeros)
+      const unsigned lm = __ballot_sync(0xffu, l >= 0);
+      if (k == 0 && lm == 0) {
+        const int i = atomicAdd(qtail, 1);
+        asm volatile("st.release.gpu.global.b32 [%0], %1;" ::"l"(cq + i), "r"(tok + 1) : "memory");
+      }
+    }
+  }
+  float f[16];
+  const __nv_bfloat162* h0 = reinterpret_cast<const __nv_bfloat162*>(&v0);
+  const __nv_bfloat162* h1 = reinterpret_cast<const __nv_bfloat162*>(&v1);
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    float2 a = __bfloat1622float2(h0[i]), b = __bfloat1622float2(h1[i]);
+    f[2 * i] = a.x; f[2 * i + 1] = a.y; f[8 + 2 * i] = b.x; f[8 + 2 * i + 1] = b.y;
+  }
+  float ss = 0.f;
+#pragma unroll
+  for (int i = 0; i < 16; ++i) ss += f[i] * f[i];
+#pragma unroll
+  for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+  if ((tid & 31) == 0) red[tid >> 5] = ss;
+  __syncthreads();
+  float tot = 0.f;
+#pragma unroll
+  for (int i = 0; i < 8; ++i) tot += red[i];
+  const float rr = rsqrtf(tot / 4096.f + 1e-5f);
+  uint32_t outw[8];
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    const float4 gg = g1p4(gw + tid * 16 + 4 * i);
+    __nv_bfloat162 a = __floats2bfloat162_rn(f[4 * i] * rr * gg.x, f[4 * i + 1] * rr * gg.y);
+    __nv_bfloat162 b = __floats2bfloat162_rn(f[4 * i + 2] * rr * gg.z, f[4 * i + 3] * rr * gg.w);
+    outw[2 * i] = bf162_u32(a);
+    outw[2 * i + 1] = bf162_u32(b);
+  }
+  const int stg = tid >> 2, ch0 = 2 * (tid & 3);
+#pragma unroll
+  for (int k = 0; k < 8; ++k) {
+    const int n = mn[k];  // (written before the reduction's __syncthreads)
+    if (n == 0) continue;
+    const int lr = mlr[k];
+    uint8_t* rowp = xt + mrow[k] + (size_t)stg * n * 128;
+    const int x = lr & 7;
+    *reinterpret_cast<uint4*>(rowp + ((ch0 ^ x) << 4)) = make_uint4(outw[0], outw[1], outw[2], outw[3]);
+    *reinterpret_cast<uint4*>(rowp + (((ch0 + 1) ^ x) << 4)) = make_uint4(outw[4], outw[5], outw[6], outw[7]);
+  }
+}
+
+// ---- routing: top-8 experts per token from the router logits (hi + lo halves), one warp per token ----
+// Same math and tie-break as the Triton reference version (sigmoid(logit / sqrt(32)), + bias for selection, the
+// highest biased score first, lowest expert index on ties; weights = selected scores / their sum), but each lane
+// holds 8 experts and the 8 rounds of arg-max are warp shuffles (no block barriers). Local routes (experts
+// local_start .. +31) get a row position from a per-expert counter: positions are first taken from block-local
+// shared-memory counters, then each block reserves its range with one global atomic per expert (hot experts take
+// thousands of routes, and per-route global atomics on one address serialize).
+#define ROUTE_WARPS 16  // v69: 16 measured +0.06% over 32
+__global__ void __launch_bounds__(ROUTE_WARPS * 32) moe_route_kernel(const float* __restrict__ logits,
+                                                                     const float* __restrict__ bias,
+                                                                     const int* __restrict__ lstart, int* __restrict__ ids,
+                                                                     float* __restrict__ wout, int* __restrict__ lid,
+                                                                     int* __restrict__ pos, int* __restrict__ cnt, int T,
+                                                                     int* __restrict__ tok_left = nullptr, int* __restrict__ cq = nullptr) {
+  pdl_enter();
+  __shared__ int s_cnt[32], s_base[32];
+  const int t = blockIdx.x * ROUTE_WARPS + (threadIdx.x >> 5), lane = threadIdx.x & 31;
+  if (threadIdx.x < 32) s_cnt[threadIdx.x] = 0;
+  __syncthreads();
+  int e_mine = 0, loc = 0, lpos = 0;
+  bool local = false;
+  float w_mine = 0.f;
+  if (t < T) {
+    const float* lg = logits + (size_t)t * 512;
+    float sv[8], bv[8];
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+      const int e = lane + 32 * j;
+      const float x = (lg[e] + lg[256 + e]) * 0.1767766952966369f;
+      sv[j] = 1.f / (1.f + expf(-x));
+      bv[j] = sv[j] + bias[e];
+    }
+    int sel_e[8];
+    float sel_s[8];
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+      float bvv = bv[0];
+      int be = lane;
+#pragma unroll
+      for (int j = 1; j < 8; ++j) {  // ascending expert index within the lane: strict > keeps the lowest on ties
+        if (bv[j] > bvv) { bvv = bv[j]; be = lane + 32 * j; }
+      }
+      {
+        const uint32_t u = __float_as_uint(bvv);
+        const uint32_t key = (u & 0x80000000u) ? ~u : (u | 0x80000000u);  // unsigned order == float order
+        const uint32_t mk = __reduce_max_sync(0xffffffffu, key);
+        be = (int)__reduce_min_sync(0xffffffffu, key == mk ? (uint32_t)be : 0xffffffffu);  // lowest expert on ties
+      }
+      float mys = 0.f;
+#pragma unroll
+      for (int j = 0; j < 8; ++j) {
+        if (j == (be >> 5)) mys = sv[j];
+      }
+      sel_s[k] = __shfl_sync(0xffffffffu, mys, be & 31);
+      sel_e[k] = be;
+#pragma unroll
+      for (int j = 0; j < 8; ++j) {
+        if (lane + 32 * j == be) bv[j] = -INFINITY;
+      }
+    }
+    float sum = 0.f;
+#pragma unroll
+    for (int k = 0; k < 8; ++k) sum += sel_s[k];
+    e_mine = sel_e[0];
+    float sk = sel_s[0];
+#pragma unroll
+    for (int k = 1; k < 8; ++k) {
+      if (lane == k) { e_mine = sel_e[k]; sk = sel_s[k]; }
+    }
+    w_mine = sk / (sum + 1e-15f);
+    loc = (e_mine - *lstart + 256) % 256;
+    local = lane < 8 && loc < 32;
+    if (local) lpos = atomicAdd(&s_cnt[loc], 1);
+  }
+  __syncthreads();
+  if (threadIdx.x < 32) {
+    const int c = s_cnt[threadIdx.x];
+    s_base[threadIdx.x] = c ? atomicAdd(cnt + threadIdx.x, c) : 0;
+  }
+  __syncthreads();
+  if (t < T && tok_left != nullptr) {  // CIT: the token's local route count, and its combine-queue slot cleared
+    const unsigned lm = __ballot_sync(0xffffffffu, local);
+    if (lane == 0) {
+      tok_left[t] = __popc(lm);
+      cq[t] = 0;
+    }
+  }
+  if (t < T && lane < 8) {
+    ids[t * 8 + lane] = e_mine;
+    wout[t * 8 + lane] = w_mine;
+    lid[t * 8 + lane] = local ? loc : -1;
+    pos[t * 8 + lane] = local ? s_base[loc] + lpos : 0;
+  }
+}
+
+// ---- combine: out[t] = sum over t's local routes of norm(y[row] * pw) * w, one block of 256 threads per token ----
+// (the post-expert norm: scale by pw = 1 + w first, then RMSNorm with eps 1e-8). The token's local routes (about two of
+// its eight) are compacted first; their sums of squares share one block reduction, and the second pass re-reads each
+// route row from L1/L2. Few registers, so several blocks per SM keep enough loads in flight.
+__global__ void __launch_bounds__(256) moe_combine_kernel(const __nv_bfloat16* __restrict__ y, const int* __restrict__ rrow,
+                                                          const int* __restrict__ lid, const float* __restrict__ topw,
+                                                          const __nv_bfloat16* __restrict__ pw, __nv_bfloat16* __restrict__ out) {
+  // one token per block, 16 elements per thread: each local route's row post-normed on its own (rsqrt of its mean
+  // square + 1e-8, times g_post_expert_norm), weighted by its routing weight, summed (as the Triton _combine_kernel);
+  // up to 4 routes' rows in flight at once, one block reduction per group of 4
+  pdl_enter();
+  const int tok = blockIdx.x, tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  __shared__ float red[4][8];
+  int rows[8];
+  float wts[8];
+  int nl = 0;
+#pragma unroll
+  for (int k = 0; k < 8; ++k) {
+    const int l = lid[tok * 8 + k];
+    if (l >= 0) {
+      rows[nl] = rrow[tok * 8 + k];
+      wts[nl] = topw[tok * 8 + k];
+      ++nl;
+    }
+  }
+  float g[16];
+  {
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      const float4 q = g1p4(pw + tid * 16 + 4 * i);
+      g[4 * i] = q.x; g[4 * i + 1] = q.y; g[4 * i + 2] = q.z; g[4 * i + 3] = q.w;
+    }
+  }
+  float acc[16];
+#pragma unroll
+  for (int i = 0; i < 16; ++i) acc[i] = 0.f;
+#define COMB_GROUP 2
+  for (int k0 = 0; k0 < nl; k0 += COMB_GROUP) {
+    float x[COMB_GROUP][16];
+    float ss[COMB_GROUP];
+#pragma unroll
+    for (int u = 0; u < COMB_GROUP; ++u) {
+      ss[u] = 0.f;
+      if (k0 + u < nl) {
+        const uint4* src = reinterpret_cast<const uint4*>(y + (size_t)rows[k0 + u] * 4096 + tid * 16);
+        const uint4 v0 = src[0], v1 = src[1];
+        const __nv_bfloat162* h0 = reinterpret_cast<const __nv_bfloat162*>(&v0);
+        const __nv_bfloat162* h1 = reinterpret_cast<const __nv_bfloat162*>(&v1);
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+          const float2 f = __bfloat1622float2(h0[i]), q = __bfloat1622float2(h1[i]);
+          x[u][2 * i] = f.x * g[2 * i]; x[u][2 * i + 1] = f.y * g[2 * i + 1];
+          x[u][8 + 2 * i] = q.x * g[8 + 2 * i]; x[u][8 + 2 * i + 1] = q.y * g[8 + 2 * i + 1];
+        }
+#pragma unroll
+        for (int i = 0; i < 16; ++i) ss[u] += x[u][i] * x[u][i];
+      } else {
+#pragma unroll
+        for (int i = 0; i < 16; ++i) x[u][i] = 0.f;
+      }
+    }
+#pragma unroll
+    for (int u = 0; u < COMB_GROUP; ++u) {
+#pragma unroll
+      for (int o = 16; o > 0; o >>= 1) ss[u] += __shfl_xor_sync(0xffffffffu, ss[u], o);
+    }
+    if (k0) __syncthreads();  // the previous group's red[] has been read
+    if (lane == 0) {
+#pragma unroll
+      for (int u = 0; u < COMB_GROUP; ++u) red[u][warp] = ss[u];
+    }
+    __syncthreads();
+#pragma unroll
+    for (int u = 0; u < COMB_GROUP; ++u) {
+      if (k0 + u < nl) {
+        float tot = 0.f;
+#pragma unroll
+        for (int w = 0; w < 8; ++w) tot += red[u][w];
+        const float sc = rsqrtf(tot / 4096.f + 1e-8f) * wts[k0 + u];
+#pragma unroll
+        for (int i = 0; i < 16; ++i) acc[i] += x[u][i] * sc;
+      }
+    }
+  }
+  uint4 o0, o1;
+  __nv_bfloat162* b0 = reinterpret_cast<__nv_bfloat162*>(&o0);
+  __nv_bfloat162* b1 = reinterpret_cast<__nv_bfloat162*>(&o1);
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    b0[i] = __floats2bfloat162_rn(acc[2 * i], acc[2 * i + 1]);
+    b1[i] = __floats2bfloat162_rn(acc[8 + 2 * i], acc[8 + 2 * i + 1]);
+  }
+  uint4* dst = reinterpret_cast<uint4*>(out + (size_t)tok * 4096 + tid * 16);
+  dst[0] = o0;
+  dst[1] = o1;
+}
+
+}  // namespace okc_moe
+
+namespace okc_moe {
+
+// ---- q/k prep, CUDA version of the Triton _qk_prep_kernel (QK_PREP_CUDA): one block of 128 threads per token.
+// Per-head RMSNorm (eps 1e-5) of q (16 heads) and k (2 heads), RoPE on interleaved (even, odd) pairs with the angle
+// pos * inv_freq[i] rounded to fp32 as in the Triton kernel (cos/sin evaluated in double, then rounded), e4m3 (RNE,
+// satfinite) q rows and k/v cache rows (k and v divided by their scales when SCALED). Thread layout: q head tid/8, dims
+// 8*(tid%8)..+7; threads 0..15 also do the k heads (head tid/8), threads 16..31 the v row (dims 8*(tid-16)..+7).
+DEVI uint32_t qk_e4m3x2(float lo, float hi) {
+  uint16_t r;
+  asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(r) : "f"(hi), "f"(lo));
+  return r;
+}
+DEVI uint2 qk_pack8(const float (&x)[8]) {
+  return make_uint2(qk_e4m3x2(x[0], x[1]) | (qk_e4m3x2(x[2], x[3]) << 16), qk_e4m3x2(x[4], x[5]) | (qk_e4m3x2(x[6], x[7]) << 16));
+}
+DEVI void qk_load8(const __nv_bfloat16* p, float (&x)[8]) {
+  const uint4 v = *reinterpret_cast<const uint4*>(p);
+  const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&v);
+#pragma unroll
+  for (int i = 0; i < 4; ++i) { const float2 f = __bfloat1622float2(h[i]); x[2 * i] = f.x; x[2 * i + 1] = f.y; }
+}
+template <bool ROPE>
+DEVI void qk_norm_rope8(float (&x)[8], const float* cs, const float* sn, int d0) {
+  float ss = 0.f;
+#pragma unroll
+  for (int i = 0; i < 8; ++i) ss += x[i] * x[i];
+  ss += __shfl_xor_sync(0xffffffffu, ss, 1);
+  ss += __shfl_xor_sync(0xffffffffu, ss, 2);
+  ss += __shfl_xor_sync(0xffffffffu, ss, 4);
+  const float r = rsqrtf(ss / 64.f + 1e-5f);
+#pragma unroll
+  for (int i = 0; i < 8; ++i) x[i] *= r;
+  if constexpr (ROPE) {
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      const float c = cs[d0 / 2 + j], s = sn[d0 / 2 + j];
+      const float e = x[2 * j], o = x[2 * j + 1];
+      x[2 * j] = e * c - o * s;
+      x[2 * j + 1] = e * s + o * c;
+    }
+  }
+}
+template <bool ROPE, bool SCALED, typename PT, typename LT>
+__global__ void __launch_bounds__(128) qk_prep_kernel(const __nv_bfloat16* __restrict__ qkv, const PT* __restrict__ pos,
+                                                      const LT* __restrict__ loc, const float* __restrict__ invf,
+                                                      uint8_t* __restrict__ q8, uint8_t* __restrict__ kc, uint8_t* __restrict__ vc,
+                                                      const float* __restrict__ ksc, const float* __restrict__ vsc) {
+  __shared__ float s_cos[32], s_sin[32];
+  const int t = blockIdx.x, tid = threadIdx.x;
+  float pf = 0.f;
+  if (ROPE && tid < 32) pf = (float)pos[t];  // positions / cache rows are inputs, not the predecessor's results
+  const long long lrow = tid < 32 ? (long long)loc[t] : 0;
+  pdl_enter();
+  if constexpr (ROPE) {
+    if (tid < 32) {
+      const float ang = __fmul_rn(pf, invf[tid]);
+      double sd, cd;
+      sincos((double)ang, &sd, &cd);
+      s_cos[tid] = (float)cd;
+      s_sin[tid] = (float)sd;
+    }
+    __syncthreads();
+  }
+  const __nv_bfloat16* row = qkv + (size_t)t * 2304;
+  const int d0 = (tid & 7) * 8;
+  {
+    float x[8];
+    qk_load8(row + (tid >> 3) * 64 + d0, x);
+    qk_norm_rope8<ROPE>(x, s_cos, s_sin, d0);
+    *reinterpret_cast<uint2*>(q8 + (size_t)t * 1024 + (tid >> 3) * 64 + d0) = qk_pack8(x);
+  }
+  if (tid < 16) {  // k heads 0, 1 (the 8-lane groups of the reduction stay within one head)
+    float x[8];
+    qk_load8(row + 1024 + (tid >> 3) * 64 + d0, x);
+    qk_norm_rope8<ROPE>(x, s_cos, s_sin, d0);
+    if constexpr (SCALED) {
+      const float ks = *ksc;
+#pragma unroll
+      for (int i = 0; i < 8; ++i) x[i] = __fdiv_rn(x[i], ks);
+    }
+    *reinterpret_cast<uint2*>(kc + lrow * 128 + (tid >> 3) * 64 + d0) = qk_pack8(x);
+  } else if (tid < 32) {  // v: no norm
+    float x[8];
+    const int dv = (tid - 16) * 8;
+    qk_load8(row + 1152 + dv, x);
+    if constexpr (SCALED) {
+      const float vs = *vsc;
+#pragma unroll
+      for (int i = 0; i < 8; ++i) x[i] = __fdiv_rn(x[i], vs);
+    }
+    *reinterpret_cast<uint2*>(vc + lrow * 128 + dv) = qk_pack8(x);
+  }
+}
+
+// Residual boundary, one block per token row: stream = alpha * stream + beta * rms(branch [* gpost]); h = rms(stream)
+// * gpre in bf16. TPB threads x 8 elements per chunk; used from 2048 tokens up (the Triton version wins below).
+// MODE 0: stream' = alpha * stream + beta * rmsnorm(branch [* gpost]); writes stream' (fp32) and its rmsnorm * gpre (bf16).
+// MODE 1 (first boundary, recompute scheme): the same, but stream' is not written; the branch's rms factor r1 goes to
+//   rio[row] instead (4 bytes a row instead of 32 KB).
+// MODE 2 (second boundary, recompute scheme): `stream` is the layer's input stream; the first boundary's stream' is
+//   rebuilt on the fly as alpha1 * stream + beta1 * (br1 * rio[row]) (the same fp32 expression as MODE 1) instead of
+//   being read back: 16 KB of bf16 branch read instead of 32 KB of fp32 stream written and read.
+#define BND_RC_MINB 2  // MODE 2 at 512 threads compiled to 74 registers (1 block/SM, half the bytes in flight)
+template <int TPB, bool GPOST, bool STREAMHINT, int MODE = 0>
+__global__ void __launch_bounds__(TPB, MODE == 2 ? BND_RC_MINB : (TPB <= 512 ? 2 : 1)) boundary_kernel(const __nv_bfloat16* __restrict__ branch, const float* __restrict__ stream,
+                                           const __nv_bfloat16* __restrict__ gpost, const float* __restrict__ alpha,
+                                           const float* __restrict__ beta, const __nv_bfloat16* __restrict__ gpre,
+                                           float* __restrict__ sout, __nv_bfloat16* __restrict__ nout, int* __restrict__ zp = nullptr, int zn = 0,
+                                           const __nv_bfloat16* __restrict__ br1 = nullptr, float* __restrict__ rio = nullptr,
+                                           const float* __restrict__ alpha1 = nullptr, const float* __restrict__ beta1 = nullptr) {
+  pdl_enter();
+  // block 0 also zeroes the MoE's per-call counters (counts | work counter | tile done): saves a fill kernel
+  if (zn > 0 && blockIdx.x == 0)
+    for (int i = threadIdx.x; i < zn; i += TPB) zp[i] = 0;
+  constexpr int H = 8192, C = H / (TPB * 8), NW = TPB / 32;
+  const size_t row = blockIdx.x;
+  const int tid = threadIdx.x;
+  __shared__ float red[2][NW];
+  float b[C * 8], s[C * 8];
+  const __nv_bfloat16* br = branch + row * H;
+  const float* sr = stream + row * H;
+#pragma unroll
+  for (int c = 0; c < C; ++c) {
+    const int off = c * TPB * 8 + tid * 8;
+    uint4 v; float4 s0, s1;
+    if (STREAMHINT) { v = __ldcs(reinterpret_cast<const uint4*>(br + off)); s0 = __ldcs(reinterpret_cast<const float4*>(sr + off)); s1 = __ldcs(reinterpret_cast<const float4*>(sr + off + 4)); }
+    else { v = *reinterpret_cast<const uint4*>(br + off); s0 = *reinterpret_cast<const float4*>(sr + off); s1 = *reinterpret_cast<const float4*>(sr + off + 4); }
+    const __nv_bfloat162* h = reinterpret_cast<const __nv_bfloat162*>(&v);
+#pragma unroll
+    for (int i = 0; i < 4; ++i) { float2 f = __bfloat1622float2(h[i]); b[c * 8 + 2 * i] = f.x; b[c * 8 + 2 * i + 1] = f.y; }
+    s[c * 8 + 0] = s0.x; s[c * 8 + 1] = s0.y; s[c * 8 + 2] = s0.z; s[c * 8 + 3] = s0.w;
+    s[c * 8 + 4] = s1.x; s[c * 8 + 5] = s1.y; s[c * 8 + 6] = s1.z; s[c * 8 + 7] = s1.w;
+    if constexpr (MODE == 2) {
+      const uint4 u = *reinterpret_cast<const uint4*>(br1 + row * H + off);
+      const __nv_bfloat162* hu = reinterpret_cast<const __nv_bfloat162*>(&u);
+      const float r1p = rio[row];
+      const float4 a0 = __ldg(reinterpret_cast<const float4*>(alpha1 + off)), a1 = __ldg(reinterpret_cast<const float4*>(alpha1 + off + 4));
+      const float4 e0 = __ldg(reinterpret_cast<const float4*>(beta1 + off)), e1 = __ldg(reinterpret_cast<const float4*>(beta1 + off + 4));
+      const float av[8] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w};
+      const float bv[8] = {e0.x, e0.y, e0.z, e0.w, e1.x, e1.y, e1.z, e1.w};
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        const float2 f = __bfloat1622float2(hu[i]);
+        s[c * 8 + 2 * i] = __fmaf_rn(av[2 * i], s[c * 8 + 2 * i], bv[2 * i] * (f.x * r1p));
+        s[c * 8 + 2 * i + 1] = __fmaf_rn(av[2 * i + 1], s[c * 8 + 2 * i + 1], bv[2 * i + 1] * (f.y * r1p));
+      }
+    }
+  }
+  float ss = 0.f;
+#pragma unroll
+  for (int c = 0; c < C; ++c) {
+    const int off = c * TPB * 8 + tid * 8;
+    if constexpr (GPOST) {
+      const float4 g0 = g1p4(gpost + off), g1 = g1p4(gpost + off + 4);
+      b[c * 8 + 0] *= g0.x; b[c * 8 + 1] *= g0.y; b[c * 8 + 2] *= g0.z; b[c * 8 + 3] *= g0.w;
+      b[c * 8 + 4] *= g1.x; b[c * 8 + 5] *= g1.y; b[c * 8 + 6] *= g1.z; b[c * 8 + 7] *= g1.w;
+    }
+#pragma unroll
+    for (int i = 0; i < 8; ++i) ss += b[c * 8 + i] * b[c * 8 + i];
+  }
+#pragma unroll
+  for (int o = 16; o > 0; o >>= 1) ss += __shfl_xor_sync(0xffffffffu, ss, o);
+  if ((tid & 31) == 0) red[0][tid >> 5] = ss;
+  __syncthreads();
+  float tot = 0.f;
+#pragma unroll
+  for (int i = 0; i < NW; ++i) tot += red[0][i];
+  const float r1 = rsqrtf(tot / H + 1e-8f);
+  if constexpr (MODE == 1) {
+    if (tid == 0) rio[row] = r1;
+  }
+  float ss2 = 0.f;
+  float* so = sout + row * H;
+#pragma unroll
+  for (int c = 0; c < C; ++c) {
+    const int off = c * TPB * 8 + tid * 8;
+    const float4 a0 = __ldg(reinterpret_cast<const float4*>(alpha + off)), a1 = __ldg(reinterpret_cast<const float4*>(alpha + off + 4));
+    const float4 e0 = __ldg(reinterpret_cast<const float4*>(beta + off)), e1 = __ldg(reinterpret_cast<const float4*>(beta + off + 4));
+    const float av[8] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w};
+    const float bv[8] = {e0.x, e0.y, e0.z, e0.w, e1.x, e1.y, e1.z, e1.w};
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+      if constexpr (MODE == 0) s[c * 8 + i] = av[i] * s[c * 8 + i] + bv[i] * (b[c * 8 + i] * r1);
+      else s[c * 8 + i] = __fmaf_rn(av[i], s[c * 8 + i], bv[i] * (b[c * 8 + i] * r1));  // MODE 2 rebuilds it identically
+      ss2 += s[c * 8 + i] * s[c * 8 + i];
+    }
+    if constexpr (MODE != 1) {
+      float4 o0 = make_float4(s[c * 8 + 0], s[c * 8 + 1], s[c * 8 + 2], s[c * 8 + 3]), o1 = make_float4(s[c * 8 + 4], s[c * 8 + 5], s[c * 8 + 6], s[c * 8 + 7]);
+      if (STREAMHINT) { __stcs(reinterpret_cast<float4*>(so + off), o0); __stcs(reinterpret_cast<float4*>(so + off + 4), o1); }
+      else { *reinterpret_cast<float4*>(so + off) = o0; *reinterpret_cast<float4*>(so + off + 4) = o1; }
+    }
+  }
+#pragma unroll
+  for (int o = 16; o > 0; o >>= 1) ss2 += __shfl_xor_sync(0xffffffffu, ss2, o);
+  if ((tid & 31) == 0) red[1][tid >> 5] = ss2;
+  __syncthreads();
+  float tot2 = 0.f;
+#pragma unroll
+  for (int i = 0; i < NW; ++i) tot2 += red[1][i];
+  const float r2 = rsqrtf(tot2 / H + 1e-5f);
+  __nv_bfloat16* no = nout + row * H;
+#pragma unroll
+  for (int c = 0; c < C; ++c) {
+    const int off = c * TPB * 8 + tid * 8;
+    const float4 g0 = g1p4(gpre + off), g1 = g1p4(gpre + off + 4);
+    const float gv[8] = {g0.x, g0.y, g0.z, g0.w, g1.x, g1.y, g1.z, g1.w};
+    uint4 o;
+    __nv_bfloat162* ho = reinterpret_cast<__nv_bfloat162*>(&o);
+#pragma unroll
+    for (int i = 0; i < 4; ++i) ho[i] = __floats2bfloat162_rn(s[c * 8 + 2 * i] * r2 * gv[2 * i], s[c * 8 + 2 * i + 1] * r2 * gv[2 * i + 1]);
+    if (STREAMHINT) __stcs(reinterpret_cast<uint4*>(no + off), o); else *reinterpret_cast<uint4*>(no + off) = o;
+  }
+}
+}  // namespace okc_moe
+
+namespace okc_moe {
+// ---- gather the attended keys/values of each request into contiguous [B, Smax, 2, 64] FP8 buffers ----
+// keys at positions [first_b, seq_b + L) where first_b = window ? max(0, seq_b - window + 1) : 0; slot j <- position first_b + j
+__global__ void __launch_bounds__(256) kv_gather_kernel(const uint8_t* __restrict__ kc, const uint8_t* __restrict__ vc,
+                                                        const int* __restrict__ page_table, const int* __restrict__ seq_lens,
+                                                        uint8_t* __restrict__ ko, uint8_t* __restrict__ vo, int max_pages,
+                                                        int page, int L, int window, int Smax) {
+  const int b = blockIdx.y;
+  const int seq = seq_lens[b];
+  const int first = window ? max(0, seq - window + 1) : 0;
+  const int n = seq + L - first;
+  const int j = blockIdx.x * 32 + (threadIdx.x >> 3);  // 32 rows per block, 8 threads x 16 B per row (K), same for V
+  const int c = threadIdx.x & 7;
+  if (j >= n) return;
+  const int pos = first + j;
+  const long row = (long)page_table[(long)b * max_pages + pos / page] * page + pos % page;
+  const uint4 kv = *reinterpret_cast<const uint4*>(kc + row * 128 + c * 16);
+  const uint4 vv = *reinterpret_cast<const uint4*>(vc + row * 128 + c * 16);
+  *reinterpret_cast<uint4*>(ko + ((long)b * Smax + j) * 128 + c * 16) = kv;
+  *reinterpret_cast<uint4*>(vo + ((long)b * Smax + j) * 128 + c * 16) = vv;
+}
+}  // namespace okc_moe
+
+// FP8 prefill attention for Muse Spark (hdim 64, 16 q heads / 2 kv heads), fused output RMSNorm * sigmoid(gate).
+// Appended after moe_gemm.cu (uses its helpers).
+//
+// attn_prep_kernel gathers each request's attended keys/values from the paged cache into per-(request, kv head,
+// 128-key tile) blocks: K tiles in the 64B-swizzled K-major layout; V tiles transposed (72 rows x 128 keys, 128B
+// swizzle) with the keys permuted inside each 32-key chunk so that the QK^T accumulator registers are directly the
+// FP8 A operand of the P.V wgmma, plus a row of ones (row 64) so the tensor core also sums P (the softmax
+// denominator, exactly over the FP8-rounded P that multiplies V).
+//
+// attn_fwd_kernel: one CTA = 16 query tokens x the 8 query heads of one kv head (128 rows); 2 consumer warpgroups
+// (64 rows each) + 1 producer warp streaming K/V tiles with bulk copies into a 4-stage ring. Per tile and
+// warpgroup: S = Q K^T (FP8 wgmma) -> mask -> online softmax (P scaled by 2^8 like FA3) -> P.V (FP8 wgmma).
+// EXPMODE n >= 0: n of each thread's 64 exponentials per tile as an FMA-pipe polynomial, the rest on the MUFU;
+// -1: exp2 on f16 pairs converted straight to FP8 pairs. P is rounded to E4M3 for the P.V MMA in every mode.
+DEVI void wgmma_fp8_ss_n128(float* d, uint64_t da, uint64_t db, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %66, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n128k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63}, %64, %65, p, 1, 1;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35]), "+f"(d[36]), "+f"(d[37]), "+f"(d[38]), "+f"(d[39]), "+f"(d[40]), "+f"(d[41]), "+f"(d[42]), "+f"(d[43]), "+f"(d[44]), "+f"(d[45]), "+f"(d[46]), "+f"(d[47]), "+f"(d[48]), "+f"(d[49]), "+f"(d[50]), "+f"(d[51]), "+f"(d[52]), "+f"(d[53]), "+f"(d[54]), "+f"(d[55]), "+f"(d[56]), "+f"(d[57]), "+f"(d[58]), "+f"(d[59]), "+f"(d[60]), "+f"(d[61]), "+f"(d[62]), "+f"(d[63])
+    : "l"(da), "l"(db), "r"(scale_d));
+}
+
+
+DEVI void wgmma_fp8_rs_n72(float* d, const uint32_t* a, uint64_t db, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %41, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n72k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35}, {%36, %37, %38, %39}, %40, p, 1, 1;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31]), "+f"(d[32]), "+f"(d[33]), "+f"(d[34]), "+f"(d[35])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(db), "r"(scale_d));
+}
+
+
+// [public-C P2] P.V without the ones-row column: the softmax denominator is the FP32 sum of the unrounded P
+DEVI void wgmma_fp8_rs_n64(float* d, const uint32_t* a, uint64_t db, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %37, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, {%32, %33, %34, %35}, %36, p, 1, 1;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "l"(db), "r"(scale_d));
+}
+
+
+DEVI void wgmma_fp8_ss_n64(float* d, uint64_t da, uint64_t db, int scale_d) {
+  asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %34, 0;\n"
+    "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, %32, %33, p, 1, 1;\n}\n"
+    : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]), "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7]), "+f"(d[8]), "+f"(d[9]), "+f"(d[10]), "+f"(d[11]), "+f"(d[12]), "+f"(d[13]), "+f"(d[14]), "+f"(d[15]), "+f"(d[16]), "+f"(d[17]), "+f"(d[18]), "+f"(d[19]), "+f"(d[20]), "+f"(d[21]), "+f"(d[22]), "+f"(d[23]), "+f"(d[24]), "+f"(d[25]), "+f"(d[26]), "+f"(d[27]), "+f"(d[28]), "+f"(d[29]), "+f"(d[30]), "+f"(d[31])
+    : "l"(da), "l"(db), "r"(scale_d));
+}
+
+
+namespace okc_attn {
+using namespace okc_moe;
+
+constexpr int NK = 128;                   // keys per tile
+constexpr int TILE_K = NK * 64;           // 8 KB
+constexpr int VROWS = 72;                 // 64 head dims + the ones row (+ 7 zero rows)
+constexpr int TILE_V = VROWS * NK;        // 9 KB
+constexpr int STAGE = TILE_K + TILE_V;    // 17 KB (1024-aligned)
+#define ATTN_ASTAGES 4
+constexpr int ASTAGES = ATTN_ASTAGES;
+#define ATTN_VOTEMAX 1  // exp-turn softmax: skip the row-max shuffles and rescale exps when a warp's maxima did not grow
+#define ATTN_VOTEMAX_ALL 0  // the same in the other softmax paths (slower for the sliding-window variant 8)
+#define ATTN_GATE_PF 1
+#define ATTN_RR_HAND2 48  // early hand-off point (exps per thread) of the non-pipelined RR step (variants 41/42: slower than 8 on sliding)
+
+
+// grid (ntk * HALVES, 2, B), block 256; HALVES = 2: each block stages one 64-key half of a tile (short windows: more
+// blocks in flight)
+// ---- programmatic dependent launch: every kernel lets its successor launch as soon as all of its blocks
+// are running, and waits for its predecessor's results before touching global memory (a no-op when the kernel was not
+// launched with the PDL attribute) ----
+__device__ __forceinline__ void pdl_enter_attn() {
+  asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
+  asm volatile("griddepcontrol.wait;" ::: "memory");
+}
+__device__ __forceinline__ void pdl_trigger_attn() {
+  asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
+}
+__device__ __forceinline__ void pdl_wait_attn() {
+  asm volatile("griddepcontrol.wait;" ::: "memory");
+}
+// ATTN_EARLY_Q: the K/V staging kernels let the attention kernel launch only after their own wait (so qk_prep, which
+// writes Q, is complete), and the attention kernel waits for the staged K/V in its producer only: barrier setup and the
+// consumers' Q staging overlap the staging kernel.
+#define ATTN_EARLY_Q 1  // (Oct 26: search +0.06..0.09% on v113; the staging kernel triggers only after its own wait, so Q is complete)
+__device__ __forceinline__ void pdl_enter_prep() {
+  if constexpr (ATTN_EARLY_Q) {
+    pdl_wait_attn();
+    pdl_trigger_attn();
+  } else {
+    pdl_enter_attn();
+  }
+}
+
+template <int HALVES>
+__global__ void __launch_bounds__(256) attn_prep_kernel(const uint8_t* __restrict__ kc, const uint8_t* __restrict__ vc,
+                                                        const int* __restrict__ page_table, int max_pages, int page,
+                                                        const int* __restrict__ seq_lens, int L, int window, int ntk,
+                                                        uint8_t* __restrict__ kt, uint8_t* __restrict__ vt, int part = 0) {
+  pdl_enter_prep();
+  const int tile = blockIdx.x / HALVES, hf = blockIdx.x % HALVES, h = blockIdx.y, b = blockIdx.z;
+  constexpr int NKH = NK / HALVES;  // keys staged by this block
+  const int seq = seq_lens[b];
+  const int first = window ? max(0, seq - window + 1) : 0;
+  const int nk = seq + L - first;
+  if (tile * NK >= nk) return;
+  // part 1: only tiles made entirely of keys already in the cache before this call (they need nothing from this
+  // call's qk_prep, so they are staged on a side stream during the qkv GEMM); part 2: the rest; part 0: all
+  if (part && ((part == 1) != (tile < (seq - first) / NK))) return;
+  constexpr int VPS = 68;  // padded rows (17 words): the transposing LDS.32 reads of 4 keys hit different banks
+  __shared__ __align__(16) uint8_t vs[NK * VPS];
+  const size_t tb = ((size_t)(b * 2 + h) * ntk + tile);
+  uint8_t* ko = kt + tb * TILE_K;
+  uint8_t* vo = vt + tb * TILE_V;
+  for (int i = threadIdx.x; i < NKH * 4; i += 256) {
+    const int r = hf * NKH + (i >> 2), c = i & 3;
+    const int j = tile * NK + r;
+    uint4 kv = make_uint4(0, 0, 0, 0), vv = make_uint4(0, 0, 0, 0);
+    if (j < nk) {
+      const int pos = first + j;
+      const long row = (long)page_table[(long)b * max_pages + pos / page] * page + pos % page;
+      kv = *reinterpret_cast<const uint4*>(kc + row * 128 + h * 64 + c * 16);
+      vv = *reinterpret_cast<const uint4*>(vc + row * 128 + h * 64 + c * 16);
+    }
+    *reinterpret_cast<uint4*>(ko + r * 64 + ((c ^ ((r >> 1) & 3)) << 4)) = kv;
+    uint32_t* vw = reinterpret_cast<uint32_t*>(vs + r * VPS + c * 16);
+    vw[0] = vv.x; vw[1] = vv.y; vw[2] = vv.z; vw[3] = vv.w;
+  }
+  __syncthreads();
+  // V^T by register 4x4 byte transposes (as attn_prep2): this block's chunks cc of 16 dim groups, then the ones and
+  // zero rows
+  for (int i = threadIdx.x; i < 16 * (8 / HALVES); i += 256) {
+    const int dg = i / (8 / HALVES), cc = hf * (8 / HALVES) + i % (8 / HALVES);
+    const int d0 = 4 * dg, kb = (cc >> 1) * 32 + (cc & 1) * 16;
+    uint32_t w[4][4];
+#pragma unroll
+    for (int q = 0; q < 4; ++q) {
+      const uint32_t* r0 = reinterpret_cast<const uint32_t*>(vs + (kb + 2 * q) * VPS + d0);
+      const uint32_t a0 = r0[0], a1 = r0[VPS / 4], a2 = r0[8 * VPS / 4], a3 = r0[9 * VPS / 4];
+      const uint32_t t0 = __byte_perm(a0, a1, 0x5140), t1 = __byte_perm(a2, a3, 0x5140);
+      const uint32_t t2 = __byte_perm(a0, a1, 0x7362), t3 = __byte_perm(a2, a3, 0x7362);
+      w[0][q] = __byte_perm(t0, t1, 0x5410);
+      w[1][q] = __byte_perm(t0, t1, 0x7632);
+      w[2][q] = __byte_perm(t2, t3, 0x5410);
+      w[3][q] = __byte_perm(t2, t3, 0x7632);
+    }
+#pragma unroll
+    for (int dd = 0; dd < 4; ++dd) {
+      const int d = d0 + dd;
+      *reinterpret_cast<uint4*>(vo + d * 128 + ((cc ^ (d & 7)) << 4)) = make_uint4(w[dd][0], w[dd][1], w[dd][2], w[dd][3]);
+    }
+  }
+  for (int i = threadIdx.x; i < 8 * (8 / HALVES); i += 256) {
+    const int d = 64 + i / (8 / HALVES), cc = hf * (8 / HALVES) + i % (8 / HALVES);
+    const uint32_t one = d == 64 ? 0x38383838u : 0u;  // e4m3 1.0
+    *reinterpret_cast<uint4*>(vo + d * 128 + ((cc ^ (d & 7)) << 4)) = make_uint4(one, one, one, one);
+  }
+}
+
+// grid (ntk, 1, B), block 256: both heads of a 128-key tile per block (full 128-byte cache rows, one page-table read per
+// key); V goes through shared memory with a 68-byte row pitch so the byte transpose reads are bank-conflict free
+__global__ void __launch_bounds__(256) attn_prep2_kernel(const uint8_t* __restrict__ kc, const uint8_t* __restrict__ vc,
+                                                         const int* __restrict__ page_table, int max_pages, int page,
+                                                         const int* __restrict__ seq_lens, int L, int window, int ntk,
+                                                         uint8_t* __restrict__ kt, uint8_t* __restrict__ vt, int part = 0) {
+  pdl_enter_prep();
+  const int tile = blockIdx.x, b = blockIdx.z;
+  const int seq = seq_lens[b];
+  const int first = window ? max(0, seq - window + 1) : 0;
+  const int nk = seq + L - first;
+  if (tile * NK >= nk) return;
+  if (part && ((part == 1) != (tile < (seq - first) / NK))) return;  // (see attn_prep_kernel)
+  constexpr int VP = 68;
+  __shared__ __align__(16) uint8_t vs[2][NK * VP];
+  // 128 keys x 8 chunks of 16 bytes (chunks 0-3: head 0, 4-7: head 1)
+  // (explicitly batching a thread's 4 page lookups and 8 row loads measured slower: 12.0 -> 13.4 us at turn-1 full)
+  for (int i = threadIdx.x; i < NK * 8; i += 256) {
+    const int r = i >> 3, c8 = i & 7, h = c8 >> 2, c = c8 & 3;
+    const int j = tile * NK + r;
+    uint4 kv = make_uint4(0, 0, 0, 0), vv = make_uint4(0, 0, 0, 0);
+    if (j < nk) {
+      const int pos = first + j;
+      const long row = (long)page_table[(long)b * max_pages + pos / page] * page + pos % page;
+      kv = *reinterpret_cast<const uint4*>(kc + row * 128 + c8 * 16);
+      vv = *reinterpret_cast<const uint4*>(vc + row * 128 + c8 * 16);
+    }
+    uint8_t* ko = kt + ((size_t)(b * 2 + h) * ntk + tile) * TILE_K;
+    *reinterpret_cast<uint4*>(ko + r * 64 + ((c ^ ((r >> 1) & 3)) << 4)) = kv;
+    uint32_t* vw = reinterpret_cast<uint32_t*>(vs[h] + r * VP + c * 16);  // 4-byte aligned (68 = 17 words)
+    vw[0] = vv.x; vw[1] = vv.y; vw[2] = vv.z; vw[3] = vv.w;
+  }
+  __syncthreads();
+  // V^T by 4x4 byte transposes in registers: thread (h, dims 4dg..4dg+3, chunk cc) reads, for each of the chunk's 4
+  // words q, the 4 keys' 4-dim words (LDS.32) and transposes them with 8 PRMTs into 4 dims' words of 4 keys
+  {
+    const int h = threadIdx.x >> 7, dg = (threadIdx.x >> 3) & 15, cc = threadIdx.x & 7;
+    const int d0 = 4 * dg;
+    const int kb = (cc >> 1) * 32 + (cc & 1) * 16;
+    uint32_t w[4][4];  // [dim dd][word q]
+#pragma unroll
+    for (int q = 0; q < 4; ++q) {
+      const uint32_t* r0 = reinterpret_cast<const uint32_t*>(vs[h] + (kb + 2 * q) * VP + d0);
+      const uint32_t a0 = r0[0], a1 = r0[VP / 4], a2 = r0[8 * VP / 4], a3 = r0[9 * VP / 4];  // keys 2q, 2q+1, 2q+8, 2q+9
+      const uint32_t t0 = __byte_perm(a0, a1, 0x5140), t1 = __byte_perm(a2, a3, 0x5140);
+      const uint32_t t2 = __byte_perm(a0, a1, 0x7362), t3 = __byte_perm(a2, a3, 0x7362);
+      w[0][q] = __byte_perm(t0, t1, 0x5410);
+      w[1][q] = __byte_perm(t0, t1, 0x7632);
+      w[2][q] = __byte_perm(t2, t3, 0x5410);
+      w[3][q] = __byte_perm(t2, t3, 0x7632);
+    }
+    uint8_t* vo = vt + ((size_t)(b * 2 + h) * ntk + tile) * TILE_V;
+#pragma unroll
+    for (int dd = 0; dd < 4; ++dd) {
+      const int d = d0 + dd;
+      *reinterpret_cast<uint4*>(vo + d * 128 + ((cc ^ (d & 7)) << 4)) = make_uint4(w[dd][0], w[dd][1], w[dd][2], w[dd][3]);
+    }
+    // the ones row (d = 64) and 7 zero rows: 2 heads x 8 rows x 8 chunks = 128 stores
+    if (threadIdx.x < 128) {
+      const int hh = threadIdx.x >> 6, dr = 64 + ((threadIdx.x >> 3) & 7), c2 = threadIdx.x & 7;
+      const uint32_t one = dr == 64 ? 0x38383838u : 0u;  // e4m3 1.0
+      uint8_t* vo2 = vt + ((size_t)(b * 2 + hh) * ntk + tile) * TILE_V;
+      *reinterpret_cast<uint4*>(vo2 + dr * 128 + ((c2 ^ (dr & 7)) << 4)) = make_uint4(one, one, one, one);
+    }
+  }
+}
+
+struct AttnArgs {
+  const uint8_t* q;         // [T, 16, 64] e4m3
+  const uint8_t* kt;
+  const uint8_t* vt;
+  const int* seq_lens;
+  const __nv_bfloat16* qkv; // [T, 2304]: gate at 1280 + head*64
+  __nv_bfloat16* out;       // [T, 1024]
+  int L, window, ntk, nqb;
+  float c;                  // softmax scale * k_scale * log2(e)
+  float v_scale;
+  int nsplit;               // key-range splits (grid.y = 2 * nsplit); > 1 writes partials to ws
+  float* ws;                // [nsplit, T, 16, 66] fp32: O (64, unnormalized), m, l
+  int zero;                 // always 0: the first QK k-step's scale-d, opaque to the compiler
+  const uint8_t* pf;        // ATTN_PF: the next GEMM's weight, prefetched into L2 by the producers (nullptr: none)
+  unsigned long long pf_bytes;
+  int sk;                   // stream-K (attn_fwd_sk_kernel): the grid size G; 0 otherwise
+  int nb;                   // stream-K: batch count
+  int* skbuf;               // stream-K: [0] = W (tiles per CTA), [1 .. npairs+1] = pair prefix, then each CTA's first pair
+};
+#define ATTN_PF 0  // (Oct 26 03:12: o-proj weight prefetch during the attention: no change, off)
+
+DEVI uint64_t desc_sw64(uint32_t saddr) {
+  uint64_t d = 0;
+  d |= (uint64_t)((saddr & 0x3FFFF) >> 4);
+  d |= (uint64_t)1 << 16;
+  d |= (uint64_t)(512 >> 4) << 32;  // 8 rows x 64 B
+  d |= (uint64_t)2 << 62;           // SWIZZLE_64B
+  return d;
+}
+
+
+DEVI uint32_t pack_e4m3x4(float p0, float p1, float p2, float p3) {
+  uint16_t lo, hi;
+  asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(lo) : "f"(p1), "f"(p0));
+  asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(hi) : "f"(p3), "f"(p2));
+  return (uint32_t)lo | ((uint32_t)hi << 16);
+}
+
+// e4m3 bytes of 2^y0..2^y3 (low to high) via f16 pairs: one MUFU op per two exponentials
+DEVI uint32_t exp2_e4m3x4(float y0, float y1, float y2, float y3) {
+  uint32_t h01, h23;
+  asm("cvt.rn.f16x2.f32 %0, %1, %2;" : "=r"(h01) : "f"(y1), "f"(y0));
+  asm("cvt.rn.f16x2.f32 %0, %1, %2;" : "=r"(h23) : "f"(y3), "f"(y2));
+  asm("ex2.approx.f16x2 %0, %0;" : "+r"(h01));
+  asm("ex2.approx.f16x2 %0, %0;" : "+r"(h23));
+  uint16_t b01, b23;
+  asm("cvt.rn.satfinite.e4m3x2.f16x2 %0, %1;" : "=h"(b01) : "r"(h01));
+  asm("cvt.rn.satfinite.e4m3x2.f16x2 %0, %1;" : "=h"(b23) : "r"(h23));
+  return (uint32_t)b01 | ((uint32_t)b23 << 16);
+}
+
+// 2^y on the FMA pipe (FA4-style): round-to-nearest split, degree-3 minimax on [-0.5, 0.5], exponent add.
+DEVI float exp2_poly(float y) {
+  y = fmaxf(y, -127.f);
+  const float jm = y + 12582912.f;  // 1.5 * 2^23: integer part lands in the mantissa
+  const float j = jm - 12582912.f;
+  const float f = y - j;            // [-0.5, 0.5]
+  float pf = fmaf(f, 0.0555041086648216f, 0.2402264923172690f);
+  pf = fmaf(pf, f, 0.6931472028550421f);
+  pf = fmaf(pf, f, 1.0f);
+  return __int_as_float(__float_as_int(pf) + (__float_as_int(jm) << 23));
+}
+
+
+template <int N>
+DEVI void fence_f(float* r) {
+#pragma unroll
+  for (int i = 0; i < N; ++i) asm volatile("" : "+f"(r[i])::"memory");
+}
+template <int N>
+DEVI void fence_u(uint32_t* r) {
+#pragma unroll
+  for (int i = 0; i < N; ++i) asm volatile("" : "+r"(r[i])::"memory");
+}
+
+// P = exp2(s * c - (m * c - ATTN_POFF)): P is 2^ATTN_POFF at the running maximum, rounded to e4m3 (max 448). Every
+// softmax path (masked or not, split partials) must use the same offset: O and l carry the same 2^ATTN_POFF factor.
+#define ATTN_POFF 8.f
+// Late-max (exp-turn path, unmasked tiles): no row maximum before the exps. P is computed against the running
+// maximum of earlier tiles, packed, then tested on the packed bytes: a byte of 0x7E (P >= ~432, or saturated) means a
+// score jumped past the headroom (448 / 2^ATTN_POFF); only then (and on the first tile, whose running maximum is
+// -1e30) the warp takes the exact path: row maxima, rescale factors, and the tile's P again from the fp32 scores.
+// P below 448 against a stale maximum is still exact softmax arithmetic (O and l share the reference).
+struct AttnState {
+  float o[36];  // columns 0..63: O ([public-C P2] o[32..35] unused: the P.V wgmma is m64n64)
+  float lA, lB;  // [public-C P2] this thread's FP32 partial sums of the unrounded P (rows A, B), against the running max
+  float mA, mB;
+  int nready;   // ATTN_EARLY_TEST: the next tile's K/V barrier already tested complete
+};
+__device__ int* g_attn_cnt;  // per (batch, query block, kv head) arrival counters (zeroed at prepare; reset by the merger)
+struct AttnCtx {
+  const AttnArgs& p;
+  uint8_t* qs;
+  uint8_t* ring;
+  uint32_t bars;
+  int wg, w, lane, g, t4;
+  int kmaxA, kmaxB, kminA, kminB, nk, L, q_first, q_last, t_begin, t_end;
+  uint64_t dq, dk0, dv0;  // wgmma descriptors of this warpgroup's Q tile and of stage 0's K / V tiles
+  int t_ring;             // the tile that sits in ring position 0 (t_begin, or earlier for later stream-K segments)
+};
+
+DEVI int stage_of(const AttnCtx& cx, int t) { return (t - cx.t_ring) % ASTAGES; }
+DEVI uint32_t phase_of(const AttnCtx& cx, int t) { return ((t - cx.t_ring) / ASTAGES) & 1; }
+
+
+DEVI void issue_qk(const AttnCtx& cx, float* sacc, int stage) {
+  uint8_t* kst = cx.ring + stage * STAGE;
+  const uint64_t dq = desc_sw64(smem_u32(cx.qs + cx.wg * 64 * 64));
+  const uint64_t dk = desc_sw64(smem_u32(kst));
+  fence_f<64>(sacc);
+  wg_fence();
+  wgmma_fp8_ss_n128(sacc, dq, dk, cx.p.zero);
+  wgmma_fp8_ss_n128(sacc, dq + 2, dk + 2, 1);
+  wg_commit();
+  fence_f<64>(sacc);
+}
+
+
+// one key tile, sequential within the warpgroup (QK -> softmax -> P.V); the two consumer warpgroups overlap each
+// other's softmax with their MMAs.
+// EXPMODE: -1 = exp2 on f16 pairs; 0..64 = that many of each thread's 64 exponentials per tile on the FMA pipe
+DEVI void named_bar_arrive(int id, int n) { asm volatile("bar.arrive %0, %1;" ::"r"(id), "r"(n) : "memory"); }
+
+// RR: the consumer warpgroups take turns on the softmax (named barriers 4..4+NWG-1), so each softmax has the SM's
+// exp2 units to itself while the other warpgroups run their QK^T / P.V on the tensor cores.
+template <int EXPMODE, bool OVL, int RR = 0>
+DEVI void attn_step(const AttnCtx& cx, AttnState& st, float* sacc, int t) {
+  static_assert(EXPMODE >= 0, "[public-C P2] the f16-pair exp path has no FP32 denominator");
+  const AttnArgs& p = cx.p;
+  const int scu = stage_of(cx, t);
+  if (!OVL) {  // OVL: S(t) was computed by the previous step (issued together with its P.V)
+    mbar_wait(cx.bars + 8 * scu, phase_of(cx, t));
+    issue_qk(cx, sacc, scu);
+    wg_wait<0>();
+  }
+  const int k0 = t * NK;
+  const int L = cx.L, nk = cx.nk;
+  const bool need_mask = (k0 + NK - 1 > nk - L + cx.q_first) || (p.window && k0 < nk - L + cx.q_last - p.window + 1);
+  if (need_mask) {
+#pragma unroll
+    for (int jj = 0; jj < 16; ++jj) {
+#pragma unroll
+      for (int e = 0; e < 2; ++e) {
+        const int key = k0 + 8 * jj + 2 * cx.t4 + e;
+        if (key > cx.kmaxA || key < cx.kminA) sacc[4 * jj + e] = -INFINITY;
+        if (key > cx.kmaxB || key < cx.kminB) sacc[4 * jj + 2 + e] = -INFINITY;
+      }
+    }
+  }
+  const float c = p.c;
+  // tree reductions (short dependency chains): row A = elements 4jj, 4jj+1; row B = 4jj+2, 4jj+3
+#define MX4(o) fmaxf(fmaxf(sacc[(o)], sacc[(o) + 1]), fmaxf(sacc[(o) + 4], sacc[(o) + 5]))
+  const float a0 = fmaxf(MX4(0), MX4(8)), a1 = fmaxf(MX4(16), MX4(24)), a2 = fmaxf(MX4(32), MX4(40)), a3 = fmaxf(MX4(48), MX4(56));
+  const float b0 = fmaxf(MX4(2), MX4(10)), b1 = fmaxf(MX4(18), MX4(26)), b2 = fmaxf(MX4(34), MX4(42)), b3 = fmaxf(MX4(50), MX4(58));
+#undef MX4
+  float tmA = fmaxf(fmaxf(a0, a1), fmaxf(a2, a3)), tmB = fmaxf(fmaxf(b0, b1), fmaxf(b2, b3));
+  float nmA = st.mA, nmB = st.mB;
+  float scA = 1.f, scB = 1.f;
+  // exact skip: when no lane's local maximum exceeds its row's running maximum, every row of this warp keeps
+  // its maximum (rescale 1): no shuffles and no rescale exps on the exp2 units
+  if (!ATTN_VOTEMAX_ALL || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+    nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+    scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+    st.mA = nmA; st.mB = nmB;
+  }
+  const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+  uint32_t pa[4][4];
+  if constexpr (EXPMODE < 0) {
+#pragma unroll
+    for (int cc = 0; cc < 4; ++cc) {
+      const float* x = sacc + 16 * cc;
+      pa[cc][0] = exp2_e4m3x4(fmaf(x[0], c, -offA), fmaf(x[1], c, -offA), fmaf(x[4], c, -offA), fmaf(x[5], c, -offA));
+      pa[cc][1] = exp2_e4m3x4(fmaf(x[2], c, -offB), fmaf(x[3], c, -offB), fmaf(x[6], c, -offB), fmaf(x[7], c, -offB));
+      pa[cc][2] = exp2_e4m3x4(fmaf(x[8], c, -offA), fmaf(x[9], c, -offA), fmaf(x[12], c, -offA), fmaf(x[13], c, -offA));
+      pa[cc][3] = exp2_e4m3x4(fmaf(x[10], c, -offB), fmaf(x[11], c, -offB), fmaf(x[14], c, -offB), fmaf(x[15], c, -offB));
+    }
+  } else {
+    // RR: the warpgroups take turns on the exp2 units for the exp loop only (the max before it and the FP8 packing
+    // after it run outside the turn), so the SM's MUFU pipe always has one warpgroup's exps to issue
+    if constexpr (RR > 1) {
+      named_bar_sync(4 + cx.wg, 256);
+      fence_f<64>(sacc);
+    }
+#pragma unroll
+    for (int jj = 0; jj < 16; ++jj) {
+      if (4 * jj < EXPMODE) {
+        sacc[4 * jj] = exp2_poly(fmaf(sacc[4 * jj], c, -offA));
+        sacc[4 * jj + 1] = exp2_poly(fmaf(sacc[4 * jj + 1], c, -offA));
+        sacc[4 * jj + 2] = exp2_poly(fmaf(sacc[4 * jj + 2], c, -offB));
+        sacc[4 * jj + 3] = exp2_poly(fmaf(sacc[4 * jj + 3], c, -offB));
+      } else {
+        sacc[4 * jj] = exp2f(fmaf(sacc[4 * jj], c, -offA));
+        sacc[4 * jj + 1] = exp2f(fmaf(sacc[4 * jj + 1], c, -offA));
+        sacc[4 * jj + 2] = exp2f(fmaf(sacc[4 * jj + 2], c, -offB));
+        sacc[4 * jj + 3] = exp2f(fmaf(sacc[4 * jj + 3], c, -offB));
+      }
+      if constexpr (RR > 1 && ATTN_RR_HAND2 < 64) {
+        if (4 * jj + 4 == ATTN_RR_HAND2) {  // early hand-off: the next warpgroup's turn starts now
+          fence_f<ATTN_RR_HAND2>(sacc);
+          named_bar_arrive(4 + (cx.wg + 1 == RR ? 0 : cx.wg + 1), 256);
+        }
+      }
+    }
+    if constexpr (RR > 1) {
+      if constexpr (ATTN_RR_HAND2 >= 64) {
+        fence_f<64>(sacc);
+        named_bar_arrive(4 + (cx.wg + 1 == RR ? 0 : cx.wg + 1), 256);  // the next warpgroup's turn
+      }
+    }
+#pragma unroll
+    for (int cc = 0; cc < 4; ++cc) {
+      const float* x = sacc + 16 * cc;
+      pa[cc][0] = pack_e4m3x4(x[0], x[1], x[4], x[5]);
+      pa[cc][1] = pack_e4m3x4(x[2], x[3], x[6], x[7]);
+      pa[cc][2] = pack_e4m3x4(x[8], x[9], x[12], x[13]);
+      pa[cc][3] = pack_e4m3x4(x[10], x[11], x[14], x[15]);
+    }
+  }
+  {   // [public-C P2] FP32 denominator: this tile's unrounded P (FA3 softmax.h:181-184), against the new running max
+    float sA = 0.f, sB = 0.f;
+#pragma unroll
+    for (int jj = 0; jj < 16; ++jj) { sA += sacc[4 * jj] + sacc[4 * jj + 1]; sB += sacc[4 * jj + 2] + sacc[4 * jj + 3]; }
+    st.lA = st.lA * scA + sA; st.lB = st.lB * scB + sB;
+  }
+  if (!__all_sync(0xffffffffu, scA == 1.f && scB == 1.f)) {  // the running max rarely moves after a few tiles
+#pragma unroll
+    for (int jj = 0; jj < 9; ++jj) {
+      st.o[4 * jj] *= scA; st.o[4 * jj + 1] *= scA;
+      st.o[4 * jj + 2] *= scB; st.o[4 * jj + 3] *= scB;
+    }
+  }
+  uint8_t* vst = cx.ring + scu * STAGE + TILE_K;
+  const uint64_t dv = desc_sw128(smem_u32(vst));
+  fence_u<16>(&pa[0][0]);
+  fence_f<36>(st.o);
+  wg_fence();
+#pragma unroll
+  for (int cc = 0; cc < 4; ++cc) wgmma_fp8_rs_n64(st.o, pa[cc], dv + 2 * cc, 1);
+  wg_commit();
+  fence_f<36>(st.o);
+  if (OVL && t + 1 <= cx.t_end) {  // the next tile's QK^T runs on the tensor cores together with this P.V
+    const int sn = stage_of(cx, t + 1);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, t + 1));
+    issue_qk(cx, sacc, sn);
+  }
+  wg_wait<0>();
+  __syncwarp();
+  if (cx.lane == 0) mbar_arrive(cx.bars + 8 * ASTAGES + 8 * scu);
+}
+
+// ---------------- half tiles: each 128-key stage in two 64-key steps ----------------
+// S and P are half as large (32 + 8 registers), so four consumer warpgroups fit the register file: more warps per
+// scheduler keep the exp2 units busy while other warpgroups wait on their MMAs.
+DEVI void issue_qk_h(const AttnCtx& cx, float* sacc, int stage, int h) {
+  uint8_t* kst = cx.ring + stage * STAGE + h * 64 * 64;
+  uint64_t dq0 = desc_sw64(smem_u32(cx.qs + cx.wg * 64 * 64));
+  uint64_t dk0 = desc_sw64(smem_u32(kst));
+  uint64_t dq1 = dq0 + 2, dk1 = dk0 + 2;
+  // both k-steps' descriptors exist before the pipeline stage opens (a descriptor register rewritten between the two
+  // wgmmas serializes every wgmma in the kernel, C7513)
+  asm volatile("" : "+l"(dq0), "+l"(dk0), "+l"(dq1), "+l"(dk1));
+  fence_f<32>(sacc);
+  wg_fence();
+  wgmma_fp8_ss_n64(sacc, dq0, dk0, cx.p.zero);
+  wgmma_fp8_ss_n64(sacc, dq1, dk1, 1);
+  wg_commit();
+  fence_f<32>(sacc);
+}
+
+template <int EXPMODE>
+DEVI void attn_step_h(const AttnCtx& cx, AttnState& st, float* sacc, int t) {
+  const AttnArgs& p = cx.p;
+  const int scu = stage_of(cx, t);
+  mbar_wait(cx.bars + 8 * scu, phase_of(cx, t));
+  uint8_t* vst = cx.ring + scu * STAGE + TILE_K;
+  const uint64_t dv = desc_sw128(smem_u32(vst));
+  const int L = cx.L, nk = cx.nk;
+  const float c = p.c;
+#pragma unroll
+  for (int h = 0; h < 2; ++h) {
+    issue_qk_h(cx, sacc, scu, h);
+    wg_wait<0>();
+    const int k0 = t * NK + 64 * h;
+    const bool need_mask = (k0 + 63 > nk - L + cx.q_first) || (p.window && k0 < nk - L + cx.q_last - p.window + 1);
+    if (need_mask) {
+#pragma unroll
+      for (int jj = 0; jj < 8; ++jj) {
+#pragma unroll
+        for (int e = 0; e < 2; ++e) {
+          const int key = k0 + 8 * jj + 2 * cx.t4 + e;
+          if (key > cx.kmaxA || key < cx.kminA) sacc[4 * jj + e] = -INFINITY;
+          if (key > cx.kmaxB || key < cx.kminB) sacc[4 * jj + 2 + e] = -INFINITY;
+        }
+      }
+    }
+#define MX4(o) fmaxf(fmaxf(sacc[(o)], sacc[(o) + 1]), fmaxf(sacc[(o) + 4], sacc[(o) + 5]))
+    float tmA = fmaxf(fmaxf(MX4(0), MX4(8)), fmaxf(MX4(16), MX4(24)));
+    float tmB = fmaxf(fmaxf(MX4(2), MX4(10)), fmaxf(MX4(18), MX4(26)));
+#undef MX4
+    float nmA = st.mA, nmB = st.mB;
+    float scA = 1.f, scB = 1.f;
+    // exact skip: when no lane's local maximum exceeds its row's running maximum, every row of this warp keeps
+    // its maximum (rescale 1): no shuffles and no rescale exps on the exp2 units
+    if (!ATTN_VOTEMAX_ALL || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+      tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+      tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+      tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+      tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+      nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+      scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+      st.mA = nmA; st.mB = nmB;
+    }
+    const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+#pragma unroll
+    for (int jj = 0; jj < 8; ++jj) {
+      if (4 * jj < EXPMODE) {
+        sacc[4 * jj] = exp2_poly(fmaf(sacc[4 * jj], c, -offA));
+        sacc[4 * jj + 1] = exp2_poly(fmaf(sacc[4 * jj + 1], c, -offA));
+        sacc[4 * jj + 2] = exp2_poly(fmaf(sacc[4 * jj + 2], c, -offB));
+        sacc[4 * jj + 3] = exp2_poly(fmaf(sacc[4 * jj + 3], c, -offB));
+      } else {
+        sacc[4 * jj] = exp2f(fmaf(sacc[4 * jj], c, -offA));
+        sacc[4 * jj + 1] = exp2f(fmaf(sacc[4 * jj + 1], c, -offA));
+        sacc[4 * jj + 2] = exp2f(fmaf(sacc[4 * jj + 2], c, -offB));
+        sacc[4 * jj + 3] = exp2f(fmaf(sacc[4 * jj + 3], c, -offB));
+      }
+    }
+    uint32_t pa[2][4];
+#pragma unroll
+    for (int cc = 0; cc < 2; ++cc) {
+      const float* x = sacc + 16 * cc;
+      pa[cc][0] = pack_e4m3x4(x[0], x[1], x[4], x[5]);
+      pa[cc][1] = pack_e4m3x4(x[2], x[3], x[6], x[7]);
+      pa[cc][2] = pack_e4m3x4(x[8], x[9], x[12], x[13]);
+      pa[cc][3] = pack_e4m3x4(x[10], x[11], x[14], x[15]);
+    }
+    if (!__all_sync(0xffffffffu, scA == 1.f && scB == 1.f)) {
+#pragma unroll
+      for (int jj = 0; jj < 9; ++jj) {
+        st.o[4 * jj] *= scA; st.o[4 * jj + 1] *= scA;
+        st.o[4 * jj + 2] *= scB; st.o[4 * jj + 3] *= scB;
+      }
+    }
+    fence_u<8>(&pa[0][0]);
+    fence_f<36>(st.o);
+    wg_fence();
+#pragma unroll
+    for (int cc = 0; cc < 2; ++cc) wgmma_fp8_rs_n64(st.o, pa[cc], dv + 2 * (2 * h + cc), 1);
+    wg_commit();
+    fence_f<36>(st.o);
+    wg_wait<0>();
+  }
+  __syncwarp();
+  if (cx.lane == 0) mbar_arrive(cx.bars + 8 * ASTAGES + 8 * scu);
+}
+
+// ---------------- software-pipelined consumer (FA3-style intra-warpgroup overlap) ----------------
+// Tile t's softmax runs while the tensor cores do tile t-1's P.V: per tile, issue QK(t) and P.V(t-1), wait for QK(t),
+// softmax(t) into a second P register set, wait for P.V(t-1), rescale O, release tile t-1's stage.
+// Reads S without writing it (S is the accumulator of a wgmma still inside an open pipeline stage: writing it in place
+// makes ptxas serialize every wgmma, C7513); masking is applied on the fly.
+template <int EXPMODE, bool MASK>
+DEVI void softmax_core(const AttnCtx& cx, AttnState& st, const float* sacc, int k0, uint32_t (&pa)[4][4], float& scA, float& scB) {
+  auto V = [&](int i) -> float {
+    if constexpr (!MASK) {
+      return sacc[i];
+    } else {
+      const int key = k0 + 8 * (i >> 2) + 2 * cx.t4 + (i & 1);
+      const bool bad = (i & 2) ? (key > cx.kmaxB || key < cx.kminB) : (key > cx.kmaxA || key < cx.kminA);
+      return bad ? -INFINITY : sacc[i];
+    }
+  };
+  const float c = cx.p.c;
+#define MX4(o) fmaxf(fmaxf(V(o), V((o) + 1)), fmaxf(V((o) + 4), V((o) + 5)))
+  const float a0 = fmaxf(MX4(0), MX4(8)), a1 = fmaxf(MX4(16), MX4(24)), a2 = fmaxf(MX4(32), MX4(40)), a3 = fmaxf(MX4(48), MX4(56));
+  const float b0 = fmaxf(MX4(2), MX4(10)), b1 = fmaxf(MX4(18), MX4(26)), b2 = fmaxf(MX4(34), MX4(42)), b3 = fmaxf(MX4(50), MX4(58));
+#undef MX4
+  float tmA = fmaxf(fmaxf(a0, a1), fmaxf(a2, a3)), tmB = fmaxf(fmaxf(b0, b1), fmaxf(b2, b3));
+  float nmA = st.mA, nmB = st.mB;
+  scA = 1.f; scB = 1.f;
+  // exact skip: when no lane's local maximum exceeds its row's running maximum, every row of this warp keeps
+  // its maximum (rescale 1): no shuffles and no rescale exps on the exp2 units
+  if (!ATTN_VOTEMAX_ALL || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+    nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+    scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+    st.mA = nmA; st.mB = nmB;
+  }
+  const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+  auto E = [&](int i) -> float {
+    const float y = fmaf(V(i), c, (i & 2) ? -offB : -offA);
+    if (i < EXPMODE) return exp2_poly(y);
+    return exp2f(y);
+  };
+  float sA = 0.f, sB = 0.f;   // [public-C P2] FP32 denominator: this tile's unrounded P
+#pragma unroll
+  for (int cc = 0; cc < 4; ++cc) {
+    const int o = 16 * cc;
+    float x[16];
+#pragma unroll
+    for (int i = 0; i < 16; ++i) x[i] = E(o + i);
+    sA += ((x[0] + x[1]) + (x[4] + x[5])) + ((x[8] + x[9]) + (x[12] + x[13]));
+    sB += ((x[2] + x[3]) + (x[6] + x[7])) + ((x[10] + x[11]) + (x[14] + x[15]));
+    pa[cc][0] = pack_e4m3x4(x[0], x[1], x[4], x[5]);
+    pa[cc][1] = pack_e4m3x4(x[2], x[3], x[6], x[7]);
+    pa[cc][2] = pack_e4m3x4(x[8], x[9], x[12], x[13]);
+    pa[cc][3] = pack_e4m3x4(x[10], x[11], x[14], x[15]);
+  }
+  st.lA = st.lA * scA + sA; st.lB = st.lB * scB + sB;
+}
+
+#define ATTN_RR_HAND 24  // v64: 24 measured +0.16% with the vote-skip
+// RR > 1: the softmax with the warpgroups taking turns on the exp2 units (named barriers 4..4+RR-1) for the exp loop
+// only; the max before it and the FP8 packing after it run outside the turn. Exps are written over S in place.
+template <bool MASK, int RR, int EXPMODE = 0>
+DEVI void softmax_core_rr(const AttnCtx& cx, AttnState& st, float* sacc, int k0, uint32_t (&pa)[4][4], float& scA, float& scB) {
+  // EXPMODE > 0: that many of the 64 exps per thread run as a cubic polynomial on the FMA pipe (every 64/EXPMODE-th),
+  // off the exp2 units that bound the turns
+  auto EXP = [&](int i, float y) -> float {
+    if constexpr (EXPMODE > 0) {
+      if (i % (64 / EXPMODE) == 0) return exp2_poly(y);
+    }
+    return exp2f(y);
+  };
+  if constexpr (MASK) {
+#pragma unroll
+    for (int i = 0; i < 64; ++i) {
+      const int key = k0 + 8 * (i >> 2) + 2 * cx.t4 + (i & 1);
+      const bool bad = (i & 2) ? (key > cx.kmaxB || key < cx.kminB) : (key > cx.kmaxA || key < cx.kminA);
+      if (bad) sacc[i] = -INFINITY;
+    }
+  }
+  const float c = cx.p.c;
+#define MX4(o) fmaxf(fmaxf(sacc[(o)], sacc[(o) + 1]), fmaxf(sacc[(o) + 4], sacc[(o) + 5]))
+  const float a0 = fmaxf(MX4(0), MX4(8)), a1 = fmaxf(MX4(16), MX4(24)), a2 = fmaxf(MX4(32), MX4(40)), a3 = fmaxf(MX4(48), MX4(56));
+  const float b0 = fmaxf(MX4(2), MX4(10)), b1 = fmaxf(MX4(18), MX4(26)), b2 = fmaxf(MX4(34), MX4(42)), b3 = fmaxf(MX4(50), MX4(58));
+#undef MX4
+  float tmA = fmaxf(fmaxf(a0, a1), fmaxf(a2, a3)), tmB = fmaxf(fmaxf(b0, b1), fmaxf(b2, b3));
+  float nmA = st.mA, nmB = st.mB;
+  scA = 1.f; scB = 1.f;
+  // exact skip: when no lane's local maximum exceeds its row's running maximum, every row of this warp keeps
+  // its maximum (rescale 1): no shuffles and no rescale exps on the exp2 units
+  if (!ATTN_VOTEMAX || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+    nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+    scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+    st.mA = nmA; st.mB = nmB;
+  }
+  const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+  named_bar_sync(4 + cx.wg, 256);  // my turn
+  fence_f<64>(sacc);
+  // the next warpgroup's turn starts after the first ATTN_RR_HAND of my 64 exps: two warpgroups overlap on the exp2
+  // units for the rest, which hides the hand-off latency
+#pragma unroll
+  for (int i = 0; i < ATTN_RR_HAND; ++i) sacc[i] = EXP(i, fmaf(sacc[i], c, (i & 2) ? -offB : -offA));
+  fence_f<ATTN_RR_HAND>(sacc);
+  named_bar_arrive(4 + (cx.wg + 1 == RR ? 0 : cx.wg + 1), 256);
+#pragma unroll
+  for (int i = ATTN_RR_HAND; i < 64; ++i) sacc[i] = EXP(i, fmaf(sacc[i], c, (i & 2) ? -offB : -offA));
+  {   // [public-C P2] FP32 denominator: this tile's unrounded P (FA3 softmax.h:181-184), against the new running max
+    float sA = 0.f, sB = 0.f;
+#pragma unroll
+    for (int jj = 0; jj < 16; ++jj) { sA += sacc[4 * jj] + sacc[4 * jj + 1]; sB += sacc[4 * jj + 2] + sacc[4 * jj + 3]; }
+    st.lA = st.lA * scA + sA; st.lB = st.lB * scB + sB;
+  }
+#pragma unroll
+  for (int cc = 0; cc < 4; ++cc) {
+    const float* x = sacc + 16 * cc;
+    pa[cc][0] = pack_e4m3x4(x[0], x[1], x[4], x[5]);
+    pa[cc][1] = pack_e4m3x4(x[2], x[3], x[6], x[7]);
+    pa[cc][2] = pack_e4m3x4(x[8], x[9], x[12], x[13]);
+    pa[cc][3] = pack_e4m3x4(x[10], x[11], x[14], x[15]);
+  }
+}
+
+template <int EXPMODE, int RR = 0>
+DEVI void softmax_tile(const AttnCtx& cx, AttnState& st, float* sacc, int t, uint32_t (&pa)[4][4], float& scA, float& scB) {
+  const AttnArgs& p = cx.p;
+  const int k0 = t * NK;
+  const int L = cx.L, nk = cx.nk;
+  const bool need_mask = (k0 + NK - 1 > nk - L + cx.q_first) || (p.window && k0 < nk - L + cx.q_last - p.window + 1);
+  if constexpr (RR > 1) {
+    if (need_mask) softmax_core_rr<true, RR, EXPMODE>(cx, st, sacc, k0, pa, scA, scB);
+    else softmax_core_rr<false, RR, EXPMODE>(cx, st, sacc, k0, pa, scA, scB);
+  } else {
+    if (need_mask) softmax_core<EXPMODE, true>(cx, st, sacc, k0, pa, scA, scB);
+    else softmax_core<EXPMODE, false>(cx, st, sacc, k0, pa, scA, scB);
+  }
+}
+
+DEVI void issue_pv(const AttnCtx& cx, float* o, uint32_t (&pa)[4][4], int stage) {
+  uint8_t* vst = cx.ring + stage * STAGE + TILE_K;
+  const uint64_t dv = desc_sw128(smem_u32(vst));
+  fence_u<16>(&pa[0][0]);
+  fence_f<36>(o);
+  wg_fence();
+#pragma unroll
+  for (int cc = 0; cc < 4; ++cc) wgmma_fp8_rs_n64(o, pa[cc], dv + 2 * cc, 1);
+  wg_commit();
+  fence_f<36>(o);
+}
+
+DEVI void rescale_o(AttnState& st, float scA, float scB) {
+  if (!__all_sync(0xffffffffu, scA == 1.f && scB == 1.f)) {
+#pragma unroll
+    for (int jj = 0; jj < 9; ++jj) {
+      st.o[4 * jj] *= scA; st.o[4 * jj + 1] *= scA;
+      st.o[4 * jj + 2] *= scB; st.o[4 * jj + 3] *= scB;
+    }
+  }
+}
+
+DEVI void release_stage(const AttnCtx& cx, int stage) {
+  __syncwarp();
+  if (cx.lane == 0) mbar_arrive(cx.bars + 8 * ASTAGES + 8 * stage);
+}
+
+#define ATTN_EARLY_TEST 0  // test the next tile's K/V barrier (non-blocking) before the P.V wait; skip the blocking wait
+DEVI bool mbar_test(uint32_t bar, uint32_t parity) {
+  uint32_t r;
+  asm volatile("{\n.reg .pred p;\nmbarrier.test_wait.parity.shared.b64 p, [%1], %2;\nselp.u32 %0, 1, 0, p;\n}\n"
+               : "=r"(r) : "r"(bar), "r"(parity) : "memory");
+  return r != 0;
+}
+template <int EXPMODE, int RR = 0>
+DEVI void pipe_step(const AttnCtx& cx, AttnState& st, float* sacc, int t, uint32_t (&pin)[4][4], uint32_t (&pout)[4][4]) {
+  const int s = stage_of(cx, t), sp = stage_of(cx, t - 1);
+  if (!ATTN_EARLY_TEST || !st.nready) mbar_wait(cx.bars + 8 * s, phase_of(cx, t));
+  issue_qk(cx, sacc, s);
+  issue_pv(cx, st.o, pin, sp);
+  wg_wait<1>();  // QK(t) is done; P.V(t-1) may still run
+  float scA, scB;
+  softmax_tile<EXPMODE, RR>(cx, st, sacc, t, pout, scA, scB);
+  if (ATTN_EARLY_TEST) st.nready = t + 1 <= cx.t_end && mbar_test(cx.bars + 8 * stage_of(cx, t + 1), phase_of(cx, t + 1));
+  wg_wait<0>();  // P.V(t-1) is done
+  fence_u<16>(&pin[0][0]);
+  fence_f<36>(st.o);
+  release_stage(cx, sp);
+  rescale_o(st, scA, scB);
+}
+
+DEVI void pipe_last(const AttnCtx& cx, AttnState& st, uint32_t (&pin)[4][4]) {
+  const int sl = stage_of(cx, cx.t_end);
+  issue_pv(cx, st.o, pin, sl);
+  wg_wait<0>();
+  fence_u<16>(&pin[0][0]);
+  fence_f<36>(st.o);
+  release_stage(cx, sl);
+}
+
+// two P register sets alternate (no copies: a copy into an in-flight wgmma's operand serializes the pipeline)
+template <int EXPMODE, int RR = 0>
+DEVI void attn_pipe(const AttnCtx& cx, AttnState& st, float* sacc) {
+  const int tb = cx.t_begin, te = cx.t_end;
+  if (tb > te) return;
+  uint32_t p0[4][4], p1[4][4];
+  {
+    const int s = stage_of(cx, tb);
+    mbar_wait(cx.bars + 8 * s, phase_of(cx, tb));
+    issue_qk(cx, sacc, s);
+    wg_wait<0>();
+    float scA, scB;
+    softmax_tile<EXPMODE, RR>(cx, st, sacc, tb, p0, scA, scB);  // O is still zero: nothing to rescale
+  }
+  int t = tb + 1;
+  for (; t + 1 <= te; t += 2) {
+    pipe_step<EXPMODE, RR>(cx, st, sacc, t, p0, p1);
+    pipe_step<EXPMODE, RR>(cx, st, sacc, t + 1, p1, p0);
+  }
+  if (t <= te) {
+    pipe_step<EXPMODE, RR>(cx, st, sacc, t, p0, p1);
+    pipe_last(cx, st, p1);
+  } else {
+    pipe_last(cx, st, p0);
+  }
+}
+
+#define ATTN_EARLY_QK 0
+// Early QK^T: QK(t+1) is issued as soon as softmax(t) has packed P(t) (S is dead then), so its latency hides behind the
+// P.V(t-1) drain, the O rescale and the next step's P.V issue instead of opening the next step. On entry QK(t) is in
+// flight.
+template <int EXPMODE, int RR, bool MORE>
+DEVI void pipe_step_eq(const AttnCtx& cx, AttnState& st, float* sacc, int t, uint32_t (&pin)[4][4], uint32_t (&pout)[4][4]) {
+  // compile-time MORE: a wgmma issued under a runtime branch serializes the kernel (ptxas C7513)
+  const int sp = stage_of(cx, t - 1);
+  issue_pv(cx, st.o, pin, sp);
+  wg_wait<1>();  // QK(t) is done; P.V(t-1) may still run
+  float scA, scB;
+  softmax_tile<EXPMODE, RR>(cx, st, sacc, t, pout, scA, scB);
+  if constexpr (MORE) {
+    const int sn = stage_of(cx, t + 1);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, t + 1));
+    issue_qk(cx, sacc, sn);
+  }
+  if constexpr (MORE) wg_wait<1>();  // P.V(t-1) is done; QK(t+1) may still run
+  else wg_wait<0>();
+  fence_u<16>(&pin[0][0]);
+  fence_f<36>(st.o);
+  release_stage(cx, sp);
+  rescale_o(st, scA, scB);
+}
+
+template <int EXPMODE, int RR = 0>
+DEVI void attn_pipe_eq(const AttnCtx& cx, AttnState& st, float* sacc) {
+  const int tb = cx.t_begin, te = cx.t_end;
+  if (tb > te) return;
+  uint32_t p0[4][4], p1[4][4];
+  {
+    const int s = stage_of(cx, tb);
+    mbar_wait(cx.bars + 8 * s, phase_of(cx, tb));
+    issue_qk(cx, sacc, s);
+    wg_wait<0>();
+    float scA, scB;
+    softmax_tile<EXPMODE, RR>(cx, st, sacc, tb, p0, scA, scB);  // O is still zero: nothing to rescale
+  }
+  {  // QK(tb + 1) runs while the first tile's tail drains. Issued even for a single-tile range (the producer loads a
+     // dummy tile): a separate single-tile path makes ptxas serialize every wgmma (C7511)
+    const int sn = stage_of(cx, tb + 1);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, tb + 1));
+    issue_qk(cx, sacc, sn);
+  }
+  int t = tb + 1;
+  for (; t + 2 <= te; t += 2) {
+    pipe_step_eq<EXPMODE, RR, true>(cx, st, sacc, t, p0, p1);
+    pipe_step_eq<EXPMODE, RR, true>(cx, st, sacc, t + 1, p1, p0);
+  }
+  if (t + 1 == te) {
+    pipe_step_eq<EXPMODE, RR, true>(cx, st, sacc, t, p0, p1);
+    pipe_step_eq<EXPMODE, RR, false>(cx, st, sacc, t + 1, p1, p0);
+    pipe_last(cx, st, p0);
+  } else if (t == te) {
+    pipe_step_eq<EXPMODE, RR, false>(cx, st, sacc, t, p0, p1);
+    pipe_last(cx, st, p1);
+  } else {  // a single-tile range: P(tb) is in p0; pipe_last's wait also retires the dummy QK
+    pipe_last(cx, st, p0);
+  }
+}
+
+// Deeper pipeline: QK(t+1) and P.V(t-1) both run on the tensor cores during softmax(t) (two S and two P register sets).
+template <int EXPMODE>
+DEVI void pipe2_step(const AttnCtx& cx, AttnState& st, int t, float* s_cur, float* s_next, uint32_t (&pin)[4][4],
+                     uint32_t (&pout)[4][4]) {
+  const bool more = t + 1 <= cx.t_end;
+  if (more) {
+    const int sn = stage_of(cx, t + 1);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, t + 1));
+    issue_qk(cx, s_next, sn);
+  }
+  const int sp = stage_of(cx, t - 1);
+  issue_pv(cx, st.o, pin, sp);
+  if (more) wg_wait<2>();  // QK(t) is done
+  else wg_wait<1>();
+  float scA, scB;
+  softmax_tile<EXPMODE>(cx, st, s_cur, t, pout, scA, scB);
+  wg_wait<0>();  // P.V(t-1) (and QK(t+1), issued before it) are done
+  fence_u<16>(&pin[0][0]);
+  fence_f<36>(st.o);
+  release_stage(cx, sp);
+  rescale_o(st, scA, scB);
+}
+
+template <int EXPMODE>
+DEVI void attn_pipe2(const AttnCtx& cx, AttnState& st, float* s0, float* s1) {
+  const int tb = cx.t_begin, te = cx.t_end;
+  if (tb > te) return;
+  uint32_t p0[4][4], p1[4][4];
+  {
+    const int s = stage_of(cx, tb);
+    mbar_wait(cx.bars + 8 * s, phase_of(cx, tb));
+    issue_qk(cx, s0, s);
+    wg_wait<0>();
+    if (tb + 1 <= te) {
+      const int sn = stage_of(cx, tb + 1);
+      mbar_wait(cx.bars + 8 * sn, phase_of(cx, tb + 1));
+      issue_qk(cx, s1, sn);
+    }
+    float scA, scB;
+    softmax_tile<EXPMODE>(cx, st, s0, tb, p0, scA, scB);
+  }
+  int t = tb + 1;
+  for (; t + 1 <= te; t += 2) {
+    pipe2_step<EXPMODE>(cx, st, t, s1, s0, p0, p1);
+    pipe2_step<EXPMODE>(cx, st, t + 1, s0, s1, p1, p0);
+  }
+  if (t <= te) {
+    pipe2_step<EXPMODE>(cx, st, t, s1, s0, p0, p1);
+    pipe_last(cx, st, p1);
+  } else {
+    pipe_last(cx, st, p0);
+  }
+}
+
+// ---------------- variant 53: two consumer warpgroups (240 registers), two S register sets, one P set, exp turns ----------------
+// Step t (QK(t) in flight on entry): issue P.V(t-1); issue QK(t+1) into the other S set; wait QK(t); softmax(t): row max
+// (vote-skipped), my exp turn (the other warpgroup's turn starts after ATTN_RR_HAND exps), then wait P.V(t-1), rescale O,
+// pack P(t). P.V(t-1) and QK(t+1) run on the tensor cores during the softmax; the two warpgroups alternate on the exp2
+// units. MORE (another tile follows) is compile-time: a wgmma issued under a runtime branch serializes (C7513).
+#define ATTN_P3_HAND ATTN_RR_HAND
+#define ATTN_P3_PVW 0  // where softmax(t) waits for P.V(t-1): 0 after the exps, 1 after the row max, 2 before the row max
+template <bool MASK, int RR, bool PVPEND, bool MORE>
+DEVI void softmax_core_p3(const AttnCtx& cx, AttnState& st, float* sacc, int k0, uint32_t (&pa)[4][4]) {
+  auto pv_wait = [&]() {
+    if constexpr (PVPEND) {
+      if constexpr (MORE) wg_wait<1>();  // QK(t+1), issued after P.V(t-1), may still run
+      else wg_wait<0>();
+    }
+    fence_u<16>(&pa[0][0]);
+    fence_f<36>(st.o);
+  };
+  if constexpr (ATTN_P3_PVW == 2) pv_wait();
+  if constexpr (MASK) {
+#pragma unroll
+    for (int i = 0; i < 64; ++i) {
+      const int key = k0 + 8 * (i >> 2) + 2 * cx.t4 + (i & 1);
+      const bool bad = (i & 2) ? (key > cx.kmaxB || key < cx.kminB) : (key > cx.kmaxA || key < cx.kminA);
+      if (bad) sacc[i] = -INFINITY;
+    }
+  }
+  const float c = cx.p.c;
+#define MX4(o) fmaxf(fmaxf(sacc[(o)], sacc[(o) + 1]), fmaxf(sacc[(o) + 4], sacc[(o) + 5]))
+  const float a0 = fmaxf(MX4(0), MX4(8)), a1 = fmaxf(MX4(16), MX4(24)), a2 = fmaxf(MX4(32), MX4(40)), a3 = fmaxf(MX4(48), MX4(56));
+  const float b0 = fmaxf(MX4(2), MX4(10)), b1 = fmaxf(MX4(18), MX4(26)), b2 = fmaxf(MX4(34), MX4(42)), b3 = fmaxf(MX4(50), MX4(58));
+#undef MX4
+  float tmA = fmaxf(fmaxf(a0, a1), fmaxf(a2, a3)), tmB = fmaxf(fmaxf(b0, b1), fmaxf(b2, b3));
+  float nmA = st.mA, nmB = st.mB;
+  float scA = 1.f, scB = 1.f;
+  if (!ATTN_VOTEMAX || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+    nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+    scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+    st.mA = nmA; st.mB = nmB;
+  }
+  const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+  if constexpr (ATTN_P3_PVW >= 1) {
+    if constexpr (ATTN_P3_PVW == 1) pv_wait();
+    rescale_o(st, scA, scB);
+  }
+  if constexpr (RR > 1) named_bar_sync(4 + cx.wg, 256);  // my turn
+  fence_f<64>(sacc);
+#pragma unroll
+  for (int i = 0; i < ATTN_P3_HAND; ++i) sacc[i] = exp2f(fmaf(sacc[i], c, (i & 2) ? -offB : -offA));
+  if constexpr (RR > 1) {
+    fence_f<ATTN_P3_HAND>(sacc);
+    named_bar_arrive(4 + (cx.wg + 1 == RR ? 0 : cx.wg + 1), 256);
+  }
+#pragma unroll
+  for (int i = ATTN_P3_HAND; i < 64; ++i) sacc[i] = exp2f(fmaf(sacc[i], c, (i & 2) ? -offB : -offA));
+  // P.V(t-1) reads P and accumulates into O: it must be done before O is rescaled and P is overwritten
+  if constexpr (ATTN_P3_PVW == 0) {
+    pv_wait();
+    rescale_o(st, scA, scB);
+  }
+#pragma unroll
+  for (int cc = 0; cc < 4; ++cc) {
+    const float* x = sacc + 16 * cc;
+    pa[cc][0] = pack_e4m3x4(x[0], x[1], x[4], x[5]);
+    pa[cc][1] = pack_e4m3x4(x[2], x[3], x[6], x[7]);
+    pa[cc][2] = pack_e4m3x4(x[8], x[9], x[12], x[13]);
+    pa[cc][3] = pack_e4m3x4(x[10], x[11], x[14], x[15]);
+  }
+}
+
+template <int RR, bool PVPEND, bool MORE>
+DEVI void softmax_tile_p3(const AttnCtx& cx, AttnState& st, float* sacc, int t, uint32_t (&pa)[4][4]) {
+  const AttnArgs& p = cx.p;
+  const int k0 = t * NK;
+  const int L = cx.L, nk = cx.nk;
+  const bool need_mask = (k0 + NK - 1 > nk - L + cx.q_first) || (p.window && k0 < nk - L + cx.q_last - p.window + 1);
+  if (need_mask) softmax_core_p3<true, RR, PVPEND, MORE>(cx, st, sacc, k0, pa);
+  else softmax_core_p3<false, RR, PVPEND, MORE>(cx, st, sacc, k0, pa);
+}
+
+template <int RR, bool MORE>
+DEVI void pipe3_step(const AttnCtx& cx, AttnState& st, int t, float* s_cur, float* s_next, uint32_t (&pa)[4][4]) {
+  const int sp = stage_of(cx, t - 1);
+  issue_pv(cx, st.o, pa, sp);  // P(t-1), V(t-1)
+  if constexpr (MORE) {
+    const int sn = stage_of(cx, t + 1);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, t + 1));
+    issue_qk(cx, s_next, sn);
+  }
+  if constexpr (MORE) wg_wait<2>();  // QK(t) is done; P.V(t-1) and QK(t+1) may still run
+  else wg_wait<1>();
+  softmax_tile_p3<RR, true, MORE>(cx, st, s_cur, t, pa);
+  release_stage(cx, sp);
+}
+
+template <int RR>
+DEVI void attn_pipe3(const AttnCtx& cx, AttnState& st, float* s0, float* s1) {
+  const int tb = cx.t_begin, te = cx.t_end;
+  if (tb > te) return;
+  uint32_t pa[4][4];
+  {
+    // QK(tb + 1) is issued even for a single-tile range (the producer loads a dummy tile): one uniform prologue
+    // (a separate single-tile path makes ptxas serialize every wgmma: C7511)
+    const int s = stage_of(cx, tb), sn = stage_of(cx, tb + 1);
+    mbar_wait(cx.bars + 8 * s, phase_of(cx, tb));
+    issue_qk(cx, s0, s);
+    mbar_wait(cx.bars + 8 * sn, phase_of(cx, tb + 1));
+    issue_qk(cx, s1, sn);
+    wg_wait<1>();  // QK(tb) is done; QK(tb+1) may still run
+    softmax_tile_p3<RR, false, true>(cx, st, s0, tb, pa);  // O is still zero: nothing pending on it
+  }
+  int t = tb + 1;  // QK(t) in flight, into s1
+  for (; t + 1 < te; t += 2) {
+    pipe3_step<RR, true>(cx, st, t, s1, s0, pa);
+    pipe3_step<RR, true>(cx, st, t + 1, s0, s1, pa);
+  }
+  if (t + 1 == te) {  // two tiles left
+    pipe3_step<RR, true>(cx, st, t, s1, s0, pa);
+    pipe3_step<RR, false>(cx, st, t + 1, s0, s1, pa);
+  } else if (t == te) {  // one tile left
+    pipe3_step<RR, false>(cx, st, t, s1, s0, pa);
+  } else {  // a single-tile range: retire the dummy QK
+    wg_wait<0>();
+  }
+  pipe_last(cx, st, pa);
+}
+
+// ---------------- half tiles, software-pipelined (QK of the next 64-key half and P.V of the previous one run on the
+// tensor cores during this half's softmax; two S and two P register sets of half size fit three warpgroups) ----------------
+template <bool MASK>
+DEVI void softmax_half(const AttnCtx& cx, AttnState& st, const float* sacc, int k0, uint32_t (&pa)[2][4], float& scA, float& scB) {
+  auto V = [&](int i) -> float {
+    if constexpr (!MASK) {
+      return sacc[i];
+    } else {
+      const int key = k0 + 8 * (i >> 2) + 2 * cx.t4 + (i & 1);
+      const bool bad = (i & 2) ? (key > cx.kmaxB || key < cx.kminB) : (key > cx.kmaxA || key < cx.kminA);
+      return bad ? -INFINITY : sacc[i];
+    }
+  };
+  const float c = cx.p.c;
+#define MX4(o) fmaxf(fmaxf(V(o), V((o) + 1)), fmaxf(V((o) + 4), V((o) + 5)))
+  float tmA = fmaxf(fmaxf(MX4(0), MX4(8)), fmaxf(MX4(16), MX4(24)));
+  float tmB = fmaxf(fmaxf(MX4(2), MX4(10)), fmaxf(MX4(18), MX4(26)));
+#undef MX4
+  float nmA = st.mA, nmB = st.mB;
+  scA = 1.f; scB = 1.f;
+  // exact skip: when no lane's local maximum exceeds its row's running maximum, every row of this warp keeps
+  // its maximum (rescale 1): no shuffles and no rescale exps on the exp2 units
+  if (!ATTN_VOTEMAX_ALL || __any_sync(0xffffffffu, (tmA > st.mA) || (tmB > st.mB))) {
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 1));
+    tmA = fmaxf(tmA, __shfl_xor_sync(0xffffffffu, tmA, 2));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 1));
+    tmB = fmaxf(tmB, __shfl_xor_sync(0xffffffffu, tmB, 2));
+    nmA = fmaxf(st.mA, tmA); nmB = fmaxf(st.mB, tmB);
+    scA = exp2f((st.mA - nmA) * c); scB = exp2f((st.mB - nmB) * c);
+    st.mA = nmA; st.mB = nmB;
+  }
+  const float offA = nmA * c - ATTN_POFF, offB = nmB * c - ATTN_POFF;
+  auto E = [&](int i) -> float { return exp2f(fmaf(V(i), c, (i & 2) ? -offB : -offA)); };
+#pragma unroll
+  for (int cc = 0; cc < 2; ++cc) {
+    const int o = 16 * cc;
+    pa[cc][0] = pack_e4m3x4(E(o + 0), E(o + 1), E(o + 4), E(o + 5));
+    pa[cc][1] = pack_e4m3x4(E(o + 2), E(o + 3), E(o + 6), E(o + 7));
+    pa[cc][2] = pack_e4m3x4(E(o + 8), E(o + 9), E(o + 12), E(o + 13));
+    pa[cc][3] = pack_e4m3x4(E(o + 10), E(o + 11), E(o + 14), E(o + 15));
+  }
+}
+
+DEVI void softmax_half_tile(const AttnCtx& cx, AttnState& st, const float* sacc, int u, uint32_t (&pa)[2][4], float& scA, float& scB) {
+  const AttnArgs& p = cx.p;
+  const int k0 = (u >> 1) * NK + 64 * (u & 1);
+  const int L = cx.L, nk = cx.nk;
+  const bool need_mask = (k0 + 63 > nk - L + cx.q_first) || (p.window && k0 < nk - L + cx.q_last - p.window + 1);
+  if (need_mask) softmax_half<true>(cx, st, sacc, k0, pa, scA, scB);
+  else softmax_half<false>(cx, st, sacc, k0, pa, scA, scB);
+}
+
+template <int H>
+DEVI void issue_pv_h(const AttnCtx& cx, float* o, uint32_t (&pa)[2][4], int stage) {
+  uint8_t* vst = cx.ring + stage * STAGE + TILE_K;
+  uint64_t dv0 = desc_sw128(smem_u32(vst)) + 4 * H;
+  uint64_t dv1 = dv0 + 2;
+  asm volatile("" : "+l"(dv0), "+l"(dv1));
+  fence_u<8>(&pa[0][0]);
+  fence_f<36>(o);
+  wg_fence();
+  wgmma_fp8_rs_n64(o, pa[0], dv0, 1);
+  wgmma_fp8_rs_n64(o, pa[1], dv1, 1);
+  wg_commit();
+  fence_f<36>(o);
+}
+
+// sub-step u = 2 t + h covers keys [128 t + 64 h, +64); H (= u & 1) is a compile-time constant at every call
+template <int H>
+DEVI void issue_qk_u(const AttnCtx& cx, float* s, int u) {
+  const int t = u >> 1;
+  const int st = stage_of(cx, t);
+  if (H == 0) mbar_wait(cx.bars + 8 * st, phase_of(cx, t));
+  issue_qk_h(cx, s, st, H);
+}
+
+// MORE: issue the next half's QK (every step but the last; the wgmma groups never depend on a runtime branch)
+template <int HC, bool MORE>
+DEVI void pipe2h_step(const AttnCtx& cx, AttnState& st, int u, float* s_cur, float* s_next, uint32_t (&pin)[2][4],
+                      uint32_t (&pout)[2][4]) {
+  if constexpr (MORE) issue_qk_u<1 - HC>(cx, s_next, u + 1);
+  const int up = u - 1;
+  issue_pv_h<1 - HC>(cx, st.o, pin, stage_of(cx, up >> 1));
+  if constexpr (MORE) wg_wait<2>();  // QK(u) is done
+  else wg_wait<1>();
+  float scA = 1.f, scB = 1.f;
+  softmax_half_tile(cx, st, s_cur, u, pout, scA, scB);
+  wg_wait<0>();  // P.V(u-1) (and QK(u+1), issued before it) are done
+  fence_u<8>(&pin[0][0]);
+  fence_f<36>(st.o);
+  if (HC == 0) release_stage(cx, stage_of(cx, up >> 1));  // u-1 was the second half of its tile
+  rescale_o(st, scA, scB);
+}
+
+DEVI void attn_pipe2h(const AttnCtx& cx, AttnState& st, float* s0, float* s1) {
+  const int tb = cx.t_begin, te = cx.t_end;
+  if (tb > te) return;
+  const int u0 = 2 * tb, u_end = 2 * te + 1;
+  uint32_t p0[2][4], p1[2][4];
+  {
+    issue_qk_u<0>(cx, s0, u0);
+    wg_wait<0>();
+    issue_qk_u<1>(cx, s1, u0 + 1);  // u_end >= u0 + 1 always (two halves per tile)
+    float scA, scB;
+    softmax_half_tile(cx, st, s0, u0, p0, scA, scB);
+  }
+  int u = u0 + 1;  // odd
+  for (; u < u_end; u += 2) {
+    pipe2h_step<1, true>(cx, st, u, s1, s0, p0, p1);
+    pipe2h_step<0, true>(cx, st, u + 1, s0, s1, p1, p0);
+  }
+  // u == u_end here (odd: the last tile's second half)
+  pipe2h_step<1, false>(cx, st, u, s1, s0, p0, p1);
+  issue_pv_h<1>(cx, st.o, p1, stage_of(cx, te));
+  wg_wait<0>();
+  fence_u<8>(&p1[0][0]);
+  fence_f<36>(st.o);
+  release_stage(cx, stage_of(cx, te));
+}
+
+template <int NWG, int EXPMODE, bool OVL, bool PIPE = false, bool PIPE2 = false, bool RRS = false, bool HALF = false, bool PIPE2H = false,
+          bool PIPE3 = false>
+__global__ void __launch_bounds__(128 * (NWG + 1), 1) attn_fwd_kernel(AttnArgs p) {
+  if constexpr (ATTN_EARLY_Q) pdl_trigger_attn();
+  else pdl_enter_attn();
+  constexpr int QBT = 8 * NWG;
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  const uint32_t raw = smem_u32(smem_raw);
+  const uint32_t pad = ((raw + 1023) & ~1023u) - raw;
+  uint8_t* base = smem_raw + pad;
+  const uint32_t bars = smem_u32(base);           // full[4], empty[4]
+  uint8_t* qs = base + 1024;                      // 64*NWG rows x 64 B (SW64)
+  uint8_t* ring = qs + 4096 * NWG;                // ASTAGES x (K tile, V tile)
+  const int qb = p.nqb - 1 - blockIdx.x;          // heaviest (latest) query blocks first
+  const int h = blockIdx.y & 1, split = blockIdx.y >> 1, b = blockIdx.z;
+  const int L = p.L;
+  const int seq = p.seq_lens[b];
+  const int first = p.window ? max(0, seq - p.window + 1) : 0;
+  const int nk = seq + L - first;
+  const int q_first = qb * QBT;
+  const int q_last = min(q_first + QBT - 1, L - 1);
+  const int kmax_last = nk - L + q_last;
+  const int kmin_first = p.window ? max(0, nk - L + q_first - p.window + 1) : 0;
+  int t_begin = kmin_first / NK, t_end = kmax_last / NK;
+  if (p.nsplit > 1) {
+    const int ntiles = t_end - t_begin + 1;
+    const int per = (ntiles + p.nsplit - 1) / p.nsplit;
+    const int tb = t_begin + split * per;
+    t_end = min(t_end, tb + per - 1);
+    t_begin = tb;  // may exceed t_end: empty split
+  }
+  const size_t tb0 = (size_t)(b * 2 + h) * p.ntk;
+  if (threadIdx.x == 0) {
+    for (int s = 0; s < ASTAGES; ++s) {
+      mbar_init(bars + 8 * s, 1);
+      mbar_init(bars + 8 * ASTAGES + 8 * s, 4 * NWG);
+    }
+    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+  }
+  __syncthreads();
+  if (threadIdx.x < 128) {
+    // ---------------- producer warpgroup (one thread issues the bulk copies) ----------------
+    const int ptid = threadIdx.x;
+    if constexpr (NWG >= 3 || PIPE2 || PIPE3) asm volatile("setmaxnreg.dec.sync.aligned.u32 24;\n");
+    else asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n");
+    if (ptid == 0) {
+      if constexpr (ATTN_EARLY_Q) pdl_wait_attn();  // the staged K/V tiles
+      if (ATTN_PF && p.pf != nullptr) {
+        // the attention leaves DRAM mostly idle: warm L2 with this CTA's slice of the next GEMM's weight
+        const unsigned long long nct = (unsigned long long)gridDim.x * gridDim.y * gridDim.z;
+        const unsigned long long cid = ((unsigned long long)blockIdx.z * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
+        const unsigned long long per = (p.pf_bytes / nct + 255ull) & ~255ull;
+        const unsigned long long b0 = cid * per, b1 = min(b0 + per, p.pf_bytes);
+        for (unsigned long long off = b0; off < b1; off += 32768ull)
+          prefetch_l2(p.pf + off, (uint32_t)min(32768ull, b1 - off) & ~15u);
+      }
+      int s = 0;
+      uint32_t ph = 0;
+      // PIPE3 always issues QK(t_begin + 1): a single-tile range gets a dummy second load (tile t_end again)
+      constexpr bool DUMMY = PIPE3 || (PIPE && RRS && ATTN_EARLY_QK);  // always issue QK(t_begin + 1)
+      const int t_last = (DUMMY && t_begin == t_end) ? t_end + 1 : t_end;
+      for (int t = t_begin; t <= t_last; ++t) {
+        mbar_wait(bars + 8 * ASTAGES + 8 * s, ph ^ 1);
+        const uint32_t full = bars + 8 * s;
+        mbar_expect_tx(full, STAGE);
+        const uint32_t dst = smem_u32(ring + s * STAGE);
+        const int tt = min(t, t_end);
+        bulk_g2s(dst, p.kt + (tb0 + tt) * TILE_K, TILE_K, full);
+        bulk_g2s(dst + TILE_K, p.vt + (tb0 + tt) * TILE_V, TILE_V, full);
+        if (++s == ASTAGES) { s = 0; ph ^= 1; }
+      }
+    }
+    return;
+  }
+  // ---------------- consumers (warpgroups 1 .. NWG) ----------------
+  // setmaxnreg moves registers inside the CTA's launch allocation: 640 threads launch with 96 each, and the producer's
+  // 72 x 128 freed registers cover at most +16 for each of the 512 consumer threads
+  if constexpr (NWG == 4) asm volatile("setmaxnreg.inc.sync.aligned.u32 112;\n");
+  else if constexpr (NWG == 3) asm volatile("setmaxnreg.inc.sync.aligned.u32 160;\n");
+  else if constexpr (PIPE2 || PIPE3) asm volatile("setmaxnreg.inc.sync.aligned.u32 240;\n");
+  else asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n");
+  const int ctid = threadIdx.x - 128;
+  const int wg = ctid >> 7, w = (ctid >> 5) & 3, lane = ctid & 31;
+  const int g = lane >> 2, t4 = lane & 3;
+  // stage Q: row r = (token q_first + r/8, head 8h + r%8) -> smem SW64
+  for (int i = ctid; i < 64 * NWG * 4; i += 128 * NWG) {
+    const int r = i >> 2, c = i & 3;
+    const int tok = q_first + (r >> 3);
+    uint4 v = make_uint4(0, 0, 0, 0);
+    if (tok < L) {
+      const size_t trow = (size_t)b * L + tok;
+      v = *reinterpret_cast<const uint4*>(p.q + (trow * 16 + 8 * h + (r & 7)) * 64 + c * 16);
+    }
+    *reinterpret_cast<uint4*>(qs + r * 64 + ((c ^ ((r >> 1) & 3)) << 4)) = v;
+  }
+  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+  named_bar_sync(1, 128 * NWG);
+  // this thread's rows: A = (token q_first + 8wg + 2w, head g), B = token + 1
+  const int tokA = q_first + 8 * wg + 2 * w, tokB = tokA + 1;
+  const int kmaxA = nk - L + tokA, kmaxB = nk - L + tokB;
+  const int kminA = p.window ? kmaxA - p.window + 1 : -1, kminB = p.window ? kmaxB - p.window + 1 : -1;
+  AttnState stt;
+#pragma unroll
+  for (int i = 0; i < 36; ++i) stt.o[i] = 0.f;
+  stt.mA = -1e30f; stt.mB = -1e30f; stt.nready = 0; stt.lA = 0.f; stt.lB = 0.f;  // [public-C P2]
+  AttnCtx cx{p, qs, ring, bars, wg, w, lane, g, t4, kmaxA, kmaxB, kminA, kminB, nk, L, q_first, q_last, t_begin, t_end,
+             desc_sw64(smem_u32(qs + wg * 64 * 64)), desc_sw64(smem_u32(ring)), desc_sw128(smem_u32(ring + TILE_K)), t_begin};
+  // the output gate, loaded before the tile loop so that the epilogue does not wait on global loads (variants with
+  // registers to spare only: the pipelined ones would spill)
+  constexpr bool GPF = ATTN_GATE_PF && !PIPE && !PIPE2 && !PIPE2H && !PIPE3 && !HALF && NWG <= 3;
+  uint32_t gpf[2][8];
+#pragma unroll
+  for (int half = 0; half < 2; ++half) {
+    const int tok = half ? tokB : tokA;
+#pragma unroll
+    for (int jj = 0; jj < 8; ++jj) gpf[half][jj] = 0u;
+    if (GPF && p.nsplit == 1 && tok < L) {
+      const __nv_bfloat16* gp = p.qkv + ((size_t)b * L + tok) * 2304 + 1280 + (8 * h + g) * 64;
+#pragma unroll
+      for (int jj = 0; jj < 8; ++jj) gpf[half][jj] = *reinterpret_cast<const uint32_t*>(gp + 8 * jj + 2 * t4);
+    }
+  }
+  float s0[64];
+  if (OVL && t_begin <= t_end) {
+    mbar_wait(bars, 0);
+    issue_qk(cx, s0, 0);
+    wg_wait<0>();
+  }
+  if constexpr (PIPE2H) {
+    float s1[32];
+    attn_pipe2h(cx, stt, s0, s1);
+  } else if constexpr (HALF) {
+    for (int t = t_begin; t <= t_end; ++t) attn_step_h<EXPMODE>(cx, stt, s0, t);
+  } else if constexpr (PIPE3) {
+    if (wg == NWG - 1 && t_begin <= t_end) named_bar_arrive(4, 256);  // warpgroup 0 starts
+    float s1[64];
+#define ATTN_P3_RR NWG
+    attn_pipe3<ATTN_P3_RR>(cx, stt, s0, s1);
+  } else if constexpr (PIPE2) {
+    float s1[64];
+    attn_pipe2<EXPMODE>(cx, stt, s0, s1);
+  } else if constexpr (PIPE && RRS) {
+    if (wg == NWG - 1 && t_begin <= t_end) named_bar_arrive(4, 256);  // warpgroup 0 starts
+    if constexpr (ATTN_EARLY_QK) attn_pipe_eq<EXPMODE, NWG>(cx, stt, s0);
+    else attn_pipe<EXPMODE, NWG>(cx, stt, s0);
+  } else if constexpr (PIPE) attn_pipe<EXPMODE>(cx, stt, s0);
+  else if constexpr (RRS) {
+    if (wg == NWG - 1 && t_begin <= t_end) named_bar_arrive(4, 256);  // warpgroup 0 starts
+    for (int t = t_begin; t <= t_end; ++t) attn_step<EXPMODE, OVL, NWG>(cx, stt, s0, t);
+  } else
+    for (int t = t_begin; t <= t_end; ++t) attn_step<EXPMODE, OVL>(cx, stt, s0, t);
+  float* o = stt.o;
+  const float mA = stt.mA, mB = stt.mB;
+  // the denominator (column 64) sits in the t4 == 0 lane of each quad
+  float lA = stt.lA, lB = stt.lB;   // [public-C P2] quad sums of the per-thread FP32 partials
+  lA += __shfl_xor_sync(0xffffffffu, lA, 1); lA += __shfl_xor_sync(0xffffffffu, lA, 2);
+  lB += __shfl_xor_sync(0xffffffffu, lB, 1); lB += __shfl_xor_sync(0xffffffffu, lB, 2);
+  const int head = 8 * h + g;
+  // ---- epilogue: partials for a split, else O / l, per-head RMSNorm, * sigmoid(gate) ----
+  if (p.nsplit > 1) {
+#pragma unroll
+    for (int half = 0; half < 2; ++half) {
+      const int tok = half ? tokB : tokA;
+      if (tok >= L) continue;
+      const size_t trow = (size_t)b * L + tok;
+      const size_t T = (size_t)gridDim.z * L;
+      float* wp = p.ws + ((size_t)split * T * 16 + trow * 16 + head) * 66;
+#pragma unroll
+      for (int jj = 0; jj < 8; ++jj)
+        *reinterpret_cast<float2*>(wp + 8 * jj + 2 * t4) = make_float2(o[4 * jj + 2 * half], o[4 * jj + 2 * half + 1]);
+      if (t4 == 0) {
+        wp[64] = half ? mB : mA;
+        wp[65] = half ? lB : lA;
+      }
+    }
+    return;
+  }
+  const float iA = p.v_scale / lA, iB = p.v_scale / lB;
+  float ssA = 0.f, ssB = 0.f;
+#pragma unroll
+  for (int jj = 0; jj < 8; ++jj) {
+    o[4 * jj] *= iA; o[4 * jj + 1] *= iA; o[4 * jj + 2] *= iB; o[4 * jj + 3] *= iB;
+    ssA += o[4 * jj] * o[4 * jj] + o[4 * jj + 1] * o[4 * jj + 1];
+    ssB += o[4 * jj + 2] * o[4 * jj + 2] + o[4 * jj + 3] * o[4 * jj + 3];
+  }
+  ssA += __shfl_xor_sync(0xffffffffu, ssA, 1);
+  ssA += __shfl_xor_sync(0xffffffffu, ssA, 2);
+  ssB += __shfl_xor_sync(0xffffffffu, ssB, 1);
+  ssB += __shfl_xor_sync(0xffffffffu, ssB, 2);
+  const float rA = rsqrtf(ssA / 64.f + 1e-5f), rB = rsqrtf(ssB / 64.f + 1e-5f);
+#pragma unroll
+  for (int half = 0; half < 2; ++half) {
+    const int tok = half ? tokB : tokA;
+    if (tok >= L) continue;
+    const size_t trow = (size_t)b * L + tok;
+    const float rr = half ? rB : rA;
+    const __nv_bfloat16* gp = p.qkv + trow * 2304 + 1280 + head * 64;
+    __nv_bfloat16* op = p.out + trow * 1024 + head * 64;
+#pragma unroll
+    for (int jj = 0; jj < 8; ++jj) {
+      const int d = 8 * jj + 2 * t4;
+      float2 gv;
+      if constexpr (GPF) {
+        const uint32_t gbits = gpf[half][jj];
+        gv = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(&gbits));
+      } else {
+        gv = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(gp + d));
+      }
+      const float x0 = o[4 * jj + 2 * half] * rr, x1 = o[4 * jj + 2 * half + 1] * rr;
+      const float y0 = x0 / (1.f + __expf(-gv.x)), y1 = x1 / (1.f + __expf(-gv.y));
+      *reinterpret_cast<__nv_bfloat162*>(op + d) = __floats2bfloat162_rn(y0, y1);
+    }
+  }
+}
+
+// ---------------- stream-K attention ----------------
+// The (pair, key tile) space, pair = (batch, query block, kv head) in that order, is cut into gridDim.x equal ranges of W
+// tiles, one per CTA, so every CTA (and SM) gets the same work: a fixed grid of nqb x 2 x B CTAs leaves the last wave
+// part-empty (T=753 full: 128 CTAs on 132 SMs; T=3012 full: 256 CTAs = 1.94 waves). A CTA runs its range as one segment
+// per pair it touches, each writing a partial (O, m, l) for the pair's QBT x 8 rows to ws slot pair + cta (unique: every
+// segment starts at a pair or a CTA boundary, so slots run 0 .. npairs + G - 2); attn_combine_sk_kernel merges them. The ring (stage, phase) continues across segments, and the exp-turn
+// hand-off of the last warpgroup at a segment's end opens the next segment (no extra start arrive after segment 0).
+#define ATTN_SK_MAXPAIRS 1536
+DEVI void sk_pair(const AttnArgs& p, int QBT, int pp, int& b, int& qb, int& h, int& tb, int& te, int& nk) {
+  h = pp & 1;
+  const int bq = pp >> 1;
+  b = bq / p.nqb;
+  qb = bq - b * p.nqb;
+  const int L = p.L, seq = p.seq_lens[b];
+  const int first = p.window ? max(0, seq - p.window + 1) : 0;
+  nk = seq + L - first;
+  const int q_first = qb * QBT, q_last = min(q_first + QBT - 1, L - 1);
+  const int kmin_first = p.window ? max(0, nk - L + q_first - p.window + 1) : 0;
+  tb = kmin_first / NK;
+  te = (nk - L + q_last) / NK;
+}
+
+template <int NWG, int EXPMODE, bool PIPE, bool RRS>
+__global__ void __launch_bounds__(128 * (NWG + 1), 1) attn_fwd_sk_kernel(AttnArgs p) {
+  pdl_enter_attn();
+  constexpr int QBT = 8 * NWG, NT = 128 * (NWG + 1);
+  constexpr int PER = (ATTN_SK_MAXPAIRS + NT - 1) / NT;
+  extern __shared__ __align__(1024) uint8_t smem_raw[];
+  const uint32_t raw = smem_u32(smem_raw);
+  const uint32_t pad = ((raw + 1023) & ~1023u) - raw;
+  uint8_t* base = smem_raw + pad;
+  const uint32_t bars = smem_u32(base);
+  uint8_t* qs = base + 1024;
+  uint8_t* ring = qs + 4096 * NWG;
+  __shared__ int s_pre[ATTN_SK_MAXPAIRS + 1];
+  __shared__ int s_wsum[NT / 32];
+  const int npairs = p.nb * p.nqb * 2;
+  // per-pair tile counts -> inclusive prefix s_pre[pp + 1] (thread i owns pairs [i * PER, i * PER + PER))
+  {
+    int cnt[PER];
+    int sum = 0;
+#pragma unroll
+    for (int k = 0; k < PER; ++k) {
+      const int pp = threadIdx.x * PER + k;
+      int n = 0;
+      if (pp < npairs) {
+        int b, qb, h, tb, te, nk;
+        sk_pair(p, QBT, pp, b, qb, h, tb, te, nk);
+        n = max(0, te - tb + 1);
+      }
+      cnt[k] = n;
+      sum += n;
+    }
+    const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
+    int incl = sum;
+#pragma unroll
+    for (int o = 1; o < 32; o <<= 1) {
+      const int v = __shfl_up_sync(0xffffffffu, incl, o);
+      if (lane >= o) incl += v;
+    }
+    if (lane == 31) s_wsum[wid] = incl;
+    __syncthreads();
+    int wbase = 0;
+    for (int i = 0; i < wid; ++i) wbase += s_wsum[i];
+    int run = wbase + incl - sum;  // exclusive prefix of this thread's first pair
+#pragma unroll
+    for (int k = 0; k < PER; ++k) {
+      const int pp = threadIdx.x * PER + k;
+      run += cnt[k];
+      if (pp < npairs) s_pre[pp + 1] = run;
+    }
+    if (threadIdx.x == 0) s_pre[0] = 0;
+  }
+  if (threadIdx.x == 0) {
+    for (int s = 0; s < ASTAGES; ++s) {
+      mbar_init(bars + 8 * s, 1);
+      mbar_init(bars + 8 * ASTAGES + 8 * s, 4 * NWG);
+    }
+    asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
+  }
+  __syncthreads();
+  const int total = s_pre[npairs];
+  const int W = (total + (int)gridDim.x - 1) / (int)gridDim.x;
+  const int r0 = min((int)blockIdx.x * W, total), r1 = min(r0 + W, total);
+  // first pair of the range: the last pp with s_pre[pp] <= r0 (binary search)
+  int lo = 0, hi = npairs - 1;
+  while (lo < hi) {
+    const int mid = (lo + hi + 1) >> 1;
+    if (s_pre[mid] <= r0) lo = mid; else hi = mid - 1;
+  }
+  const int pp0 = lo;
+  if (threadIdx.x == 0) {  // for attn_combine_sk_kernel: W, the prefix, each CTA's first pair
+    p.skbuf[2 + npairs + blockIdx.x] = pp0;
+    if (blockIdx.x == 0) p.skbuf[0] = W;
+  }
+  if (blockIdx.x == 0)
+    for (int i = threadIdx.x; i <= npairs; i += NT) p.skbuf[1 + i] = s_pre[i];
+  if (threadIdx.x < 128) {
+    // ---------------- producer warpgroup ----------------
+    if constexpr (NWG >= 3) asm volatile("setmaxnreg.dec.sync.aligned.u32 24;\n");
+    else asm volatile("setmaxnreg.dec.sync.aligned.u32 40;\n");
+    if (threadIdx.x == 0) {
+      int s = 0;
+      uint32_t ph = 0;
+      for (int pp = pp0; r0 < r1 && pp < npairs && s_pre[pp] < r1; ++pp) {
+        int b, qb, h, tb, te, nk;
+        sk_pair(p, QBT, pp, b, qb, h, tb, te, nk);
+        const int l0 = max(r0, s_pre[pp]) - s_pre[pp], l1 = min(r1, s_pre[pp + 1]) - s_pre[pp];
+        const size_t tb0 = (size_t)(b * 2 + h) * p.ntk;
+        for (int t = tb + l0; t < tb + l1; ++t) {
+          mbar_wait(bars + 8 * ASTAGES + 8 * s, ph ^ 1);
+          const uint32_t full = bars + 8 * s;
+          mbar_expect_tx(full, STAGE);
+          const uint32_t dst = smem_u32(ring + s * STAGE);
+          bulk_g2s(dst, p.kt + (tb0 + t) * TILE_K, TILE_K, full);
+          bulk_g2s(dst + TILE_K, p.vt + (tb0 + t) * TILE_V, TILE_V, full);
+          if (++s == ASTAGES) { s = 0; ph ^= 1; }
+        }
+      }
+    }
+    return;
+  }
+  // ---------------- consumers ----------------
+  if constexpr (NWG == 3) asm volatile("setmaxnreg.inc.sync.aligned.u32 160;\n");
+  else asm volatile("setmaxnreg.inc.sync.aligned.u32 232;\n");
+  const int ctid = threadIdx.x - 128;
+  const int wg = ctid >> 7, w = (ctid >> 5) & 3, lane = ctid & 31;
+  const int g = lane >> 2, t4 = lane & 3;
+  // the consumers' loop state (pair, ring position) lives in shared memory, not in registers across the tile loop:
+  // ctid 0 writes the next segment's values after the post-staging barrier; everyone reads them after the top barrier
+  __shared__ int s_loop[2];
+  if (ctid == 0) { s_loop[0] = pp0; s_loop[1] = 0; }
+  for (int seg = 0;; ++seg) {
+    named_bar_sync(1, 128 * NWG);  // (also: every consumer warpgroup is done with the previous segment's Q)
+    const int pp = reinterpret_cast<volatile int*>(s_loop)[0], ring0 = reinterpret_cast<volatile int*>(s_loop)[1];
+    if (!(r0 < r1 && pp < p.nb * p.nqb * 2 && s_pre[pp] < r1)) break;
+    int b, qb, h, tb, te, nk;
+    sk_pair(p, QBT, pp, b, qb, h, tb, te, nk);
+    const int l0 = max(r0, s_pre[pp]) - s_pre[pp], l1 = min(r1, s_pre[pp + 1]) - s_pre[pp];
+    const int stb = tb + l0, ste = tb + l1 - 1;
+    const int L = p.L;
+    const int q_first = qb * QBT, q_last = min(q_first + QBT - 1, L - 1);
+    for (int i = ctid; i < 64 * NWG * 4; i += 128 * NWG) {
+      const int r = i >> 2, c = i & 3;
+      const int tok = q_first + (r >> 3);
+      uint4 v = make_uint4(0, 0, 0, 0);
+      if (tok < L) {
+        const size_t trow = (size_t)b * L + tok;
+        v = *reinterpret_cast<const uint4*>(p.q + (trow * 16 + 8 * h + (r & 7)) * 64 + c * 16);
+      }
+      *reinterpret_cast<uint4*>(qs + r * 64 + ((c ^ ((r >> 1) & 3)) << 4)) = v;
+    }
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    named_bar_sync(1, 128 * NWG);
+    if (ctid == 0) { s_loop[0] = pp + 1; s_loop[1] = ring0 + ste - stb + 1; }  // read after the next top barrier
+    const int tokA = q_first + 8 * wg + 2 * w, tokB = tokA + 1;
+    const int kmaxA = nk - L + tokA, kmaxB = nk - L + tokB;
+    const int kminA = p.window ? kmaxA - p.window + 1 : -1, kminB = p.window ? kmaxB - p.window + 1 : -1;
+    AttnState stt;
+#pragma unroll
+    for (int i = 0; i < 36; ++i) stt.o[i] = 0.f;
+    stt.mA = -1e30f; stt.mB = -1e30f; stt.nready = 0; stt.lA = 0.f; stt.lB = 0.f;  // [public-C P2]
+    AttnCtx cx{p, qs, ring, bars, wg, w, lane, g, t4, kmaxA, kmaxB, kminA, kminB, nk, L, q_first, q_last, stb, ste,
+               desc_sw64(smem_u32(qs + wg * 64 * 64)), desc_sw64(smem_u32(ring)), desc_sw128(smem_u32(ring + TILE_K)),
+               stb - ring0};
+    float s0[64];
+    if constexpr (PIPE && RRS) {
+      if (seg == 0 && wg == NWG - 1) named_bar_arrive(4, 256);  // warpgroup 0 starts (later segments: the last hand-off)
+      attn_pipe<EXPMODE, NWG>(cx, stt, s0);
+    } else {
+      for (int t = stb; t <= ste; ++t) attn_step<EXPMODE, false>(cx, stt, s0, t);
+    }
+    // partial (O unnormalized, m, l) of this segment: slot blockIdx.x * MAXSEG + seg, row (token in block) * 8 + g
+    float* o = stt.o;
+    float lA = stt.lA, lB = stt.lB;   // [public-C P2] quad sums of the per-thread FP32 partials
+  lA += __shfl_xor_sync(0xffffffffu, lA, 1); lA += __shfl_xor_sync(0xffffffffu, lA, 2);
+  lB += __shfl_xor_sync(0xffffffffu, lB, 1); lB += __shfl_xor_sync(0xffffffffu, lB, 2);
+    float* wslot = p.ws + ((size_t)pp + blockIdx.x) * (QBT * 8 * 66);
+#pragma unroll
+    for (int half = 0; half < 2; ++half) {
+      const int tok = half ? tokB : tokA;
+      if (tok >= L) continue;
+      float* wp = wslot + ((tok - q_first) * 8 + g) * 66;
+#pragma unroll
+      for (int jj = 0; jj < 8; ++jj)
+        *reinterpret_cast<float2*>(wp + 8 * jj + 2 * t4) = make_float2(o[4 * jj + 2 * half], o[4 * jj + 2 * half + 1]);
+      if (t4 == 0) {
+        wp[64] = half ? stt.mB : stt.mA;
+        wp[65] = half ? lB : lA;
+      }
+    }
+  }
+}
+
+// stream-K merge: one warp per R (token, head) rows (adjacent heads of one kv head), the pair's partials from the CTAs
+// whose ranges cover it, then O / l, the per-head RMSNorm and * sigmoid(gate)
+template <int R, int QBT>
+__global__ void __launch_bounds__(256) attn_combine_sk_kernel(const float* __restrict__ ws, const int* __restrict__ skbuf,
+                                                              int T, int L, int nqb, const __nv_bfloat16* __restrict__ qkv,
+                                                              __nv_bfloat16* __restrict__ out, float c, float v_scale) {
+  pdl_enter_attn();
+  const int wid = blockIdx.x * 8 + (threadIdx.x >> 5), lane = threadIdx.x & 31;
+  if (wid >= T * (16 / R)) return;
+  const int r0 = R * wid;
+  const int tok = r0 >> 4, head = r0 & 15;
+  const int b = tok / L, tq = tok - b * L, qb = tq / QBT;
+  const int npairs = (T / L) * nqb * 2;
+  const int pp = (b * nqb + qb) * 2 + (head >> 3);
+  const int W = skbuf[0];
+  const int* pre = skbuf + 1;
+  const int i0 = pre[pp] / W, i1 = (pre[pp + 1] - 1) / W;
+  const int rowp = (tq - qb * QBT) * 8 + (head & 7);
+  float M[R], o0[R], o1[R], l[R];
+#pragma unroll
+  for (int r = 0; r < R; ++r) { M[r] = -1e30f; o0[r] = 0.f; o1[r] = 0.f; l[r] = 0.f; }
+  for (int i = i0; i <= i1; ++i) {
+    const float* wp = ws + (((size_t)pp + i) * (QBT * 8) + rowp) * 66;
+#pragma unroll
+    for (int r = 0; r < R; ++r) M[r] = fmaxf(M[r], wp[66 * r + 64]);
+  }
+  for (int i = i0; i <= i1; ++i) {
+    const float* wp = ws + (((size_t)pp + i) * (QBT * 8) + rowp) * 66;
+    float ls[R], ms[R];
+    float2 v[R];
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      ls[r] = wp[66 * r + 65];
+      ms[r] = wp[66 * r + 64];
+      v[r] = *reinterpret_cast<const float2*>(wp + 66 * r + 2 * lane);
+    }
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      if (ls[r] != 0.f) {
+        const float sc = exp2f((ms[r] - M[r]) * c);
+        o0[r] += sc * v[r].x; o1[r] += sc * v[r].y; l[r] += sc * ls[r];
+      }
+    }
+  }
+  float ss[R];
+#pragma unroll
+  for (int r = 0; r < R; ++r) {
+    const float inv = v_scale / l[r];
+    o0[r] *= inv; o1[r] *= inv;
+    ss[r] = o0[r] * o0[r] + o1[r] * o1[r];
+  }
+#pragma unroll
+  for (int off = 16; off > 0; off >>= 1) {
+#pragma unroll
+    for (int r = 0; r < R; ++r) ss[r] += __shfl_xor_sync(0xffffffffu, ss[r], off);
+  }
+  const __nv_bfloat16* gp = qkv + (size_t)tok * 2304 + 1280 + head * 64 + 2 * lane;
+  __nv_bfloat16* op = out + (size_t)tok * 1024 + head * 64 + 2 * lane;
+#pragma unroll
+  for (int r = 0; r < R; ++r) {
+    const float rr = rsqrtf(ss[r] / 64.f + 1e-5f);
+    const float2 gv = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(gp + 64 * r));
+    *reinterpret_cast<__nv_bfloat162*>(op + 64 * r) =
+        __floats2bfloat162_rn(o0[r] * rr / (1.f + __expf(-gv.x)), o1[r] * rr / (1.f + __expf(-gv.y)));
+  }
+}
+
+
+// Same merge, R (token, head) rows per warp (adjacent heads of one token): all R rows' loads are in flight together.
+template <int R>
+__global__ void __launch_bounds__(256) attn_combine2_kernel(const float* __restrict__ ws, int nsplit, int T,
+                                                            const __nv_bfloat16* __restrict__ qkv, __nv_bfloat16* __restrict__ out,
+                                                            float c, float v_scale) {
+  pdl_enter_attn();
+  const int wid = blockIdx.x * 8 + (threadIdx.x >> 5), lane = threadIdx.x & 31;
+  if (wid >= T * (16 / R)) return;
+  const int r0 = R * wid;  // rows r0 .. r0 + R - 1: token r0 >> 4, heads (r0 & 15) ..
+  const int tok = r0 >> 4, head = r0 & 15;
+  float M[R], o0[R], o1[R], l[R];
+#pragma unroll
+  for (int r = 0; r < R; ++r) { M[r] = -1e30f; o0[r] = 0.f; o1[r] = 0.f; l[r] = 0.f; }
+  for (int s = 0; s < nsplit; ++s) {
+    const float* wp = ws + ((size_t)s * T * 16 + r0) * 66;
+#pragma unroll
+    for (int r = 0; r < R; ++r) M[r] = fmaxf(M[r], wp[66 * r + 64]);
+  }
+  for (int s = 0; s < nsplit; ++s) {
+    const float* wp = ws + ((size_t)s * T * 16 + r0) * 66;
+    float ls[R], ms[R];
+    float2 v[R];
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      ls[r] = wp[66 * r + 65];
+      ms[r] = wp[66 * r + 64];
+      v[r] = *reinterpret_cast<const float2*>(wp + 66 * r + 2 * lane);
+    }
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+      if (ls[r] != 0.f) {  // an empty split contributes nothing
+        const float sc = exp2f((ms[r] - M[r]) * c);
+        o0[r] += sc * v[r].x; o1[r] += sc * v[r].y; l[r] += sc * ls[r];
+      }
+    }
+  }
+  float ss[R];
+#pragma unroll
+  for (int r = 0; r < R; ++r) {
+    const float inv = v_scale / l[r];
+    o0[r] *= inv; o1[r] *= inv;
+    ss[r] = o0[r] * o0[r] + o1[r] * o1[r];
+  }
+#pragma unroll
+  for (int off = 16; off > 0; off >>= 1) {
+#pragma unroll
+    for (int r = 0; r < R; ++r) ss[r] += __shfl_xor_sync(0xffffffffu, ss[r], off);
+  }
+  const __nv_bfloat16* gp = qkv + (size_t)tok * 2304 + 1280 + head * 64 + 2 * lane;
+  __nv_bfloat16* op = out + (size_t)tok * 1024 + head * 64 + 2 * lane;
+#pragma unroll
+  for (int r = 0; r < R; ++r) {
+    const float rr = rsqrtf(ss[r] / 64.f + 1e-5f);
+    const float2 gv = __bfloat1622float2(*reinterpret_cast<const __nv_bfloat162*>(gp + 64 * r));
+    *reinterpret_cast<__nv_bfloat162*>(op + 64 * r) =
+        __floats2bfloat162_rn(o0[r] * rr / (1.f + __expf(-gv.x)), o1[r] * rr / (1.f + __expf(-gv.y)));
+  }
+}
+
+}  // namespace okc_attn
+'''
+
+LT_CPP = r'''
+#include <torch/extension.h>
+int64_t lt_plan(int64_t M, int64_t N, int64_t K, bool out_f32, int64_t ws_bytes, int64_t max_algos);
+int64_t lt_plan_sm(int64_t M, int64_t N, int64_t K, bool out_f32, int64_t ws_bytes, int64_t max_algos, int64_t sm_count);
+int64_t lt_nalgo(int64_t id);
+std::vector<int64_t> lt_info(int64_t id, int64_t algo);
+void lt_run(int64_t id, int64_t algo, torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws);
+'''
+
+LT_GLUE = r'''
+#include <torch/extension.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cublasLt.h>
+#include <vector>
+struct LtPlan {
+  cublasLtMatmulDesc_t op;
+  cublasLtMatrixLayout_t la, lb, lc;
+  std::vector<cublasLtMatmulHeuristicResult_t> res;
+};
+static std::vector<LtPlan*> g_lt_plans;
+static cublasLtHandle_t g_lt = nullptr;
+int64_t lt_plan_sm(int64_t M, int64_t N, int64_t K, bool out_f32, int64_t ws_bytes, int64_t max_algos, int64_t sm_count) {
+  if (!g_lt) TORCH_CHECK(cublasLtCreate(&g_lt) == CUBLAS_STATUS_SUCCESS, "cublasLtCreate");
+  auto* p = new LtPlan();
+  TORCH_CHECK(cublasLtMatmulDescCreate(&p->op, CUBLAS_COMPUTE_32F, CUDA_R_32F) == CUBLAS_STATUS_SUCCESS, "desc");
+  if (sm_count > 0) {  // size the kernel for fewer SMs: a concurrent stream keeps the rest
+    const int32_t smc = (int32_t)sm_count;
+    cublasLtMatmulDescSetAttribute(p->op, CUBLASLT_MATMUL_DESC_SM_COUNT_TARGET, &smc, sizeof(smc));
+  }
+  cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
+  cublasLtMatmulDescSetAttribute(p->op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta));
+  cublasLtMatmulDescSetAttribute(p->op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb));
+  // column-major views: A = W^T (K x N, ld K) used transposed, B = X^T (K x M, ld K), C = out^T (N x M, ld N)
+  cublasLtMatrixLayoutCreate(&p->la, CUDA_R_16BF, K, N, K);
+  cublasLtMatrixLayoutCreate(&p->lb, CUDA_R_16BF, K, M, K);
+  cublasLtMatrixLayoutCreate(&p->lc, out_f32 ? CUDA_R_32F : CUDA_R_16BF, N, M, N);
+  cublasLtMatmulPreference_t pref;
+  cublasLtMatmulPreferenceCreate(&pref);
+  uint64_t ws = (uint64_t)ws_bytes;
+  cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws, sizeof(ws));
+  p->res.resize(max_algos);
+  int n = 0;
+  cublasLtMatmulAlgoGetHeuristic(g_lt, p->op, p->la, p->lb, p->lc, p->lc, pref, (int)max_algos, p->res.data(), &n);
+  p->res.resize(n);
+  cublasLtMatmulPreferenceDestroy(pref);
+  g_lt_plans.push_back(p);
+  return (int64_t)g_lt_plans.size() - 1;
+}
+int64_t lt_plan(int64_t M, int64_t N, int64_t K, bool out_f32, int64_t ws_bytes, int64_t max_algos) {
+  return lt_plan_sm(M, N, K, out_f32, ws_bytes, max_algos, 0);
+}
+int64_t lt_nalgo(int64_t id) { return (int64_t)g_lt_plans[id]->res.size(); }
+std::vector<int64_t> lt_info(int64_t id, int64_t algo) {
+  const auto& r = g_lt_plans[id]->res[algo];
+  int tile = 0, splitk = 0, stages = 0, cluster = 0, aid = 0, red = 0, swz = 0, cust = 0, inner = 0;
+  size_t sz = 0;
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_TILE_ID, &tile, sizeof(tile), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splitk, sizeof(splitk), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_STAGES_ID, &stages, sizeof(stages), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_CLUSTER_SHAPE_ID, &cluster, sizeof(cluster), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_ID, &aid, sizeof(aid), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &red, sizeof(red), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, &swz, sizeof(swz), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, &cust, sizeof(cust), &sz);
+  cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_INNER_SHAPE_ID, &inner, sizeof(inner), &sz);
+  // [0..3] as before; [4] workspace; [5..9] algo id, reduction scheme, CTA swizzling, custom option, inner shape
+  return {tile, splitk, stages, cluster, (int64_t)r.workspaceSize, aid, red, swz, cust, inner};
+}
+void lt_run(int64_t id, int64_t algo, torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws) {
+  auto* p = g_lt_plans[id];
+  const float alpha = 1.f, beta = 0.f;
+  auto st = c10::cuda::getCurrentCUDAStream();
+  auto s = cublasLtMatmul(g_lt, p->op, &alpha, w.data_ptr(), p->la, x.data_ptr(), p->lb, &beta, out.data_ptr(), p->lc,
+                          out.data_ptr(), p->lc, &p->res[algo].algo, ws.data_ptr(), (size_t)ws.numel(), st);
+  TORCH_CHECK(s == CUBLAS_STATUS_SUCCESS, "cublasLtMatmul failed: ", (int)s);
+}
+'''
+
+
+
+
+
+

@@ -1,3 +1,23 @@
+
+> **USER RULING 2026-10-31 ~05:10Z (verbatim):** "from this point on, im embracing the MIT license as i rebase this
+> systematic improvement system onto the public board. there is no hope for simply transferring the knowledge and
+> findings on the initial repo; using this board and attempting to improve it with a good system is now the goal. i do
+> not expect this to make the serving board, so this is strictly an academic exercise to see if a systematic approach
+> can improve on a public board enough to be competetive. adopt any and all the problem solutions as the new
+> foundation."
+>
+> What this means for the repo:
+> - **Master `submission.py` now comes from alygg77@6cae49a** (notices in `third_party/okc-muse-spark-kernels/`):
+>   - attention = public-C A0 (2.4369 judge check mean);
+>   - prefill = public-C P2 (1.7741);
+>   - moe = public raw (2.3704);
+>   - bf16 = public raw (1.5403).
+> - **decode stays ours** until a compliant public-C decode (D0) exists. The raw public decode fails the FA3-precision
+>   ruling.
+> - Our pre-adoption files are at tag `ours-final-1031`.
+> - **Superseded:** "public = target, never base", the arch-mirror clean-room, and public-plus "never on master".
+> - **Still binding:** okc-stay-compliant, the attempt gate and the rules checklist.
+
 > **NEWEST USER STEER, 2026-10-27 ~00:07Z (standing until the challenge closes): THE 3:1 DAILY RHYTHM.** Full text:
 > `campaigns/DAILY-RHYTHM.md`; invoke `/3to1` (one tick) or `/loop /3to1`. It retires the 10-26 ~23:00Z STOP banner
 > (distil done; the user resumed by hand at 00:03Z) and the 19:05Z "using every check is not required" rule.
