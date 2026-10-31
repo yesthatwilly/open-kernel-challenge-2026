@@ -396,6 +396,10 @@
     1.10). Build 3 = DS1 M2/M3, since neither DEC-DX1(c) nor BF-DX2 was read. Attention S3/S2 gates (#3, #5) become
     phase-B diagnostic rungs. PF-D1 unread (prefill S1 stays default no). The partial builds on
     campaign/diag1031-{att,moe,pf} are unaudited starting points only.
+    H100 builder dry-runs before the stop (node-only, unaudited; not judge reads): moe DX2 r(d1) 1.28 [1.27, 1.29],
+    validity VOID (bandwidth ceiling 3.1 TB/s), prepare 196.5 s; PF-D1 validity PASS, prize t1s 81.1 / t4s 82.0 us,
+    noload 0.91 (rule #2 GO on the node); attention D1+D3 last run DONE bad=1 (needs a fix). DEC-DX1 and BF-DX2 not
+    built.
 - **Next:** nothing in flight (no okc job, no workflow, no agent). Idle until the next /3to1 tick. Day start
   (~00:00Z): record the boards, re-fetch the rules, then phase A from the plan above.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
