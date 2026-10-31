@@ -12,7 +12,7 @@
 >   - prefill = public-C P2 (1.7741);
 >   - moe = public raw (2.3704);
 >   - bf16 = public raw (1.5403).
-> - **decode = public-C D0 since 10-31 ~07:50Z (scored 2.1793, was 1.7030; old line at tag `ours-decode-1703-1031`).**
+> - **decode = public-C D0 since 10-31 ~07:43Z (scored 2.1793, was 1.7030; old line at tag `ours-decode-1703-1031`).**
 >   moe = public + M1a NOFENCE (scored 2.3867). /3to1 resumed 06:05Z (user: "resume /3to1 on the new foundation. free
 >   and open use of h100").
 > - (historical) decode stayed ours until a compliant public-C decode (D0) existed. The raw public decode fails the FA3-precision
