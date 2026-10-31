@@ -314,6 +314,24 @@
     only if >= 2.2220); a speed-only KILL leaves D0FIX as the landing candidate.
   - BF16FIX GO: 9/9 tests, mean >= 1.525; landing below the 1.5657 board is a user call (HOLD).
 - Quota at 20:52Z (checks / runs): bf16 14/9, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
+- **20:52Z gap map wave 2 judged** (wf_07670be7-65b, 3 agents, 1.18M tokens): `GAPMAP-1031b.md`, finder reports in
+  `research/gapmap-1031b/`; master 842b39dd.
+  - **Correction to 19:41Z (DC5L):** decode's graph is one serial stream; attention sits between non-PDL nvjet GEMMs
+    with no overlap (H100 nsys). The saving did reach the rows: pooled paired v32f +0.93% vs +0.86% predicted. DC5L is
+    worth only +0.10% headline, below two-read resolution; the KILL came from untouched rows reading low (d1s -3.2%).
+    CLAIMS: new [shelf] line supersedes the [unresolved] one (bit-exact rider on the next carrier).
+  - **Correction (DPP, 07-11Z):** DPP's kernel saving was real (v16f/v32f +2.7/+3.2% pooled) but worth ~+0.26% headline;
+    most of its +2.0% board step was row noise (board 2.2220 vs 3-read level 2.2136). Lesson: build decode gates from
+    pooled paired ratios of the touched rows; the headline is a no-harm guard unless the expected effect is > ~1.5%.
+  - Value per µs: d1s 0.177 vs v32f 0.012 %/µs (x15). Decode 10th (2.375) is out of reach at central estimates
+    (P ~0.05-0.1); the top-50 cut (2.261, x1.021) is reachable with DS1 plus one more item.
+  - Phase A build 1: **DS1**, the T<=8 dense chain at the H200 stream rate (bf16 board runs the same shapes at
+    ~4.6 TB/s; decode's chain 1.3-3.3 TB/s). Build 2: moe C1 with a decode port stage. Build 3: S1-M1 or D12 by
+    tonight's diagnostics. bf16: no phase-A build (donor/testbed only).
+  - Rejected: spending bf16's checks timing other problems' kernels (gray area; needs a user ruling).
+- **20:56Z diag build workflow wf_ba98ae2b-a7e** (task wk4bcz6pd): DEC-DX1 (decode), BF-DX2 then BF-DX1 (bf16), same
+  build -> audit -> diag-ready marker flow; worktrees `.worktrees/diag-{dec,bf}`. Reserves: 1 decode (if DEC-DX1's A/A
+  > 1%), 1 bf16.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
