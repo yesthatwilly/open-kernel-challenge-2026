@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T11:20Z) — /3to1 on the public foundation; phase B: PP LANDED 2.4729; S6M checks + DPP audit in flight
+## Now (2026-10-31T11:45Z) — /3to1 on the public foundation; phase B: DPP checks + lever round 2 in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -103,7 +103,10 @@
   attention GPU 6) and a max judge. Briefed on today's transfer record: favour compute, issue, latency and launch
   levers, with judge profiles as the primary evidence. Output: LEVERS-1031b.md, which feeds the rest of phase B and
   tomorrow's phase A.
-- **Next:** the DPP audit, then 2 decode checks. Phase C (18Z): spend the remaining checks.
+- **11:44Z DPP audit PASS** (independent, GPU 5): barrier balance proven, no regressions against D0, no hangs. The
+  kernel alone saves -2.26 / -2.67 us at v16f / v32f on the H100. **Checks eb4e07ad and f078d673** (gate in the
+  attempt files, campaign/public-plus 90af4130).
+- **Next:** harvest DPP and lever round 2. Phase C (18Z): spend the remaining checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
