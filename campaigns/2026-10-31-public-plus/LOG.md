@@ -35,7 +35,7 @@
   - **moe M1a NOFENCE: 2.3867** (f4e16629; check eaf35636 2.3867). Was 2.3670, so +0.83%, borderline (under 1.2%).
   - union-confirm: its decode line is superseded by the foundation ruling; its swap-AB lesson stays in LESSONS.
 - **Next (phase B, since decode's phase-A item is landed):**
-  - first, an H100 A/B of D0 against the raw public decode on the judge's worst rows: d32s 1.751 and v16f 2.016;
+  - 07:46Z: lever-finding workflow wf_d49ebbab-bc8 launched: 5 effort-max finders (GPUs 1/3/4/5/6) and a max judge; its ranking picks the next build;
   - then the cheap riders on moe, bf16 and prefill, at most 3 agents;
   - decode checks left: 18.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
