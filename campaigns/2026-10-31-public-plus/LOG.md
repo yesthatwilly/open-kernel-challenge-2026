@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T16:10Z) — /3to1; phase B: LATENT RACE found in master decode, fix workflow running
+## Now (2026-10-31T18:35Z) — /3to1 phase C; resumed after the 17:22Z usage-limit stop
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -201,10 +201,35 @@
     +0.3-0.4%, p 0.25); public KPERM + 2-CTA split merge (about 0.15% expected); the bf16 rk_kernel (<=0.1%).
 - **15:40Z scheduling-lever finder** (effort max, H100 GPU 5/6) for prefill and bf16, the two problems unchanged today.
   Only scheduling-class levers are in scope (the class that transferred). "None" is an accepted answer.
-- No file is check-worthy right now. ET3 is held, B4 is too small on its own, and re-rolling identical bytes is not allowed.
-- **Next:** harvest the 3 agents (phase B). Phase C (18Z) spends the remaining checks. If it finds and fixes the cause, the fixed
-  ET3 gets an independent audit, then checks in phase C. Phase C (18Z): spend the remaining checks. Tomorrow's
-  phase-A plan is due in the LOG by about 23Z.
+- **17:22Z USAGE LIMIT:** the /3to1 session (e0c4de02) hit its 5-hour limit, and every agent in flight died. Those
+  were the sk2 fix (wf_a26ca193-d8e), the C5L audit, the R11C/PQ8 builds (wf_93daf94c-69f), the moe-B4 audit
+  (wf_2f1d3d0d-275) and the prefill compliance-tax design.
+  - The session then exited.
+  - The limit reset at 18:20Z; ~18:25Z, the user (verbatim): "resume". Picked up by session 47d181e3 (union-confirm's
+    session, idle since its swap-AB landing).
+- **wf_2f1d3d0d-275 had finished its other leads before the stop:**
+  - PFR (prefill router chain): KILLED on the H100 (t1s x1.0103, t1f x1.0072, both slower), audit confirms.
+  - BRK (bf16 rk_kernel): KILLED, no gain even with the barrier removed.
+  - PFK2 (prefill KPERM + 2-CTA merge): audit FAIL on the speed claim only. Order-balanced it is +0.84% turn-1 /
+    +0.28% headline; the builder prepared PFK2 first. Rules and correctness PASS.
+- **18:3xZ resume workflow wf_a9414eed-b89** (task w3ks6lxqj; 6 continuation agents plus 3 audits, effort high,
+  pf-tax max; GPUs 1/3/4/5/6):
+  - sk2fix: complete, then an independent audit. Uncommitted D0FIX/ET3FIX/**BF16FIX** arms were found, so bf16 carries
+    the pattern too.
+  - C5L: a fresh independent audit.
+  - R11C and PQ8: finish the builds, then audit.
+  - moe-B4: finish the audit.
+  - pf-tax: finish the K2/K2o measurements.
+- **18:31Z PFK2 phase-C checks:** 035dec28 (r1) and 25f3c3f0 (r2). Arms and attempts are on campaign/public-plus
+  3dbbc54e. The auditor pre-registered the rule (GO / HOLD / KILL); HOLD is expected.
+- Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
+  checks.
+- **Next:**
+  - Harvest PFK2.
+  - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
+    LEVERS-1031b; BF16FIX 2 checks; C5L 2 checks (v16f <= 109 us, v32f <= 199 us); R11C/PQ8 and B4 reads if they pass;
+    pf-tax per its verdict.
+  - Tomorrow's phase-A plan goes in the LOG by ~23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
