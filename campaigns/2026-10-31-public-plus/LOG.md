@@ -132,7 +132,9 @@
        only, and compliance comes first.
     2. The H100 GO is missed: d16s -1.67 us against the -2.0 bar (the unpooler edge carried most of d16s).
   - CLAIMS: unresolved line added (decode). Reopen once the root cause is found and fixed, followed by an independent audit.
-- **Next:** one H100 root-cause agent on the unpooler@16 race (phase B). If it finds and fixes the cause, the fixed
+- **15:00Z root-cause agent launched** (background, effort high, gpunode06 GPU 1/3, branch campaign/et3-rc). Q1 asks first
+  whether master's landed decode carries a latent form of the race.
+- **Next:** harvest the root-cause agent (phase B). If it finds and fixes the cause, the fixed
   ET3 gets an independent audit, then checks in phase C. Phase C (18Z): spend the remaining checks. Tomorrow's
   phase-A plan is due in the LOG by about 23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
