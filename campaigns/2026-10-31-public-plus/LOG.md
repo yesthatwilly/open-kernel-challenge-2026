@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T18:35Z) — /3to1 phase C; resumed after the 17:22Z usage-limit stop
+## Now (2026-10-31T21:33Z) — /3to1 phase C, wound down (user 21:06Z); resumed 18:35Z after the 17:22Z usage-limit stop
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -360,6 +360,15 @@
 - **~21:06Z the user: "can you try to finish up whatever is in flight."** No new launches. In flight: diag builds
   wf_725f652d-a70 (moe DX2+DX3 -> DX1, prefill D1, attention D1+D3 -> D2) and wf_ba98ae2b-a7e (DEC-DX1, BF-DX2 ->
   BF-DX1); each check is dispatched on its audit PASS until 23:40Z, then harvested against its GAPMAP rule.
+- **21:33Z correction: both diag workflows were stopped, so no diagnostic check ran tonight.** Status `killed`
+  ("Workflow aborted"): wf_725f652d-a70 at 20:48:51Z (all 3 builders were in their final H100 end-to-end runs; 781k
+  tokens) and wf_ba98ae2b-a7e at 20:56:29Z (2.7 min after launch; 287k tokens). The main thread made no stop call, so
+  this is read as the user's stop and nothing is relaunched. The 21:06/21:07Z "still building" status was wrong: it
+  read the journal's `started` lines without the workflow status. Cleanup: gpunode06 has no compute processes (21:32Z,
+  read-only); the gd-moe-dx23 takemyjob worktree's 3 moved-aside sub_*.py links restored; the unaudited partial files
+  committed on their own branches (diag1031-att 301ba9c7, -moe e2e41094, -pf 548cc851; never sent to okc without an
+  audit). Quota left at 21:33Z (checks / runs): bf16 14/8, attention 12/6, moe 12/8, decode 7/6, prefill 12/9. These
+  expire unspent at 00:00Z, by the user's wind-down.
 - **Phase-A plan for 11-01 (written 21:07Z; tonight's diagnostic reads fill in the gates)**
   - **Bases on master:** decode D0FIX (ce08a099), attention C5L (c5990d50), bf16 BF16FIX (8d0df028), moe M1a, prefill
     P2. Any new ring hand-back keeps the D0FIX fence (decode CLAIMS:116).
@@ -382,13 +391,13 @@
     M0 stamps gate, plus tonight's #3 intercept a >= 8 us), then S2 (B=1 latency path, gated by #5). Prefill S1
     only if the user grants it a phase-A slot (default no) and PF-D1's prize is >= 75 us at t1s and t4s.
   - **Open user decisions:** prefill S1 phase-A slot; prefill exp-split precision ruling (PENDING_USER).
-  - **Tonight's answers:** see the diag harvest bullets below as they land (each names the GAPMAP rule it fired).
-- **Next:**
-  - Harvest PFK2.
-  - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
-    LEVERS-1031b; BF16FIX 2 checks; C5L 2 checks (v16f <= 109 us, v32f <= 199 us); R11C/PQ8 and B4 reads if they pass;
-    pf-tax per its verdict.
-  - Tomorrow's phase-A plan goes in the LOG by ~23Z.
+  - **Tonight's answers: none** (the diag workflows were stopped at 20:48/20:56Z). Defaults: Build 1 runs DEC-DX1 as
+    its M0 diagnostic rung before any DS1 kernel work. Build 2 runs moe DX2 as its first rung (precondition r(d1) <
+    1.10). Build 3 = DS1 M2/M3, since neither DEC-DX1(c) nor BF-DX2 was read. Attention S3/S2 gates (#3, #5) become
+    phase-B diagnostic rungs. PF-D1 unread (prefill S1 stays default no). The partial builds on
+    campaign/diag1031-{att,moe,pf} are unaudited starting points only.
+- **Next:** nothing in flight (no okc job, no workflow, no agent). Idle until the next /3to1 tick. Day start
+  (~00:00Z): record the boards, re-fetch the rules, then phase A from the plan above.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
