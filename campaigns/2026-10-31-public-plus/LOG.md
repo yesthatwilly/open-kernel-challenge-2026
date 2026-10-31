@@ -248,6 +248,20 @@
   - Decode and bf16 get a second wave once the landings are in.
   - The user's paste showed the dead session's 3 workflows "paused" there; all 3 were continued here, and the user was
     told not to resume them in the old session (duplicate writers on the same worktrees).
+- **19:34Z resume workflow, more returns:**
+  - **C5L: independent audit PASS.** Adversarial identity 298/298, detid 18/18, checks/force 76/76, 19/20 SASS
+    identical. H100 L2-resident v16f 0.943, v32f 0.937; cold only 0.3-0.6%.
+  - **R11C: KILLED.** No gain beyond noise vs C5L. CLAIMS line: node-only.
+  - **pf-tax: NONE.** The prefill compliance tax is only +0.94% headline on the H100 (variant 43, +64 FADD/tile), and
+    no compliant arm of 24 beats P2. The rest of public 1.8167 vs our 1.7836 is judge-job variance. CLAIMS line: node-only.
+  - Still running: sk2fix (builder).
+- **19:35Z C5L checks** 94993678 (r1) and 262412e1 (r2). The auditor's rule: GO needs v16f <= 109.0 and v32f <= 199.0 in
+  both reads, other rows within board x1.03 + 0.35 us, and a headline mean >= 2.4729.
+- **19:36Z DC5L done (wf_ab3194a8-fc3): build and audit PASS on all 4 arms.** L2 v16f 0.9415, v32f 0.9429; cold
+  -0.6 us.
+  - **DC5L checks** 390a1cd4 (r1) and f632199e (r2), on the master base for an early transfer read. GO needs v16f <= 107.1
+    and v32f <= 196.5 in both reads, and a headline mean >= 2.2000.
+  - On GO, the scored run is DC5LF (DC5L on D0FIX), after D0FIX lands and DC5LF has its own check.
 - Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
   checks.
 - **Next:**
