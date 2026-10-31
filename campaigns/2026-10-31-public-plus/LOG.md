@@ -283,8 +283,25 @@
   - The bf16 finder says plainly if the floor leaves nothing, and whether the 16 spare checks are better spent as H200
     bandwidth diagnostics.
   - Timebox 22:00Z.
-- Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
-  checks.
+- **19:48Z sk2fix builder done** (campaign/sk2fix 1276427e; takemyjob hopper/sk2fix c280d1e). D0FIX, ET3FIX and
+  BF16FIX: 0 gross replays in 16k+16k stress at d16 (the ET3old positive control has 4-32), 37/37 judge checks.
+  Speed vs master: D0FIX +0.18% time, ET3FIX -0.27%, BF16FIX ~+0.2%. Site 8 (moe WGS hand-back) is hardening, ~0.4%
+  at d32. Also found, not fixed: moe :2215 (same hand-back as decode site 8), prefill empty `slot_proxy_fence()`
+  (formal only). The independent audit has been running since 19:48Z.
+- **20:27Z gap map wave 1 judged** (wf_a3de48ce-c2f, 4 agents, 1.79M tokens): `GAPMAP-1031.md`, finder reports in
+  `research/gapmap-1031/`; master 796bafff.
+  - No problem reaches 10th on the mapped mechanisms by 11-04 under the ruling. Physics doesn't rule it out (compliant
+    floors: attention 3.27, prefill 2.23, moe 2.84).
+  - Phase A tomorrow: decode first (from GAPMAP-1031b); the moe C1 gate as the testbed (M0 microbench, then build on
+    GO). Attention S3 then S2 go to phase B.
+  - **Open user decision (default: standing order holds):** give prefill S1 (small-tile converter co-schedule, EV
+    1.3-1.7%, the only item near the bar) a phase-A slot. It does not count on the overall board.
+- **20:30Z diag build workflow wf_725f652d-a70** (task wrvyz72el): GAPMAP-1031 §3 checks #1 moe DX2+DX3, #2 prefill
+  D1(+D2,D3), #3 attention D1+D3, then #4 moe DX1 and #5 attention D2 (skipped if their build starts after 22:50Z).
+  One builder per problem at effort high, each followed by an independent audit; worktrees `.worktrees/diag-{moe,pf,att}`
+  (campaign/diag1031-*). On audit PASS, a marker lands in the scratchpad `diag-ready/`, and the main thread copies the
+  file and attempt draft into public-plus and dispatches. Never scored. Dispatch cutoff 23:40Z.
+- Quota at 20:31Z (checks / runs): bf16 16/9, attention 12/6, moe 12/8, decode 11/7, prefill 12/9.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
