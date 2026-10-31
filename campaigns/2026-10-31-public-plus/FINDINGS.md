@@ -37,6 +37,22 @@ Per-row tables: `controls-bf16-1031.md`, `controls-moe-1031.md`. Raw records and
     (o m8); rr_small (router m8/16); qb_kernel (qkv m128); ol/rl projections (o m128/256); cuBLASLt nvjet pins
     (pooler/unpooler/qkv m128/256); rk (router m128/256).
 
+**Is the control within noise of the published row? (checked 10-31 ~01:00Z, after the user asked)**
+- **Our nonce line cannot change execution.** The control bytes differ from the public file only by the comment on
+  line 2. Neither file reads its own source. Their extension names hash the CUDA source strings (bf16 PUB:4081, 4318,
+  4511, 4543, 4636), and those strings are unchanged. So the compiled kernels are identical.
+- **bf16 is exactly at their own mean.** alygg77 submitted this same file 4 times: 1.5443 (sfo3), 1.5410 (sfo3c),
+  1.5502 (sfo3c) and 1.5259 (sfo3) (H200_MEASURED_FACTS.md §3). Mean 1.5404, sd 1.0%. Our 2 reads also average
+  **1.5404**. The published 1.5502 is the best of those 4, because the board keeps a team's best scored run, so a
+  board row is biased high.
+- **moe is consistent with noise but not proven.** Our mean score is 5673 µs against their 5600 µs (+1.3%; the same
+  SGLang baseline_us of 13448.5). All 6 rows are 0.7-3.7% slower, a uniform shift. That is inside their documented
+  unchanged-file board spread of 1.6-2.2%, their sfo3/sfo3c moe offset of 0.9-1.8% per load, and their 5-10 µs v32
+  container spread (ours is +3.9 µs). They published no repeat runs for moe, and their 2.4015 is also a best-run board
+  row. A third read (1 check) would tighten this; that needs the user's go.
+- **Reading rule.** Judge arms against the same-day control, never the published row. Compare ours with theirs best
+  against best, or mean against mean. Our board rows are best-of-N too.
+
 **Where today's gap sits** (ours BEST vs today's public mean, raw µs; share of the log gap, then the headline-equivalent):
 ```
 == muse_moe_w4a16: log gap (ours BEST vs today public mean, raw us) 0.1099 = x1.116 over 6 loads
