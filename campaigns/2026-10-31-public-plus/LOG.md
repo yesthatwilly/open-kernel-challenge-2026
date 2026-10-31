@@ -147,6 +147,12 @@
     captures, none containing cuBLAS.
   - moe: the capture is diag-only (`DIAG=False`). prefill: no captures. Both verdicts are from reading the code.
   - Unverified: prefill SIDE_STREAM pooling (:404), compute-sanitizer, H200.
+- **~16:30Z lever finder (prefill/bf16): NONE clears +0.5%.**
+  - Prefill attention already has 3-warpgroup exp turns (:4268/:4305), and its turn variants measured 0.4-1.8% slower.
+    Custom kernels already use PDL. moe_fused is at 97-99% SM, and the dense GEMMs are cuBLAS at 95-99.7% tensor use.
+  - bf16: one kernel per row and bandwidth-bound at m<=32. The m=256 nvjet plans are already the best of 39-78.
+  - Near misses for tomorrow's plan: the prefill router chain (a custom FP32 hi/lo router with in-kernel reduce,
+    +0.3-0.4%, p 0.25); public KPERM + 2-CTA split merge (about 0.15% expected); the bf16 rk_kernel (<=0.1%).
 - **15:40Z scheduling-lever finder** (effort max, H100 GPU 5/6) for prefill and bf16, the two problems unchanged today.
   Only scheduling-class levers are in scope (the class that transferred). "None" is an accepted answer.
 - No file is check-worthy right now. ET3 is held, B4 is too small on its own, and re-rolling identical bytes is not allowed.
