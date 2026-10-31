@@ -13646,7 +13646,7 @@ def _ead_setup(weights, state, device, t_prepare0):
     for t in EAD_BIG:
         tail.append(f"{EAD_TAG} PATH CHOSEN T={t} = {'ENGINE A ' + state['ea']['on'][t] if state['ea']['on'][t] else 'MASTER'}")
     return tail
-CAMPAIGN_DENSE_SWAPAB = False  # containment: its copy check hit a sticky illegal access (scored cb182920)
+CAMPAIGN_DENSE_SWAPAB = True
 SWAPAB_MIN_M = 17
 SWAPAB_MAX_M = 32
 SWAPAB_BLOCK_W = 64
