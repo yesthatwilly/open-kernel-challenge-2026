@@ -222,6 +222,10 @@
   - pf-tax: finish the K2/K2o measurements.
 - **18:31Z PFK2 phase-C checks:** 035dec28 (r1) and 25f3c3f0 (r2). Arms and attempts are on campaign/public-plus
   3dbbc54e. The auditor pre-registered the rule (GO / HOLD / KILL); HOLD is expected.
+- **18:5xZ PFK2 harvested: HOLD** (rule pre-registered). Reads 1.7618 / 1.7893 (mean 1.7755 < board 1.7836). Turn-1
+  load is ~1.776 / ~1.843 against controls of 1.764-1.805, with r1's t1s/t1f under the control minima; no row is
+  down beyond the 2% floor. CLAIMS line: shelf; reopen it stacked with other turn-1 levers worth >= +2.5% turn-1.
+  Report: pfk2-1031.md. Prefill checks left: 12.
 - Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
   checks.
 - **Next:**
