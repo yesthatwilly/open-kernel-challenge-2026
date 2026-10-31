@@ -12,7 +12,7 @@
     the kill rule is PLAN §7 #11.
   - **M1-stack**: the moe testbed (PLAN §7 #3).
   - **A1**: attention W2 on A0, the phase-B rider.
-  - Design runs at effort max; build and audit at high. Variant files go in `files/<p>/` on campaign/public-plus,
+  - Workflow wf_1c6314b7-81b (task wzlr8upqf), launched 06:10Z. Design runs at effort max; build and audit at high. GPUs: D0 1,3; M1 4,5; A1 6. Variant files go in `files/<p>/` on campaign/public-plus,
     rebased on master.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
