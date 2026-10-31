@@ -360,7 +360,7 @@
 - **~21:06Z the user: "can you try to finish up whatever is in flight."** No new launches. In flight: diag builds
   wf_725f652d-a70 (moe DX2+DX3 -> DX1, prefill D1, attention D1+D3 -> D2) and wf_ba98ae2b-a7e (DEC-DX1, BF-DX2 ->
   BF-DX1); each check is dispatched on its audit PASS until 23:40Z, then harvested against its GAPMAP rule.
-- **Phase-A plan for 11-01 (written 21:08Z; tonight's diagnostic reads fill in the gates)**
+- **Phase-A plan for 11-01 (written 21:07Z; tonight's diagnostic reads fill in the gates)**
   - **Bases on master:** decode D0FIX (ce08a099), attention C5L (c5990d50), bf16 BF16FIX (8d0df028), moe M1a, prefill
     P2. Any new ring hand-back keeps the D0FIX fence (decode CLAIMS:116).
   - **Gate method (GAPMAP-1031b §5):** decode gates use pooled paired per-row ratios of the rows a change touches; the
