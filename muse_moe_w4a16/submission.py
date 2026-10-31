@@ -1,5 +1,5 @@
 # okc: problem=muse_moe_w4a16
-# Adopted from alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31
+# Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31.
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -2149,7 +2149,7 @@ __device__ __forceinline__ void wgs_flush(const Params& p, Smem& S, WgsPend& pd)
   pd.kind = 0;
   if (!last) return;
   }
-  asm volatile("fence.acq_rel.gpu;\n" ::: "memory");
+  // [M1a] NOFENCE: the acquire is wt 0's ld.acquire / atom.acq_rel, then bar.sync
   float* fb = wgs_fix(p, PB) + (size_t)(pd.slot * 4 + wg) * WGS_FIXW + wt * 4;
   const int ntt = (S.jC[j] + 7) >> 3, r16 = ub * 16 + wg * 4 + wp;
   // two n-tiles' loads in flight before their zeroing stores and epilogues (the scout): one at a time, each load

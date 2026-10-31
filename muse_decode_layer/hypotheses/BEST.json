@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "63d0785130904bd1",
- "check_job": "476d3ff11ba34347",
+ "job": "201db0b8c295487b",
+ "check_job": "4b2adae23a3346ff",
  "mode": "submit",
- "speedup": 1.7030453658729507,
+ "speedup": 2.179286240938651,
  "ci": [
-  1.6774996853848565,
-  1.7285910463610448
+  2.1465969473245714,
+  2.2119755345527308
  ],
- "score_us": 13282.265084233522,
+ "score_us": 10379.68284067957,
  "commit": "bf25b82798f962c13006ca5cd860186c3e66d600",
  "submission_blob": "c6bb62a6a588d4c40bc100444d01e91aa7681d6c",
- "slug": "swapab-root",
- "master_slug": "swapab-root",
- "master_job": "63d0785130904bd1",
+ "slug": "public-c-d0",
+ "master_slug": "public-c-d0",
+ "master_job": "201db0b8c295487b",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T072844Z",
- "note": "fix/swapab-root c4fcd162; removes cb182920 illegal-access hazard; 1.6989->1.703"
+ "updated_at": "2026-10-31T074351Z",
+ "note": "foundation rebase of decode; replaces our line (1.703, tag ours-decode-1703-1031); checks 2.2060/2.1708"
 }

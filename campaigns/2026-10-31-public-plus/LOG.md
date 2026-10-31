@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T06:06Z) — /3to1 RESUMED on the public foundation
+## Now (2026-10-31T07:52Z) — /3to1 on the public foundation; phase A landed D0 + M1a
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -29,6 +29,15 @@
 - **Concurrent session:** union-confirm landed decode **1.7030** (63d07851, swap-AB root-cause fix, master eb66b591)
   at 07:20Z on our old decode line. D0 is now measured against 1.7030. If D0 wins, it replaces that line on master
   (foundation ruling); union-confirm's LOG must be told.
+- **~07:50Z LANDED on master (scored, register-landing done):**
+  - **decode D0 public-C: 2.1793** (201db0b8; checks 2.2060 4b2adae2 and 2.1708 de38cec7). Was 1.7030, so +28.0%.
+    Our old decode line is at tag `ours-decode-1703-1031`; **all five problems now sit on the public foundation.**
+  - **moe M1a NOFENCE: 2.3867** (f4e16629; check eaf35636 2.3867). Was 2.3670, so +0.83%, borderline (under 1.2%).
+  - union-confirm: its decode line is superseded by the foundation ruling; its swap-AB lesson stays in LESSONS.
+- **Next (phase B, since decode's phase-A item is landed):**
+  - first, an H100 A/B of D0 against the raw public decode on the judge's worst rows: d32s 1.751 and v16f 2.016;
+  - then the cheap riders on moe, bf16 and prefill, at most 3 agents;
+  - decode checks left: 18.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
