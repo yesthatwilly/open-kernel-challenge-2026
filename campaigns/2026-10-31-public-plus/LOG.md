@@ -1,6 +1,17 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T00:48Z)
+## Now (2026-10-31T03:45Z)
+
+- **~03:50Z, the user (verbatim): "stop lifted for the 10 public-C checks, go ahead".** This lifts the 00:32Z stop
+  only for the following (PLAN §14):
+  - A0 and A0′ (attention), P0, P1 and P2 (prefill), 2 reads each, 10 check-only runs;
+  - one builder plus one audit agent;
+  - H100 correctness on gpunode06 GPUs 1/3/4/5/6.
+  - Everything else stays stopped: M1-stack, A1/A2, D0 and the launch diet.
+- §13 done: KERNEL-COUNTS.md and the FINDINGS "Answer 10-31".
+- Adopting vjeux's attention and prefill as our base is the user's call, after public-C reads (PLAN §14).
+
+## Earlier Now (2026-10-31T00:48Z)
 
 - **USER STOP, ~00:32Z (verbatim):** "do not launch any new work. get the four control runs back, harvest, process,
   plan out. but do not launch more agents or checks submissions or h100 work". It still holds. Nothing is running

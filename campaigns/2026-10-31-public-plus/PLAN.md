@@ -395,3 +395,76 @@ Then dispatch per §6: the compliant bases twice each first, then the arms.
   the architecture lever the arch-mirror L3 skeleton failed to reproduce.
 - **bf16:** the gap is spread over the 12-bit m=16/32 consumer and m=8 qkv.
 - Both confirm §4: the remaining gap is architecture, not riders.
+
+## 13. 10-31 answer and redirect: can our findings improve the proven score?
+
+**Context.** After the controls, the user asked whether our findings have any way to knowingly improve the public
+score. The evidence says no, at least not by an amount the judge can see:
+- Of 48 graft candidates, 1 survived (attention W2, +0.14..0.58%). A moe stack might add +0.3..0.5%.
+- Our A/A noise is about 0.5%. Their unchanged-file spread is 1.6–2.2%.
+- 116 of our findings are things their file already does.
+- The 43 refutations their file contradicts run the wrong way: they tell us what to adopt, not what to add.
+- Our only strong lever on their files is compliance: making attention, decode and prefill legal at the lowest cost.
+  That lowers their score toward our rules; it does not raise it.
+
+The useful direction is the reverse: carry their primitives into our code, using our own measured costs (R8) as the
+gates. The kernel-count analysis shows where this pays:
+- moe: v16 and v32 are 62% of the moe gap. The bundle is one launch, per-job counters, a distributed final pass,
+  dequantize-once wide jobs, and 1 CTA/SM.
+- decode: the FP32 router folded into the pooler, plus the combine and one norm boundary; worth about 6–10 µs at d1s.
+- attention: the remaining full and v16s/v32s rows go to one launch, up to about 2.9%.
+- prefill: a launch diet, about 17–21% of its gap.
+
+**On approval (text only; the USER STOP still holds, so no agents, checks or H100):**
+1. Write `campaigns/2026-10-31-public-plus/KERNEL-COUNTS.md`. It holds:
+   - the per-row launch tables from judge profiles (moe 476d3a0e, decode dfb318ee, attention 4db5f139, bf16 7753d5c7,
+     prefill 9f934846; theirs b3510dcc, a9547928);
+   - the causes, with CLAIMS citations (moe :72, :102, :110, :124; arch-mirror :135; decode :109);
+   - the primitive transfer table with our measured costs;
+   - the "build the empty skeleton in their sync form first" gate (2–4 µs).
+2. Add a FINDINGS.md "Answer 10-31" paragraph. Update LOG Now: the public-plus graft track is near-null by
+   construction; the recommended next work is a launch-diet campaign on our own line (moe first, then decode). It
+   needs a user go.
+3. Commit by path on master (`git commit -m ... -- campaigns/2026-10-31-public-plus/KERNEL-COUNTS.md FINDINGS.md LOG.md`).
+   Update memory `okc-campaign-public-plus.md` with a one-line redirect.
+
+**Verification:** `git show --stat HEAD` touches only those paths; no okc jobs and no worktrees were created.
+
+## 14. 10-31 question: adopt vjeux's attention and prefill as our base, then /3to1 over them?
+
+**The question.** The user asked whether the two vjeux files could be adopted alongside our own modules. Those are
+attention and prefill, which alygg77 ships unchanged. They also asked whether that would give /3to1 a solid base.
+
+**Rules (read 10-31: technical-rules:139,151; official-rules §6, §11b, §14).**
+- Nothing in the rules forbids reusing Apache-2.0 code if the notice is kept, and we would hold the right to submit
+  it.
+- Two clauses are discretionary:
+  - "submissions should follow the spirit of the challenge … disqualify … at our discretion";
+  - the Sponsor may disqualify "conduct inconsistent with the spirit".
+- Kernel boards carry no prizes; the prize money is on the serving board.
+- So sending a near-copy of a public board entry as our row is a **gray area. That call is the user's**, under
+  okc-stay-compliant, and the user's own rule "public = target, never base" (okc-data-driven-integration) would also
+  have to be reversed for these two problems.
+
+**Compliance.** The raw files break the FA3-precision ruling in two ways: a rounded-P denominator, and a lazy max in
+attention. So the base would be public-C. Its cost is unmeasured, which is exactly what arms A0/A0′ and P0/P1/P2
+measure.
+
+**As a /3to1 base.**
+- **Upside:** a one-time jump on the board, attention 2.005 → at most 2.653 and prefill 1.572 → at most 1.817, less
+  the compliance tax.
+- **Weak follow-on:**
+  - alygg77 iterated on both files and found nothing above noise;
+  - our verifiers found 1 graft for attention (W2, ≤0.6%) and 0 for prefill;
+  - /3to1 on that base would mostly chase noise.
+- **Cost:** every agent that works those files is public-exposed, which ends the arch-mirror clean-room for attention
+  and prefill.
+- **Verdict:** dependable as a level. It is not a rich source of further gains. The only knowable lever on it is
+  lowering the compliance tax: the M1 offset, G0 against FA3 per class, and our fa3c gather.
+
+**Step that decides it.** This requires the user to lift the stop for these checks only.
+- Run the public-C arms in §7: A0 and A0′ (attention), then P0, P1 and P2 (prefill), 2 reads each. That is 10
+  check-only runs.
+- One builder plus an audit on the public-plus branch, with H100 correctness on gpunode06 GPUs 1/3/4/5/6.
+- Gate: if public-C clears our board by more than max(2%, s_h), the user decides whether to adopt it (§10). Otherwise
+  it stays a target.

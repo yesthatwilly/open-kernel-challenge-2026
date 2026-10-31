@@ -10,6 +10,22 @@ Verifier caveats:
 - Each problem's verifier listed misclassified inventory rows (about 11% overall). They are in the per-problem "verifier corrections" lists.
 - Line refs are into `~/git/okc-muse-spark-kernels/kernels/<problem>.py` (PUB) unless a path says otherwise.
 
+## Answer 10-31 (~03:45Z): can our findings knowingly improve the public score?
+
+No, at least not by an amount the judge can see:
+- Of the 48 graft candidates, 1 survived: attention W2, +0.14..0.58%. A moe stack might add +0.3..0.5%.
+- Our A/A spread is ~0.5%; their unchanged-file spread is 1.6–2.2%.
+- 116 of our findings are things their file already does.
+- The 43 refutations their file contradicts tell us what to adopt, not what to add.
+- Our one strong lever on their files is compliance (public-C). That lowers their score toward our rules; it does not
+  raise it.
+
+So the useful direction is the reverse: carry their primitives into our code. `KERNEL-COUNTS.md` has the launch-count
+evidence and the transfer table.
+
+PLAN §14 covers adopting vjeux's attention and prefill as our base. That is a gray area under the rules' "spirit"
+clause, so it is the user's call. The measurement that decides it is the 10 public-C checks (A0/A0′, P0/P1/P2).
+
 ## Results so far
 
 ### 10-31 raw controls (B0 bf16, M0 moe), harvested 2026-10-31T00:48Z
