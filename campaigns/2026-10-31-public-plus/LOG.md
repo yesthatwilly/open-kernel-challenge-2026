@@ -140,7 +140,10 @@
   replaced, so it never reached the public files. Master decode and bf16 both capture graphs and call torch matmul.
   - Forwarded to the root-cause agent as a lead for both master decode exposure and the ET3 race.
   - New agent: bf16 exposure audit (moe/prefill spot check), GPUs 4/5/6, fix on campaign/bf16-ws only if exposed.
-- **Next:** harvest both agents (phase B). If it finds and fixes the cause, the fixed
+- **15:40Z scheduling-lever finder** (effort max, H100 GPU 5/6) for prefill and bf16, the two problems unchanged today.
+  Only scheduling-class levers are in scope (the class that transferred). "None" is an accepted answer.
+- No file is check-worthy right now. ET3 is held, B4 is too small on its own, and re-rolling identical bytes is not allowed.
+- **Next:** harvest the 3 agents (phase B). Phase C (18Z) spends the remaining checks. If it finds and fixes the cause, the fixed
   ET3 gets an independent audit, then checks in phase C. Phase C (18Z): spend the remaining checks. Tomorrow's
   phase-A plan is due in the LOG by about 23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
