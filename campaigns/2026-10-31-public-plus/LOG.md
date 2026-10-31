@@ -276,6 +276,13 @@
   - CLAIMS line: unresolved. Reopen only after an H100 graph-mode nsys of the v16f/v32f critical path. This feeds the
     decode gap map.
   - DC5LF is not checked.
+- **19:52Z the user (verbatim): "launch the decode and bf16 gap maps now".** Gap-map wave 2 is wf_07670be7-65b
+  (task wmzbualcz): decode (GPU 5) and bf16 (GPU 1) finders at effort max, then a max judge. Output: GAPMAP-1031b.md.
+  - The decode finder's key question: what is on the graph-mode critical path at v16f/v32f, given that DC5L's kernel
+    saving did not reach the rows.
+  - The bf16 finder says plainly if the floor leaves nothing, and whether the 16 spare checks are better spent as H200
+    bandwidth diagnostics.
+  - Timebox 22:00Z.
 - Quota at 18:27Z (checks / runs): bf16 16/9, attention 14/7, moe 12/8, decode 13/7, prefill 14/9; PFK2 used 2 prefill
   checks.
 - **Next:**
