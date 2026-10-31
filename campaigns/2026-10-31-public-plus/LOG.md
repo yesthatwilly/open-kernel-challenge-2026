@@ -226,14 +226,14 @@
   load is ~1.776 / ~1.843 against controls of 1.764-1.805, with r1's t1s/t1f under the control minima; no row is
   down beyond the 2% floor. CLAIMS line: shelf; reopen it stacked with other turn-1 levers worth >= +2.5% turn-1.
   Report: pfk2-1031.md. Prefill checks left: 12.
-- **18:4xZ resume workflow, first returns:**
+- **18:37Z resume workflow, first returns:**
   - **PQ8: KILLED.** L2-resident short rows were slower: v32s lost 37/40 rounds vs C5L and 40/40 vs master. CLAIMS line: node-only.
   - **moe B4: audit PASS, rider only.** d32 x1.0083 [1.0072, 1.0099]; prepare +46 s.
     - **No B4 checks:** the expected judge gain is ~1 us at d32, against the M1a pair's own 4 us d32 spread, so 2
       reads answer nothing (the auditor estimates >60 reads per arm to resolve it). This departs from the earlier
       "2 reads per passing lead".
     - CLAIMS line: shelf, to ride on the next moe carrier.
-- **18:4xZ DC5L workflow wf_ab3194a8-fc3** (task wsmjj40k6; build GPU 6, then an independent audit).
+- **18:39Z DC5L workflow wf_ab3194a8-fc3** (task wsmjj40k6; build GPU 6, then an independent audit).
   - What it is: the decode port of C5L, the same way DPP ported PP. PP gave attention +1.6% and DPP gave decode +2.0%.
   - Generator: mk_decode_c5l.py. Arms: DC5L on master, plus DC5LF on D0FIX, whichever base lands first.
   - Goal: decode checks tonight if attention C5L reads GO.
