@@ -1,5 +1,5 @@
 # okc: problem=muse_bf16_proj
-# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31
+# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31.
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -497,6 +497,7 @@ skinny_tma_kernel(const uint4* __restrict__ Wp, const __nv_bfloat16* __restrict_
       for (int q = 0; q < NL; ++q)
         asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(wr[q].x), "=r"(wr[q].y), "=r"(wr[q].z), "=r"(wr[q].w) : "r"(src + q * 512));
     }
+    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
     __syncwarp();
     if (lane == 0) mbar_arrive(empty0 + 8 * slot);
     if constexpr (!COMP && HL) {
@@ -1148,6 +1149,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           }
           ++pe;
         }
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
         __syncwarp();
         if (lane == 0) mbar_arrive(empty0 + 8 * slot);
       }
@@ -1216,6 +1218,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
       }
       // the stage's shared memory is in registers now: hand the slot back before decoding and multiplying
       if (UPW == 1 && uu == 0) {
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
         __syncwarp();
         if (lane == 0) mbar_arrive(empty0 + 8 * slot);
       }
@@ -1241,6 +1244,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           }
     }
     if (UPW > 1) {
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
       __syncwarp();
       if (lane == 0) mbar_arrive(empty0 + 8 * slot);
     }
