@@ -151,6 +151,9 @@
   A0 2.4369, so the patch costs about 8%; PP got back 1.6%. The agent breaks the tax into its parts and proposes cheaper
   implementations of the FA3 ruling that stay exactly compliant. This is the largest known pool and tomorrow's
   phase-A candidate.
+- **~15:55Z user: "go after the prefill compliance tax too".** Prefill compliance-tax design agent launched (effort max,
+  H100 GPUs 4/5/6, branch campaign/pf-tax). Public 1.8167 vs our P2 1.7741 / scored 1.7836, a tax of about 1.8-2.4%
+  (rounded-P denominator only). Same brief as attention: break it down, find exactly compliant cheaper forms, measure.
 - **~16:30Z lever finder (prefill/bf16): NONE clears +0.5%.**
   - Prefill attention already has 3-warpgroup exp turns (:4268/:4305), and its turn variants measured 0.4-1.8% slower.
     Custom kernels already use PDL. moe_fused is at 97-99% SM, and the dense GEMMs are cuBLAS at 95-99.7% tensor use.
