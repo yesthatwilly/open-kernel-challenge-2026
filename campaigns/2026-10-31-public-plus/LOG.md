@@ -400,8 +400,13 @@
     validity VOID (bandwidth ceiling 3.1 TB/s), prepare 196.5 s; PF-D1 validity PASS, prize t1s 81.1 / t4s 82.0 us,
     noload 0.91 (rule #2 GO on the node); attention D1+D3 last run DONE bad=1 (needs a fix). DEC-DX1 and BF-DX2 not
     built.
-- **Next:** nothing in flight (no okc job, no workflow, no agent). Idle until the next /3to1 tick. Day start
-  (~00:00Z): record the boards, re-fetch the rules, then phase A from the plan above.
+- **22:59Z, the user (verbatim): "set it to resume at 0001Z time to do any and all work you see at advancing todays
+  board".** A one-shot session cron fires `/loop /3to1` at 2026-11-01T00:01Z (session-only; it fires only while this
+  session is open). That go covers the audits of the committed side-branch diag files (GD-MOE-DX23 e2e41094,
+  GD-PF-D1 548cc851, attention GD-ATT-D13 301ba9c7 after its bad=1 fix) and their `--target diag` checks, plus the
+  phase-A workflow from the plan above.
+- **Next:** nothing in flight (no okc job, no workflow, no agent) until 00:01Z. Day start: record the boards,
+  re-fetch the rules, run phase A from the plan above, and dispatch the audited diag checks as each one passes.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
