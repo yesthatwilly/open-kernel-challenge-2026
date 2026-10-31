@@ -164,6 +164,19 @@
     (bf16 first: the sk2 code comes from it), measures speed, and builds the D0FIX/ET3FIX (+BF16FIX) arms.
   - Plan: on PASS, 2 D0FIX checks, then a scored run and land (correctness comes before speed; landing it is right
     even at a small speed cost). ET3FIX gets 2 checks under the LEVERS-1031b rule.
+- **Attention compliance-tax design done** (campaign/att-tax d8948831).
+  - Tax vs the published row: 7.7%. v16f/v32f account for 4.3%, almost all of it the exact max; R11 ~1.1%; per-request
+    q8 ~0.45%; ~1.8% is not compliance (best-of-N row bias and drift).
+  - **C5L** = per-row-half exact-max bookkeeping in the flat q8 kernel.
+    - H100 L2-resident: v16f 0.944, v32f 0.939. Cold rows within noise.
+    - Byte-identical to master on deterministic grids (18/18).
+    - Expected judge ≈ +1.6% (≈2.51), p 0.8.
+  - Rejected (measured): speculative exponentials, half-speculation and other turn placements.
+  - The agent ran `ssh -O stop` on the wedged sched-head control socket. That is local only and unblocked
+    hopper-probe guard checks. Flagged to the user.
+  - **Workflow wf_93daf94c-69f** (task w0lswx76g): package and independently audit C5L; build and audit compact R11
+    (R11C) and the per-request q8 port (PQ8), both stacked on C5L. Gate for C5L checks: v16f <= 109 us and
+    v32f <= 199 us, no other row beyond noise.
 - **~16:12Z user (verbatim): "start and pursue any and all leads you have."** Workflow wf_2f1d3d0d-275 (task wybxc2nqh)
   builds and independently audits each lead (effort high, shared GPUs 1/3/4/5/6):
   - prefill router chain (PFR, +0.3-0.4%, p 0.25);
