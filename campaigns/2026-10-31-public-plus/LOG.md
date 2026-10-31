@@ -1,6 +1,23 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T03:45Z)
+## Now (2026-10-31T06:06Z) — /3to1 RESUMED on the public foundation
+
+- **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
+  "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
+  and this campaign is the active one. H100: free use on gpunode06 GPUs 1/3/4/5/6, under the hopper-probe guard.
+- Boards (BEST, 10-31): attention 2.4337, prefill 1.7836, moe 2.3670, bf16 1.5657, decode 1.6989 (ours).
+- Quota at 06:05Z: decode 20 checks/10 runs; moe 18/9; bf16 18/9; attention 18/8; prefill 14/9.
+- Phase A (06:06Z): an ultracode workflow with three items.
+  - **D0**: a compliant public decode. It ports the A0 softmax fix into ATT7 and moves tvm_ffi load_inline to torch;
+    the kill rule is PLAN §7 #11.
+  - **M1-stack**: the moe testbed (PLAN §7 #3).
+  - **A1**: attention W2 on A0, the phase-B rider.
+  - Design runs at effort max; build and audit at high. Variant files go in `files/<p>/` on campaign/public-plus,
+    rebased on master.
+- Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
+  and the rules checklist.
+
+## Earlier Now (2026-10-31T03:45Z)
 
 - **~03:50Z, the user (verbatim): "stop lifted for the 10 public-C checks, go ahead".** This lifts the 00:32Z stop
   only for the following (PLAN §14):
