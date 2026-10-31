@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T09:22Z) — /3to1 on the public foundation; phase A landed D0 + M1a
+## Now (2026-10-31T10:31Z) — /3to1 on the public foundation; phase B: 9 lever checks in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -52,6 +52,26 @@
 - **09:19Z DL2H KILLED:** reads 2.1912 and 2.2029 (mean 2.197) against D0 checks of 2.188. That is noise, and d1s is flat. The H100's L2-hint gain does not transfer to the H200. Not scored; a CLAIMS refuted line is added. Decode checks left: 16.
 - **09:22Z build workflow wf_2144e5b0-bff:** S6 (design max; GPUs 3,4), ATT pp/ppstsm (GPU 5), PF knobs (GPU 6), BF
   race (GPU 1). Each is built, then audited.
+- **10:28Z build workflow wf_2144e5b0-bff done** (8 agents, 1.8M tokens; branch commits f489056f, db79fa99, c7bd8479,
+  f509fbf9).
+  - **S6 (moe): audit PASS.** H100 x1.020 / x1.021 on every row; prepare 144.7 s.
+  - **ATT PP / PPS (attention): audit PASS.** L2-resident v16f/v32f x0.951-0.959; non-flat SASS identical.
+  - **BF BFR (bf16): audit PASS.** v16 pooler picks non-coop nvjet in 10/10 prepares, x0.986-0.990.
+  - **PF PFK / PFK0 (prefill): KILLED on the H100 builder gate** (+0.16% / +0.09%, below +0.35%). Recorded as a
+    node-only CLAIMS line; the reopen is a spare phase-C check.
+- **10:29-10:30Z, 9 checks dispatched** (attempt files 2026-10-31T1029*Z on campaign/public-plus 45106f85; gates
+  pre-registered in each):
+  - moe S6-r1 / r2 / r3: 7748ec1f, 3bd96942, 1aaf3cc1 (r3 = mk_s6.py n=3);
+  - attention PPS-r1 / r2: a8425ac5, e11914e5;
+  - attention PP-r1 / r2: ac0335f9, d933848f;
+  - bf16 BFR-r1 / r2: 7d43d14a, a16e53de.
+  - The claims hook warned about T1 AT2W4 on ATT. That is a false match (a different mechanism), noted as Reopen in
+    the attempt files.
+- **Open note for the user, before any S6 scored submit:** the S6 gain depends on the generator's narrow scale range
+  (bytes 0x5C..0x7E). Wide-scale weights fall back to the 8-bit layout, with no gain and no breakage. Default: score
+  it if the gate passes, and say so in the landing report.
+- **Next:** harvest the 9 checks against their gates. Then score and land the winners. After that: the decode ports of
+  ATT-pp and S6, moe HF, decode cgemv.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
