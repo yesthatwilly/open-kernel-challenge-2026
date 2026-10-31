@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T07:44Z) — /3to1 on the public foundation; phase A landed D0 + M1a
+## Now (2026-10-31T09:22Z) — /3to1 on the public foundation; phase A landed D0 + M1a
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -38,6 +38,19 @@
   - 07:46Z: lever-finding workflow wf_d49ebbab-bc8 launched: 5 effort-max finders (GPUs 1/3/4/5/6) and a max judge; its ranking picks the next build;
   - then the cheap riders on moe, bf16 and prefill, at most 3 agents;
   - decode checks left: 18.
+- **09:14Z lever workflow wf_d49ebbab-bc8 done** (6 agents, 3.3M tokens). The ranking is in LEVERS-1031.md:
+  1. attention pp/ppstsm (softmax ping-pong; about +1%);
+  2. moe S6, a 6-bit scale code (about +1.2-1.5%, then a decode port);
+  3. decode DL2H, the TINY L2 hints (about +0.5% d1);
+  4. the prefill knob bundle;
+  5. the bf16 nvjet race;
+  6. moe HF;
+  7. decode cgemv;
+  8. compact R11 (parked).
+- **09:20Z decode DL2H checks:** 5b0f8dae (r1) and cc512a50 (r2). GO if d1s moe is at least 1.5 us faster than D0 in
+  both reads, with no other row more than 0.5% worse.
+- **09:22Z build workflow wf_2144e5b0-bff:** S6 (design max; GPUs 3,4), ATT pp/ppstsm (GPU 5), PF knobs (GPU 6), BF
+  race (GPU 1). Each is built, then audited.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
