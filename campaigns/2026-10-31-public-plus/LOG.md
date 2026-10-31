@@ -329,7 +329,7 @@
     ~4.6 TB/s; decode's chain 1.3-3.3 TB/s). Build 2: moe C1 with a decode port stage. Build 3: S1-M1 or D12 by
     tonight's diagnostics. bf16: no phase-A build (donor/testbed only).
   - Rejected: spending bf16's checks timing other problems' kernels (gray area; needs a user ruling).
-- **20:56Z diag build workflow wf_ba98ae2b-a7e** (task wk4bcz6pd): DEC-DX1 (decode), BF-DX2 then BF-DX1 (bf16), same
+- **20:53Z diag build workflow wf_ba98ae2b-a7e** (task wk4bcz6pd): DEC-DX1 (decode), BF-DX2 then BF-DX1 (bf16), same
   build -> audit -> diag-ready marker flow; worktrees `.worktrees/diag-{dec,bf}`. Reserves: 1 decode (if DEC-DX1's A/A
   > 1%), 1 bf16.
 - **Next:**
