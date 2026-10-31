@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31.
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31.
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -1777,6 +1777,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     
     
   }
+  float dlo_c = 0.f, dhi_c = 0.f;   // [tax C5] P offsets of the anchors below (0 while an anchor is -inf)
   float cr[2] = {-INFINITY, -INFINITY};   // [public-C] per-row max anchors (log2 units; -inf: no finite score yet), rows g and g+8; P is taken against anchor - 8
   const float ssc = sl2;   // raw score -> log2 units
   // the lazy-max test on raw scores against (offset + 8) / ssc (ssc > 0), updated with the offset
@@ -1982,33 +1983,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // running row max (TH = 0: any score past it moves it, as FA3's per-tile max does), P = 2^(x - max + 8) in
     // (0, 256]; the denominator is the FP32 sum of the unrounded P (no ones rows; PV m64n64)
     constexpr float TH = 0.f;
-    // (flat kernel, every row of the warp anchored: no max here; the packed-P byte test below instead)
-    const bool pchk = false;
-    if (!pchk) {
-      float mlo = -INFINITY, mhi = -INFINITY;
-#pragma unroll
-      for (int nt = 0; nt < 8; ++nt) {
-        mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
-        mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
-      }
-      mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
-      mhi *= ssc;
-      // any score past its row's anchor + TH shows in its own thread's partial max: then the row max over the quad
-      if (__any_sync(0xffffffffu, (mlo > cr[0] + TH || mhi > cr[1] + TH))) {
-        mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
-        const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
-        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
-        // (the previous tile's PV wgmma completed at this tile's wgmma wait)
-#pragma unroll
-        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
-        lacc[0] *= alo; lacc[2] *= ahi;
-        cr[0] = nlo; cr[1] = nhi;
-      }
-    }
-    first = false;
-    float dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
-    float dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
-    float tlo = 0.f, thi = 0.f;   // this tile's FP32 row sums of the unrounded P
+    float dlo, dhi;   // P = 2^(x - dlo) for row g, 2^(x - dhi) for row g + 8 (dlo = anchor - 8; 0 with no finite score yet)
+    // this tile's FP32 row sums of the unrounded P ([tax] flat kernel: seeded with -0.0, the additive identity, so the
+    // first add folds away; P >= +0 (ex2 never returns -0), hence the same sums bit for bit)
+    float tlo = WS ? -0.f : 0.f, thi = WS ? -0.f : 0.f;
     auto pk4 = [](float x0, float x1, float x2, float x3, float& t) -> uint32_t {
       t += (x0 + x1) + (x2 + x3);
       return e4m3x4f(x0, x1, x2, x3);
@@ -2020,20 +1998,74 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       pa[kk][2] = pk4(ex2(fmaf(sv[8], ssc, -dlo)), ex2(fmaf(sv[9], ssc, -dlo)), ex2(fmaf(sv[12], ssc, -dlo)), ex2(fmaf(sv[13], ssc, -dlo)), tlo);
       pa[kk][3] = pk4(ex2(fmaf(sv[10], ssc, -dhi)), ex2(fmaf(sv[11], ssc, -dhi)), ex2(fmaf(sv[14], ssc, -dhi)), ex2(fmaf(sv[15], ssc, -dhi)), thi);
     };
+    if constexpr (WS) {   // [tax C5L] flat q8 kernel
+      float mlo = fmaxf(s[0], s[1]), mhi = fmaxf(s[2], s[3]);
+#pragma unroll
+      for (int nt = 1; nt < 8; ++nt) {
+        mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
+        mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
+      }
+      mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
+      mhi *= ssc;
+      const bool vlo = __any_sync(0xffffffffu, mlo > cr[0]);   // [tax C5] one vote per row half
+      const bool vhi = __any_sync(0xffffffffu, mhi > cr[1]);
+      if (vlo) {   // warp-uniform
+        mlo = quad_max(mlo);   // (full-mask shuffles)
+        const float nlo = fmaxf(mlo, cr[0]);
+        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f;
+#pragma unroll
+        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; }
+        lacc[0] *= alo;
+        cr[0] = nlo;
+        dlo_c = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;
+      }
+      if (vhi) {   // warp-uniform
+        mhi = quad_max(mhi);   // (full-mask shuffles)
+        const float nhi = fmaxf(mhi, cr[1]);
+        const float ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+#pragma unroll
+        for (int t = 0; t < 8; ++t) { o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+        lacc[2] *= ahi;
+        cr[1] = nhi;
+        dhi_c = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
+      }
+      dlo = dlo_c; dhi = dhi_c;
+      if (hk == 0 || jj + 1 < nit)   // [PP] the other's turn (none after warpgroup 1's last tile)
+        asm volatile("bar.arrive %2, 256;\n" : "+f"(dlo), "+f"(dhi) : "r"(5 + (hk ^ 1)) : "memory");
+      packh(0);
+      packh(1);
+    } else {
+      const bool pchk = false;
+      if (!pchk) {
+        float mlo = -INFINITY, mhi = -INFINITY;
+#pragma unroll
+        for (int nt = 0; nt < 8; ++nt) {
+          mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
+          mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
+        }
+        mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
+        mhi *= ssc;
+        if (__any_sync(0xffffffffu, (mlo > cr[0] + TH || mhi > cr[1] + TH))) {
+          mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
+          const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
+          const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+#pragma unroll
+          for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+          lacc[0] *= alo; lacc[2] *= ahi;
+          cr[0] = nlo; cr[1] = nhi;
+        }
+      }
+      dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
+      dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
+    }
+    first = false;
     // P (e4m3, registers, k-steps of 32 permuted keys) x V^T (e4m3, K-major, 64 dims) as an asynchronous wgmma; the
     // next tile's wgmma wait covers it before P, o or V^T are reused
     constexpr bool PK2 = WS;
     if constexpr (PK2) {
-      packh(0);
-      packh(1);
-      if (hk == 0 || jj + 1 < nit)   // [PP] the other's turn (none after warpgroup 1's last tile)
-        asm volatile("bar.arrive %0, 256;\n" ::"r"(5 + (hk ^ 1)) : "memory");
-      lacc[0] += tlo; lacc[2] += thi;
       float* odk = &o[0][0][0];
 #pragma unroll
       for (int e = 0; e < 32; ++e) reg_fence(odk[e]);
-#pragma unroll
-      for (int e = 0; e < 4; ++e) reg_fence(lacc[e]);
 #pragma unroll
       for (int e = 0; e < 8; ++e) asm volatile("" : "+r"(pa[e >> 2][e & 3]));
       if constexpr (LSYNC) {   // every warp's V^T for this tile written (and visible to the async proxy)
@@ -2044,6 +2076,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       wgmma_m64n64k32_e4m3(odk, pa[0][0], pa[0][1], pa[0][2], pa[0][3], vdesc_c, 1);
       wgmma_m64n64k32_e4m3(odk, pa[1][0], pa[1][1], pa[1][2], pa[1][3], vdesc_c + 2, 1);
       wgmma_commit();
+      lacc[0] += tlo; lacc[2] += thi;   // [tax L] after the PV issue
     } else {
 #pragma unroll
       for (int kk = 0; kk < 2; ++kk) {   // each half of P goes to the tensor cores as soon as it is packed
