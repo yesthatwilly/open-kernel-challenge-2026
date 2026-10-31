@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T11:45Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; lever round 2 in flight
+## Now (2026-10-31T13:05Z) — /3to1 on the public foundation; phase B: PP + DPP LANDED; ET3 build in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -112,7 +112,18 @@
   register-landing is done.
 - **Lesson:** the turn-taking scheduling class transfers to the H200 with amplification (PP and DPP). Bandwidth, L2
   and plan-race levers do not (DL2H, S6, S6M, BFR).
-- **Next:** harvest lever round 2 (wf_c7b20f1e-b31). Phase C (18Z): spend the remaining checks.
+- **13:00Z lever round 2 done** (4 agents, 2.4M tokens). The ranking is in LEVERS-1031b.md (95966769):
+  - **ET3 (decode): RUN.** Early PDL triggers on the qkv (T=8/16), o (T=8/16/32) and unpooler (T=16) sk2 edges.
+    About +0.45% if it works; p 0.65.
+  - **B4 (moe): PARK.** The B4FIN final as a d32 build: +0.13%, a rider only.
+  - **Attention: no lever left.**
+  - **Instrument note:** the judge profile pass is one eager call, so early PDL edges do not show in it. Gate PDL
+    levers on late edges and on GPU busy minus moe minus attn.
+  - Round 2 produced no phase-A-sized decode rewrite.
+- **13:05Z ET3 build and audit workflow wf_6852109b-c3c** (task w74sycqdq; builder GPU 1, auditor GPU 3). Then 2
+  decode checks under the LEVERS-1031b rule.
+- **Next:** harvest ET3 and run its checks. Phase C (18Z): spend the remaining checks. Tomorrow's phase-A plan is due
+  in the LOG by about 23Z.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
