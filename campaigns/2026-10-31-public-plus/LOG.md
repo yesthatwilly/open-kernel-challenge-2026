@@ -8,7 +8,20 @@
   - one builder plus one audit agent;
   - H100 correctness on gpunode06 GPUs 1/3/4/5/6.
   - Everything else stays stopped: M1-stack, A1/A2, D0 and the launch diet.
-- 04:29Z: 8 public-C checks in flight (check-only).
+- **05:0xZ: public-C HARVESTED** (8/8 passed; `publicC-*-1031.md`, `runs/`, RESULTS.tsv):
+
+  | arm | reads | mean | A/A | vs our board | vs published |
+  |---|---|---:|---:|---:|---:|
+  | A0 attention (exact max, P<=256, FP32 denom, R11) | 2.4361, 2.4377 | 2.4369 | 0.07% | +21.5% (2.005) | -8.1% (2.653) |
+  | P0 prefill (FA3 everywhere) | 1.7448, 1.7398 | 1.7423 | 0.28% | +10.8% (1.5721) | -4.1% (1.8167) |
+  | P1 prefill (P0 + contiguous gather) | 1.7353, 1.7464 | 1.7408 | 0.64% | +10.7% | -4.2% |
+  | P2 prefill (own kernel, FP32 denom) | 1.7848, 1.7634 | 1.7741 | 1.21% | +12.9% | -2.3% |
+
+  - A0 and P2 are faster than our BEST on every row (A0 ours/theirs 1.06-1.62; P2 1.11-1.20).
+  - A0's compliance cost is concentrated in full v16/v32 (+17.5% vs their 10-29 row).
+  - P1's gather adds nothing.
+  - Adoption decision (PLAN §14) now waits on the user. The stop holds for everything else.
+- 04:29Z: dispatched the 8 public-C checks (check-only).
   - A0 attention: 5b751676 (r1), 3ba805db (r2).
   - P0 prefill: 04b9092b, cb644182.
   - P1: b8b44f36, 253ff43c.

@@ -28,6 +28,17 @@ clause, so it is the user's call. The measurement that decides it is the 10 publ
 
 ## Results so far
 
+### Public-C reads (10-31 ~05:00Z)
+
+| arm | reads | mean | A/A | vs our board | vs published |
+|---|---|---:|---:|---:|---:|
+| A0 attention (exact max, P<=256, FP32 denom, R11) | 2.4361, 2.4377 | 2.4369 | 0.07% | +21.5% (2.005) | -8.1% (2.653) |
+| P0 prefill (FA3 everywhere) | 1.7448, 1.7398 | 1.7423 | 0.28% | +10.8% (1.5721) | -4.1% (1.8167) |
+| P1 prefill (P0 + contiguous gather) | 1.7353, 1.7464 | 1.7408 | 0.64% | +10.7% | -4.2% |
+| P2 prefill (own kernel, FP32 denom) | 1.7848, 1.7634 | 1.7741 | 1.21% | +12.9% | -2.3% |
+
+These are the compliant ceilings under the user's ruling, measured on the judge. Per-row tables: `publicC-*-1031.md`.
+
 ### 10-31 raw controls (B0 bf16, M0 moe), harvested 2026-10-31T00:48Z
 
 | problem | read 1 | read 2 | control mean | A/A headline spread | published 10-29 | our board | gap today |

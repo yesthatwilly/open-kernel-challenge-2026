@@ -1,0 +1,15 @@
+LT tune T=753 qkv: torch.mm 43.1us, best 43.1us algo None of 8
+LT tune T=753 o: torch.mm 24.8us, best 24.8us algo None of 8
+LT T=753 router: pinned (33, 4, 2, 3) -> algo 6
+LT tune T=753 pooler: torch.mm 68.4us, best 68.4us algo None of 8
+LT tune T=753 unpooler: torch.mm 70.0us, best 70.0us algo None of 8
+LT tune T=3012 qkv: torch.mm 147.9us, best 147.9us algo None of 8
+LT tune T=3012 o: torch.mm 75.0us, best 75.0us algo None of 8
+LT tune T=3012 router: torch.mm 40.2us, best 40.2us algo None of 8
+LT tune T=3012 pooler: torch.mm 255.0us, best 255.0us algo None of 8
+LT tune T=3012 unpooler: torch.mm 255.5us, best 255.5us algo None of 8
+LT tune T=16384 qkv: torch.mm 762.8us, best 762.8us algo None of 8
+LT T=16384 o: pinned (201, 1, 0, 2) -> algo 6
+LT tune T=16384 router: torch.mm 208.2us, best 208.2us algo None of 8
+LT T=16384 pooler: pinned (29, 1, 0, 1) -> algo 5
+LT T=16384 unpooler: pinned (201, 1, 0, 2) -> algo 6
