@@ -1,6 +1,6 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T10:45Z) — /3to1 on the public foundation; phase B: PP LANDED 2.4729; build wf_514e7d34-141 in flight
+## Now (2026-10-31T11:20Z) — /3to1 on the public foundation; phase B: PP LANDED 2.4729; S6M checks + DPP audit in flight
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
@@ -87,7 +87,16 @@
   - Decode cgemv is left for phase C.
 - **10:43Z LANDED on master: attention PP 2.4729** (scored 14cec684 [2.4358, 2.5233]; was 2.4337, so +1.6%).
   register-landing is done. Rows: v16f 113.71, v32f 207.28.
-- **Next:** harvest wf_514e7d34-141 and run its checks. DPP's decode gate needs D0's same-day rows.
+- **11:18Z wf_514e7d34-141 done** (4 agents, 0.8M tokens):
+  - **S6M: audit PASS.** S6 in the WGS copy and MAIN build only, which serve d32, v16 and v32 (d32 cannot be
+    isolated). TINY, TINY2 and MID keep master's SASS. **Checks 83c362cf and bbcf6b9c** (11:19Z). The GO gate is in the
+    attempt files. The predicted outcome is close to a coin flip, about +0.2%.
+  - **HF: KILLED on the H100.** No effect after A/A correction. CLAIMS line: node-only.
+  - **DPP (decode port of PP): built** (208760ec); correct and bit-identical to D0 under fixed plans. It missed the H100
+    size bar: v16f -1.6..-1.95 us, v32f -1.9..-4.2 us. PP itself read -1.1/-1.4 us on the H100 and -5.4/-9 us on the
+    judge, so the default is a judge read after an independent audit. Audit agent launched 11:20Z (GPU 5); 2 decode
+    checks follow if it passes.
+- **Next:** harvest S6M; run the DPP audit, then its 2 checks. Phase C (18Z): spend the remaining checks.
 - Compliance stays first (the user: "compliance is of absolute utter importance"): FA3 precision, the attempt gate
   and the rules checklist.
 
