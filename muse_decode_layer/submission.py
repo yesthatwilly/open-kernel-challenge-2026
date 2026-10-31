@@ -1945,7 +1945,7 @@ def _dl_self_check(state, pdl):
         y_eager, ids_eager = chain()
         torch.cuda.synchronize()
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
+        with _rt_cap(graph):
             y_graph, ids_graph = chain()
         graph.replay()
         torch.cuda.synchronize()
@@ -1966,7 +1966,7 @@ def _dl_pdl_probe():
         eager_overlap = eager[2] < eager[1]
         times.zero_()
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
+        with _rt_cap(graph):
             _DL_EXT.dl_pdl_probe(times, 50_000, 1)
         graph.replay()
         torch.cuda.synchronize()
@@ -3144,7 +3144,7 @@ def _sk_graph_of(fn, device):
     torch.cuda.current_stream().wait_stream(side)
     torch.cuda.synchronize()
     g = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g):
+    with _rt_cap(g):
         fn()
     torch.cuda.synchronize()
     return g
@@ -8303,6 +8303,22 @@ def _rt_flush_buf(device):
     return _RT_FLUSH[key]
 def _rt_read_flush(device):
     return torch.sum(_rt_flush_buf(device))
+_RT_WS = {}
+def _rt_cap(g):
+    # Every capture owns its cuBLAS workspace. torch keeps one workspace per (handle, stream); a capture on the shared
+    # default capture stream reuses the existing one (allocated eagerly when a torch.cuda.Stream() warm-up drew that
+    # same pool stream, or by an earlier capture), and CUDAGraph::reset of ANY graph clears that stream's entry, so the
+    # next empty_cache unmapped memory a live graph still wrote (Warp MMU Fault in cuBLAS dot_kernel). Destroying a
+    # one-kernel graph clears the entry; the capture below then allocates its workspace in its own private pool.
+    # Covers the capture stream only: side-stream workspaces (t128 fork) stay shared, safe while no capture runs on them.
+    t = _RT_WS.get("t")
+    if t is None:
+        t = _RT_WS["t"] = torch.zeros(1, device="cuda")
+    d = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(d, capture_error_mode="thread_local"):
+        t.add_(0.0)
+    del d
+    return torch.cuda.graph(g)
 def _rt_graph(fn, warm=2):
     s = torch.cuda.Stream()
     s.wait_stream(torch.cuda.current_stream())
@@ -8312,7 +8328,7 @@ def _rt_graph(fn, warm=2):
     torch.cuda.current_stream().wait_stream(s)
     torch.cuda.synchronize()
     g = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g):
+    with _rt_cap(g):
         out = fn()
     torch.cuda.synchronize()
     return g, out
@@ -14082,6 +14098,7 @@ def _dsa_copy_check(state, device):
                 if not (e_h <= DSA_COPY_TOL and e_s <= DSA_COPY_TOL and torch.equal(out[2], ref[2])):
                     fails.append(f"T={tokens} state {'AB'[i]} refill {k}: hidden {e_h:.3g} stream {e_s:.3g}")
         del per
+        print(f"{DSA_TAG} copy check T={tokens}: {n} replays, {len(fails)} fails", flush=True)
     left = (_dsa_tickets(dsa), _dsa_tickets(other["dsa"]))
     if any(left):
         fails.append(f"tickets left {left[0]} / {left[1]}")
@@ -14239,7 +14256,7 @@ def _dsa_setup(state, device, t_prepare0):
         _dsa_all_off(dsa)
         for cls in DSA_CLASSES:
             miss(DSA_LAYERS, cls, type(e).__name__)
-        say(f"{DSA_TAG} {type(e).__name__}: {str(e)[:400]}")
+        say(f"{DSA_TAG} {type(e).__name__}: {str(e)[:400]} ... {str(e)[-400:]}")
         try:
             _dsa_zero_tickets(dsa)
         except Exception as e2:
