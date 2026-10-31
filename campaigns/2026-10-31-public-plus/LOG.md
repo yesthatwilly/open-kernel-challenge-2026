@@ -343,6 +343,14 @@
   - **BF16FIX: GO.** 1.5510 / 1.5434, mean 1.5472 >= 1.525, 0 row breaches over 30 rows. **20:58Z scored run
     d1f5f46c** (BF16FIX-score.py, public-plus b9454673). A read below the 1.5657 board is HOLD for the user.
 - Quota at 20:59Z (checks / runs): bf16 14/8, attention 12/6, moe 12/8, decode 7/7, prefill 12/9.
+- **~21:01Z the user (verbatim): "if d0fix improves the robustness of the kernel, keep it.  .0006 is nothing, but i
+  appreciate the real race it addresse".** D0FIX lands despite the speed-guard KILL. **21:03Z scored run 545b80bb**
+  (D0FIX-score.py, public-plus bd9bc3a6; body = the checked D0FIX-r1 bytes). On its result: master
+  `muse_decode_layer/submission.py` = those bytes, `register-landing --force` with a note (the leaderboard entry stays
+  DPP 9d726d84 2.2220 if the read is lower). Tomorrow's decode builds then sit on D0FIX (GAPMAP-1031b §2). Memory:
+  okc-robustness-fixes-land.
+- **21:02Z BF16FIX scored d1f5f46c: 1.5522** [1.5289, 1.5755], below the 1.5657 board: **HOLD** (pure hardening; no
+  forced failure shown in bf16). Landing asked of the user.
 - **Next:**
   - Harvest PFK2.
   - As the workflow returns: D0FIX 2 checks, then a scored run and land (correctness first); ET3FIX 2 checks under
