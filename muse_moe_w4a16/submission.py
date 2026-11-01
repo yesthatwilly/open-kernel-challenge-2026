@@ -1,5 +1,5 @@
 # okc: problem=muse_moe_w4a16
-# Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31. + MD16F: D1 paired scale decode in the WS skinny consumer (one PRMT + IMAD per scale pair, HMUL2 half-broadcast; bit-identical) + D6 TINY / TINY2 compile the helper0 source with -DOKC_WSH0=1 (helper-warp rotation, as MID) + F: moe WGS weights-slot hand-back fence (fence.proxy.async.shared::cta + __syncwarp before the BW_E arrive). pp-nonce MD16F-r3
+# Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31. + MD16F: D1 paired scale decode in the WS skinny consumer (one PRMT + IMAD per scale pair, HMUL2 half-broadcast; bit-identical) + D6 TINY / TINY2 compile the helper0 source with -DOKC_WSH0=1 (helper-warp rotation, as MID) + F: moe WGS weights-slot hand-back fence (fence.proxy.async.shared::cta + __syncwarp before the BW_E arrive). + B4X: d32 (16 < M <= 32) run(s) their own WGS build with the B4FIN final pass ported from alygg77@6cae49a kernels/muse_decode_layer.py (bet4_claude; only the FP32 order of each route's sum of squares changes). pp-nonce B4X-r3
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -148,6 +148,9 @@ MID_DEFINES = ("-DOKC_NW=8", "-DOKC_TINY=1", "-DOKC_SPLIT=1", "-DOKC_CPF=0",
                "-DOKC_WS=1", "-DOKC_WSB=1", "-DOKC_WSBL=2", "-DOKC_WSBLK=2",
                "-DOKC_FINPF=1")
 MID_MAX_M = 16
+# [B4X] MID_MAX_M < M <= B4_MAX_M: the WGS MAIN build compiled with -DOKC_B4FIN=1 (the public decode layer's
+# bet4_claude column-parallel final pass with fixed-order sum-of-squares partials).
+B4_MAX_M = 32
 # M 17..63 runs on the WGS MAIN build; M >= 64 is MAIN by default below.
 # The skinny ring's slot count when the caller does not pin -DOKC_NS.
 MAIN_NS = 3
@@ -218,6 +221,12 @@ CUDA_SRC = r'''
                      // OKC_FTSC2; the TINY builds measured -0.5%, so off by default)
 #define OKC_F1EARLY 1  // tiny builds: FAST1 warp issues its topk loads before lane 0's barrier inits
 #define OKC_WGSFINSS 1  // WGS: the final pass forms each route's sum of squares (the phase-B epilogue only writes y)
+#ifndef OKC_B4FIN
+#define OKC_B4FIN 0  // bet4_claude: column-parallel final pass, fixed-order ss partials (own build at 16 < M <= 32)
+#endif
+#ifndef B4_EARLY_Y
+#define B4_EARLY_Y 1
+#endif
 #ifndef OKC_FINCOL
 #define OKC_FINCOL 1
 #endif
@@ -365,6 +374,9 @@ struct Params {
   float* ybuf;     // [EMAX, HD]
   float* ss;       // [EMAX] copy 0 of the per-token sums of squares (copy 1: ss1); a launch uses copy gen & 1
   float* ss1;      // [EMAX]
+#if OKC_B4FIN
+  float* sspart;   // bet4_claude B4FIN: per-(route, 16-column tile) sum-of-squares partials (WGS only)
+#endif
   __nv_bfloat16* out;
   unsigned long long* dbg;
 };
@@ -2111,6 +2123,22 @@ __device__ __forceinline__ void wgs_epi_tile(const Params& p, const Smem& S, int
         st_keep_f32(p.ybuf + ((size_t)(jst + tk) * HD + n0 + 8), d4[2 + h] * w1);
       }
     }
+#if OKC_B4FIN
+    {  // bet4_claude: this tile's 16-column sum of squares per token, reduced over the 8 column lanes (fixed tree)
+      float q0 = 0.f, q1 = 0.f;
+      if (tok0 < cnt) { const float a = d4[0] * w0, b = d4[2] * w1; q0 = a * a + b * b; }
+      if (tok0 + 1 < cnt) { const float a = d4[1] * w0, b = d4[3] * w1; q1 = a * a + b * b; }
+#pragma unroll
+      for (int o = 4; o < 32; o <<= 1) {
+        q0 += __shfl_xor_sync(0xffffffffu, q0, o);
+        q1 += __shfl_xor_sync(0xffffffffu, q1, o);
+      }
+      if (g == 0) {
+        if (tok0 < cnt) p.sspart[(size_t)(jst + tok0) * 256 + r16] = q0;
+        if (tok0 + 1 < cnt) p.sspart[(size_t)(jst + tok0 + 1) * 256 + r16] = q1;
+      }
+    }
+#endif
   }
 }
 template <bool PB>
@@ -2653,7 +2681,57 @@ __global__ void __launch_bounds__(NTL, 1) moe_fused(Params p) {
 #endif
   }
   // final: out[t] = sum_s w * rsqrt(ss/HD + eps) * ybuf[pos]
-#if OKC_WGS && OKC_WGSFINSS
+#if OKC_WGS && OKC_B4FIN
+  // bet4_claude: item = (token, 1024-column segment), thread = 2 columns: 4 x M items over all CTAs. Each route's sum
+  // of squares = fixed-order sum of its 256 epilogue partials (warp w: route w / 2, half w & 1; xor tree; 2 halves)
+  {
+    static_assert(NT == 512 && NW == 16, "B4FIN: 16 warps = 8 routes x 2 halves, 512 threads x 2 columns");
+    static_assert(HD == 4096, "B4FIN: 256 16-column tiles per route");
+    float* red = reinterpret_cast<float*>(xbuf);
+    const int lane = tid & 31, warp = WARP_IDX(tid);
+    constexpr int SEG = 1024, NSEG = HD / SEG;
+    for (int it = blockIdx.x; it < p.M * NSEG; it += gridDim.x) {
+      const int tk = it / NSEG, col = (it % NSEG) * SEG + tid * 2;
+#if B4_EARLY_Y
+      float2 yv[8];  // A2: the 8 routes' y loads go out before the ss partial loads and the reduction
+#pragma unroll
+      for (int sl = 0; sl < 8; ++sl) {
+        const int q = S.pos[tk * 8 + sl];
+        yv[sl] = q >= 0 ? __ldcg(reinterpret_cast<const float2*>(p.ybuf + (size_t)q * HD + col)) : make_float2(0.f, 0.f);
+      }
+#endif
+      {
+        const int sl = warp >> 1, hh = warp & 1;
+        const int q = S.pos[tk * 8 + sl];
+        float v = 0.f;
+        if (q >= 0) {
+          const float4 a = __ldcg(reinterpret_cast<const float4*>(p.sspart + (size_t)q * 256 + hh * 128 + lane * 4));
+          v = (a.x + a.y) + (a.z + a.w);
+        }
+#pragma unroll
+        for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
+        if (lane == 0) red[warp] = v;
+      }
+      CTA_SYNC();
+      float2 acc = make_float2(0.f, 0.f);
+#pragma unroll
+      for (int sl = 0; sl < 8; ++sl) {
+        const int q = S.pos[tk * 8 + sl];
+        if (q >= 0) {
+          const float r = p.topk_w[tk * 8 + sl] * rsqrtf((red[2 * sl] + red[2 * sl + 1]) * (1.f / HD) + 1e-8f);
+#if B4_EARLY_Y
+          const float2 v = yv[sl];
+#else
+          const float2 v = __ldcg(reinterpret_cast<const float2*>(p.ybuf + (size_t)q * HD + col));
+#endif
+          acc.x += r * v.x; acc.y += r * v.y;
+        }
+      }
+      *reinterpret_cast<__nv_bfloat162*>(p.out + (size_t)tk * HD + col) = __floats2bfloat162_rn(acc.x, acc.y);
+      CTA_SYNC();  // red is reused by the next item
+    }
+  }
+#elif OKC_WGS && OKC_WGSFINSS
   // item = one token's whole row (thread = 8 columns): pass 1 sums each local route's y^2 over the row (warp
   // shuffles, then the 16 warps' partials through smem: the ring is free now), pass 2 re-reads the rows (L2 hits)
   {
@@ -2841,6 +2919,15 @@ void okc_run(std::vector<torch::Tensor> w, std::vector<torch::Tensor> scratch, t
   TORCH_CHECK(scratch[0].numel() >= 8 + 1024 + okc::EMAX, "scratch[0] needs the second ss copy");
   p.ss1 = reinterpret_cast<float*>(ib + 8 + 1024);
   p.ybuf = p.ss + okc::EMAX;
+#if OKC_B4FIN
+#if !OKC_WGS
+#error "OKC_B4FIN is a WGS-build final pass"
+#endif
+  // B4FIN runs only at M <= 256: ybuf rows (sorted local routes) stay below M * 8 <= 2048 <= EMAX - 128, so its last
+  // 128 rows (2048 routes x 256 partials) are free
+  TORCH_CHECK(x.size(0) * 8 <= 128 * (okc::HD / 256) && x.size(0) * 8 <= okc::EMAX - 128, "B4FIN build is for M <= 256");
+  p.sspart = p.ybuf + (size_t)(okc::EMAX - 128) * okc::HD;
+#endif
   p.inter = (__nv_bfloat16*)scratch[2].data_ptr();
 #if OKC_WGS
   TORCH_CHECK((size_t)scratch[2].numel() >= ((size_t)okc::EMAX + 2 * (size_t)okc::WGS_XROWS) * okc::HD,
@@ -3342,6 +3429,8 @@ def prepare(weights):
     for d in (TINY_DEFINES, TINY2_DEFINES, MID_DEFINES):
         if d and (state["sfx"] or "-DOKC_WGS=1" not in tuple(d)):  # the WGS build needs the PRMT scale decode
             mods.append(tuple(d) + state["sfx"])
+    if B4_MAX_M > MID_MAX_M and "-DOKC_WGS=1" in tuple(_main_defines(state["sfx"])):  # [B4] the B4FIN build
+        mods.append(tuple(_main_defines(state["sfx"])) + ("-DOKC_B4FIN=1",) + state["sfx"])
     for d in mods:
         _ext(d)
     torch.cuda.synchronize()
@@ -3387,6 +3476,8 @@ def kernel_fn(data, state):
         ext = _ext(tuple(TINY2_DEFINES) + sfx)  # (the WGS build needs the PRMT scale decode: else MID/MAIN)
     elif MID_DEFINES and M <= MID_MAX_M:
         ext = _ext(tuple(MID_DEFINES) + sfx)
+    elif M <= B4_MAX_M and "-DOKC_WGS=1" in tuple(_main_defines(sfx)):  # [B4X] MID_MAX_M < M <= B4_MAX_M: the B4FIN build
+        ext = _ext(tuple(_main_defines(sfx)) + ("-DOKC_B4FIN=1",) + sfx)
     else:
         ext = _ext(tuple(_main_defines(sfx)) + sfx)
     for m0 in range(0, M, CHUNK_TOKENS):
