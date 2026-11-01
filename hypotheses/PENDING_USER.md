@@ -81,3 +81,10 @@ items here and in each tick's summary. Resolved items move to the log at the bot
   - (a) Confirm that manual hopper-probe runs are fine while queue/STOP is set. You can run it yourself with `! <command>`, or approve it when prompted.
   - (b) Leave S2 unmeasured.
 - Default: S2 waits. Attention phase B has no other item.
+
+### 2026-11-01 03:03Z: moe C1 M0 read BETWEEN; continue to a TINY-only M1? (not blocking; default applies)
+- The H100 M0 (workflow wf_855a9495-ef4, independently verified) put the C1-12 engine at **1.239x** consumer weights/us at N=1 (whole-kernel 1.248-1.251) against the pre-registered GO-TINY line of 1.25x, and 1.14x at N=8 (GO needs 1.25 at N=1/8/16; KILL needs < 1.15 at N=1 and N=8). The rule says BETWEEN: no M1.
+- Value cap: on the H200, d1 is bandwidth plus consumer bound, so a 1.24x consumer only recovers the HBM headroom (0-14% of d1 stream time); design EV ~+0.25% moe headline; the decode port +0.5-1.2% only if moe lands.
+- Caveats from the verifier: C1's FP32 order is farther from fp64 on 30/31 cancellation elements (compliant); one per-refill proxy fence was dropped in campaign/c1-moe 016e301e and needs a memory-order review before any M1.
+- **Your options:** (a) a TINY-only M1 anyway (C1-12 at d1; ~2-3 h build + audit, then moe checks); (b) hold C1 (CLAIMS [unresolved]).
+- Default: (b) hold. The bit-identical diet rider D1+D6 (1.05-1.07x consumer) is queued as a moe phase-B item after the ~04:19Z usage-window reset.

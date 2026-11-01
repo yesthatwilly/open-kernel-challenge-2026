@@ -135,6 +135,17 @@
   **Odds correction:** central gain is ~+0.3-0.45% (DC5L +0.10, CG in-chain ~+0.15, FN <= +0.2), on a D0FIX level of
   ~2.19-2.20, so one scored read clearing 2.2294 is ~5-10%, not the 15-30% first quoted. The stack also becomes the
   base the moe C1 decode port lands on. Default if GO but below the board: land on master (D0FIX + audited riders).
+- **03:03Z moe Build 2 (wf_855a9495-ef4) done: C1 M0 BETWEEN, no M1** (5 agents, 2.08M tokens; design C1-DESIGN.md).
+  Judge chose (a) the engine; (b) K-fused refuted on paper, (c) diet not a C1 candidate. M0 H100 GPU 6 (hopper/c1m0
+  30d9493; verify hopper/c1m0v ef998c1, run 20261031-195402, equal-work 78/78): C1-12 r1 AB 1.239 (K 1.248-1.251)
+  vs GO-TINY 1.25; r8 1.142 (K 1.125); r16 1.87 phase A only; INC-AA 1.000. The gain is removing INC's critical-SMSP
+  imbalance (+23% -> +4%), not fewer instructions, so only 12 warps reach it. Verifier flags: per-refill proxy fence
+  dropped in campaign/c1-moe 016e301e; C1 farther from fp64 on 30/31 cancellation elements (still FP32, compliant).
+  Rider sub-rule fired: INC-D (D1 paired scale + D6 helper rotation) 1.052/1.068 at N=1/8, inter+ybuf bit-identical.
+  CLAIMS moe: [refuted] C1(b), [node-only] SASS census, [unresolved] C1(a), [shelf] D1+D6 rider. PENDING_USER 03:03Z
+  (TINY-only M1? default hold). **So the moe->decode C1 port is off for today; decode's only live item is DSTK.**
+  Next moe item: a clean (stamp-free) master+D1+D6 build + audit, then a moe check, after the ~04:19Z window reset;
+  if it transfers, D1 rides on decode (decode already has D6).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
