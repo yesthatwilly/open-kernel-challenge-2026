@@ -339,6 +339,11 @@
   "re-send" B4X-r3 check 7776cad9 read **2.4081** (d32 1.6955); 3-read rho_d32 1.0119, H 2.3881. **Scored run of B4X-r3
   sent** (attempt 2026-11-01T184000Z-submit-b4x.md); lands on master if valid. B1XN re-checked on paired_ratio: still
   HOLD (d1s 4.3883 < 4.41, v1f 2.3928 < 2.43). Lesson: read each gate's metric definition before computing.
+- **~19:00Z moe B4X scored 299e8e6e: 2.3757** (5/5 + 6/6; d32 paired 1.6787 = +1.0% vs ref) -> **LANDED master 75b795dd**
+  per the gate (valid scored run lands); register-landing --force cb1da0c6. Board stays M1a 2.3867. 4-read H 2.3850.
+- **~18:55Z prefill PFC1 checks sent** (PFK2 + BND_RC 2048 + RR denominator tree; audit PASS 70def772 with an H100-stage
+  A/A deviation flagged; PFC2 dropped by GO-B). Gate GO bar 1.7740 < master mean 1.7783: the landing rule (> 1.7836,
+  rows >= control min/1.025) is the real guard.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
