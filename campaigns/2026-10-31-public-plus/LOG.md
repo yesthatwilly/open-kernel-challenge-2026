@@ -286,6 +286,19 @@
   (RGb/RGc ~1.000, RGa deadlocks), miner #3 none_left (dec-bfr-cgu-qb128 below bar). **g5 refill wf_6cf32a08-5eb**
   (task wz9zrmfr5) seeded with **cpush-dec-port** (CPUSH into decode ATT7 T=1, d1s 0.177%/us). CLAIMS lines for the
   window's kills/shelves (HS, TBR, NTX, RG, pf-sk2, dec-ffn-glue-fold, pf-s1-wg4-oracle) wait for one batched harvest.
+- **10:40-15:40Z GPUs idle** (all refill chains ended ~11-13Z; ticks missed) -- saturation gap, my miss.
+- **Lanes 10:40-15:40Z** (reports in session scratchpad): KILL vpush, cpushq (v16s/v32s cluster placement null), hsq8
+  (v16s/v32s), cpush-dec-port (decode ATT7 tail hidden by the PDL o-proj stream), c2-wgs-pdl-endgame, abx; BETWEEN/shelf
+  vpushf (v1s -0.58), cpnqf, moe-xs, dec-ds0-weight-arena, dec-cgpr1 (harm). **GO: HSV1** (attention v1s one CTA per
+  (split, KV head); H100 -0.80 us over 8 processes, verify upheld, check_ready).
+- **15:55Z HSV1 checks** 608fd6ed **2.5473**, 176fa97c **2.5953** (16/16 + 12/12): v1s pooled 3.5397 (+10.27% vs R0
+  3.2101) TRANSFERRED; H 2.5713; but **d16s -4.72% < R0/1.03** (SASS-identical row; R0 lifted by 8a73a9d7 +5.26%) ->
+  shelf by the letter. **User ruling ~16:10Z: "Scored run + land if it holds"** (d16s judged on the 7-read pooled R0).
+  **~16:12Z scored run of HSV1-r1** (attempt 2026-11-01T161000Z-submit-hsv1.md, public-plus fc192ddd).
+- **~16:05Z /home full (14 MB)** -> user approved removing clean worktrees: 129 removed with `git worktree remove` (no
+  --force; branches kept; list research/worktrees-removed-1101.txt); /home 13 GB free.
+- **~16:13Z refill wf_fcb43dbd-e65** (task wapglleym): GPUs 1/3/4/5/6, <= 4 lanes each, miners told the winning class
+  (B=1 critical-path/parallelism) and the copy-placement measurement lesson.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
