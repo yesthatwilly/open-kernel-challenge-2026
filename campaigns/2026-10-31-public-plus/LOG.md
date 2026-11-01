@@ -215,7 +215,7 @@
   before all 32 BW_E arrives, 0 gross in 16k replays x 6 rows. **Speed not reproduced:** d1 0.998, v1 0.999, d16
   0.9995, d32 0.994 (F) vs master: expect ~-0.1% headline. Gate rewritten: 5-read skinny reference (the builder's
   3-read one sat 0.3-0.46% high), F lands unless MAIN harm, riders ride only at S >= 0.998, H a harm backstop.
-  **05:34Z MD16F checks dispatched:** 1ab2de4b (r1), 483bcb8e (r2) (public-plus 6a102ffb/e46f74cb).
+  **05:33Z MD16F checks dispatched:** 1ab2de4b (r1), 483bcb8e (r2) (public-plus 6a102ffb/e46f74cb).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
