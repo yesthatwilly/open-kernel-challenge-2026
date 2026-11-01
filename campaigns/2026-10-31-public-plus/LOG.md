@@ -68,6 +68,18 @@
   timed sha d3f588ec… = master). H100 same-process control 20261031-174747: 26/26 tests, state size = master, gd/board
   x1.0044. H100 reference: DS1-KILL (cg-qkv -1.40 / -1.49 [-1.63, -1.38] vs -1.5; pen +0.94), S1-CLOSED (p8 9.54,
   p3 4.26). DS1 sits at the threshold, so the H200 read decides. **01:08Z check d3f671e8** (public-plus 89bfd864).
+- **01:20Z DEC-DX1 read (d3f671e8, H200; headline 2.2018 = diag control; prepare 134.8 s):** sha = master, validity
+  PASS, A/A 0.9965/1.0032 (reserve 0). **(b) cg-qkv -1.29 us [-1.54, -0.98] vs -1.5; qkv pen -0.07 -> DS1-KILL**
+  (pre-registered; DS1 closed). (c) minus null: chain8 3.10, p3 3.87, **p8 8.66**, gbar 1.39 -> **S1 CLOSED through
+  11-04**. (a) T=1 solo/pen: qkv 8.88/-0.07, o 5.01/0.01, pr 17.08/-0.84, un 3.34/-0.46; T=8 pen qkv +0.50, o +0.46, pr
+  -0.93, un -0.22 (PDL overlap already helps pr). (d) moe_pick agent at every T; gluev2 0; mm_pick bfp/bfp/bfpf/bfp;
+  bfp_qkv sk2; compose 1w16; pbmax 0; marlin_cfg 0. CLAIMS decode: [refuted] DS1, [shelf] cgemv qkv T=1, [refuted] S1.
+  **01:20Z wf_8cd7ce16-d96 stopped** by the main thread (its judge was synthesizing the now-closed DS1).
+- **Decode phase A is spent for today:** DS1 and S1 closed; D12 needs BF-DX2 (unbuilt, EV ~0.4%, below the bar);
+  the moe C1 decode port waits for moe's own judge GO (Build 2, in flight). No decode build within ~2 h -> **phase B
+  starts 01:22Z** (Build 2 keeps running).
+- **01:22Z phase B launched:** attention S3 builder (M0 stamps -> M1 last-arriver finalize on GO; H100 GPU 5; branch
+  campaign/att-s3) and the prefill S0 headroom check (ncu big-only issue-active / conversion pipes, NSLOT 3 vs 4; GPU 4).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows

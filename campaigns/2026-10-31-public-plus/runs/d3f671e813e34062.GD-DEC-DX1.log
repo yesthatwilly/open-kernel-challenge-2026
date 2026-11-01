@@ -1,0 +1,24 @@
+GAPDIAG GD-DEC-DX1 timed_sha256=d3f588ec6d9cbb72cf47a090ea5ce9b94323feca7436ef7b8f547a18089d8d41 mode=file master_match=1
+GAPDIAG gpu=NVIDIA_H200 sms=132 torch=2.14.1+cu130 entry_s=120.5
+GAPDIAG d moe_pick=1:agent,2:agent,4:agent,8:agent,16:agent,32:agent,64:agent,128:agent,256:agent gluev2=1:0,2:0,4:0,8:0,16:0,32:0,64:0,128:0,256:0
+GAPDIAG d mm_pick(qkv/o/pr/un)=1:bfp/bfp/bfpf/bfp 8:bfp/bfp/bfpf/bfp bfp_qkv=1:sk2,8:sk2 compose(graft,warps)=1:1w16,8:1w16,16:1w16,32:1w16,128:1w16,256:1w16 pbmax=0 marlin_cfg=0
+GAPDIAG budget build_done_s=134.0 captures_done_s=134.0
+GAPDIAG budget runs_s=0.3 rounds=64 pairs=32 graphs=30 null_us=5.45[5.38,5.49]
+GAPDIAG a T=1 kf_us=75.18[74.74,75.33] anchor_graph_time_us=75.71 judge_row_us=68.2 aa=0.9965[0.9926,0.9992] copy/kf=0.9967[0.9913,1.0004] copy_ids_eq=1 out_rel=0.0e+00 s2_rel=0.0e+00 local_routes=3
+GAPDIAG a T=1 qkv solo=8.88[8.77,9.06] chain=8.82[8.45,9.38] pen=-0.07[-0.42,0.50] us
+GAPDIAG a T=1 o   solo=5.01[4.96,5.09] chain=5.05[4.72,5.23] pen=0.01[-0.30,0.30] us
+GAPDIAG a T=1 pr  solo=17.08[16.98,17.17] chain=16.30[15.89,16.54] pen=-0.84[-1.26,-0.40] us
+GAPDIAG a T=1 un  solo=3.34[3.28,3.41] chain=2.99[2.83,3.12] pen=-0.46[-0.53,-0.22] us
+GAPDIAG a T=8 kf_us=126.50[126.24,126.62] anchor_graph_time_us=126.78 judge_row_us=105.7 aa=1.0032[0.9987,1.0062] copy/kf=1.0030[1.0006,1.0056] copy_ids_eq=1 out_rel=1.6e-05 s2_rel=2.3e-05 local_routes=12
+GAPDIAG a T=8 qkv solo=8.24[8.13,8.45] chain=8.78[8.40,9.26] pen=0.50[0.11,0.93] us
+GAPDIAG a T=8 o   solo=4.83[4.74,4.88] chain=5.38[4.82,6.02] pen=0.46[0.10,1.31] us
+GAPDIAG a T=8 pr  solo=18.46[18.02,18.67] chain=17.46[17.04,17.79] pen=-0.93[-1.25,-0.35] us
+GAPDIAG a T=8 un  solo=3.54[3.47,3.60] chain=3.35[2.78,3.82] pen=-0.22[-0.83,0.40] us
+GAPDIAG b T=1 cg_solo=7.62[7.42,7.86] qkv_solo=8.88[8.77,9.06] cg-qkv=-1.29[-1.54,-0.98] us; info: chain_with_cg-chain=-0.50[-1.14,-0.16] us; relL2_vs_fp64 cg=1.7e-03 qkv=1.7e-03 cg_vs_qkv=1.0e-05
+GAPDIAG c minus_null_us chain8=3.10[3.02,3.23] p1=1.96[1.86,1.98] p3=3.87[3.81,3.95] p8=8.66[8.56,8.78] gbar=1.39[1.33,1.44] grids=96/32/256/128/10/132/128/32x384 persist_ctas=132 spin_timeouts=0/0 epochs=65/65/65
+GAPDIAG rule DS1=DS1-KILL (cg-qkv=-1.29 vs -1.5; qkv in-chain-solo=-0.07 vs +1.5; pivot_also=0) b_valid=1
+GAPDIAG rule S1=S1-CLOSED-11-04 (p8=8.66 vs 3.0 and 0.5*chain8=1.55; p3=3.87 vs 2.0)
+GAPDIAG rule reserve=0 (A/A |ratio-1|>1%: T1=0.9965 T8=1.0032)
+GAPDIAG validity=PASS copy=1 skel=True guards=1 st_unchanged=1 (VOID: at most one re-send, from the reserve)
+GAPDIAG budget master_prepare_s=120.5 diag_s=14.3 prepare_total_s=134.8 mem_alloc_mb=6787 mem_reserved_mb=10498
+GAPDIAG end bytes=2660
