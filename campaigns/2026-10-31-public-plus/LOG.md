@@ -268,6 +268,15 @@
   master copies differ ~0.1 us at d1s). Verifier running on g3; on upheld -> 2 attention checks (attempt files +
   pre-registered gate). dec-ffn-glue-fold KILL (g4) -> **g4 refill wf_6b959dcc-18b** (task wntralwcq). Still running:
   g1 pf-s1-wg4-oracle, g5 moe-rg-wgs-setmaxnreg, g6 c2-wgs-pdl-endgame, g7 fillers.
+- **~09:00-10:00Z usage limit** (all agents paused; window reset ~10:00Z).
+- **08:5xZ CPUSH checks** (verify-cpush-m1 upheld, check_ready; gate pre-registered by a prep agent, public-plus 94410961):
+  929c84e0 (r1) **2.5202**, 21889c3e (r2) **2.5285**; 16/16 + 12/12 both; d1s profile attn_kernel<1,false,29> 4.1 us
+  (master <1,false,13> 4.6). **GO:** H 2.5243 >= 2.4856; pooled **R_d1s 4.2432 = +10.13%** vs R0 3.8528 (H100 predicted
+  x1.085-1.15: the cluster push-merge TRANSFERRED); untouched rows -1.18..+2.16%, all >= R0/1.03. **10:08Z scored run
+  of CPUSH-r1** (attempt 2026-11-01T100800Z-submit-cpush.md, public-plus 68c01f5b). Landing rule in the attempts.
+- **Lanes since 08:35Z:** pf-s1-wg4-oracle KILL (g1), moe-rg-wgs-setmaxnreg KILL (g5). In flight: g3
+  moe-xs-wgs-start-selfgather, g4 dec-ds0-weight-arena, g5 mining #3, g6 c2-wgs-pdl-endgame. **g1 refill
+  wf_4fd3c855-af9** (task wdjy9f6rc), told to mine CPUSH extensions to other rows first.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
