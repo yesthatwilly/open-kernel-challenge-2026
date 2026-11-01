@@ -320,6 +320,9 @@
   ~8%; the one lead is **CG-O** (o-proj post-wait tail, +0.30-0.55% x p 0.45); DEC-DX2 combines CG-O k-variants, CG-U,
   CPUSH exposure, O8 and a post-DSTK path map in one diag check; both building on g7. Refill lanes: att-d1f-tail KILL,
   dec-tf7-att7-trigger-first KILL, bf16-qkv256-cutlass-streamk KILL.
+- **~17:15Z CLAIMS harvest** master 072507e4 (42 lines: att 21, moe 10, dec 8, pf 2, bf16 1; verify verdicts win).
+  Note for the attention combo: lane att-hsk8-v1f-keypacked-headsplit is [refuted] -> prefer ATT-B1S (no HSK8) unless
+  the combo audit shows HSK8 helps. Refill wf_fcb43dbd-e65 done (all miners none_left); fuzz runner restarted on g3/g4.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
