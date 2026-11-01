@@ -299,6 +299,9 @@
   --force; branches kept; list research/worktrees-removed-1101.txt); /home 13 GB free.
 - **~16:13Z refill wf_fcb43dbd-e65** (task wapglleym): GPUs 1/3/4/5/6, <= 4 lanes each, miners told the winning class
   (B=1 critical-path/parallelism) and the copy-placement measurement lesson.
+- **16:2xZ HSV1 scored 1cf77c00: 2.5192** (16/16 + 12/12; board 2.5180 -> 2.5192). v1s +11.38% vs the 7-read R0, but
+  **d1f -3.54% < R0/1.03 -> NOT landed** per the user's landing rule (read ~2% low on most SASS-identical rows). Open
+  for the user: land HSV1 on its 3-read pool (v1s +10-11% in all 3; pooled d1f ~-1.6%) or leave master at CPUSH.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
