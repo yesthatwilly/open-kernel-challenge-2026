@@ -235,6 +235,14 @@
   items killed today; bf16 has no phase-B item. Open user question: CLAIMS split / PENDING_USER prune (05:41Z).
   Usage window resets ~10:00Z. Next: phase C at 18:00Z spends every check (decode 17, moe 17, attention 19, prefill
   19, bf16 20); fresh /hypothesize leads against the current code are the main source now that the queue is empty.
+- **05:45Z H100 WINDOW OPEN until 11-02 11:00Z (Mon 04:00 MST), the user (verbatim):** "no limit on use of gpunode06
+  until monday local time 4am.  use it please, as much as possible.  autonomously conjure up more for it to do, because
+  zulu reset is far away, adn there are many 5h quotas to be used to advance this right now.  prioritize h100
+  queueing." gpunode06 GPUs 1/3/4/5/6 for lanes, 7 for queue fillers (0/2 hot); H200 still held.
+- **05:55Z workflow wf_51aab7e9-56a (task w4hgiz47n), h100-weekend-lanes:** 5 lead-miners (one per problem, effort
+  high, transfer-class aware) + a GPU-7 filler agent (runner restart, fuzz of master DSTK/MD16F) -> judge (effort max)
+  builds 5 serial lane chains on GPUs 1/3/4/5/6 -> lanes (pre-registered M0, paired vs master copy + A/A) -> adversarial
+  verify on every GO/BETWEEN. Lane reports: session scratchpad lane-<id>.md. Checks stay with the main thread.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
