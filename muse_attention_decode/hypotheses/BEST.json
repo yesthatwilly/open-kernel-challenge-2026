@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "8a73a9d739c24f3b",
+ "job": "1cf77c003c3e4428",
  "check_job": null,
  "mode": "submit",
- "speedup": 2.5180039789317905,
+ "speedup": 2.5191875943241553,
  "ci": [
-  2.4802339192478136,
-  2.555774038615767
+  2.481399780409293,
+  2.5569754082390173
  ],
- "score_us": 1495.7482321365403,
- "commit": "41978a3e6c1e25d9e7e65cbc293ed544f4d931a8",
- "submission_blob": "191c592ec301c511424e61a451bd5803456d8d0d",
- "slug": "landing-8a73a9d7",
- "master_slug": "landing-8a73a9d7",
- "master_job": "8a73a9d739c24f3b",
+ "score_us": 1495.0454696131587,
+ "commit": "8881e073c6465f66d0f7e887c19a7c27f5d66daa",
+ "submission_blob": "a0ed5a24f3c6120344401c4adf1fbb78d5f3fb58",
+ "slug": "landing-1cf77c00",
+ "master_slug": "landing-1cf77c00",
+ "master_job": "1cf77c003c3e4428",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-11-01T100906Z",
- "note": "registered by churn.py register-landing from okc status 8a73a9d739c24f3b"
+ "updated_at": "2026-11-01T171702Z",
+ "note": "registered by churn.py register-landing from okc status 1cf77c003c3e4428"
 }

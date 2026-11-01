@@ -323,6 +323,9 @@
 - **~17:15Z CLAIMS harvest** master 072507e4 (42 lines: att 21, moe 10, dec 8, pf 2, bf16 1; verify verdicts win).
   Note for the attention combo: lane att-hsk8-v1f-keypacked-headsplit is [refuted] -> prefer ATT-B1S (no HSK8) unless
   the combo audit shows HSK8 helps. Refill wf_fcb43dbd-e65 done (all miners none_left); fuzz runner restarted on g3/g4.
+- **~17:20Z the user: "land hsv1 on the 3-read pool".** HSV1 LANDED on master (bytes = scored file HSV1-r1 399eb35d…;
+  3-read pool: v1s +10-11% on every read, pooled d1f ~-1.6%); register-landing 1cf77c00. Master attention =
+  CPUSH + HSV1. Attention combos must rebase on this master.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
