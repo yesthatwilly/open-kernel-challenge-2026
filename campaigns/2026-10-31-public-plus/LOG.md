@@ -115,6 +115,18 @@
   (build; timeout-wrapped run) plus an `autoMode.allow` note authorizing hopper-probe build/run on gpunode06 GPUs
   1/3/4/5/6 (queue/STOP only stops bin/hopper-queue, bin/hopper-queue:303). PENDING_USER 01:41Z resolved.
   **02:06Z attention S2 M1 builder launched** (GPU 5; branch campaign/att-s2).
+- **02:30Z attention S2 M1: KILL** (campaign/att-s2 266841fd, files/attention/S2-M1.py sha256 f047131b; probe
+  hopper/att-s2 19cb7b8; report scratchpad att-s2-m1.md). The new-token CTA's warp 0 now preps the new k/v rows in its
+  q pass: q prep 0.816 -> 0.379 us and the last red 0.38 us earlier, but the last arriver's ticket wait grew 0.68 ->
+  1.11 us (stamps 20261031-192203), so the stagger was hiding the hand-off. Paired d1s -0.128 [-0.160,-0.080] us (24
+  rounds, -191835) and -0.016 [-0.048,+0.008] us with a master-copy control at +0.016 (40 rounds, -192036), vs GO
+  <= -0.4. Workspace-copy reds (2 or 4) also refuted (-192534: d1s +0.02, d16s +0.5..+1.0 us). 144 tests pass, cache
+  rows bitwise equal, 16k x 8 replays clean. Not dispatched. CLAIMS attention [refuted] S2 M1; the only open lever is a
+  cheaper release/acquire hand-off (unmeasured). Attention has no ready build today; its checks go to phase C.
+- **02:21Z the user asked what gets decode into the top 100 today.** Answer: the 100th cut (2.2294) is +0.33% over
+  the board entry but ~1.3-1.8% over master's D0FIX bytes (reads 2.18-2.20). Offered option 1 (stacked riders on D0FIX:
+  DC5L + cgemv qkv T=1 + narrower fences, est +0.4-0.9%, 15-30%/scored run), which needs the user's OK because it
+  overrides the CLAIMS [shelf] stacking bar for cgemv. **Awaiting the user; not launched.**
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
