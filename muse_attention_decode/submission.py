@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. pp-nonce CPUSH-r1
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. pp-nonce CPUSH-r1 | HSV1 (v1s head split, campaign/h100-att-hsv1-v1s-headsplit-confirm c5033ddb) pp-nonce HSV1-r1
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -35,6 +35,9 @@ Design
   known resident. The host picks one in _plan(); the kernel itself is built
   once per launch mode (the MODE template parameter), so each build carries
   only its own epilogue.
+* [HSV1] q_len 8 sliding, one request (the speculative one-tile cooperative grid): one CTA per (split, KV
+  head), grid z = 2 x pairs: one QDIR pass over the head's 64 rows, the head's K/V bytes, warpgroup 0
+  computes, warpgroup 1 only issues copies and meets the CTA barriers; one warpgroup's reds.
 * Fixed build: sm_90a only. There are no tuning switches left in the
   CUDA source; the taken path is the only path.
 * CUDA-graph capturable: no host syncs in the timed path. The module-level
@@ -80,6 +83,9 @@ COOP_BIT = 1   # bit 1: cooperative finalize
 PDL_BIT = 16   # bit 16: programmatic dependent launch
 CPUSH_BIT = 24   # [CPUSH] bit 24: per-KV-head cluster push-merge (B=1, one KV pair, q_len 1, sliding)
 _CPUSH = 1       # [CPUSH] 0 routes d1s as master (test switch)
+HSQ_BIT = 25     # [HSQ8] bit 25: one CTA per (split, KV head) on the q_len 8 sliding cooperative grids
+_HSQ = 1         # [HSQ8] 0 routes every q_len 8 row as master (test switch); [HSV1] B == 1 only
+_HSQ_V1 = 1      # [HSQ8] 1 also routes one request (v1s: the speculative-length one-tile build)
 
 # ---- per-(request, KV pair) launch grid: the per-request grids run slightly
 # below the CTA target, leaving headroom for the finalize tail ----
@@ -1158,6 +1164,9 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   constexpr bool ONE = !FLAT && (MODE & 4) != 0;
   constexpr bool PH = !FLAT && L == 1 && (MODE & 16) != 0;   // [CPUSH] per-KV-head cluster push-merge
   const int phh = PH ? (int)(blockIdx.x >> 4) : 0;            // [CPUSH] this cluster's KV head
+  // [HSQ8] q_len 8 per-KV-head split (MODE bit 32): this CTA's KV head = blockIdx.z & 1 (pair = blockIdx.z >> 1)
+  constexpr bool HSQ = !FLAT && L == 8 && (MODE & 32) != 0;
+  const int hsz = HSQ ? (int)(blockIdx.z & 1) : 0;
   const bool M_CL = !FLAT && ((MODE & 3) == 0 ? p.cs > 1 : (MODE & 3) == 2);
   const bool M_COOP = (MODE & 3) == 0 ? p.coop != 0 : (MODE & 3) == 3;
   constexpr int NT = Cfg<L, FLAT>::NT;
@@ -1331,6 +1340,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   const int kvx = PH ? (cchunk >> 2) : 0;                   // [CPUSH] tile half of this chunk
   constexpr int RPP = NT / 8;   // rows per pass
   auto issue_kv = [&](int x, bool with_new) {
+    if (HSQ && (cchunk >> 2) != hsz) return;   // [HSQ8] the other KV head's chunks: never read here
     const int st = x % STAGES;
     const int* idxs = &S.idx[((x + kvx) % IDX_SLOTS) * TILE];   // [CPUSH] kvx: tile half (0 outside PH)
     bool generic = false;   // st.shared into a K stage: the wgmma (async proxy) needs a proxy fence
@@ -1440,6 +1450,13 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 
   pdl_wait();   // qkv (q, new k / v, gate) is the preceding kernel's output; nothing above reads or writes it
   // raw q rows: L*16 rows x 128 B = 8 chunks of 16 B per row
+  if constexpr (HSQ) {   // [HSQ8] this head's 64 query rows (8 tokens x 8 heads), at their rows j*16 + hh
+    tfor<L * 8 * 8, NT>(tidL, [&](int e) {
+      const int r8 = e >> 3, ch = e & 7;
+      const int j = r8 >> 3, hh = hsz * 8 + (r8 & 7);
+      cp_async16(smem_u32(&S.qst()[(j * 16 + hh) * 64 + ch * 8]), p.qkv + (ix_t)(b * L + j) * p.ld_qkv + (16 * pair + hh) * 64 + ch * 8, 16);
+    });
+  } else
   tfor<L * 16 * 8, NT>(tidL, [&](int e) {   // (straight-line: no loop branches on the once-path)
     const int rr = e >> 3, ch = e & 7;
     const int j = rr >> 4, hh = rr & 15;
@@ -1512,7 +1529,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
           // rows are skipped (written by the patch pass after the new-k/v pass)
           const int pr = start + kvx * TILE + r;   // [CPUSH] kvx: tile half (0 outside PH)
           const bool cached = pr < cend;
-          const bool doit = cached || pr >= end;
+          const bool doit = (cached || pr >= end) && (!HSQ || (cchunk >> 2) == hsz);   // [HSQ8] this head's chunks
           const uint32_t off = ((uint32_t)S.idx[kvx * TILE + r] << p.lrb) + col;   // (zero-filled index past the cached rows)
           cp_async16_pred(kst + so, p.k_cache + off, cached ? 16 : 0, doit);
           cp_async16_pred(vst + so, p.v_cache + off, cached ? 16 : 0, doit);
@@ -1563,11 +1580,11 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // (q_len 8, QDIRECT): four threads per query row, 16 dims each (half the passes of the 8-thread
     // layout, two shuffle levels instead of three, one 16-byte e4m3 store); same math per element
     constexpr int RP4 = NT / 4;                    // rows per pass
-    constexpr int QP4 = L * 16 / RP4;
+    constexpr int QP4 = (HSQ ? L * 8 : L * 16) / RP4;   // [HSQ8] one pass: this head's 64 rows
     const int q4 = tidL & 3;
 #pragma unroll
     for (int ps = 0; ps < QP4; ++ps) {
-      const int rr = ps * RP4 + (tidL >> 2);
+      const int rr = HSQ ? ((tidL >> 5) * 16 + hsz * 8 + ((tidL >> 2) & 7)) : ps * RP4 + (tidL >> 2);
       const int j = rr >> 4, hh = rr & 15;
       const uint4 qa = *reinterpret_cast<const uint4*>(&S.qst()[rr * 64 + q4 * 16]);
       const uint4 qb = *reinterpret_cast<const uint4*>(&S.qst()[rr * 64 + q4 * 16 + 8]);
@@ -1712,7 +1729,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         uint8_t* dst = (kind == 0 ? S.kn : S.vn) + jj * ROWB + hh * 64 + partL * 8;
         *reinterpret_cast<uint2*>(dst) = make_uint2(w0, w1);
         const int pos = seq + jj;
-        if (pos >= start && pos < end && (!PH || hh == phh)) {   // [CPUSH] PH: this cluster's head only
+        if (pos >= start && pos < end && (!PH || hh == phh) && (!HSQ || hh == hsz)) {   // [CPUSH] PH / [HSQ8]: this CTA's head only
           const int64_t row = S.cloc[jj];
           uint8_t* g8 = const_cast<uint8_t*>(cache_row(kind == 0 ? p.k_cache : p.v_cache, p, row, (2 * pair + hh) * 64 + partL * 8));
           *reinterpret_cast<uint2*>(g8) = make_uint2(w0, w1);
@@ -1744,9 +1761,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   constexpr int MT = 1;                    // m-tiles per warp
   constexpr int NROW = (L == 1) ? 1 : 2;   // rows per thread
   // (lane-0 broadcasts, so ptxas keeps them in uniform registers instead of re-deriving them every tile)
-  const int hk = __shfl_sync(0xffffffffu, (L == 1) ? (warp & 1) : ((warp & 7) >> 2), 0);      // L==8: warpgroup = KV head
+  const int hk0 = __shfl_sync(0xffffffffu, (L == 1) ? (warp & 1) : ((warp & 7) >> 2), 0);      // L==8: warpgroup = KV head
+  const int hk = HSQ ? hsz : hk0;   // [HSQ8] both warpgroups on this CTA's KV head
   const int wsub = __shfl_sync(0xffffffffu, (L == 1) ? (warp >> 1) : (warp & 3), 0);    // L==1: key half; L==8: m-tile (tokens 2*wsub, 2*wsub+1)
-  const int wgi = hk;          // named barrier of this warpgroup
+  const int wgi = hk0;          // named barrier of this warpgroup ([HSQ8] the warpgroup, not the head)
   float o[MT][8][4];
 #pragma unroll
   for (int mt = 0; mt < MT; ++mt)
@@ -1948,10 +1966,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   const uint32_t klo0 = __shfl_sync(0xffffffffu, (uint32_t)((smem_u32(S.k) + hk * 64) >> 4) | 0x10000u, 0);
   const uint64_t qdesc0 = ((uint64_t)((512 >> 4) | (2u << 30)) << 32) | qlo0;
   const uint32_t vsrc0 = smem_u32(S.v);
-  uint8_t* vtb_c = S.kvq + hk * 4608;
-  const uintptr_t vtb_x = uintptr_t(S.kvq + hk * 4608) ^ uintptr_t(S.kvq + (2 + hk) * 4608);
-  uint64_t vdesc_c = desc_sw64(smem_u32(S.kvq + hk * 4608));
-  const uint64_t vdesc_x = vdesc_c ^ desc_sw64(smem_u32(S.kvq + (2 + hk) * 4608));
+  uint8_t* vtb_c = S.kvq + wgi * 4608;   // [HSQ8] V^T buffers per warpgroup (wgi == hk outside HSQ8)
+  const uintptr_t vtb_x = uintptr_t(S.kvq + wgi * 4608) ^ uintptr_t(S.kvq + (2 + wgi) * 4608);
+  uint64_t vdesc_c = desc_sw64(smem_u32(S.kvq + wgi * 4608));
+  const uint64_t vdesc_x = vdesc_c ^ desc_sw64(smem_u32(S.kvq + (2 + wgi) * 4608));
   const int i_new = seq > start ? (seq - start) / TILE : 0;   // first tile that can hold the block's new rows
   // interior tiles (no mask) are i in [i_lo, i_lo + i_span], found once (shuffled: kept uniform)
   uint32_t i_lo = 0, i_span = 0;
@@ -2000,6 +2018,13 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     } else {
       cp_wait<STAGES - 2>();   // (timing probe only, wrong results)
       __syncthreads();       // tile i landed; previous tile's PV done (V16 free)
+    }
+    if (HSQ && !WS && wgi == 1) {   // [HSQ8] warpgroup 1: the copies and the CTA barrier only (its head is warpgroup 0's)
+      if (i + STAGES - 1 < ntiles) issue_kv(i + STAGES - 1, true);
+      issue_idx(i + 2 * STAGES - 2);
+      cp_commit();
+      if (++st_c == STAGES) { st_c = 0; ph_c ^= 1u; }
+      continue;
     }
       
     
@@ -2269,7 +2294,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   }
 
   // ---- merge: rescale to the fixed reference 2^0 and accumulate with FP32 atomics ----
-  bool do_red = true;
+  bool do_red = !HSQ || wgi == 0;   // [HSQ8] warpgroup 1 ran warpgroup 0's head: one set of reds
      // stream 1's state was merged into stream 0
   if (L == 1) {
     // warps 2,3 (second key half) hand their state to warps 0,1 (same heads) through shared memory
@@ -2409,8 +2434,8 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // ---- all splits of this (request, kv pair) are resident: wait for every split's merge, then each
     // CTA finalizes its own slice of the rows (instead of one CTA doing all of them)
     // (the slice arithmetic first: it does not depend on the merge, so its divisions leave the barrier's chain)
-    const int split_idx = (int)blockIdx.x;
-    int nact = fdiv_i(n_keys + chunk - 1, chunk);    // splits with keys
+    const int split_idx = HSQ ? (int)blockIdx.x * 2 + hsz : (int)blockIdx.x;   // [HSQ8] slice per (split, head)
+    int nact = fdiv_i(n_keys + chunk - 1, chunk) * (HSQ ? 2 : 1);    // splits with keys ([HSQ8] x 2 heads)
     int R = fdiv_i(L * 16 + nact - 1, nact);          // rows per CTA
     // keep both divisions above the barrier wait (ptxas otherwise sinks them below the spin, where
     // they are first used: scout's v200 census found them after the poll); volatile asm keeps program order
@@ -2425,7 +2450,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       int old;
       asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], %2;\n" : "=r"(old) : "l"(c), "r"(mine) : "memory");
       
-      if (old + mine == n_keys) {
+      if (old + mine == (HSQ ? 2 * n_keys : n_keys)) {   // [HSQ8] every head's CTAs add their keys: 2 x n_keys
         p.ws_cnt[((ep & 1) ? 8192 : 12288) + bp] = 0;
         p.ws_cnt[24576 + bp] = ep + 1;
       } else {
@@ -2433,7 +2458,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         SPIN_T0;
         for (;;) {
           asm volatile("ld.acquire.gpu.global.s32 %0, [%1];\n" : "=r"(v) : "l"(c) : "memory");
-          if (v >= n_keys) break;
+          if (v >= (HSQ ? 2 * n_keys : n_keys)) break;
           SPIN_CHECK;
           __nanosleep(64);
         }
@@ -2638,7 +2663,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
   extern __shared__ __align__(1024) uint8_t smem_raw[];
   // 1024-byte aligned base: the 128B-swizzled tiles must start on swizzle-pattern boundaries (wgmma)
   Smem<L, FLAT>& S = *reinterpret_cast<Smem<L, FLAT>*>(smem_raw + ((1024u - (smem_u32(smem_raw) & 1023u)) & 1023u));
-  const int pair = blockIdx.z;
+  const int pair = (!FLAT && L == 8 && (MODE & 32) != 0) ? (int)(blockIdx.z >> 1) : (int)blockIdx.z;   // [HSQ8] z = 2 pair + head
   if (!FLAT) {
     // grid (n_splits, B): request b, split s of its window / context
     const int split = blockIdx.x, b = blockIdx.y;
@@ -2948,7 +2973,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
 }  // namespace
 
 template <int L>
-void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, bool ph = false) {
+void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, bool ph = false, bool hs = false) {
   Params p = p0;
   static bool init = false;
   const int sm_f = (int)sizeof(Smem<L, true>) + 1024, sm_n = (int)sizeof(Smem<L, false>) + 1024;
@@ -2965,6 +2990,9 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
   // [CPUSH] per-KV-head cluster push-merge builds (q_len 1): ONE | plain, and its speculative-length variant
   static const KernFn kph[2] = {attn_kernel<L, false, (L == 1) ? 21 : 5>, attn_kernel<L, false, (L == 1) ? 29 : 13>};
   const int sm_ph = sm_n + 16 + PH_BYTES;
+  // [HSQ8] per-KV-head split builds (q_len 8 sliding cooperative): kn[3] | 32 and ksp1[3] | 32
+  static const KernFn khs[2] = {attn_kernel<L, false, (L == 8) ? 35 : 3>, attn_kernel<L, false, (L == 8) ? 47 : 15>};
+  static int occ_h0 = 0, occ_h1 = 0;
   if (!init) {
     if (L == 1)
       for (int i = 0; i < 2; ++i) {
@@ -2981,6 +3009,9 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
     }
     cudaFuncSetAttribute(attn_kernel<L, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, sm_f);
     cudaFuncSetAttribute(kn[2], cudaFuncAttributeNonPortableClusterSizeAllowed, 1);
+    for (int i = 0; i < 2; ++i) cudaFuncSetAttribute(khs[i], cudaFuncAttributeMaxDynamicSharedMemorySize, sm_n);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_h0, khs[0], Cfg<L, false>::NTX, sm_n);   // [HSQ8]
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_h1, khs[1], Cfg<L, false>::NTX, sm_n);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_c, kn[3], Cfg<L, false>::NTX, sm_n);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_c1, kn1[3], Cfg<L, false>::NTX, sm_n);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_sp, ksp[3], Cfg<L, false>::NTX, sm_n);
@@ -3018,6 +3049,14 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
     if ((long long)grid.x * grid.y * grid.z > (long long)occ_k * nsm) {
       q.coop = 0;
       kern = plain;
+    }
+  }
+  // [HSQ8] one CTA per (split, KV head) where kn[3] / ksp1[3] launch, when twice the grid is resident
+  if (hs && L == 8 && q.coop && !p.flat && !cl && (kern == kn[3] || kern == ksp1[3])) {
+    const bool sp = kern == ksp1[3];
+    if ((long long)grid.x * grid.y * grid.z * 2 <= (long long)(sp ? occ_h1 : occ_h0) * nsm) {
+      kern = khs[sp ? 1 : 0];
+      grid.z *= 2;
     }
   }
   ph = ph && L == 1 && !p.flat;
@@ -3115,7 +3154,7 @@ void run(torch::Tensor qkv, torch::Tensor seq_lens, torch::Tensor cache_loc, tor
   const bool pdl = ((tma >> 16) & 1);   // programmatic dependent launch (off by default)
   const bool ph = ((tma >> 24) & 1) && L == 1 && !flat && n_splits == 32 && B == 1;   // [CPUSH] bit 24
   if (L == 1) launch<1>(p, grid, stream, (int)cs, pdl, ph);
-  else launch<8>(p, grid, stream, (int)cs, pdl);
+  else launch<8>(p, grid, stream, (int)cs, pdl, false, ((tma >> 25) & 1) && !flat);   // [HSQ8] bit 25
 }
 """
 
@@ -3161,7 +3200,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_cpushM1{tag}_90a",
+        name=f"okc_attn_hsv1M1{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
@@ -3223,6 +3262,12 @@ def _headroom(target):
     return (target * PLAN_HEADROOM_NUM) // PLAN_HEADROOM_DEN
 
 
+def _hsq_bit(B):
+    """[HSQ8] the per-KV-head split bit for a q_len 8 sliding cooperative grid (the launcher re-checks the build and
+    that the doubled grid is resident; otherwise master's launch)."""
+    return (1 << HSQ_BIT) if (_HSQ and _HSQ_V1 and B == 1) else 0   # [HSV1] one request only
+
+
 def _plan(B, pairs, L, window, max_pages, P, device):
     """Launch plan for a shape: n_splits CTAs per (request, KV pair) or, flat, per KV pair over all
     requests; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
@@ -3252,11 +3297,11 @@ def _plan(B, pairs, L, window, max_pages, P, device):
         # q_len 8, few requests: plain split-KV with one tile per CTA and the cooperative finalize
         # (every CTA normalizes a slice of the rows) beats clusters.
         n = _splits(tiles, target // reqs)
-        return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=1, coop=1)
+        return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=1, coop=1, tma=_hsq_bit(B))
     if L == 8 and reqs >= 16:
         # q_len 8, many requests: plain split-KV with about one CTA per SM, plus the cooperative finalize.
         n = _splits(tiles, (target if reqs >= 24 else sms) // reqs)
-        return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=1, coop=1)
+        return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=1, coop=1, tma=_hsq_bit(B))
     if reqs >= 24:
         # Many requests: clusters no longer fit one CTA per SM, so plain split-KV spreads evenly.
         n = _splits(tiles, target // reqs)
@@ -3313,7 +3358,7 @@ def _launch(data, dbg=None, _mod=None, pdl=None, **override):
         coop = int(plan.get("coop", 0 if (cs > 1 or n_splits < 64) else
                             int(n_splits * B * pairs <= 2 * _num_sms(device))))
     use_pdl = bool(pdl)
-    # tma packs the kernel-mode bitfield: bit 1 = cooperative finalize, bit 16 = PDL.
+    # tma packs the kernel-mode bitfield: bit 1 = cooperative finalize, bit 16 = PDL, bit 24 = CPUSH, bit 25 = HSQ8.
     tma = int(plan.get("tma", 0)) | (coop << COOP_BIT) | (int(use_pdl) << PDL_BIT) | (int(_R11_FORCE) << 20)
     if flat or cs <= 1:
         cs, ncl = 0, 1
