@@ -88,6 +88,13 @@
   below the bar as specified. **Prefill S1 is re-scoped, not built:** next is a cheap S1-stage probe of the
   small-only path with real-row MMA width (gate <= 105 us at t1s vs 110.4, bit-identical), after the 04:19Z window.
   CLAIMS prefill [node-only] S0.
+- **02:00Z attention S3: M0 GO, M1 KILL** (H100 GPU 5). M0 (20261031-182321): imbalance + barrier/finalize is 69/78% of
+  the tail at v16f/v32f L2-res, but only 4.8/5.1 us follows the last main loop (barrier 0.9 + finalize 1.7 at v16f).
+  The 15/28 us "plateau" is each SM's second-dispatched CTA running alone, and per public NEGATIVE_RESULTS #2
+  rebalancing that pair does not move the SM finish. M1 (coop=0, the per-request last-arriver ticket already in the
+  source; 20261031-182818): v16f +1.52 us (1.0153), v32f +1.40: **KILL** (the last arriver finalizes 128 rows alone in
+  2.9-3.4 us; ideal bound ~-1 us). 86/86 tests, 16k replays clean. CLAIMS attention [refuted] S3. Cold-mode cross-SM
+  spread 11.7/19.7 us is recorded (inflated ~16% by the stamps) and is not addressed by S3.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
