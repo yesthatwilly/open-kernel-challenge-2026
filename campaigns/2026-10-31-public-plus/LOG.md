@@ -247,6 +247,14 @@
   saturation with usable results".** Each tick: keep GPUs 1/3/4/5/6 (lanes) and 7 (fillers) busy; refill a GPU whose
   chain ends with a new lane; lane GO -> verify -> attempt file -> check (main thread). Quota 05:55Z: checks decode 17,
   moe 17, attention 19, prefill 19, bf16 20. GPU 7 runner live (wk-* decode/moe fuzz queued).
+- **06:50Z tick:** wf_51aab7e9-56a judge chains: g1 cpush-d1s-cluster-pushmerge > pf-s1-wg4-oracle; g3 pf-sk2-small-kernel;
+  g4 dec-ffn-glue-fold; g5 hs-v1s-headsplit; g6 c2-wgs-pdl-endgame > abx-skinny-ab-stage-split (EVs 0.14-0.42%).
+  **HS (attention v1s head split): BETWEEN, shelved** (built: ~-0.5 us v1s, ~+0.65% x p 0.5; no M1, no check);
+  verifier on g5. GPU-7 fillers: 24 rounds queued (moe odd/skew, decode sweep/margin), all pass so far; **decode
+  nodejudge runs are VOID** (shims.py:~1261 self-test wants >= 1 SGLang shim call; public decode board makes 0), so
+  correctness runs but there is no SGLang ratio; harness fix not made (main-thread note). **Refill workflow
+  wf_717c6a2c-4b1** (task ww4iy6y7h): per-GPU loop mine -> lane -> verify, <= 4 lanes, starting with g5; more GPUs
+  get added as their chains end.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
