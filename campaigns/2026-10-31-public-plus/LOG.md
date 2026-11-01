@@ -334,6 +334,11 @@
 - **~18:25Z round-2 workflow phase-c-round2 wf_4916a9fb-058** (task wttv7aj1m): per problem (att g1, moe g5, bf16 g6,
   prefill g6) design (max) the 1-2 most informative checks (multi-question prepare-time DIAG and/or judge-evidenced
   combos) -> build -> audit + attempt files. Decode stays with decode-push.
+- **~18:40Z CORRECTION, moe B4X:** my VOID used the median of per-rep `ratios`; the gate's rho is the geomean of
+  `paired_ratio`. On paired_ratio the r1/r2 pair is VALID and **GO** (rho_d32 1.0078, d1 0.9908, H 2.3782). The
+  "re-send" B4X-r3 check 7776cad9 read **2.4081** (d32 1.6955); 3-read rho_d32 1.0119, H 2.3881. **Scored run of B4X-r3
+  sent** (attempt 2026-11-01T184000Z-submit-b4x.md); lands on master if valid. B1XN re-checked on paired_ratio: still
+  HOLD (d1s 4.3883 < 4.41, v1f 2.3928 < 2.43). Lesson: read each gate's metric definition before computing.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
