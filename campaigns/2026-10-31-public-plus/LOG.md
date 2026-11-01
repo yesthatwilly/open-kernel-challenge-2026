@@ -97,6 +97,11 @@
   spread 11.7/19.7 us is recorded (inflated ~16% by the stamps) and is not addressed by S3.
 - **01:34Z attention S2 builder launched** (B=1 latency path: M0 phase stamps at d1s/v1s/d1f, GO at >= 1.0 us non-chain
   at d1s; M1 cut the largest phase, GO <= -0.4 us d1s; H100 GPU 5; branch campaign/att-s2).
+- **01:41Z attention S2 M0 BLOCKED, not run.** The builder's H100 run was denied by the permission classifier
+  ("Interfere With Workloads"; queue STOP present). Not retried, and not run by the main thread on its behalf
+  (PENDING_USER 01:41Z). The probe is ready on takemyjob hopper/att-s2 9062e3e (probes/atts2). The existing H100 latency
+  data puts d1s ~1.7-3.3 us above the floor (leans GO, not the gate). B=1 board rows (C5L 1280e6f2): d1s 5.250, v1s
+  7.117, d1f 11.135, v1f 15.405 us.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows

@@ -71,3 +71,13 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - **Prefill exp-split** (about 15% of exp2 on the FMA pipe as a polynomial, ~+1.1%): it changes the exp implementation, so it needs your ruling before any build. Default: not built. GAPMAP-1031 §2.5, §4 Q10.
 - **RESOLVED ~21:01Z (user: "if d0fix improves the robustness of the kernel, keep it"): D0FIX lands after scored run 545b80bb.** ~~2026-10-31 21:00Z: land the decode sk2 race fix (D0FIX) although it missed its speed guard?~~ Tonight's 2 checks read 2.1923 / 2.1866 (mean 2.18945, guard 2.19) with d1s/v1s over their caps. ET3FIX, which carries the same fences, read d1s/v1s inside the caps, and tonight's reads of master-equivalent code were also low, so the fence's H200 cost is somewhere between ~0.2% (H100) and ~1% (tonight's 4 reads vs DPP). The race is real (forced 15-25 bad outputs per 16,000 replays in a variant), the judge's tolerance does not catch it, and it has never fired on master in 100k+ replays. Note: the board keeps our best scored run, so a lower-scoring landing changes master's file, not the board entry. Default: not landed; tomorrow's new sk2 code paths keep the fences (CLAIMS:116).
 - **RESOLVED ~21:04Z (user: "Land it (robustness)"): BF16FIX landed, master 8d0df028.** ~~2026-10-31 21:03Z: land BF16FIX (bf16 sk2 ring-slot hardening)?~~ Scored 1.5522 (checks 1.5510 / 1.5434) vs the 1.5657 board; H100 cost ~+0.3%. Same race pattern as D0FIX (71 SASS hazards -> 0), but no failure was ever forced in bf16 (no PDL neighbour, narrower window). Default: HOLD (not landed).
+
+### 2026-11-01 01:41Z: an H100 run was denied by the permission check (needs your call)
+- The attention S2 builder's run `hopper-probe run gpunode06 --gpus 5 atts2-stamps` was denied by Claude Code's permission check as "Interfere With Workloads". The takemyjob queue STOP file is present.
+- Today's other manual runs went through with STOP in place: the moe/prefill/attention/decode diag audits, S3 and S0.
+- Nothing was retried, and the main thread will not run it on the builder's behalf.
+- Ready to run: takemyjob `hopper/att-s2` 9062e3e, `probes/atts2`. Rebuild the bundle, then `HP_BUNDLE=atts2 bin/hopper-probe run gpunode06 --gpus 5 --tmax 85 atts2-stamps`.
+- **Your options:**
+  - (a) Confirm that manual hopper-probe runs are fine while queue/STOP is set. You can run it yourself with `! <command>`, or approve it when prompted.
+  - (b) Leave S2 unmeasured.
+- Default: S2 waits. Attention phase B has no other item.
