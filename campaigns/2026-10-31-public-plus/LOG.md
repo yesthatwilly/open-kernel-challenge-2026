@@ -31,6 +31,20 @@
   diag 0.78 s, 2,527 B. **00:22Z check af53426a** (public-plus e0624010, attempt 2026-11-01T002050Z-check-gd-pf-d1).
 - **00:24Z** attention GD-ATT-D13 fixer launched (rebase onto C5L if needed, root-cause bad=1, H100 GPU 5); an
   independent audit follows before any dispatch.
+- **00:33Z PF-D1 read (af53426a, H200; headline 1.7815 = diag control):** sha = master, validity PASS 0.988/1.008.
+  Prize t1s **70.7** / t4s **69.6 us** (band 45-75), noload 0.976/0.970. **Prefill S1 (A2) = phase-B build**
+  (+2.2-3.8%); no reserve re-read (a GO would only move it to phase A, the user's slot, default no). D2: unpooler addmm
+  33%, o 45% (neither rule fires; S2 costing unchanged). D3: gather 0.973 / combine 1.007 of the 2.72 TB/s copy
+  ceiling: glue-bandwidth question CLOSED. CLAIMS: prefill [lead] S1/A2, [refuted] D3 glue rider. Harvest
+  diag-pf-d1-1101.md. The H100 read the prize 11-13 us higher than the H200.
+- **00:31Z moe DX23 audit PASS** after 3 fixes (diag1031-moe bf74d970; 60673184…, 354,006 B; timed sha = master):
+  the earlier dry run had used other bytes (first end-to-end run on the final bytes: 20261031-171738, 5/5 tests); entry
+  cutoff 150 -> 175 s (150 always skips on the judge, whose prepare is 163.6-168.2 s; 175 is derived from the 300 s
+  limit, worst case ~291 s on one core); DX3 uses a local RNG; the sha covers DIAG/_REG_HJ. **00:31Z check
+  5d1bc475** (public-plus 87932433).
+- **00:34Z attention D13 fixer done** (diag1031-att a8b14613, f459792c…): bad=1 was memory_reserved != 0 after import
+  (loop variables held master's `_WS` through empty_cache); L2 rows now net of the cold null. H100 20261031-172649:
+  bad=0, import 42.9 s. **Independent audit launched** (no dispatch before PASS).
 - **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
   saved output.log against its pre-registered rule; then Build 2 by the DX2 read, M1 by the DEC-DX1 read.
 

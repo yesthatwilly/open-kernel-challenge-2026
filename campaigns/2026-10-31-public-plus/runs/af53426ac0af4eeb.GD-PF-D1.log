@@ -1,0 +1,31 @@
+LT tune T=753 qkv: torch.mm 42.5us, best 42.5us algo None of 8
+LT tune T=753 o: torch.mm 24.2us, best 24.2us algo None of 8
+LT T=753 router: pinned (33, 4, 2, 3) -> algo 6
+LT tune T=753 pooler: torch.mm 69.4us, best 69.4us algo None of 8
+LT tune T=753 unpooler: torch.mm 70.5us, best 70.5us algo None of 8
+LT tune T=3012 qkv: torch.mm 148.2us, best 148.2us algo None of 8
+LT tune T=3012 o: torch.mm 75.3us, best 75.3us algo None of 8
+LT tune T=3012 router: torch.mm 40.6us, best 40.6us algo None of 8
+LT tune T=3012 pooler: torch.mm 256.9us, best 256.9us algo None of 8
+LT tune T=3012 unpooler: torch.mm 256.3us, best 256.3us algo None of 8
+LT tune T=16384 qkv: torch.mm 771.7us, best 771.7us algo None of 8
+LT T=16384 o: pinned (201, 1, 0, 2) -> algo 6
+LT tune T=16384 router: torch.mm 205.5us, best 205.5us algo None of 8
+LT T=16384 pooler: pinned (29, 1, 0, 1) -> algo 5
+LT T=16384 unpooler: pinned (201, 1, 0, 2) -> algo 6
+ATTN own kernel validation (worst rel err): {8: 0.0151, 43: 0.0151} -> [8, 43]
+GAPDIAG GD-PF-D1 timed_sha256 86bd0ee752a2c504eba2b721f8e8afabe55e6c96ed85b1956b131053bf938fbd expect 86bd0ee752a2c504eba2b721f8e8afabe55e6c96ed85b1956b131053bf938fbd (master e5558cfef075 minus line 2) ext okc_prefill_moe_b7a5bc5a989a2a0f lt okc_prefill_lt_b671661c5171f52b
+GAPDIAG D1 t1s T753: all 281.6 big 210.9 small 97.4 prize 70.7 noload 0.976 | small@66 166.7 small@33 313.9 small_noW 95.0 small_noXW 95.1 big_noXW 203.1
+GAPDIAG D1 t1s items us G<gemm>r<rows>: all [1r32:11.4 1r64:16.8 1r128:24.2 1r256:42.5 2r32:11.6 2r64:16.2 2r128:22.5 2r256:41.0] small [1r32:11.3 1r64:19.2 2r32:12.5 2r64:18.1] noXW [1r32:11.1 1r64:17.9 2r32:11.5 2r64:16.2]
+GAPDIAG D1 t1f T753: all 246.8 big 176.8 small 98.2 prize 70.0 noload 0.965 | small@66 166.9 small@33 313.2 small_noW 95.3 small_noXW 94.8 big_noXW 170.7
+GAPDIAG D1 t4s T3012: all 794.8 big 725.1 small 107.0 prize 69.6 noload 0.970 | small@66 178.5 small@33 330.7 small_noW 104.1 small_noXW 103.8 big_noXW 707.7
+GAPDIAG D1 t4s items us G<gemm>r<rows>: all [1r32:11.1 1r64:15.8 1r128:22.1 1r256:41.0 2r32:11.7 2r64:16.6 2r128:23.4 2r256:41.5] small [1r32:11.4 1r64:18.8 2r32:12.3 2r64:17.4] noXW [1r32:11.1 1r64:17.0 2r32:11.7 2r64:16.2]
+GAPDIAG D3 glue T16384 (ratio to copy ceiling): copy 1579.9us 2.72TB/s (1.000) | read 999.8us 4.30TB/s (1.580) | gather 145.0us 2.64TB/s (0.973) | combine 140.0us 2.74TB/s (1.007) | bnd1 304.0us 3.53TB/s (1.299) | bnd2 461.8us 4.07TB/s (1.497)
+GAPDIAG D2 o T16384 K1024 N8192: mm 377.0 addmm(+read 268 MB) 430.9 extra +53.9 (alone 98.8) hide 45% | fp32-out(+write) 421.4 extra +44.4 hide 55%
+GAPDIAG D2 unpooler T16384 K4096 N8192: mm 1379.0 addmm(+read 268 MB) 1444.7 extra +65.7 (alone 98.8) hide 33% | fp32-out(+write) 1512.4 extra +133.4 hide -35%
+GAPDIAG D2 copy ceiling 2.72 TB/s
+GAPDIAG VALIDITY all/J1-moe_fused t1s 281.6/285.0=0.988 t4s 794.8/788.4=1.008 (pass iff both in [0.90, 1.10]) -> PASS
+GAPDIAG RULE#2 prize t1s 70.7 [45-75] t4s 69.6 [45-75] min 69.6 | noload t1s 0.976 t4s 0.970 min 0.970 | GO(prize>=75 both & noload>=0.80) 0 KILL(prize t1s<30) 0 loadbound(noload<0.65) 0
+GAPDIAG RULE#2-D2 hide addmm/fp32: unpooler 33%/-35%(void) o 45%/55% | unpooler>=60% 0 both<=30% 0
+GAPDIAG RULE#2-D3 copy 2.72 TB/s | gather 0.973 combine 1.007 bnd1 1.299 bnd2 1.497 | gather|combine<=0.78 0 both>=0.85 1
+GAPDIAG budget diag 0.83 s (D1 0.39 D3 0.32 D2 0.12) limit 5 s OK; since import 55.7 s; st restored 1; cuda rng restored 1; alloc MiB 2365->2397 (torch's cuBLAS workspace cache, never cleared here) reserved MiB 4318->3322
