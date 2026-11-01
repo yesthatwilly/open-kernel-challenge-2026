@@ -55,6 +55,12 @@
   effort max) -> M0 warm-L2 consumer microbench at N=1/8/16 (H100 GPU 6; GO >= 1.25x weights/us, KILL < 1.15x) ->
   adversarial verify of a GO/BETWEEN. M1 (TINY at d1) launches from the main thread on a verified GO.
 - DEC-DX1 (wf_8cd7ce16-d96) built 00:34Z (H100 13/13 tests, prepare 104.4 s); its audit round 1 is running.
+- **00:46Z attention D13 audit PASS** after 2 fixes (diag1031-att 6f409b3e; 810ec69b…, 189,714 B; first 159,008 B =
+  master C5L, pure append): the current stream is restored if a capture fails; the D3 control is pre-registered as d32f
+  (GO needs best/ctrl >= 1.08 on both d32f and d16f; CLOSE needs d32f <= 1.03). H100 20261031-174138: bad=0, 16/16,
+  import 42.9 s, memory fully released. **00:46Z check 66308d87** (public-plus 6126be5f).
+- **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
+  plus the day's audits are already in this window (the 10-31 17:22Z limit stop killed in-flight work).
 - **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
   saved output.log against its pre-registered rule; then Build 2 by the DX2 read, M1 by the DEC-DX1 read.
 
