@@ -1,5 +1,5 @@
 # okc: problem=muse_decode_layer
-# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31.
+# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31. + DC5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the max, lean max seed; the DPP turn ends right before the exponentials; same arithmetic, scheduling only; port of attention C5L). + CG: T = 1 qkv on muse_bf16_proj's cgemv<2,512,8192,2> over lossless 12-bit planes in the unused qkv_gate wide stream (FP32 accumulation, one BF16 rounding; launch_dependents after the FMA loop as sk2; T != 1 unchanged; DS1 M1, judge diag d3f671e8). pp-nonce DSTK-r1
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -2092,6 +2092,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       if (lane == 0) mbar_arrive(&S.qdone);
     }
   }
+  float dlo_c = 0.f, dhi_c = 0.f;   // [DC5L] flat q8: P offsets of the maxes below (0 while a max is -inf)
   float cr[2] = {-INFINITY, -INFINITY};   // [public-C D0] per-row running max (log2 units; -inf: no finite score yet), rows g and g+8; P is taken against max - 8
   const float ssc = OKC_Q8RAW ? sl2 : 1.f;   // raw score -> log2 units
   // OKC_RAWTHR: the lazy-max test on raw scores against (offset + 8) / ssc (ssc > 0), updated with the offset
@@ -2412,34 +2413,79 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // moves it, as FA3's per-tile max does), P = 2^(x - max + 8) in (0, 256]; the denominator is the FP32 sum of the
     // unrounded P (no ones rows; PV m64n64). Replaces the lazy offset (P_max anywhere in [1, 256]) and the ones-row
     // row sums of the e4m3-rounded P.
-    {
-      float mlo = -INFINITY, mhi = -INFINITY;
+    float dlo, dhi;   // P = 2^(x - dlo) for row g, 2^(x - dhi) for row g + 8 (max - 8; 0 with no finite score yet)
+    if constexpr (WS) {   // [DC5L] flat q8 kernel (attention C5L): exact-max bookkeeping per row half
+      float mlo = fmaxf(s[0], s[1]), mhi = fmaxf(s[2], s[3]);   // (seeded from the first pair: no -inf seed)
 #pragma unroll
-      for (int nt = 0; nt < 8; ++nt) {
+      for (int nt = 1; nt < 8; ++nt) {
         mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
         mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
       }
       mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
       mhi *= ssc;
-      // any score past its row's running max shows in its own thread's partial max: then the row max over the quad
-      if (__any_sync(0xffffffffu, (mlo > cr[0] || mhi > cr[1]))) {
-        mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
-        const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
-        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
-        // (no PV wgmma in flight: the previous tile's was waited at its end, OKC_PVSPLIT 1, or at this tile's top, 2)
+      // one vote per row half: only a half with a score past its running max takes the quad max, alpha and the O / l
+      // rescale (a half with a false vote has quad max <= max, where the update is the identity: alpha = 1.f)
+      const bool vlo = __any_sync(0xffffffffu, mlo > cr[0]);
+      const bool vhi = __any_sync(0xffffffffu, mhi > cr[1]);
+      if (vlo) {   // warp-uniform
+        mlo = quad_max(mlo);   // (full-mask shuffles)
+        const float nlo = fmaxf(mlo, cr[0]);
+        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f;
+        // (no PV wgmma in flight: the previous tile's was waited at its end, OKC_PVSPLIT 1)
 #pragma unroll
-        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
-        lacc[0] *= alo; lacc[2] *= ahi;
-        cr[0] = nlo; cr[1] = nhi;
+        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; }
+        lacc[0] *= alo;
+        cr[0] = nlo;
+        dlo_c = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
       }
+      if (vhi) {   // warp-uniform
+        mhi = quad_max(mhi);   // (full-mask shuffles)
+        const float nhi = fmaxf(mhi, cr[1]);
+        const float ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+#pragma unroll
+        for (int t = 0; t < 8; ++t) { o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+        lacc[2] *= ahi;
+        cr[1] = nhi;
+        dhi_c = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
+      }
+      dlo = dlo_c; dhi = dhi_c;
+      if constexpr (PPT) {   // [DC5L] the DPP turn ends here, right before the exponentials (dlo / dhi as "+f"
+        // operands pin it there); the other's turn (none after warpgroup 1's last tile)
+        if (hk == 0 || jj + 1 < nit)
+          asm volatile("bar.arrive %2, 256;\n" : "+f"(dlo), "+f"(dhi) : "r"(5 + (hk ^ 1)) : "memory");
+      }
+    } else {
+      {
+        float mlo = -INFINITY, mhi = -INFINITY;
+#pragma unroll
+        for (int nt = 0; nt < 8; ++nt) {
+          mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
+          mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
+        }
+        mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
+        mhi *= ssc;
+        // any score past its row's running max shows in its own thread's partial max: then the row max over the quad
+        if (__any_sync(0xffffffffu, (mlo > cr[0] || mhi > cr[1]))) {
+          mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
+          const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
+          const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+          // (no PV wgmma in flight: the previous tile's was waited at its end, OKC_PVSPLIT 1, or at this tile's top, 2)
+#pragma unroll
+          for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+          lacc[0] *= alo; lacc[2] *= ahi;
+          cr[0] = nlo; cr[1] = nhi;
+        }
+      }
+      dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
+      dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
     }
     first = false;
-    const float dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
-    const float dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
     PROF_MARK(4);
     if constexpr (PV8) {   // P (e4m3, registers, k-steps of 32 permuted keys) x V^T (e4m3, K-major, 64 dims): one
         // asynchronous m64n64 wgmma per half, issued as soon as that half is packed, waited before the next tile
-      float tlo = 0.f, thi = 0.f;   // this tile's FP32 row sums of the unrounded P (this thread's keys of rows g, g+8)
+      // this tile's FP32 row sums of the unrounded P (this thread's keys of rows g, g+8); [DC5L] flat kernel: seeded with
+      // -0.0, the additive identity, so the first add folds away (P >= +0: ex2 never returns -0; the same sums bit for bit)
+      float tlo = WS ? -0.f : 0.f, thi = WS ? -0.f : 0.f;
       auto pk4 = [](float x0, float x1, float x2, float x3, float& t) -> uint32_t {
         t += (x0 + x1) + (x2 + x3);
         return e4m3x4f(x0, x1, x2, x3);
@@ -2453,11 +2499,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       };
 #pragma unroll
       for (int kk = 0; kk < 2; ++kk) {   // each half of P goes to the tensor cores as soon as it is packed
-        packh(kk);
-        if constexpr (PPT) {   // [DPP] after packh(1): the other's turn (none after warpgroup 1's last tile)
-          if (kk == 1 && (hk == 0 || jj + 1 < nit))
-            asm volatile("bar.arrive %0, 256;\n" ::"r"(5 + (hk ^ 1)) : "memory");
-        }
+        packh(kk);   // ([DC5L] PPT: the turn's bar.arrive is above, right before the exponentials)
         float* od = &o[0][0][0];
         if constexpr (LSYNCN) {   // every warp's V^T for this tile written (and visible to the async proxy)
           if (kk == 0) {
@@ -2468,8 +2510,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         if (kk == 0) {
 #pragma unroll
           for (int e = 0; e < 32; ++e) reg_fence(od[e]);
+          if constexpr (!WS) {   // ([DC5L] flat kernel: lacc is no wgmma accumulator, not pinned before the PV issue)
 #pragma unroll
-          for (int e = 0; e < 4; ++e) reg_fence(lacc[e]);
+            for (int e = 0; e < 4; ++e) reg_fence(lacc[e]);
+          }
         }
 #pragma unroll
         for (int e = 0; e < 4; ++e) asm volatile("" : "+r"(pa[kk][e]));
@@ -13892,4 +13936,296 @@ def prepare(weights):
     cge = st.setdefault('compose_graft_enabled', {})
     for T in (1, 8):
         cge[T] = True
+    return st
+
+
+# ---- [CG] DSTK: T = 1 qkv on muse_bf16_proj's judge-proven 12-bit GEMV, cgemv<2, 512, 8192, 2> (CLAIMS [shelf] "cgemv
+# qkv at T=1", judge diag d3f671e8: solo 7.62 vs 8.88 us, in-chain -0.50 us, rel-L2 vs fp64 equal). The kernel body is
+# GD-DEC-DX1's gd_cgemv_kernel (= bf16_proj cgemv_kernel<2, 512, 8192, 2>) unchanged, plus an optional PDL trigger after
+# the FMA loop (_CGQ_TRIG; off = the plain launch DX1 measured). Plain <<<>>> launch: the qkv is the graph's first node.
+# Planes (lossless: BF16 weights kept bit for bit) in the unused qkv_gate wide bfp stream, the escape table in the unused
+# unpooler rgc-16 wide stream: no new persistent memory. T != 1 and every other launch: master's code.
+_CGQ_TRIG = 1
+_CGQ_HOST = ("qkv_gate", 0, 4, 1, 4, 2304)
+_CGQ_TABK = ("unpooler", 0, 16, 1, 4, 8192)
+
+_CGQ_CUDA = r"""
+#include <ATen/core/Tensor.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
+#include <stdint.h>
+
+__device__ __forceinline__ float cgq_esc_delta(uint32_t t, uint32_t bq) {
+  const uint32_t hi = (t >> 8) & 0xFFu, e71 = hi & 0x7Fu;
+  const uint32_t dhi = (hi & 0x80u) | (e71 < bq ? bq : bq + 7u);
+  return __uint_as_float(t << 16) - __uint_as_float(((dhi << 8) | (t & 0xFFu)) << 16);
+}
+__device__ __forceinline__ uint32_t cgq_hib(uint32_t c, uint32_t base4) {
+  return ((c & 0x07070707u) + base4) | ((c << 4) & 0x80808080u);
+}
+template <int ROWS, int NTH, int K, int NACC, bool TRIG>
+__global__ void __launch_bounds__(NTH + 32) cgq_kernel(const uint8_t* __restrict__ L, const uint8_t* __restrict__ C,
+    const __nv_bfloat16* __restrict__ x, const int2* __restrict__ etab, int pmax,
+    __nv_bfloat16* __restrict__ out, uint32_t base4) {
+  constexpr int PER = K / (16 * NTH);
+  constexpr int NWARP = NTH / 32;
+  static_assert(PER >= 1, "cgemv: K >= 16 NTH");
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+  const int r0 = blockIdx.x * ROWS;
+  __shared__ float red[ROWS][NWARP + 1];
+  if (warp == NWARP) {
+    const int2* tb = etab + (size_t)blockIdx.x * pmax;
+    int2 mine = make_int2(0, 0);
+    if (lane < pmax) mine = __ldg(&tb[lane]);
+    const int cnt = __shfl_sync(0xffffffffu, mine.x, 0);
+    float ec[ROWS];
+#pragma unroll
+    for (int r = 0; r < ROWS; ++r) ec[r] = 0.f;
+    for (int i0 = 0; i0 <= cnt; i0 += 32) {
+      const int i = i0 + lane;
+      int2 en = mine;
+      if (i0 > 0) en = (i <= cnt) ? __ldg(&tb[i]) : make_int2(0, 0);
+      if (i >= 1 && i <= cnt) {
+        const float c = __bfloat162float(x[en.x & 0xFFFF]) * cgq_esc_delta((uint32_t)en.y, base4 & 0xFFu);
+        const int rl = en.x >> 16;
+#pragma unroll
+        for (int r = 0; r < ROWS; ++r) ec[r] += (rl == r) ? c : 0.f;
+      }
+    }
+    if (TRIG) asm volatile("griddepcontrol.launch_dependents;" ::: "memory");   // [CG] dependents wait for our end
+#pragma unroll
+    for (int r = 0; r < ROWS; ++r) {
+      float v = ec[r];
+#pragma unroll
+      for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
+      if (lane == 0) red[r][NWARP] = v;
+    }
+    __syncthreads();
+    return;
+  }
+  uint4 lw[ROWS][PER]; uint2 cw[ROWS][PER]; uint4 xv[PER][2];
+#pragma unroll
+  for (int r = 0; r < ROWS; ++r)
+#pragma unroll
+    for (int j = 0; j < PER; ++j) {
+      const size_t e0 = (size_t)(r0 + r) * K + (size_t)j * 16 * NTH + 16 * tid;
+      lw[r][j] = __ldg(reinterpret_cast<const uint4*>(L + e0));
+      cw[r][j] = __ldg(reinterpret_cast<const uint2*>(C + e0 / 2));
+    }
+#pragma unroll
+  for (int j = 0; j < PER; ++j) {
+    const __nv_bfloat16* xp = x + j * 16 * NTH + 16 * tid;
+    xv[j][0] = __ldg(reinterpret_cast<const uint4*>(xp));
+    xv[j][1] = __ldg(reinterpret_cast<const uint4*>(xp + 8));
+  }
+  float acc[ROWS][NACC];
+#pragma unroll
+  for (int r = 0; r < ROWS; ++r) for (int a = 0; a < NACC; ++a) acc[r][a] = 0.f;
+#pragma unroll
+  for (int j = 0; j < PER; ++j) {
+    float xf[16];
+#pragma unroll
+    for (int h = 0; h < 2; ++h) {
+      const uint32_t* xw = reinterpret_cast<const uint32_t*>(&xv[j][h]);
+#pragma unroll
+      for (int e = 0; e < 4; ++e) { xf[8 * h + 2 * e] = __uint_as_float(xw[e] << 16); xf[8 * h + 2 * e + 1] = __uint_as_float(xw[e] & 0xFFFF0000u); }
+    }
+#pragma unroll
+    for (int r = 0; r < ROWS; ++r) {
+      const uint32_t lws[4] = {lw[r][j].x, lw[r][j].y, lw[r][j].z, lw[r][j].w};
+      const uint32_t cws[2] = {cw[r][j].x, cw[r][j].y};
+      float v[NACC]; for (int a = 0; a < NACC; ++a) v[a] = acc[r][a];
+#pragma unroll
+      for (int g = 0; g < 2; ++g) {
+        const uint32_t ha = cgq_hib(cws[g] & 0x0F0F0F0Fu, base4);
+        const uint32_t hb = cgq_hib((cws[g] >> 4) & 0x0F0F0F0Fu, base4);
+        const uint32_t la = lws[2 * g], lb = lws[2 * g + 1];
+        const uint32_t p01 = __byte_perm(la, ha, 0x5140), p23 = __byte_perm(la, ha, 0x7362);
+        const uint32_t p45 = __byte_perm(lb, hb, 0x5140), p67 = __byte_perm(lb, hb, 0x7362);
+        const float* xg = xf + 8 * g;
+        v[0%NACC] = fmaf(__uint_as_float(p01 << 16), xg[0], v[0%NACC]); v[1%NACC] = fmaf(__uint_as_float(p01 & 0xFFFF0000u), xg[1], v[1%NACC]);
+        v[2%NACC] = fmaf(__uint_as_float(p23 << 16), xg[2], v[2%NACC]); v[3%NACC] = fmaf(__uint_as_float(p23 & 0xFFFF0000u), xg[3], v[3%NACC]);
+        v[4%NACC] = fmaf(__uint_as_float(p45 << 16), xg[4], v[4%NACC]); v[5%NACC] = fmaf(__uint_as_float(p45 & 0xFFFF0000u), xg[5], v[5%NACC]);
+        v[6%NACC] = fmaf(__uint_as_float(p67 << 16), xg[6], v[6%NACC]); v[7%NACC] = fmaf(__uint_as_float(p67 & 0xFFFF0000u), xg[7], v[7%NACC]);
+      }
+      for (int a = 0; a < NACC; ++a) acc[r][a] = v[a];
+    }
+  }
+  if (TRIG) asm volatile("griddepcontrol.launch_dependents;" ::: "memory");   // [CG] as sk2: after the FMA loop
+#pragma unroll
+  for (int r = 0; r < ROWS; ++r) {
+    float v = 0.f; for (int a = 0; a < NACC; ++a) v += acc[r][a];
+#pragma unroll
+    for (int o = 16; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
+    if (lane == 0) red[r][warp] = v;
+  }
+  __syncthreads();
+  if (tid < ROWS) {
+    float v = 0.f;
+#pragma unroll
+    for (int q = 0; q <= NWARP; ++q) v += red[tid][q];
+    out[r0 + tid] = __float2bfloat16_rn(v);
+  }
+}
+
+void cgq(at::Tensor L, at::Tensor C, at::Tensor x, at::Tensor tab, at::Tensor out, int64_t pmax, int64_t b4, int64_t trig) {
+  TORCH_CHECK(x.dim() == 2 && x.size(0) == 1 && x.size(1) == 8192 && x.is_contiguous(), "cgq: x [1, 8192]");
+  TORCH_CHECK(out.dim() == 2 && out.size(0) == 1 && out.is_contiguous(), "cgq: out [1, N]");
+  const int N = (int)out.size(1);
+  TORCH_CHECK(N % 2 == 0 && (int64_t)N * 8192 <= L.numel() && (int64_t)N * 4096 <= C.numel(), "cgq: N");
+  TORCH_CHECK(tab.numel() >= (int64_t)(N / 2) * pmax * 2, "cgq: tab");
+  TORCH_CHECK(((uintptr_t)x.data_ptr() & 15) == 0 && ((uintptr_t)L.data_ptr() & 15) == 0 && ((uintptr_t)C.data_ptr() & 7) == 0,
+              "cgq: alignment");
+  auto st = at::cuda::getCurrentCUDAStream();
+  if (trig)
+    cgq_kernel<2, 512, 8192, 2, true><<<N / 2, 512 + 32, 0, st>>>((const uint8_t*)L.data_ptr(), (const uint8_t*)C.data_ptr(),
+        (const __nv_bfloat16*)x.data_ptr(), (const int2*)tab.data_ptr(), (int)pmax, (__nv_bfloat16*)out.data_ptr(), (uint32_t)b4);
+  else
+    cgq_kernel<2, 512, 8192, 2, false><<<N / 2, 512 + 32, 0, st>>>((const uint8_t*)L.data_ptr(), (const uint8_t*)C.data_ptr(),
+        (const __nv_bfloat16*)x.data_ptr(), (const int2*)tab.data_ptr(), (int)pmax, (__nv_bfloat16*)out.data_ptr(), (uint32_t)b4);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+"""
+_CGQ_CPP = ("#include <torch/extension.h>\n"
+            "void cgq(torch::Tensor L, torch::Tensor C, torch::Tensor x, torch::Tensor tab, torch::Tensor out, int64_t pmax, "
+            "int64_t b4, int64_t trig);\n")
+
+
+def _cgq_ext():
+    tag = _hashlib.md5((_CGQ_CPP + _CGQ_CUDA).encode()).hexdigest()[:12]
+    return load_inline(name="okc_cgq_" + tag, cpp_sources=_CGQ_CPP, cuda_sources=_CGQ_CUDA, functions=["cgq"],
+                       no_implicit_headers=True, extra_cuda_cflags=["-O3", "-gencode=arch=compute_90,code=sm_90"],
+                       verbose=False)
+
+
+def _cgq_pack(w):
+    """muse_bf16_proj cg_compress (GD-DEC-DX1 _gd_cg_compress, same constants) on a CPU copy of w, plus a full CPU
+    reconstruction: the planes + the escape table must give back w's bits exactly (lossless), else None."""
+    ew, ev, mxd, b4r, rows_per_cta = 8, 128, 200, 0x01010101, 2
+    n, k = w.shape
+    bits = w.contiguous().view(torch.int16).to(torch.int32) & 0xFFFF
+    hi, low = bits >> 8, bits & 0xFF
+    e71, sign = hi & 0x7F, hi >> 7
+    hist = torch.bincount(e71.flatten(), minlength=ev)
+    win = torch.stack([hist[b:b + ew].sum() for b in range(ev - ew + 1)])
+    base = int(win.argmax())
+    o = (e71 - base).clamp(0, ew - 1)
+    code = ((sign << 3) | o).to(torch.uint8)
+    esc = (e71 < base) | (e71 > base + ew - 1)
+    if int(esc.sum()) > n * k // mxd:
+        return None
+    g = code.view(n, k // 8, 8)
+    C = (g[:, :, 0:4] | (g[:, :, 4:8] << 4)).reshape(n, k // 2).contiguous()
+    L = low.to(torch.uint8).contiguous()
+    rows, cols = esc.nonzero(as_tuple=True)
+    dec = ((((sign[rows, cols] << 7) | (base + o[rows, cols])) << 8) | low[rows, cols]).to(torch.int16).view(torch.bfloat16).float()
+    wtrue = w[rows, cols].float()
+    if not bool(((dec + (wtrue - dec)) == wtrue).all()):
+        return None
+    ncta = n // rows_per_cta
+    cta = rows // rows_per_cta
+    counts = torch.bincount(cta, minlength=ncta)
+    pmax = int(counts.max()) + 1 if rows.numel() else 1
+    start = torch.cumsum(counts, 0) - counts
+    pos = torch.arange(rows.numel()) - start[cta] + 1
+    tab = torch.zeros(ncta, pmax, 2, dtype=torch.int32)
+    tab[:, 0, 0] = counts.to(torch.int32)
+    tab[cta, pos, 0] = (((rows - cta * rows_per_cta) << 16) | cols).to(torch.int32)
+    tab[cta, pos, 1] = bits[rows, cols].to(torch.int32)
+    # lossless check: decode every plane byte the kernel's way (nibble j of byte b of an 8-group: element b + 4 j),
+    # patch the escapes from the table, compare with w's bits
+    Cg = C.view(n, k // 8, 4).to(torch.int32)
+    cd = torch.cat([Cg & 0xF, Cg >> 4], 2).reshape(n, k)
+    rb = ((((cd >> 3) & 1) << 7) | ((cd & 7) + base)) << 8 | L.to(torch.int32)
+    tl = tab[:, 1:, :].reshape(-1, 2)
+    ct = torch.arange(ncta).repeat_interleave(pmax - 1)
+    keep = torch.arange(pmax - 1).repeat(ncta) < counts.repeat_interleave(pmax - 1)
+    er = ct[keep] * rows_per_cta + (tl[keep, 0] >> 16)
+    ec = tl[keep, 0] & 0xFFFF
+    rb[er, ec] = tl[keep, 1]
+    if int(keep.sum()) != rows.numel() or not torch.equal(rb, bits):
+        return None
+    return {"L": L, "C": C, "tab": tab.contiguous(), "pmax": pmax, "base4": base * b4r, "esc": rows.numel(), "base": base}
+
+
+def _cgq_view(t, nbytes):
+    """The first nbytes of an existing tensor's storage as uint8 (no allocation)."""
+    u = t.view(-1).view(torch.uint8)
+    if u.numel() < nbytes:
+        raise RuntimeError(f"cgq: host buffer {u.numel()} B < {nbytes} B")
+    return u[:nbytes]
+
+
+def _cgq_setup(st):
+    bfp = st.get("bfp")
+    w = st.get("qkv")
+    if bfp is None or w is None or tuple(w.shape) != (2304, HIDDEN) or w.dtype != torch.bfloat16:
+        raise RuntimeError("cgq: no bfp state / qkv weights")
+    if not bfp.get("sm90") or bfp.get("old_paths", True) or bfp_WIDE_BF16:
+        raise RuntimeError("cgq: needs sm_90 sk2 paths (the wide streams must be dead)")
+    if any(ch and ch[0] == "wide" for (lay, _m), ch in bfp.get("choice", {}).items() if lay != "router"):
+        raise RuntimeError("cgq: a BF16 layer routes to the wide kernel")
+    if st.get("mm_pick", {}).get((1, "qkv")) != "bfp":
+        raise RuntimeError(f"cgq: T = 1 qkv pick is {st.get('mm_pick', {}).get((1, 'qkv'))!r}, not bfp")
+    streams = bfp["streams"]
+    if _CGQ_HOST not in streams or _CGQ_TABK not in streams:
+        raise RuntimeError("cgq: dead wide streams missing")
+    pk = _cgq_pack(w.cpu())
+    if pk is None:
+        raise RuntimeError("cgq: pack not lossless / too many escapes")
+    n, k = w.shape
+    tnb = pk["tab"].numel() * 4
+    host, tabh = streams.pop(_CGQ_HOST), streams.pop(_CGQ_TABK)   # a stray wide read now fails loudly (KeyError)
+    keep = (host, tabh)
+    flat = _cgq_view(host, n * k + n * k // 2)
+    L = flat[:n * k].view(n, k)
+    C = flat[n * k:].view(n, k // 2)
+    tab = _cgq_view(tabh, tnb).view(torch.int32).view(n // 2, pk["pmax"], 2)
+    L.copy_(pk["L"])
+    C.copy_(pk["C"])
+    tab.copy_(pk["tab"])
+    ext = _cgq_ext()
+    q = {"L": L, "C": C, "tab": tab, "pmax": pk["pmax"], "base4": pk["base4"], "ext": ext, "keep": keep}
+    # GPU self-test against the incumbent qkv on 4 fixed inputs (FP32 sums of the same BF16 products in another order:
+    # BF16 outputs within 2 ulp of each other; the H100 column-identity test proves the planes element by element)
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(4243)
+    worst = 0.0
+    for i in range(4):
+        x = (torch.randn(1, k, generator=gen) * (1.0 + 9.0 * (torch.rand(1, k, generator=gen) < 0.01))).to(torch.bfloat16).to(w.device)
+        ref_ = _cgq_prior_bfp_gemm(st, "qkv", x, 1, n, k).float()
+        out = torch.empty((1, n), dtype=torch.bfloat16, device=w.device)
+        ext.cgq(L, C, x, tab, out, pk["pmax"], pk["base4"], int(_CGQ_TRIG))
+        d = (out.float() - ref_).abs().max() / ref_.abs().max().clamp_min(1e-30)
+        worst = max(worst, float(d))
+    if not worst < 2e-2:
+        raise RuntimeError(f"cgq: self-test vs incumbent max rel {worst:.3e}")
+    st["cgq"] = q
+    sha = _hashlib.sha256(pk["L"].numpy().tobytes()[:1 << 20]).hexdigest()[:8]
+    print(f"[cgq] on: T=1 qkv cgemv<2,512,8192,2> trig={_CGQ_TRIG} esc={pk['esc']} pmax={pk['pmax']} base={pk['base']} "
+          f"selftest max rel {worst:.2e} L1M sha {sha}", flush=True)
+
+
+_cgq_prior_bfp_gemm = _bfp_gemm
+def _bfp_gemm(st, name, x, m, n, k):
+    q = st.get("cgq")
+    if (q is not None and name == "qkv" and m == 1 and n == 2304 and k == HIDDEN and x.dtype == torch.bfloat16
+            and x.dim() == 2 and x.shape[0] == 1 and x.is_contiguous() and x.data_ptr() % 16 == 0):
+        _bfp_pdl(m)   # the incumbent's side effect (later bfp launchers read bfp_SK2_PDL), kept as is
+        out = torch.empty((1, n), dtype=torch.bfloat16, device=x.device)
+        q["ext"].cgq(q["L"], q["C"], x, q["tab"], out, q["pmax"], q["base4"], int(_CGQ_TRIG))
+        return out
+    return _cgq_prior_bfp_gemm(st, name, x, m, n, k)
+
+
+_cgq_prior_prepare = prepare
+def prepare(weights):
+    st = _cgq_prior_prepare(weights)
+    try:
+        _cgq_setup(st)
+    except Exception as ex:  # noqa: BLE001
+        st.pop("cgq", None)
+        print("cgq disabled:", repr(ex)[:200], flush=True)
     return st

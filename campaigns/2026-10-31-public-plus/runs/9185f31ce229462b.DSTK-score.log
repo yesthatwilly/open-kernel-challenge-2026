@@ -1,0 +1,1 @@
+[cgq] on: T=1 qkv cgemv<2,512,8192,2> trig=1 esc=2583 pmax=10 base=54 selftest max rel 1.59e-03 L1M sha e4639383
