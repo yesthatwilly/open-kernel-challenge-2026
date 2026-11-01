@@ -326,6 +326,14 @@
 - **~17:20Z the user: "land hsv1 on the 3-read pool".** HSV1 LANDED on master (bytes = scored file HSV1-r1 399eb35d…;
   3-read pool: v1s +10-11% on every read, pooled d1f ~-1.6%); register-landing 1cf77c00. Master attention =
   CPUSH + HSV1. Attention combos must rebase on this master.
+- **~18:00Z phase C. Combo checks** (attempts on public-plus c09d62d1/d2ed9d65): **attention B1XN** a4fcde9f 2.5571 /
+  91604729 2.5465 -> **HOLD** by the amended gate (d1s 4.3614 < 4.41, v1f 2.3923 < 2.43: CPNQF/HSK8 not clearly
+  transferred; no KILL). **moe B4X** e8bb8ad0 2.3717 / eb8c11a1 2.3846 -> **VOID** (d32 rho 1.0069 GO-side, but untouched
+  d1 rho 1.0716 in both reads); one allowed re-send B4X-r3 in flight. **bf16 RBX** 4b5887c7 1.5284 / ad738856 1.5668 ->
+  R32 arm KILL (no-op both), P1 HOLD (picked once). No scored runs. Prefill combo re-audit in flight.
+- **~18:25Z round-2 workflow phase-c-round2 wf_4916a9fb-058** (task wttv7aj1m): per problem (att g1, moe g5, bf16 g6,
+  prefill g6) design (max) the 1-2 most informative checks (multi-question prepare-time DIAG and/or judge-evidenced
+  combos) -> build -> audit + attempt files. Decode stays with decode-push.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
