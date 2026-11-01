@@ -110,6 +110,11 @@
   finalize 0.70, idx trip 0.43 (L2 ld 0.15), merge reds 0.39, setup 0.31, KV issue 0.31, main loop 0.48. Outputs
   T==M at d1s. M1 (cut the largest non-chain phase; GO <= -0.4 us d1s, KILL above) needs H100 A/B runs: agent runs
   are being denied by the permission classifier (PENDING_USER 01:41Z).
+- **02:05Z the user: "set up the allow rule for hopper-probe runs".** Claude Code's permission check refused my
+  edit of .claude/settings.local.json as self-modification, so the user ran the merge themselves: 3 more allow rules
+  (build; timeout-wrapped run) plus an `autoMode.allow` note authorizing hopper-probe build/run on gpunode06 GPUs
+  1/3/4/5/6 (queue/STOP only stops bin/hopper-queue, bin/hopper-queue:303). PENDING_USER 01:41Z resolved.
+  **02:06Z attention S2 M1 builder launched** (GPU 5; branch campaign/att-s2).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
