@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31.
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. pp-nonce CPUSH-r1
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -78,6 +78,8 @@ LOG2E = 1.4426950408889634  # log2(e), to full double precision
 # bit 1: cooperative finalize; bit 16: PDL.
 COOP_BIT = 1   # bit 1: cooperative finalize
 PDL_BIT = 16   # bit 16: programmatic dependent launch
+CPUSH_BIT = 24   # [CPUSH] bit 24: per-KV-head cluster push-merge (B=1, one KV pair, q_len 1, sliding)
+_CPUSH = 1       # [CPUSH] 0 routes d1s as master (test switch)
 
 # ---- per-(request, KV pair) launch grid: the per-request grids run slightly
 # below the CTA target, leaving headroom for the finalize tail ----
@@ -862,6 +864,116 @@ __device__ __forceinline__ void cluster_stage_gate(const Params& p, SM& S, const
   }
 }
 
+// [CPUSH] per-KV-head cluster push-merge mode (MODE bit 16; q_len 1 only): 2 clusters x 16 CTAs per KV pair, cluster h
+// = KV head h, rank r = keys [lo + 128 r, +128) of head h only (its two tiles in the two column halves of one stage
+// row). Warps 0/1 push their 8 (O[64], m, l) FP32 partials (264 B) to owner rank g with st.async + mbarrier complete_tx;
+// owner g merges its 32 partials (16 ranks x 2 tile halves) with an exact max-rescaled FP32 merge, then
+// rmsnorm * sigmoid(gate) and the store. The slots live after the Smem struct (extra dynamic shared memory).
+constexpr int PH_SRC = 32;                       // partials per owner row: 16 ranks x 2 tile halves
+constexpr int PH_PITCH = 68;                     // floats per partial slot: O[64], m, l, 2 pad (16-byte pitch)
+constexpr int PH_TX = PH_SRC * 264;              // bytes the owner's mbarrier expects
+constexpr int PH_BYTES = PH_SRC * PH_PITCH * 4 + 16;   // slots + the owner's mbarrier
+template <class SM>
+__device__ __forceinline__ float* ph_slots(SM& S) {
+  return reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(&S) + ((sizeof(SM) + 15) & ~(size_t)15));
+}
+__device__ __forceinline__ uint32_t ph_rank() {
+  uint32_t r;
+  asm volatile("mov.u32 %0, %%cluster_ctarank;" : "=r"(r));
+  return r;
+}
+// every CTA once, before anything that can return: owners arm their mbarrier (one arrival + the expected bytes),
+// then the early relaxed cluster arrive (its matching wait sits just before the push)
+template <class SM>
+__device__ __forceinline__ void ph_arm(SM& S) {
+  if (ph_rank() < 8 && threadIdx.x == 0) {
+    uint64_t* bar = reinterpret_cast<uint64_t*>(ph_slots(S) + PH_SRC * PH_PITCH);
+    mbar_init_n(bar, 1);
+    mbar_fence_init();
+    mbar_expect_tx(bar, PH_TX);
+  }
+  asm volatile("barrier.cluster.arrive.relaxed.aligned;\n" ::: "memory");
+}
+// every thread of the CTA (converged): push (warps 0/1 when `push`: warp = tile half, lane row g = owner rank g), then
+// owner warp 0 merges and stores. m: the row's running max (log2 units, -inf: no keys), l: its quad-summed denominator,
+// o: master's L == 1 accumulator fragments (dims 16*tig + 8*c + t in o[0][t][c]).
+template <int L, class SM>
+__device__ __forceinline__ void ph_finish(const Params& p, SM& S, const int b, const int pair, const int h,
+                                          const bool push, const float m, const float l, const float (&o)[1][8][4],
+                                          const float vscale) {
+  const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5, g = lane >> 2, tig = lane & 3;
+  const uint32_t rank = ph_rank();
+  float* slots = ph_slots(S);
+  const uint32_t lbar = smem_u32(slots + PH_SRC * PH_PITCH);
+  asm volatile("barrier.cluster.wait.aligned;\n" ::: "memory");   // every owner's mbarrier is initialized
+  if (push) {
+    const float* sl = slots + (2 * rank + (warp & 1)) * PH_PITCH;
+    uint32_t rb;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(rb) : "r"(lbar), "r"(g));
+#pragma unroll
+    for (int c = 0; c < 2; ++c)
+#pragma unroll
+      for (int t4 = 0; t4 < 8; t4 += 4) {
+        uint32_t ra;
+        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(ra) : "r"(smem_u32(sl + 16 * tig + 8 * c + t4)), "r"(g));
+        asm volatile("st.async.shared::cluster.mbarrier::complete_tx::bytes.v4.f32 [%0], {%1, %2, %3, %4}, [%5];\n"
+                     ::"r"(ra), "f"(o[0][t4][c]), "f"(o[0][t4 + 1][c]), "f"(o[0][t4 + 2][c]), "f"(o[0][t4 + 3][c]), "r"(rb)
+                     : "memory");
+      }
+    if (tig == 0) {
+      uint32_t ra;
+      asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(ra) : "r"(smem_u32(sl + 64)), "r"(g));
+      asm volatile("st.async.shared::cluster.mbarrier::complete_tx::bytes.v2.f32 [%0], {%1, %2}, [%3];\n"
+                   ::"r"(ra), "f"(m), "f"(l), "r"(rb) : "memory");
+    }
+  }
+  if (rank < 8 && warp == 0) {
+    asm volatile("{\n.reg .pred q;\nPHW_%=:\nmbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 q, [%0], 0;\n@!q bra PHW_%=;\n}\n"
+                 ::"r"(lbar) : "memory");
+    // lanes: half hf (sources 16 hf .. 16 hf + 15) x dim group dg (dims 4 dg .. 4 dg + 3)
+    const int hf = lane >> 4, dg = lane & 15;
+    float M = -INFINITY;
+#pragma unroll
+    for (int i = 0; i < PH_SRC / 2; ++i) M = fmaxf(M, slots[(hf * (PH_SRC / 2) + i) * PH_PITCH + 64]);
+    M = fmaxf(M, __shfl_xor_sync(0xffffffffu, M, 16));
+    float ls = 0.f, a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+#pragma unroll
+    for (int i = 0; i < PH_SRC / 2; ++i) {
+      const float* sl = slots + (hf * (PH_SRC / 2) + i) * PH_PITCH;
+      const float mi = sl[64];
+      const float f = (mi == -INFINITY) ? 0.f : ex2(mi - M);
+      const float4 x = *reinterpret_cast<const float4*>(sl + 4 * dg);
+      ls += f * sl[65];
+      a0 += f * x.x; a1 += f * x.y; a2 += f * x.z; a3 += f * x.w;
+    }
+    ls += __shfl_xor_sync(0xffffffffu, ls, 16);
+    a0 += __shfl_xor_sync(0xffffffffu, a0, 16);
+    a1 += __shfl_xor_sync(0xffffffffu, a1, 16);
+    a2 += __shfl_xor_sync(0xffffffffu, a2, 16);
+    a3 += __shfl_xor_sync(0xffffffffu, a3, 16);
+    const float inv = ls > 0.f ? __fdividef(vscale, ls) : 0.f;
+    const float y[4] = {pr8(a0 * inv), pr8(a1 * inv), pr8(a2 * inv), pr8(a3 * inv)};
+    float ss = y[0] * y[0] + y[1] * y[1] + y[2] * y[2] + y[3] * y[3];
+    ss += __shfl_xor_sync(0xffffffffu, ss, 1);
+    ss += __shfl_xor_sync(0xffffffffu, ss, 2);
+    ss += __shfl_xor_sync(0xffffffffu, ss, 4);
+    ss += __shfl_xor_sync(0xffffffffu, ss, 8);
+    const float rn = rsqrtf(ss * (1.f / 64.f) + 1e-5f);
+    const uint2 graw = *reinterpret_cast<const uint2*>(&S.gst[dg * 4]);
+    const __nv_bfloat162* g2 = reinterpret_cast<const __nv_bfloat162*>(&graw);
+    uint2 ov;
+    uint32_t* ow = reinterpret_cast<uint32_t*>(&ov);
+#pragma unroll
+    for (int k = 0; k < 2; ++k) {
+      const float2 gt = __bfloat1622float2(g2[k]);
+      __nv_bfloat162 r2 = __floats2bfloat162_rn(y[2 * k] * rn * sigm(gt.x), y[2 * k + 1] * rn * sigm(gt.y));
+      ow[k] = *reinterpret_cast<uint32_t*>(&r2);
+    }
+    if (hf == 0)
+      *reinterpret_cast<uint2*>(p.out + (ix_t)(b * L) * (p.Hq * 64) + (16 * pair + 8 * h + (int)rank) * 64 + dg * 4) = ov;
+  }
+}
+
 // One (request b, KV pair) segment [start, end) of the request's key positions.
 // Sum the nc workspace copies of one (row, 8-dim part) of request-pair bp, token j, head hh, and zero them. Copies in
 // groups of 4 (loads of a group in flight together): one compact loop body, since this runs once per launch from a
@@ -1044,6 +1156,8 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   // MODE | 4 = a build for grids whose every split holds at most one tile (the host checks): the tile loop,
   // the in-loop copies and the first-tile tests fold at compile time (scout's once-path census, s1 / vs1)
   constexpr bool ONE = !FLAT && (MODE & 4) != 0;
+  constexpr bool PH = !FLAT && L == 1 && (MODE & 16) != 0;   // [CPUSH] per-KV-head cluster push-merge
+  const int phh = PH ? (int)(blockIdx.x >> 4) : 0;            // [CPUSH] this cluster's KV head
   const bool M_CL = !FLAT && ((MODE & 3) == 0 ? p.cs > 1 : (MODE & 3) == 2);
   const bool M_COOP = (MODE & 3) == 0 ? p.coop != 0 : (MODE & 3) == 3;
   constexpr int NT = Cfg<L, FLAT>::NT;
@@ -1213,14 +1327,16 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   // K/V: thread -> 16-byte chunk (tid & 7) of rows (tid >> 3) + 16*k: a warp copies 4 whole 128-byte rows.
   // New-token rows come from S.kn / S.vn; rows past the range are zeroed.
   const int cchunk = tid & 7, crow0 = tid >> 3;
+  const int kvc = PH ? (phh * 4 + (cchunk & 3)) : cchunk;   // [CPUSH] source chunk of the pair row
+  const int kvx = PH ? (cchunk >> 2) : 0;                   // [CPUSH] tile half of this chunk
   constexpr int RPP = NT / 8;   // rows per pass
   auto issue_kv = [&](int x, bool with_new) {
     const int st = x % STAGES;
-    const int* idxs = &S.idx[(x % IDX_SLOTS) * TILE];
+    const int* idxs = &S.idx[((x + kvx) % IDX_SLOTS) * TILE];   // [CPUSH] kvx: tile half (0 outside PH)
     bool generic = false;   // st.shared into a K stage: the wgmma (async proxy) needs a proxy fence
     // every row of the tile cached (pos < min(end, seq)), page size 1, caches below 4 GB: one shift-add
     // per row, no per-row branches (the per-request issue runs from a cold instruction cache, mostly once)
-    if (with_new && p.off32 && p.lp == 0 && start + x * TILE + TILE <= min(end, seq)) {   // (in-loop issues only: the
+    if (!PH && with_new && p.off32 && p.lp == 0 && start + x * TILE + TILE <= min(end, seq)) {   // (in-loop issues only: the
       // prologue's cold copy of the tile-0 issue stays the plain one, s1 measured +1.5% with it)
       const uint32_t kst = smem_u32(S.k + st * STAGE_BYTES), vst = smem_u32(S.v + st * STAGE_BYTES);
       const uint32_t col = (uint32_t)(pair * 128 + cchunk * 16);
@@ -1237,26 +1353,26 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 #pragma unroll
     for (int k = 0; k < TILE / RPP; ++k) {
       const int r = crow0 + RPP * k;
-      const int pos = start + x * TILE + r;
+      const int pos = start + (x + kvx) * TILE + r;
       const int sw = ((cchunk ^ (r & 7)) << 4);
       uint8_t* dk = S.k + st * STAGE_BYTES + r * ROWB + sw;
       uint8_t* dv = S.v + st * STAGE_BYTES + r * ROWB + sw;
       if (pos < end && pos < seq) {
         if (p.off32) {   // caches below 4 GB: 32-bit offsets (uniform branch)
-          const uint32_t off = ((((uint32_t)idxs[r] << p.lp) + (uint32_t)(pos & (p.P - 1))) << p.lrb) + (uint32_t)(pair * 128 + cchunk * 16);
+          const uint32_t off = ((((uint32_t)idxs[r] << p.lp) + (uint32_t)(pos & (p.P - 1))) << p.lrb) + (uint32_t)(pair * 128 + kvc * 16);
           cp_async16(smem_u32(dk), p.k_cache + off, 16);
           cp_async16(smem_u32(dv), p.v_cache + off, 16);
         } else
         {
           const int64_t row = ((int64_t)idxs[r] << p.lp) + (pos & (p.P - 1));
-          const int64_t off = row * p.row_bytes + pair * 128 + cchunk * 16;
+          const int64_t off = row * p.row_bytes + pair * 128 + kvc * 16;
           cp_async16(smem_u32(dk), p.k_cache + off, 16);
           cp_async16(smem_u32(dv), p.v_cache + off, 16);
         }
       } else if (pos < end) {
         if (with_new) {
-          *reinterpret_cast<uint4*>(dk) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + cchunk * 16);
-          *reinterpret_cast<uint4*>(dv) = *reinterpret_cast<const uint4*>(S.vn + (pos - seq) * ROWB + cchunk * 16);
+          *reinterpret_cast<uint4*>(dk) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + kvc * 16);
+          *reinterpret_cast<uint4*>(dv) = *reinterpret_cast<const uint4*>(S.vn + (pos - seq) * ROWB + kvc * 16);
           generic = true;
         }
       } else {   // past the range: masked out of S; V must be finite (P = 0 times V)
@@ -1267,7 +1383,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if (L == 8 && generic) fence_proxy_async();
   };
   auto issue_idx = [&](int y) {
-    if (phalf == 0 && prow < TILE && y < ntiles) {
+    if (phalf == 0 && prow < TILE && y < (PH ? 2 : ntiles)) {   // [CPUSH] PH: the two tile halves
       const int pos = start + y * TILE + prow;
       if (pos < end && pos < seq) cp_async4(smem_u32(&S.idx[(y % IDX_SLOTS) * TILE + prow]), pt_row + (pos >> p.lp));
     }
@@ -1327,7 +1443,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   tfor<L * 16 * 8, NT>(tidL, [&](int e) {   // (straight-line: no loop branches on the once-path)
     const int rr = e >> 3, ch = e & 7;
     const int j = rr >> 4, hh = rr & 15;
-    cp_async16(smem_u32(&S.qst()[rr * 64 + ch * 8]), p.qkv + (ix_t)(b * L + j) * p.ld_qkv + (16 * pair + hh) * 64 + ch * 8, 16);
+    cp_async16(smem_u32(&S.qst()[rr * 64 + ch * 8]), p.qkv + (ix_t)(b * L + j) * p.ld_qkv + (16 * pair + (PH ? 8 * phh + (hh & 7) : hh)) * 64 + ch * 8, 16);
   });
   if (has_new) {
     tfor<L * 4 * 8, NT>(tidL, [&](int e) {   // (straight-line: no loop branches on the once-path)
@@ -1338,6 +1454,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     });
   }
   if (M_CL) cluster_stage_gate<L>(p, S, b, pair);
+  if constexpr (PH) {   // [CPUSH] owner ranks stage their output row's gate (64 bf16)
+    if (ph_rank() < 8 && tidL < 8)
+      cp_async16(smem_u32(&S.gst[tidL * 8]), p.qkv + (ix_t)(b * L) * p.ld_qkv + (p.Hq + 2 * p.Hkv) * 64 + (16 * pair + 8 * phh + (int)ph_rank()) * 64 + tidL * 8, 16);
+  }
   // small per-call constants: staged with the same group instead of cold loads in the middle of the prologue
   if (tidL < 8) cp_async16(smem_u32(&S.ifreq[tidL * 4]), p.inv_freq + tidL * 4, 16);
   else if (tidL == 8) cp_async4(smem_u32(&S.scl[0]), p.k_scale);
@@ -1349,7 +1469,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;\n" ::"r"(smem_u32(&S.cloc[jj])), "l"(p.cache_loc + b * L + jj));
   }
   cp_commit();
-  if (split == 0 && (FLAT || !M_CL)) {  // warm L2 with the gate rows for whichever CTA finishes last
+  if (!PH && split == 0 && (FLAT || !M_CL)) {  // warm L2 with the gate rows for whichever CTA finishes last
     tfor<L * 16, NT>(tidL, [&](int e) {   // (straight-line: no loop branches on the once-path)
       const __nv_bfloat16* gp = p.qkv + (ix_t)(b * L + (e >> 4)) * p.ld_qkv + (p.Hq + 2 * p.Hkv) * 64 + (16 * pair + (e & 15)) * 64;
       asm volatile("prefetch.global.L2 [%0];" ::"l"(gp));
@@ -1380,7 +1500,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if (ONE && p.off32 && p.lp == 0) {
       one = true;
       const uint32_t kst = smem_u32(S.k), vst = smem_u32(S.v);
-      const uint32_t col = (uint32_t)(pair * 128 + cchunk * 16);
+      const uint32_t col = (uint32_t)(pair * 128 + kvc * 16);   // [CPUSH] kvc = cchunk outside PH
       const int cend = min(end, seq);
 #pragma unroll
       for (int k = 0; k < TILE / RPP; ++k) {
@@ -1390,10 +1510,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
           // branch-free (scout's v200 census: the per-row branches cost 16 instr + 4 taken branches per warp, cold):
           // cached rows copy, rows past the range zero-fill (masked out of S; V must be finite), the block's new
           // rows are skipped (written by the patch pass after the new-k/v pass)
-          const int pr = start + r;
+          const int pr = start + kvx * TILE + r;   // [CPUSH] kvx: tile half (0 outside PH)
           const bool cached = pr < cend;
           const bool doit = cached || pr >= end;
-          const uint32_t off = ((uint32_t)S.idx[r] << p.lrb) + col;   // (zero-filled index past the cached rows)
+          const uint32_t off = ((uint32_t)S.idx[kvx * TILE + r] << p.lrb) + col;   // (zero-filled index past the cached rows)
           cp_async16_pred(kst + so, p.k_cache + off, cached ? 16 : 0, doit);
           cp_async16_pred(vst + so, p.v_cache + off, cached ? 16 : 0, doit);
             // (the block's new rows: written by the patch pass after the new-k/v pass, as with the general issue)
@@ -1592,7 +1712,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         uint8_t* dst = (kind == 0 ? S.kn : S.vn) + jj * ROWB + hh * 64 + partL * 8;
         *reinterpret_cast<uint2*>(dst) = make_uint2(w0, w1);
         const int pos = seq + jj;
-        if (pos >= start && pos < end) {
+        if (pos >= start && pos < end && (!PH || hh == phh)) {   // [CPUSH] PH: this cluster's head only
           const int64_t row = S.cloc[jj];
           uint8_t* g8 = const_cast<uint8_t*>(cache_row(kind == 0 ? p.k_cache : p.v_cache, p, row, (2 * pair + hh) * 64 + partL * 8));
           *reinterpret_cast<uint2*>(g8) = make_uint2(w0, w1);
@@ -1608,11 +1728,11 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 #pragma unroll
       for (int k = 0; k < TILE / RPP; ++k) {
         const int r = crow0 + RPP * k;
-        const int pos = start + x * TILE + r;
+        const int pos = start + (x + kvx) * TILE + r;   // [CPUSH] kvx: tile half (0 outside PH)
         if (pos >= seq && pos < end) {
           const int sw = ((cchunk ^ (r & 7)) << 4);
-          *reinterpret_cast<uint4*>(S.k + st * STAGE_BYTES + r * ROWB + sw) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + cchunk * 16);
-          *reinterpret_cast<uint4*>(S.v + st * STAGE_BYTES + r * ROWB + sw) = *reinterpret_cast<const uint4*>(S.vn + (pos - seq) * ROWB + cchunk * 16);
+          *reinterpret_cast<uint4*>(S.k + st * STAGE_BYTES + r * ROWB + sw) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + kvc * 16);
+          *reinterpret_cast<uint4*>(S.v + st * STAGE_BYTES + r * ROWB + sw) = *reinterpret_cast<const uint4*>(S.vn + (pos - seq) * ROWB + kvc * 16);
         }
       }
     }
@@ -1668,7 +1788,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     const uint8_t* K = S.k + ((tb + i) % STAGES) * STAGE_BYTES;
     const uint8_t* V = S.v + ((tb + i) % STAGES) * STAGE_BYTES;
     const int t0 = start + i * TILE;
-    const bool interior = (t0 >= lo_all) && (t0 + TILE - 1 <= hi_all);
+    const bool interior = (t0 >= lo_all) && (t0 + (PH ? 2 * TILE : TILE) - 1 <= hi_all);
     // warp: kv head hk, keys [32*wsub, 32*wsub+32) of the tile
     float s[4][4];
     uint32_t kw[4][4];
@@ -1693,7 +1813,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       for (int nt = 0; nt < 4; ++nt)
 #pragma unroll
         for (int e = 0; e < 2; ++e) {
-          const int pos = t0 + 32 * wsub + 8 * nt + 2 * tig + e;
+          const int pos = t0 + (PH ? 64 * hk : 0) + 32 * wsub + 8 * nt + 2 * tig + e;   // [CPUSH] PH: warp hk = tile half
           if (pos >= end) s[nt][e] = -INFINITY;
         }
     }
@@ -2180,6 +2300,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       do_red = false;
     }
   }
+  if constexpr (PH) {   // [CPUSH] warps 0/1 push to the owners; owner warp 0 merges and stores
+    ph_finish<L>(p, S, b, pair, phh, do_red, m_r[0], quad_sum(l_r[0]), o, vscale);
+    return true;
+  }
   if (M_CL) {
     cp_wait<0>();
     csync<WS, NT>();
@@ -2518,6 +2642,8 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
   if (!FLAT) {
     // grid (n_splits, B): request b, split s of its window / context
     const int split = blockIdx.x, b = blockIdx.y;
+    constexpr bool PHK = L == 1 && (MODE & 16) != 0;   // [CPUSH]
+    if constexpr (PHK) ph_arm(S);
     // (MODE | 8 builds, chosen by the host for one request with page size 1): SGLang's FA3 backend builds
     // page_table = req_to_token[req_pool_indices, :max_seq_len_k] (sglang/srt/layers/attention/
     // flashattention_backend.py, init_forward_metadata: decode / target-verify paths), so with one request its row
@@ -2544,12 +2670,29 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
     }
     int start = lo + split * chunk;
     int end = min(seq + L, start + chunk);
+    if constexpr (PHK) {   // [CPUSH] cluster split >> 4 = KV head, rank split & 15 = keys [lo + 128 rank, +128)
+      chunk = 2 * TILE;
+      start = lo + (split & 15) * chunk;
+      end = min(seq + L, start + chunk);
+    }
     // splits beyond the SM count share an SM with an earlier split, which gets the warp schedulers'
     // priority: the first-wave splits take w0/1024 of a second-wave split's tiles (only when every split still gets
     // at least one tile, so all splits have keys and the cooperative finalize counts all of them)
     
     if (start >= end) {
       if (SPEC && seq != seq_ld) { seq = seq_ld; continue; }   // (an empty split only on the real length)
+      if constexpr (PHK) {   // [CPUSH] an empty rank still pushes empty partials; an empty owner still merges
+        pdl_wait();     // (the gate rows are qkv)
+        if (ph_rank() < 8 && threadIdx.x < 8)
+          cp_async16(smem_u32(&S.gst[threadIdx.x * 8]), p.qkv + (ix_t)(b * L) * p.ld_qkv + (p.Hq + 2 * p.Hkv) * 64 + (16 * pair + 8 * (split >> 4) + (int)ph_rank()) * 64 + threadIdx.x * 8, 16);
+        if (threadIdx.x == 8) cp_async4(smem_u32(&S.scl[1]), p.v_scale);
+        cp_commit();
+        cp_wait<0>();
+        __syncthreads();
+        const float oz[1][8][4] = {};
+        ph_finish<L>(p, S, b, pair, split >> 4, (threadIdx.x >> 5) < 2, -INFINITY, 0.f, oz, S.scl[1]);
+        return;
+      }
       if ((MODE & 3) == 0 ? p.cs > 1 : (MODE & 3) == 2) {   // still part of its cluster: contributes an empty partial, finalizes its slice
         pdl_wait();     // (the gate rows are qkv)
         cluster_stage_gate<L>(p, S, b, pair);
@@ -2805,7 +2948,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
 }  // namespace
 
 template <int L>
-void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl) {
+void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, bool ph = false) {
   Params p = p0;
   static bool init = false;
   const int sm_f = (int)sizeof(Smem<L, true>) + 1024, sm_n = (int)sizeof(Smem<L, false>) + 1024;
@@ -2819,7 +2962,15 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl) 
   static const KernFn kn1[4] = {0, attn_kernel<L, false, 5>, 0, attn_kernel<L, false, 7>};
   static const KernFn ksp[4] = {0, attn_kernel<L, false, 9>, 0, attn_kernel<L, false, 11>};
   static const KernFn ksp1[4] = {0, attn_kernel<L, false, 13>, 0, attn_kernel<L, false, 15>};
+  // [CPUSH] per-KV-head cluster push-merge builds (q_len 1): ONE | plain, and its speculative-length variant
+  static const KernFn kph[2] = {attn_kernel<L, false, (L == 1) ? 21 : 5>, attn_kernel<L, false, (L == 1) ? 29 : 13>};
+  const int sm_ph = sm_n + 16 + PH_BYTES;
   if (!init) {
+    if (L == 1)
+      for (int i = 0; i < 2; ++i) {
+        cudaFuncSetAttribute(kph[i], cudaFuncAttributeMaxDynamicSharedMemorySize, sm_ph);
+        cudaFuncSetAttribute(kph[i], cudaFuncAttributeNonPortableClusterSizeAllowed, 1);
+      }
     for (int m = 1; m < 4; ++m)
       cudaFuncSetAttribute(kn[m], cudaFuncAttributeMaxDynamicSharedMemorySize, sm_n);
     cudaFuncSetAttribute(kn1[1], cudaFuncAttributeMaxDynamicSharedMemorySize, sm_n);
@@ -2869,19 +3020,21 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl) 
       kern = plain;
     }
   }
-  if (cl || pdl) {
+  ph = ph && L == 1 && !p.flat;
+  if (ph) kern = (p.B == 1 && p.P == 1 && p.max_pages >= L && (int)grid.y == 1) ? kph[1] : kph[0];   // [CPUSH]
+  if (cl || pdl || ph) {
     // cluster dims and / or programmatic stream serialization (PDL: this grid may start while the preceding
     // kernel finishes; the kernel waits with griddepcontrol.wait before reading qkv)
     cudaLaunchConfig_t cfg = {};
     cfg.gridDim = grid;
     cfg.blockDim = dim3(p.flat ? Cfg<L, true>::NTX : Cfg<L, false>::NTX, 1, 1);
-    cfg.dynamicSmemBytes = sm;   // (one cluster CTA per SM)
+    cfg.dynamicSmemBytes = ph ? sm_ph : sm;   // (one cluster CTA per SM)
     cfg.stream = stream;
     cudaLaunchAttribute attr[2];
     int na = 0;
-    if (cl) {
+    if (cl || ph) {
       attr[na].id = cudaLaunchAttributeClusterDimension;
-      attr[na].val.clusterDim.x = cs;
+      attr[na].val.clusterDim.x = ph ? 16 : cs;
       attr[na].val.clusterDim.y = 1;
       attr[na].val.clusterDim.z = 1;
       ++na;
@@ -2960,7 +3113,8 @@ void run(torch::Tensor qkv, torch::Tensor seq_lens, torch::Tensor cache_loc, tor
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   p.coop = (int)((tma >> 1) & 1);
   const bool pdl = ((tma >> 16) & 1);   // programmatic dependent launch (off by default)
-  if (L == 1) launch<1>(p, grid, stream, (int)cs, pdl);
+  const bool ph = ((tma >> 24) & 1) && L == 1 && !flat && n_splits == 32 && B == 1;   // [CPUSH] bit 24
+  if (L == 1) launch<1>(p, grid, stream, (int)cs, pdl, ph);
   else launch<8>(p, grid, stream, (int)cs, pdl);
 }
 """
@@ -3007,7 +3161,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_v298pcA0{tag}_90a",
+        name=f"okc_attn_cpushM1{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
@@ -3088,6 +3242,9 @@ def _plan(B, pairs, L, window, max_pages, P, device):
         n = _splits(tiles, target // reqs)
         return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=_copies(n, 4), coop=0)
     if L == 1 and reqs < 24:
+        if _CPUSH and B == 1 and reqs == 1 and window + L - 1 <= 32 * TILE_KEYS:
+            # [CPUSH] one request, one KV pair: 2 clusters x 16 CTAs (one per KV head), push-merge to owner ranks
+            return dict(n_splits=32, flat=0, cs=0, ncl=1, nc=1, tma=1 << CPUSH_BIT)
         # Few requests, sliding: plain split-KV with one tile per CTA and a single workspace copy.
         n = _splits(tiles, target // reqs)
         return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=1)
