@@ -243,6 +243,10 @@
   high, transfer-class aware) + a GPU-7 filler agent (runner restart, fuzz of master DSTK/MD16F) -> judge (effort max)
   builds 5 serial lane chains on GPUs 1/3/4/5/6 -> lanes (pre-registered M0, paired vs master copy + A/A) -> adversarial
   verify on every GO/BETWEEN. Lane reports: session scratchpad lane-<id>.md. Checks stay with the main thread.
+- **05:55Z /loop /3to1 restarted, the user (verbatim): "yes, restart /loop /3to1  with a focus on total gpunode06
+  saturation with usable results".** Each tick: keep GPUs 1/3/4/5/6 (lanes) and 7 (fillers) busy; refill a GPU whose
+  chain ends with a new lane; lane GO -> verify -> attempt file -> check (main thread). Quota 05:55Z: checks decode 17,
+  moe 17, attention 19, prefill 19, bf16 20. GPU 7 runner live (wk-* decode/moe fuzz queued).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
