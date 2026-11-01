@@ -308,6 +308,12 @@
   decode GPU 7. **Workflow decode-push wf_89af62c6-ed8** (task wvfcrenhq): design (effort max: critical-path map, leads,
   DEC-DX2 = one multi-lead prepare-time judge diag check, CG-O = DSTK + cgq o-proj T=1 + PDL trigger) -> builds of DX2
   and CG-O on GPU 7 -> independent audits. Main thread dispatches checks on PASS.
+- **~16:35Z the user (verbatim): "spend a few checks trying out informed combinations of findings.  i need unexplored
+  cominbations inteligently approached.  use h100 as you see fit, but prioritize using up todays checks/scoring
+  submissions with promising attempts".** -> **Workflow informed-combos wf_8e5ce67c-043** (task wtc324jb9): per problem
+  (attention g1, moe g5, prefill g6, bf16 g5 shared) designer (max) -> build + H100 sanity -> audit; returns check-ready
+  r1/r2 files + pre-registered gates; main thread dispatches. Decode combos come from decode-push (g7). Refill
+  wf_fcb43dbd-e65 keeps g3/g4 (g1/g5/g6 chains ended none_left). Checks left: att 15, dec 17, moe 17, pf 19, bf16 20.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
