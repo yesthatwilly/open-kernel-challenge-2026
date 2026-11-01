@@ -228,6 +228,13 @@
   `review: required`. **Retired** to `<p>/hypotheses/retired/2026-11-01-prefoundation/` (master 5a1485d1; README
   per folder; churn and hyp.py do not read it; hyp.py context verified). Proposed next (user's call): split CLAIMS
   (~85% of lines predate 10-31; 30-57 KB each) and prune PENDING_USER's obsolete items.
+- **05:42Z MD16F scored 3f9df6f8: 2.3680** [2.3325, 2.4036]; 5/5 + 6/6, valid -> **LANDED on master 62c4a332**
+  (bytes = scored file 52b80a41), register-landing --force 9f023f8e. 3-read mean 2.3726 (s_h 0.42%). Board stays M1a
+  2.3867: moe rank 125 at 05:43Z (100th 2.399, 50th 2.4533). D1+D6 judge-neutral, so **no decode D1 rider**.
+- **Phase B status 05:43Z:** nothing in flight, no agents. Decode (DSTK) and moe (MD16F) landed; attention and prefill
+  items killed today; bf16 has no phase-B item. Open user question: CLAIMS split / PENDING_USER prune (05:41Z).
+  Usage window resets ~10:00Z. Next: phase C at 18:00Z spends every check (decode 17, moe 17, attention 19, prefill
+  19, bf16 20); fresh /hypothesize leads against the current code are the main source now that the queue is empty.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
