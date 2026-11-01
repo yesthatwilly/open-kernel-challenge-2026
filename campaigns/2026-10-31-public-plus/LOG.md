@@ -157,7 +157,7 @@
   weight compression is explicitly allowed (technical-rules:107; bulk12 precedent). Expected ~+0.37% (+0.18..+0.45).
   **03:48Z independent DSTK audit launched** (effort high; GPUs 4/5; audit-DSTK.md): reproduction, rules, the PDL
   trigger vs the ET3-class race (>= 32k replays), accuracy flag, DC5L bitwise, fences/SASS, and the final gate.
-- **04:24Z phase B (window reset 04:19Z), 3 agents running (DSTK audit + 2):**
+- **04:23Z phase B (window reset 04:19Z), 3 agents running (DSTK audit + 2):**
   - **moe MD16 builder** (effort high; campaign/md16, .worktrees/md16; H100 GPU 6; report md16.md): stamp-free master +
     D1 + D6 (the INC-D rider), plus an optional MD16F arm fencing moe's unfixed :2215 WGS hand-back (same pattern as
     decode D0FIX site 8, LOG 19:48Z) if it is the same hazard. Then an independent audit and 2 moe checks; moe's 100th
