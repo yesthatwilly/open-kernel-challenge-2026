@@ -194,6 +194,12 @@
   +-0.3%; registers 149 -> 141 (TINY/TINY2); inter bit-identical 42/42; 16k replays x touched rows 0 gross. Expected
   judge +0.1-0.2%, p(GO) ~0.25: below the ~+0.5% moe needs for its top 100. **MD16F is the candidate** (robustness
   fixes land even inside the noise; D0FIX shipped site 8). **05:12Z independent MD16 audit launched** (GPU 6).
+- **05:15Z DSTK scored 9185f31c: 2.2112** [2.1780, 2.2443]; 13/13 + 12/12. Touched rows d1s +2.30%, d1f +4.79%,
+  v16f +2.23%, v32f +2.35% vs R0; untouched -0.88..+3.51%. **Landing rule PASS -> LANDED on master 5af7e6a8**
+  (bytes = scored file 1c653e3f), register-landing --force 05a57f1d (CLAIMS [landed] DSTK). Board stays DPP 2.2220:
+  decode rank 131 at 05:20Z (100th 2.2302, 50th 2.2707). Harvest dstk-1101-decode.md (s_h 1.75% over the 3 reads).
+  Master's decode is now ~+1% over D0FIX on the touched rows; it is the base for the next decode rider (moe D1 if
+  MD16 transfers). The top-100 cut needs +0.86% over the board entry.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
