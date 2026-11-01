@@ -102,6 +102,14 @@
   (PENDING_USER 01:41Z). The probe is ready on takemyjob hopper/att-s2 9062e3e (probes/atts2). The existing H100 latency
   data puts d1s ~1.7-3.3 us above the floor (leans GO, not the gate). B=1 board rows (C5L 1280e6f2): d1s 5.250, v1s
   7.117, d1f 11.135, v1f 15.405 us.
+- **01:59Z attention S2 M0: GO** (H100 GPU 5, takemyjob hopper/att-s2 4b67e97, run 20261031-185625-gpunode06; the user
+  ran it by hand after the agent's run was denied, plus a latency-bench compile fix in main). d1s read mode: M 9.31 us
+  vs empty kernel 5.13, so 4.18 us of work; dependent DRAM trip 0.356 us, atom 0.63 us; minimal chain (idx + KV trip,
+  math 0.47, ticket atom, partials read) is ~2.3 us, so **~1.9 us non-chain (~1.4 net of the +0.48 stamp cost) >= 1.0
+  -> GO**. Critical-CTA d1s phases (L2-res, span 4.35 us): q prep 0.82 (median CTA 0.385), ticket/wait 0.72,
+  finalize 0.70, idx trip 0.43 (L2 ld 0.15), merge reds 0.39, setup 0.31, KV issue 0.31, main loop 0.48. Outputs
+  T==M at d1s. M1 (cut the largest non-chain phase; GO <= -0.4 us d1s, KILL above) needs H100 A/B runs: agent runs
+  are being denied by the permission classifier (PENDING_USER 01:41Z).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
