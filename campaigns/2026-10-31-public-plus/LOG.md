@@ -262,6 +262,12 @@
   g1 pf-s1-wg4-oracle, g4 dec-ffn-glue-fold, g6 c2-wgs-pdl-endgame running; g7 fillers live (111 done, 0 failed).
   **g3 refill wf_13a077ef-1a4 (task wq08bn1g2) seeded with cpush M1** (GPU-bound metric, full candidate file on GO),
   then 3 mined lanes. CLAIMS lines wait for the lanes' close.
+- **08:35Z tick:** **cpush-m1 BETWEEN by 0.003 us** (campaign/h100-cpush-m1 3ac4e46c; candidate 57d1e21c…, 168,771 B =
+  master d6b78106 + cpush routed to d1s only; GPU-bound G-L2 d1s S-M -0.397/-0.445 us valid runs, flushed -0.67..-0.80;
+  80/80 tests, d1s bitwise = master, 7 x 16k replays clean, all 20 master kernels SASS-identical; A/A finding: byte-identical
+  master copies differ ~0.1 us at d1s). Verifier running on g3; on upheld -> 2 attention checks (attempt files +
+  pre-registered gate). dec-ffn-glue-fold KILL (g4) -> **g4 refill wf_6b959dcc-18b** (task wntralwcq). Still running:
+  g1 pf-s1-wg4-oracle, g5 moe-rg-wgs-setmaxnreg, g6 c2-wgs-pdl-endgame, g7 fillers.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
