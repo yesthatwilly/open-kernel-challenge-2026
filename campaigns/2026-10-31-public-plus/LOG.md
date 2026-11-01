@@ -172,6 +172,15 @@
   read the reset time from the limit message, never estimate it.
 - **04:25Z the user asked for a full-history bundle in ~/:** `/home/user/musespark-full-e8bc334f-20261101T0425Z.bundle`
   (51 MB, `git bundle create --all`, 605 refs, verify OK). /home is at 99% (370 MB free): flagged to the user.
+- **~05:04Z DSTK audit PASS, all 8 items** (hopper/dstk-aud 49fdeb1; runs 20261031-210010/-210015/-211335; report
+  audit-DSTK.md; 374k tokens). Regeneration byte-identical; lossless 0/18.9M on judge weights, fallbacks exercised;
+  prepare +12 s (H100 105 s); PDL trigger: dependent ATT7 reads qkv only after pdl_wait, 0 gross/0 fails in 32k
+  stalled replays at d1s and d1f vs positive control 3842/4000; cgq most accurate vs fp64; DC5L bit-identical; fences
+  and SASS identical outside the 2 changed kernels. Gate amended (failed test = KILL; untouched rows on paired ratios;
+  touched-row floor 0.97; HOLD -> 2 more reads then final). Auditor note: the fence scanner's 8 HAZARD sites sit in
+  master decode's moe_fused (pre-existing) and may deserve their own look.
+- **05:06Z DSTK checks dispatched:** 5a84a880 (r1), 437f3be3 (r2) (public-plus f4f341a3/ccfbd520; attempts
+  2026-11-01T050520Z/050521Z-check-dstk-r{1,2}.md with the audited gate verbatim). On GO: one scored run of DSTK-r1.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
