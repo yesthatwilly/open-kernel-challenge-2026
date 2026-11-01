@@ -146,6 +146,17 @@
   (TINY-only M1? default hold). **So the moe->decode C1 port is off for today; decode's only live item is DSTK.**
   Next moe item: a clean (stamp-free) master+D1+D6 build + audit, then a moe check, after the ~04:19Z window reset;
   if it transfers, D1 rides on decode (decode already has D6).
+- **03:47Z decode DSTK built** (campaign/dstk 7ea201fc; takemyjob hopper/dstk; report scratchpad dstk.md; 376k tokens;
+  no denials). DSTK-r1/r2 (860,349 B; sha256 1c653e3f / fe3cc94c) = D0FIX + DC5L (DC5LF body byte-identical) + CG
+  (DX1 gd_cgemv qkv at T=1 on a lossless 12-bit code packed in prepare, FP32 accum, prepare fallback, plus a PDL
+  launch_dependents after the FMA loop). FN not built: no site qualifies, the PTX model needs the proxy fence; all 8
+  D0FIX fences intact (scan identical). H100 paired vs 2 master copies: d1s -2.48 us cold / -1.11 L2 (CG alone with
+  trigger -2.88 / -1.32; without -1.69; the trigger is a scheduling gain, ~-1.0 us cold); d1f -1.62 / -1.24; v16f/v32f
+  within noise; untouched rows within +-0.5%. Tests: 12 rows x 2 seeds + 13 tests, 16k replays x 4 rows 0 gross.
+  Flag: sk2fix envelope OUTSIDE at T=1 (2.9e-3 vs 2.4e-3) vs judge error 0.9995-1.0032x master's. Rules: lossless
+  weight compression is explicitly allowed (technical-rules:107; bulk12 precedent). Expected ~+0.37% (+0.18..+0.45).
+  **03:48Z independent DSTK audit launched** (effort high; GPUs 4/5; audit-DSTK.md): reproduction, rules, the PDL
+  trigger vs the ET3-class race (>= 32k replays), accuracy flag, DC5L bitwise, fences/SASS, and the final gate.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
