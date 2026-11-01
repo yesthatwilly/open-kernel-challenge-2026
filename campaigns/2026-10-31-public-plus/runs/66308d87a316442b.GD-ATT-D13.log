@@ -1,0 +1,17 @@
+GAPDIAG att-d13 timed ext_sha256=466ff6162a51273b2c207168ed5dc1db2a68cc47a4f08eaa8510cb6effdc407c py_sha256=7d0315cf790332b3444ff59ca49103a60ebbb1fe1674807e259bdfe9c1f402e4 ext_match_master=1 torch=2.14.1+cu130 dev=NVIDIA_H200
+GAPDIAG null graph us cold=4.61 hot=9.02(info) (cold and l2res rows are net of cold; sweep = 256MiB read)
+GAPDIAG d1 v16f ctx=80k MB=341.4 cold=105.55 [p10 104.8 p90 106.8] l2res=99.30 r=1.063 coldTBs=3.234
+GAPDIAG d1 v32f ctx=80k MB=670.1 cold=191.46 [p10 190.4 p90 200.0] l2res=178.24 r=1.074 coldTBs=3.500
+GAPDIAG d1 d16f ctx=80k MB=329.7 cold=84.19 [p10 83.2 p90 85.1] l2res=60.08 r=1.401 coldTBs=3.916
+GAPDIAG d1 d32f ctx=80k MB=664.2 cold=164.27 [p10 162.8 p90 187.4] l2res=114.98 r=1.429 coldTBs=4.044
+GAPDIAG fit v16x(16 req) cold=a+b*MB: a=11.05us b=0.2717us/MB (1/b=3.680TB/s) maxres=1.57us ctx80/40/120k MB=[341.4, 168.1, 502.5] cold=[105.4, 56.0, 146.8]
+GAPDIAG fit d16x(16 req) cold=a+b*MB: a=5.91us b=0.2373us/MB (1/b=4.214TB/s) maxres=0.32us ctx80/40/120k MB=[329.7, 167.2, 499.3] cold=[84.5, 45.4, 124.2]
+GAPDIAG valid v16f=105.6in[96.9,115.2]:1 v32f=191.5in[177.6,211.5]:1 d16f=84.2in[79.1,92.9]:1 d32f=164.3in[151.0,177.2]:1 r_d16f=1.401>=1.3:1 r_d32f=1.429>=1.3:1 VALID=1
+GAPDIAG d3 TB/s (cold, net) pools 2x704MB tokens=2560000 moved=665.6MB: ldg_u4_adj=4.028 ldg_u8_adj=4.042 ldg_u16_adj=4.180 ldg_u4_sep=4.054 ldg_u8_sep=4.055 ldg_u16_sep=4.183
+GAPDIAG d3 TB/s cpa_s4_adj=2.738 cpa_s6_adj=2.698 cpa_s8_adj=3.108 cpa_s4_sep=3.834 cpa_s6_sep=3.798 cpa_s8_sep=3.822
+GAPDIAG d3 ctrl(master kernel_fn, same interleave) d32f=4.044TB/s(164.3us,664.2MB) d16f=3.905TB/s(84.4us,329.7MB)
+GAPDIAG rule3 a(v16f-shape)=11.05us -> a>=8:S3-tail-goes-ahead; a(d16f-shape)=5.91us
+GAPDIAG rule3 cold/L2res, floor model only: r_v16f=1.063(<1.15) r_v32f=1.074(<1.15)
+GAPDIAG rule3 d3 best=ldg_u16_sep 4.183TB/s best/ctrl_d32f=1.034(between) best/ctrl_d16f=1.071(between) d3rule=between
+GAPDIAG budget elapsed=49.1s limit=120s build_master=48.7s build_d3=38.1s(parallel) d1=0.3s d3=0.1s trimmed=none
+GAPDIAG clean alloc=25088B reserved=2097152B ws_zeroed=3 ws_dropped=1 globals_restored=1 err=none

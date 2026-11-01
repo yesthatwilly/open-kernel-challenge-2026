@@ -59,6 +59,13 @@
   master C5L, pure append): the current stream is restored if a capture fails; the D3 control is pre-registered as d32f
   (GO needs best/ctrl >= 1.08 on both d32f and d16f; CLOSE needs d32f <= 1.03). H100 20261031-174138: bad=0, 16/16,
   import 42.9 s, memory fully released. **00:46Z check 66308d87** (public-plus 6126be5f).
+- **00:58Z attention D13 read (66308d87, H200; headline 2.5092 = diag control):** ext sha = master, VALID=1 (cold
+  v16f 105.6, v32f 191.5, d16f 84.2, d32f 164.3 us; r_d16f/d32f 1.40/1.43). **a(v16f shape) = 11.05 us -> S3 tail work
+  goes ahead in phase B** (b 3.68 TB/s; a(d16f) 5.91 us). r cold/L2 v16f/v32f 1.06/1.07: no prefetch arm. D3 best
+  ldg_u16_sep 1.034x d32f / 1.071x d16f: between, no re-read (GO needs >= 1.08 on both): flat q1 [shelf]. CLAIMS:
+  attention [lead] S3, [shelf] flat q1, [refuted] prefetch arm. Harvest diag-att-d13-1101.md.
+- **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
+  stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
   plus the day's audits are already in this window (the 10-31 17:22Z limit stop killed in-flight work).
 - **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
