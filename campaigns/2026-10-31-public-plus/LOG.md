@@ -207,6 +207,15 @@
   time (issue ~45%). It frees tensor budget for S1 (small vs big idle 0.55x t1s / 0.36x t4s; t1f still 1.24x).
   CLAIMS prefill [refuted] PF-RR (reopen only inside a separate S1 kernel with its own wgmma shape budget). Prefill S1
   stays below the value bar (EV ~0.7%); no prefill build today; its checks go to phase C.
+- **The user asked (after 05:17Z) when the 2.2112 gets submitted for score.** Answer: it already is (9185f31c);
+  the board keeps the best scored run (2.2220). No identical-byte resubmit by default (3-read mean ~2.188 vs 100th
+  2.2302; organizers rerun top entries, technical-rules:135); offered the override as the user's call.
+- **~05:30Z moe MD16F audit PASS** (hopper/md16-aud b20e457..e58de9f; runs 20261031-222257..-223106; audit-MD16.md;
+  296k tokens). D1 exhaustive 0/393,216 mismatches; D6 rotation keeps barrier counts; F = decode site-8 form, fence
+  before all 32 BW_E arrives, 0 gross in 16k replays x 6 rows. **Speed not reproduced:** d1 0.998, v1 0.999, d16
+  0.9995, d32 0.994 (F) vs master: expect ~-0.1% headline. Gate rewritten: 5-read skinny reference (the builder's
+  3-read one sat 0.3-0.46% high), F lands unless MAIN harm, riders ride only at S >= 0.998, H a harm backstop.
+  **05:34Z MD16F checks dispatched:** 1ab2de4b (r1), 483bcb8e (r2) (public-plus 6a102ffb/e46f74cb).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
