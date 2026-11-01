@@ -216,6 +216,12 @@
   0.9995, d32 0.994 (F) vs master: expect ~-0.1% headline. Gate rewritten: 5-read skinny reference (the builder's
   3-read one sat 0.3-0.46% high), F lands unless MAIN harm, riders ride only at S >= 0.998, H a harm backstop.
   **05:33Z MD16F checks dispatched:** 1ab2de4b (r1), 483bcb8e (r2) (public-plus 6a102ffb/e46f74cb).
+- **05:37Z MD16F checks: outcome D (land)** by the audited gate. 1ab2de4b **2.3780**, 483bcb8e **2.3717**; 5/5 +
+  6/6 both. rhobar d1 0.9929, v1 1.0027, d16 1.0026 (S 0.9994: D1+D6 judge-neutral); d32 1.0003, v16 0.9872, v32
+  0.9854 (W 0.99094 vs 0.990); H 2.374842 vs 2.3748 floor (both margins hair-thin; computed at full precision).
+  The gate said land without a scored run; **overridden by the user's standing policy** (okc-robustness-fixes-land:
+  scored run first, promote only from a scored sha). **05:38Z scored run 3f9df6f8** of MD16F-r3 (fresh nonce, code
+  identical; attempt 2026-11-01T053806Z-submit-md16f.md): lands on master if valid (5/5 + 6/6).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
