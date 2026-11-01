@@ -302,6 +302,12 @@
 - **16:2xZ HSV1 scored 1cf77c00: 2.5192** (16/16 + 12/12; board 2.5180 -> 2.5192). v1s +11.38% vs the 7-read R0, but
   **d1f -3.54% < R0/1.03 -> NOT landed** per the user's landing rule (read ~2% low on most SASS-identical rows). Open
   for the user: land HSV1 on its 3-read pool (v1s +10-11% in all 3; pooled d1f ~-1.6%) or leave master at CPUSH.
+- **16:25Z the user: "do you have a check that can put together many of the promising leads and information from the
+  last 24 hours or more?  what will it take to make ANY movement on decode".** Decode 16:23Z: rank 168/1166 at 2.2220;
+  100th 2.2496 (+1.24% over board, ~+2.3% over master's ~2.195 level). GPU-7 fuzz runner stopped (queue/STOP) to give
+  decode GPU 7. **Workflow decode-push wf_89af62c6-ed8** (task wvfcrenhq): design (effort max: critical-path map, leads,
+  DEC-DX2 = one multi-lead prepare-time judge diag check, CG-O = DSTK + cgq o-proj T=1 + PDL trigger) -> builds of DX2
+  and CG-O on GPU 7 -> independent audits. Main thread dispatches checks on PASS.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
