@@ -126,7 +126,15 @@
 - **The user asked (between 02:13Z and 02:30Z, unstamped) what gets decode into the top 100 today.** Answer: the 100th cut (2.2294) is +0.33% over
   the board entry but ~1.3-1.8% over master's D0FIX bytes (reads 2.18-2.20). Offered option 1 (stacked riders on D0FIX:
   DC5L + cgemv qkv T=1 + narrower fences, est +0.4-0.9%, 15-30%/scored run), which needs the user's OK because it
-  overrides the CLAIMS [shelf] stacking bar for cgemv. **Awaiting the user; not launched.**
+  overrides the CLAIMS [shelf] stacking bar for cgemv. Awaiting the user.
+- **~02:40Z the user (verbatim): "go ahead with option 1 for decode".** This overrides CLAIMS :124's stacking bar
+  for cgemv qkv T=1. **DSTK builder launched** (effort high; branch campaign/dstk, .worktrees/dstk; H100 GPUs 4/5;
+  report scratchpad dstk.md): D0FIX + DC5L (DC5LF, audited) + cgemv qkv at T=1 + optional fence narrowing (FN, only
+  with a PTX-model argument and a positive-control stress test, else D0FIX's fences stay). Then an independent audit,
+  attempt files, 2 checks under a pre-registered gate, and one scored run on GO (no re-rolls of identical bytes).
+  **Odds correction:** central gain is ~+0.3-0.45% (DC5L +0.10, CG in-chain ~+0.15, FN <= +0.2), on a D0FIX level of
+  ~2.19-2.20, so one scored read clearing 2.2294 is ~5-10%, not the 15-30% first quoted. The stack also becomes the
+  base the moe C1 decode port lands on. Default if GO but below the board: land on master (D0FIX + audited riders).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
