@@ -1,6 +1,33 @@
 # Public-plus: LOG
 
-## Now (2026-10-31T21:33Z) — /3to1 phase C, wound down (user 21:06Z); resumed 18:35Z after the 17:22Z usage-limit stop
+## Now (2026-11-01T00:05Z) — /3to1 day 11-01, phase A (under /loop, started 00:01Z by the user's 22:59Z steer)
+
+- **User steers in force:** "set it to resume at 0001Z time to do any and all work you see at advancing todays board"
+  (10-31 22:59Z); "compliance is of absolute utter importance"; "free and open use of h100" (10-31 ~06:05Z; gpunode06
+  GPUs 1/3/4/5/6 only, H200 gpunode26 NOT approved); audited robustness fixes land even inside the noise (D0FIX,
+  BF16FIX); FA3 precision ruling binding; timing one problem's kernels with another problem's checks is a gray area
+  (not done without a user ruling). Open: prefill S1 phase-A slot (default no), prefill exp-split ruling (not built).
+- **00:02Z rules re-fetched:** `GET /api/v1/rules` = 2026-10-22.1, unchanged. Quota: 20 checks / 10 runs on all five.
+- **Boards 00:03Z** (n ranked; leader; 10th / 50th / 100th; ours):
+  | problem | n | leader | 10th | 50th | 100th | ours (rank) |
+  |---|---|---|---|---|---|---|
+  | decode | 1124 | 2.469 | 2.3748 | 2.2633 | 2.2265 | 2.222 (120) |
+  | moe | 1260 | 2.764 | 2.5931 | 2.4533 | 2.3968 | 2.3867 (120) |
+  | bf16 | 1557 | 1.652 | 1.6045 | 1.5791 | 1.5643 | 1.5657 (92) |
+  | attention | 1203 | 3.339 | 2.9098 | 2.7051 | 2.6529 | 2.488 (303) |
+  | prefill | 762 | 2.155 | 2.0134 | 1.8516 | 1.8044 | 1.7836 (189) |
+- **00:04Z in flight:**
+  - Phase-A workflow **wf_8cd7ce16-d96** (task wcqmvl1up): DS1 design panel (2 designers donor/chain + judge, effort
+    max; output scratchpad DS1-DESIGN.md) in parallel with the **DEC-DX1** build (worktree `.worktrees/diag-dec`,
+    branch campaign/diag1101-dec) -> adversarial audit -> fix loop (<= 2 rounds). The main thread dispatches DEC-DX1
+    on PASS; M1 is built only after its read (GO/PIVOT; KILL closes DS1).
+  - Audits (effort high, outside the workflow): **GD-MOE-DX23** (campaign/diag1031-moe e2e41094; check #1, decides
+    Build 2) and **GD-PF-D1** (campaign/diag1031-pf 548cc851; check #2). Each is dispatched on PASS.
+  - Held for an agent slot: attention GD-ATT-D13 fix + audit (301ba9c7, H100 bad=1), phase B.
+- **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
+  saved output.log against its pre-registered rule; then Build 2 by the DX2 read, M1 by the DEC-DX1 read.
+
+## Earlier Now (2026-10-31T21:33Z) — /3to1 phase C, wound down (user 21:06Z); resumed 18:35Z after the 17:22Z usage-limit stop
 
 - **~06:05Z, the user (verbatim): "resume /3to1 on the new foundation. free and open use of h100".** This lifts the
   "stop after foundation" hold. The 3:1 rhythm (campaigns/DAILY-RHYTHM.md) now runs on master's foundation files,
