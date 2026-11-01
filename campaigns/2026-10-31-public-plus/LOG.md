@@ -255,6 +255,13 @@
   correctness runs but there is no SGLang ratio; harness fix not made (main-thread note). **Refill workflow
   wf_717c6a2c-4b1** (task ww4iy6y7h): per-GPU loop mine -> lane -> verify, <= 4 lanes, starting with g5; more GPUs
   get added as their chains end.
+- **08:07Z tick:** results so far (all H100, no checks): HS BETWEEN upheld -> shelf; **cpush (attention d1s cluster
+  push-merge) BETWEEN upheld, mechanism stands: GPU-bound d1s -0.6 us (-0.46..-0.80, 6 fresh runs), EV ~+0.8%** (the
+  pre-registered M1 metric was host-launch-bound, so it was an invalid ruler); pf-sk2-small-kernel KILL (109.6 us vs KILL
+  83); refill g5: att-tbr BETWEEN upheld -> shelf (egress/L2 class, v1s +0.13 us), att-ntx KILL, now moe-rg-wgs-setmaxnreg.
+  g1 pf-s1-wg4-oracle, g4 dec-ffn-glue-fold, g6 c2-wgs-pdl-endgame running; g7 fillers live (111 done, 0 failed).
+  **g3 refill wf_13a077ef-1a4 (task wq08bn1g2) seeded with cpush M1** (GPU-bound metric, full candidate file on GO),
+  then 3 mined lanes. CLAIMS lines wait for the lanes' close.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
