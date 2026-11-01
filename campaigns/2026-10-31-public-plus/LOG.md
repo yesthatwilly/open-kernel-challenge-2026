@@ -24,6 +24,13 @@
   - Audits (effort high, outside the workflow): **GD-MOE-DX23** (campaign/diag1031-moe e2e41094; check #1, decides
     Build 2) and **GD-PF-D1** (campaign/diag1031-pf 548cc851; check #2). Each is dispatched on PASS.
   - Held for an agent slot: attention GD-ATT-D13 fix + audit (301ba9c7, H100 bad=1), phase B.
+- **00:21Z PF-D1 audit PASS** after 4 fixes (diag1031-pf 6ecf13c9; f6a871c9…, 317,911 B; timed sha = master): the WIP
+  bytes had never run; removed a private cuBLAS-workspace clear (dropped one of master's workspaces); CUDA RNG restored;
+  D1 arms interleaved (was "all" first); the D2 unpooler fp32-out arm (-73%) is a different cuBLAS epilogue, now
+  `(void)`. H100 final bytes 20261031-171632: 5/5 tests, validity 1.043/1.041, prize 82.0/83.0 us, noload 0.91/0.94,
+  diag 0.78 s, 2,527 B. **00:22Z check af53426a** (public-plus e0624010, attempt 2026-11-01T002050Z-check-gd-pf-d1).
+- **00:24Z** attention GD-ATT-D13 fixer launched (rebase onto C5L if needed, root-cause bad=1, H100 GPU 5); an
+  independent audit follows before any dispatch.
 - **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
   saved output.log against its pre-registered rule; then Build 2 by the DX2 read, M1 by the DEC-DX1 read.
 
