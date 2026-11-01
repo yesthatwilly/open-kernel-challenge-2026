@@ -64,6 +64,10 @@
   goes ahead in phase B** (b 3.68 TB/s; a(d16f) 5.91 us). r cold/L2 v16f/v32f 1.06/1.07: no prefetch arm. D3 best
   ldg_u16_sep 1.034x d32f / 1.071x d16f: between, no re-read (GO needs >= 1.08 on both): flat q1 [shelf]. CLAIMS:
   attention [lead] S3, [shelf] flat q1, [refuted] prefetch arm. Harvest diag-att-d13-1101.md.
+- **01:08Z DEC-DX1 audit PASS, no fixes** (diag1101-dec c4eadd23; 81c0a09c…, 891,503 B; hunks 1a2 + appended block;
+  timed sha d3f588ec… = master). H100 same-process control 20261031-174747: 26/26 tests, state size = master, gd/board
+  x1.0044. H100 reference: DS1-KILL (cg-qkv -1.40 / -1.49 [-1.63, -1.38] vs -1.5; pen +0.94), S1-CLOSED (p8 9.54,
+  p3 4.26). DS1 sits at the threshold, so the H200 read decides. **01:08Z check d3f671e8** (public-plus 89bfd864).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
