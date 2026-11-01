@@ -45,6 +45,16 @@
 - **00:34Z attention D13 fixer done** (diag1031-att a8b14613, f459792c…): bad=1 was memory_reserved != 0 after import
   (loop variables held master's `_WS` through empty_cache); L2 rows now net of the cold null. H100 20261031-172649:
   bad=0, import 42.9 s. **Independent audit launched** (no dispatch before PASS).
+- **00:45Z moe DX23 read (5d1bc475, H200; headline 2.3992 = diag control; prepare 220.7 s):** sha = master, VALID 4/4.
+  **r(d1) 1.0256** [1.0188, 1.0343] (ratio of medians 1.051): consumer-bound, so **skinny byte cuts CLOSED** for moe
+  and decode's MoE T<=16; **A1/C1 runs** (half-to-full value). The H100's r(d1) 1.28 was its 3.1 TB/s byte ceiling
+  and does not transfer. r(v32) 1.081 [1.079, 1.085]: C3(a) rides C2 (C2 waits on DX1, unrun). Ceilings 444/703 MB
+  4.535/4.614 TB/s: moe floors stand (2.835). smmap spearman 0.047, p90/med 1.008: slow-SM closed. CLAIMS: moe
+  [refuted] x2, [lead] C1; decode [refuted] MoE byte cuts. Harvest diag-moe-dx23-1101.md.
+- **00:47Z Build 2 workflow wf_855a9495-ef4** (task wo1jimztl): C1 panel (engine (a)/(b) and diet (c) designers + judge,
+  effort max) -> M0 warm-L2 consumer microbench at N=1/8/16 (H100 GPU 6; GO >= 1.25x weights/us, KILL < 1.15x) ->
+  adversarial verify of a GO/BETWEEN. M1 (TINY at d1) launches from the main thread on a verified GO.
+- DEC-DX1 (wf_8cd7ce16-d96) built 00:34Z (H100 13/13 tests, prepare 104.4 s); its audit round 1 is running.
 - **Next:** dispatch each audited diag check on PASS (attempt file + rules checklist first); read GAPDIAG from the
   saved output.log against its pre-registered rule; then Build 2 by the DX2 read, M1 by the DEC-DX1 read.
 

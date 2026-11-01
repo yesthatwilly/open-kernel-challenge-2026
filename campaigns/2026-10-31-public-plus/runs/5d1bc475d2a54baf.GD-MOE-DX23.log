@@ -1,0 +1,22 @@
+GAPDIAG GD-MOE-DX23 timed_sha256=785eb9573d5fd648b58ae6b98ce2577b32216e8ae7d728a347eb1a6df617266a ext=f8456f6ef9ad178d py=b5d9b307c680fefc py_mode=src
+GAPDIAG gpu=NVIDIA_H200 sms=132 torch=2.14.1+cu130 grid=132 sfx=-DOKC_PRMTSC=1
+GAPDIAG ovh_us=3.55 one_empty_replay_us=5.23
+GAPDIAG r50 row=d1 bs=1 n=40 build=TINY master_us=26.62 (-ovh 23.07) r50_us=25.50 (-ovh 21.95) r=1.0256 ci95=[1.0188,1.0343] q25/q75=[1.0166,1.0474] ratio_of_medians=1.0510 judge_us=25.0 dev=+6.5% ok
+GAPDIAG r50 row=d32 bs=32 n=40 build=MAIN master_us=126.24 (-ovh 122.69) r50_us=110.56 (-ovh 107.01) r=1.1444 ci95=[1.1379,1.1530] q25/q75=[1.1342,1.1585] ratio_of_medians=1.1465 judge_us=125.8 dev=+0.3% ok
+GAPDIAG r50 row=v16 bs=128 n=40 build=MAIN master_us=179.41 (-ovh 175.86) r50_us=163.04 (-ovh 159.49) r=1.0988 ci95=[1.0904,1.1075] q25/q75=[1.0863,1.1102] ratio_of_medians=1.1026 judge_us=174.6 dev=+2.8% ok
+GAPDIAG r50 row=v32 bs=256 n=40 build=MAIN master_us=205.84 (-ovh 202.29) r50_us=190.18 (-ovh 186.62) r=1.0811 ci95=[1.0788,1.0848] q25/q75=[1.0777,1.0877] ratio_of_medians=1.0839 judge_us=209.2 dev=-1.6% ok
+GAPDIAG validity master-arm raw medians within +-10% of judge rows 25.0/125.8/174.6/209.2 us: VALID (4/4 rows ok)
+GAPDIAG bw 73MB bytes=72990720 gs=3.805 sm=3.352 t17=3.926 t19=3.912 TB/s ceil=3.926 (us best=18.59)
+GAPDIAG bw 244MB bytes=243965952 gs=4.245 sm=3.440 t17=4.358 t19=4.348 TB/s ceil=4.358 (us best=55.98)
+GAPDIAG bw 325MB bytes=324993024 gs=4.301 sm=3.502 t17=4.452 t19=4.451 TB/s ceil=4.452 (us best=72.99)
+GAPDIAG bw 444MB bytes=443990016 gs=4.374 sm=3.569 t17=4.535 t19=4.532 TB/s ceil=4.535 (us best=97.90)
+GAPDIAG bw 649MB bytes=648990720 gs=4.448 sm=3.555 t17=4.603 t19=4.603 TB/s ceil=4.603 (us best=140.99)
+GAPDIAG bw 703MB bytes=702996480 gs=4.418 sm=3.559 t17=4.614 t19=4.596 TB/s ceil=4.614 (us best=152.37)
+GAPDIAG bw 2GiB bytes=2147475456 gs=4.509 sm=3.601 t17=4.682 t19=4.679 TB/s ceil=4.682 (us best=458.66)
+GAPDIAG smmap 4MB/SM reps=8 sms=132 med_us=134.46 p10=133.34 p90=135.50 max=136.54 p90/med=1.0077 spearman_mean=0.047 consecutive=[0.05,0.28,-0.03,-0.06,-0.15,0.12,0.12] slow=44:136.5,41:136.2,87:136.0,46:136.0,33:135.9,126:135.8
+GAPDIAG rule r(d1)=1.0256 ci95=[1.0188,1.0343] band=<=1.03: consumer-bound; close skinny byte cuts (moe + decode MoE, T<=16); A1 runs | ci_lo_band=<=1.03 ci_hi_band=1.03-1.10
+GAPDIAG rule r(v32)=1.0811 ci95=[1.0788,1.0848] band=>=1.08: C3(a) becomes C2's rider | ci_lo_band=1.03-1.08 ci_hi_band=>=1.08
+GAPDIAG rule ceil(444MB)=4.535 ceil(703MB)=4.614 TB/s band=>=4.40 at both: the moe floors stand (2.835)
+GAPDIAG rule smmap spearman=0.047 p90/med=1.0077 -> slow-SM idea closed
+GAPDIAG rule validity=VALID (VOID: at most one re-send, from the reserve)
+GAPDIAG budget s_since_prepare_entry: entry=166.9 compiled=220.0 end=220.7 diag=53.8 limits entry<=175 compile<=260 runs<=285 prepare<300 mem_alloc_MiB=10543
