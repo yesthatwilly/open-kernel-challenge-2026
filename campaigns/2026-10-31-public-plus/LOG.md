@@ -95,7 +95,7 @@
   source; 20261031-182818): v16f +1.52 us (1.0153), v32f +1.40: **KILL** (the last arriver finalizes 128 rows alone in
   2.9-3.4 us; ideal bound ~-1 us). 86/86 tests, 16k replays clean. CLAIMS attention [refuted] S3. Cold-mode cross-SM
   spread 11.7/19.7 us is recorded (inflated ~16% by the stamps) and is not addressed by S3.
-- **01:35Z attention S2 builder launched** (B=1 latency path: M0 phase stamps at d1s/v1s/d1f, GO at >= 1.0 us non-chain
+- **01:34Z attention S2 builder launched** (B=1 latency path: M0 phase stamps at d1s/v1s/d1f, GO at >= 1.0 us non-chain
   at d1s; M1 cut the largest phase, GO <= -0.4 us d1s; H100 GPU 5; branch campaign/att-s2).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
