@@ -186,14 +186,14 @@
   2.1687. Pooled R vs R0: d1s 2.5317 (+2.47%), d1f 2.5130 (+4.55%), v16f -0.45%, v32f +0.29%: **I = +1.96%** (GO >=
   +0.50%). Untouched rows all inside R0/1.03 but ~1% low as a group (v32s -2.47%, v1s -1.63%, d32s -1.54%), so the
   headline sits below D0FIX's 2.1906 mean. CG transferred (d1s/d1f +2.5/+4.6% vs H100 +2.3%); DC5L within noise.
-  **05:12Z scored run 9185f31c** (DSTK-r1 bytes; attempt 2026-11-01T051105Z-submit-dstk.md; public-plus 15f29484).
+  **05:11Z scored run 9185f31c** (DSTK-r1 bytes; attempt 2026-11-01T051105Z-submit-dstk.md; public-plus 15f29484).
   Landing rule: 13/13 + 12/12, H >= 2.1687, untouched rows >= R0/1.03 -> land on master; board only if > 2.2220.
 - **~05:08Z moe MD16 builder done** (campaign/md16 10b727ff/af881bc3; hopper/md16 48a353f; md16.md; 304k tokens; no
   denials). MD16 = master + D1 + D6; MD16F = + fence.proxy.async + __syncwarp at the :2215 WGS hand-back (same hazard
   as decode site 8, not live in master's SASS; d32 cost -0.34% cold). H100: d1 cold +1.18% [+1.02,+1.32], else within
   +-0.3%; registers 149 -> 141 (TINY/TINY2); inter bit-identical 42/42; 16k replays x touched rows 0 gross. Expected
   judge +0.1-0.2%, p(GO) ~0.25: below the ~+0.5% moe needs for its top 100. **MD16F is the candidate** (robustness
-  fixes land even inside the noise; D0FIX shipped site 8). **05:13Z independent MD16 audit launched** (GPU 6).
+  fixes land even inside the noise; D0FIX shipped site 8). **05:12Z independent MD16 audit launched** (GPU 6).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
