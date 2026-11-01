@@ -344,6 +344,9 @@
 - **~18:55Z prefill PFC1 checks sent** (PFK2 + BND_RC 2048 + RR denominator tree; audit PASS 70def772 with an H100-stage
   A/A deviation flagged; PFC2 dropped by GO-B). Gate GO bar 1.7740 < master mean 1.7783: the landing rule (> 1.7836,
   rows >= control min/1.025) is the real guard.
+- **~19:40Z prefill PFC1:** checks b49ac7e2 1.7795 / 60384917 1.7947 -> GO (mean 1.7871, routes PASS); **scored ecf82580
+  1.7821** (5/5, rows all above floor) < board 1.7836 -> **not landed** (A4), CLAIMS [shelf]. 3-read 1.7854 vs master
+  1.7783 (+0.40%). Open for the user: land on the 3-read pool (as HSV1) or keep shelved.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
