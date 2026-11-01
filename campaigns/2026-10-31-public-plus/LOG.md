@@ -127,7 +127,7 @@
   the board entry but ~1.3-1.8% over master's D0FIX bytes (reads 2.18-2.20). Offered option 1 (stacked riders on D0FIX:
   DC5L + cgemv qkv T=1 + narrower fences, est +0.4-0.9%, 15-30%/scored run), which needs the user's OK because it
   overrides the CLAIMS [shelf] stacking bar for cgemv. Awaiting the user.
-- **~02:40Z the user (verbatim): "go ahead with option 1 for decode".** This overrides CLAIMS :124's stacking bar
+- **The user (verbatim, received before 02:39Z): "go ahead with option 1 for decode".** This overrides CLAIMS :124's stacking bar
   for cgemv qkv T=1. **DSTK builder launched** (effort high; branch campaign/dstk, .worktrees/dstk; H100 GPUs 4/5;
   report scratchpad dstk.md): D0FIX + DC5L (DC5LF, audited) + cgemv qkv at T=1 + optional fence narrowing (FN, only
   with a PTX-model argument and a positive-control stress test, else D0FIX's fences stay). Then an independent audit,
