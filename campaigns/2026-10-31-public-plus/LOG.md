@@ -165,6 +165,12 @@
   - **prefill PF-RR probe** (effort high; hopper/pf-rr; H100 GPU 3; report pf-rr.md): small tiles with real-row
     WGMMA N (n8 steps; 320 padded vs 155 real rows at t1s). Pre-registered: GO <= 105.0 us small-only t1s (110.4
     today) and bit-identical; KILL > 108 us or not bit-identical.
+- **Between 04:25Z and 05:00Z all 3 agents stopped on the 5-hour usage limit** (HTTP 429; resets 05:00Z). Work so
+  far is saved in each agent's transcript and branch. **05:02Z all 3 resumed** in place (SendMessage), each told to
+  check its in-flight H100 run before re-running. Token pacing lesson: 3 high-effort agents + the main thread spent
+  the 23:19-04:19Z window's tail and the new window's start together; keep <= 2 heavy agents per window start.
+- **04:25Z the user asked for a full-history bundle in ~/:** `/home/user/musespark-full-e8bc334f-20261101T0425Z.bundle`
+  (51 MB, `git bundle create --all`, 605 refs, verify OK). /home is at 99% (370 MB free): flagged to the user.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
