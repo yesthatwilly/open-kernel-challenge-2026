@@ -200,6 +200,13 @@
   decode rank 131 at 05:16Z (100th 2.2302, 50th 2.2707). Harvest dstk-1101-decode.md (s_h 1.75% over the 3 reads).
   Master's decode is now ~+1% over D0FIX on the touched rows; it is the base for the next decode rider (moe D1 if
   MD16 transfers). The top-100 cut needs +0.86% over the board entry.
+- **05:17Z prefill PF-RR: KILL** (campaign/pf-rr 3cfd2759; hopper/pf-rr 7fb7abe; run 20261031-221340; pf-rr.md; 261k
+  tokens). Real-row wgmma N is bit-identical (every real-row count 1..64, all 8 judge routings) but any added wgmma
+  width makes ptxas serialize both fused kernels (C7512): small t1s 117.9 vs 110.8 us (GO <= 105, KILL > 108), all
+  arms +34..96 us. Timing-only oracles without serialization reach only 107.4/107.8 us: small is not tensor-bound in
+  time (issue ~45%). It frees tensor budget for S1 (small vs big idle 0.55x t1s / 0.36x t4s; t1f still 1.24x).
+  CLAIMS prefill [refuted] PF-RR (reopen only inside a separate S1 kernel with its own wgmma shape budget). Prefill S1
+  stays below the value bar (EV ~0.7%); no prefill build today; its checks go to phase C.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
