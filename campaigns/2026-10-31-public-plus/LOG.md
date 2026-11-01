@@ -282,6 +282,10 @@
   code (checks read it +1.70%; 3-read pool > R0). **Landed on master 41978a3e anyway** (bytes = scored file 145b6849) by
   the skill's standing "scored run beats the board -> land" rule: an override of the agent-written pre-registered rule,
   flagged for the user; revert = `git revert 41978a3e`. register-landing done (CLAIMS [landed] CPUSH, BEST, DECISIONS).
+- **10:35Z g5 refill done** (wf_717c6a2c-4b1, 8 agents, 2.16M tokens): TBR shelf, NTX KILL, moe-rg-wgs-setmaxnreg KILL
+  (RGb/RGc ~1.000, RGa deadlocks), miner #3 none_left (dec-bfr-cgu-qb128 below bar). **g5 refill wf_6cf32a08-5eb**
+  (task wz9zrmfr5) seeded with **cpush-dec-port** (CPUSH into decode ATT7 T=1, d1s 0.177%/us). CLAIMS lines for the
+  window's kills/shelves (HS, TBR, NTX, RG, pf-sk2, dec-ffn-glue-fold, pf-s1-wg4-oracle) wait for one batched harvest.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
