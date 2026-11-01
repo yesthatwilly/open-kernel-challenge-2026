@@ -80,6 +80,14 @@
   starts 01:22Z** (Build 2 keeps running).
 - **01:22Z phase B launched:** attention S3 builder (M0 stamps -> M1 last-arriver finalize on GO; H100 GPU 5; branch
   campaign/att-s3) and the prefill S0 headroom check (ncu big-only issue-active / conversion pipes, NSLOT 3 vs 4; GPU 4).
+- **01:45Z prefill S0 (H100, node-only):** gate GO (big-phase issue-active 34/28/32%, conversion pipes <= 16%) but the
+  big phase is **tensor-pipe-bound** (81/91/85% busy; tensor work is additive across big and small), so the prize
+  shrinks to ~63 us t1s / ~37 us t4s judge-scaled (from 70.7/69.6). NSLOT 3 costs big +1.95% at t1s (marginal);
+  setmaxnreg 40/96/168/168 is infeasible (consumers use R219/R229). The lever that matters: small tiles carry 320
+  padded rows for 155 real at t1s, so size their MMA N to real rows. Value now ~+1.5-2.5% x p ~0.35 (EV ~0.7%):
+  below the bar as specified. **Prefill S1 is re-scoped, not built:** next is a cheap S1-stage probe of the
+  small-only path with real-row MMA width (gate <= 105 us at t1s vs 110.4, bit-identical), after the 04:19Z window.
+  CLAIMS prefill [node-only] S0.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
