@@ -1,17 +1,17 @@
 {
  "schema": 1,
  "problem": "muse_decode_layer",
- "slug": "d0fix-sk2-ring-war",
- "job": "545b80bb25904f3e",
+ "slug": "landing-9185f31c",
+ "job": "9185f31ce229462b",
  "mode": "submit",
  "duplicate_of": null,
- "content_hash": "3c91c7f811e4791c6f0fe14ef05cede708b54e7098d6be9815101344d2e3f725",
+ "content_hash": "96e1efc6dd982223eac51f8daca5dff2e5f21591272a3a7b6385f1a7c921732a",
  "submission_sha256": null,
- "submission_blob": "93c8012fcc9f7a9e54a81906f04526172090ac63",
- "impl_commit": "ce08a099be7620eb79a385b5f795b58d2b5a5dc4",
+ "submission_blob": "453959d81964980fe06b493d40099c1448b3b99a",
+ "impl_commit": "5af7e6a82f72fbed2d9390048181104d42fbcb4d",
  "base_sha": null,
- "created_at": 1793480571.1974673,
- "finished_at": 1793480804.25136,
+ "created_at": 1793509884.464921,
+ "finished_at": 1793510134.503184,
  "gpu": "H200",
  "evaluator_sha256": "2999d8a201bb2b0bad6c7b3998af2143a1ed720d531dbb4d15670721ee9f957b",
  "status": "done",
@@ -23,12 +23,12 @@
   "passed": 13
  },
  "first_failing": null,
- "speedup": 2.1817223816922757,
+ "speedup": 2.2111703725745118,
  "speedup_ci": [
-  2.1489965459668916,
-  2.21444821741766
+  2.1780028169858943,
+  2.2443379281631293
  ],
- "score_us": 10368.092746270644,
+ "score_us": 10230.012250780437,
  "baseline_us": 22620.3,
  "flags": [],
  "checks": {
@@ -48,37 +48,37 @@
     "load": "decode 1",
     "page": 1,
     "repeats": 60,
-    "seed": 4752847143516040615,
+    "seed": 2138527724345317133,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 68447.47750084923,
-   "baseline_ns": 170064.00087848306,
-   "speedup": 2.4845912090240736,
-   "speedup_of_medians": 2.4758909949894568,
-   "err_ns": 594.7287603505875,
+   "median_ns": 68318.21109492493,
+   "baseline_ns": 169743.99983882904,
+   "speedup": 2.484608380669947,
+   "speedup_of_medians": 2.5337950872344748,
+   "err_ns": 589.7416846031994,
    "speed_of_light_ns": 40024.746666666666,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     23.0,
-     31.3
+     29.3,
+     37.0
     ],
     [
      "void sk2_kernel_gle04aa4a5f0ad8<1, 8, 4, 1, 8, 1, 6, true...",
-     19.2,
-     26.1
+     20.6,
+     26.0
     ],
     [
-     "void sk2_kernel<1, 8, 3, 1, 4, 2, 6, true, false, 1, 1, _...",
-     10.5,
-     14.3
+     "void cgq_kernel<2, 512, 8192, 2, true>(unsigned char cons...",
+     8.7,
+     11.0
     ],
     [
      "void sk2_kernel_gle04aa4a5f0ad8<1, 8, 4, 1, 4, 1, 4, true...",
-     6.4,
-     8.7
+     6.8,
+     8.6
     ]
    ]
   },
@@ -93,37 +93,37 @@
     "load": "decode 1",
     "page": 1,
     "repeats": 60,
-    "seed": 4753120065927058914,
+    "seed": 2138607926834801875,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 76835.2134228919,
-   "baseline_ns": 183263.99894431233,
-   "speedup": 2.3851563727121965,
-   "speedup_of_medians": 2.346650290688597,
-   "err_ns": 528.3329376953566,
+   "median_ns": 72871.88783017633,
+   "baseline_ns": 180768.00601556897,
+   "speedup": 2.4806274600273595,
+   "speedup_of_medians": 2.5173796453071993,
+   "err_ns": 477.4056513989111,
    "speed_of_light_ns": 44182.18666666667,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     22.3,
-     28.5
+     22.1,
+     28.7
     ],
     [
      "void sk2_kernel_gle04aa4a5f0ad8<1, 8, 4, 1, 8, 1, 6, true...",
-     18.3,
-     23.3
+     18.8,
+     24.3
     ],
     [
      "void (anonymous namespace)::attn_kernel<1, false, 11>((an...",
      11.6,
-     14.8
+     15.1
     ],
     [
-     "void sk2_kernel<1, 8, 3, 1, 4, 2, 6, true, false, 1, 1, _...",
-     10.3,
-     13.2
+     "void cgq_kernel<2, 512, 8192, 2, true>(unsigned char cons...",
+     8.9,
+     11.5
     ]
    ]
   },
@@ -137,38 +137,38 @@
     "layer": "sliding",
     "load": "decode 16",
     "page": 1,
-    "seed": 4753392988338077214,
+    "seed": 2138688129324286618,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 125602.46563826296,
-   "baseline_ns": 256303.98793146014,
-   "speedup": 2.040596787881693,
-   "speedup_of_medians": 2.0261825248581258,
-   "err_ns": 2261.8562849058853,
+   "median_ns": 132588.57044897697,
+   "baseline_ns": 267776.0059013963,
+   "speedup": 2.0196009731053133,
+   "speedup_of_medians": 2.028114434144828,
+   "err_ns": 1314.239836831653,
    "speed_of_light_ns": 76721.90293333333,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     80.7,
-     54.3
+     75.1,
+     52.7
     ],
     [
      "void sk2_kernel<1, 16, 4, 1, 8, 1, 5, true, false, 2, 1, ...",
-     19.3,
-     13.0
+     18.8,
+     13.1
     ],
     [
      "void sk2_kernel<1, 16, 4, 1, 4, 1, 5, true, false, 2, 1, ...",
-     15.1,
-     10.1
+     15.6,
+     10.9
     ],
     [
      "void sk2_kernel<1, 16, 3, 1, 4, 2, 5, true, false, 1, 1, ...",
-     10.1,
-     6.8
+     10.9,
+     7.6
     ]
    ]
   },
@@ -182,38 +182,38 @@
     "layer": "full",
     "load": "decode 16",
     "page": 1,
-    "seed": 4753665910749095515,
+    "seed": 2138768331813771362,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 208053.78775483274,
-   "baseline_ns": 439967.99318119884,
-   "speedup": 2.1146838898201175,
-   "speedup_of_medians": 2.1372609012441712,
-   "err_ns": 2008.5852577466842,
+   "median_ns": 211183.59293998056,
+   "baseline_ns": 441552.00105160475,
+   "speedup": 2.0908442502779847,
+   "speedup_of_medians": 2.1135789747201543,
+   "err_ns": 1578.2085794688833,
    "speed_of_light_ns": 137455.75253333335,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, true, 0>((anon...",
-     90.9,
-     43.6
+     91.2,
+     40.9
     ],
     [
      "void okc::moe_fused<false>(okc::Params)",
-     56.9,
-     27.3
+     70.8,
+     31.8
     ],
     [
      "void sk2_kernel<1, 16, 4, 1, 8, 1, 5, true, false, 2, 1, ...",
      17.9,
-     8.6
+     8.0
     ],
     [
      "void sk2_kernel<1, 16, 4, 1, 4, 1, 5, true, false, 2, 1, ...",
-     15.0,
-     7.2
+     15.7,
+     7.1
     ]
    ]
   },
@@ -227,38 +227,38 @@
     "layer": "sliding",
     "load": "decode 32",
     "page": 1,
-    "seed": 4753938833160113817,
+    "seed": 2138848534303256107,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 151164.8088586959,
-   "baseline_ns": 259632.0090815425,
-   "speedup": 1.7175426677794983,
-   "speedup_of_medians": 1.7308800454982118,
-   "err_ns": 2636.1032244438343,
+   "median_ns": 150810.01216610297,
+   "baseline_ns": 269807.9966939986,
+   "speedup": 1.789058914714698,
+   "speedup_of_medians": 1.7922201334353514,
+   "err_ns": 1425.126230440218,
    "speed_of_light_ns": 84505.39520000001,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     78.3,
-     50.2
-    ],
-    [
-     "void sk2_kernel<2, 32, 4, 2, 2, 2, 3, true, false, 1, 1, ...",
-     17.9,
-     11.5
+     77.3,
+     50.1
     ],
     [
      "void sk2_kernel<2, 32, 2, 2, 2, 2, 5, true, false, 1, 1, ...",
-     16.9,
-     10.8
+     17.7,
+     11.4
+    ],
+    [
+     "void sk2_kernel<2, 32, 4, 2, 2, 2, 3, true, false, 1, 1, ...",
+     17.5,
+     11.3
     ],
     [
      "void sk2_kernel<2, 32, 3, 1, 4, 2, 4, true, false, 1, 1, ...",
-     11.7,
-     7.5
+     11.2,
+     7.3
     ]
    ]
   },
@@ -272,38 +272,38 @@
     "layer": "full",
     "load": "decode 32",
     "page": 1,
-    "seed": 4754211755571132120,
+    "seed": 2138928736792740853,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 306890.7908519962,
-   "baseline_ns": 619151.9936546683,
-   "speedup": 2.01749942360853,
-   "speedup_of_medians": 2.0296339497887925,
-   "err_ns": 2296.95788344975,
+   "median_ns": 309428.69095167017,
+   "baseline_ns": 624336.0126391053,
+   "speedup": 2.01770563265777,
+   "speedup_of_medians": 2.03733096730983,
+   "err_ns": 1750.4310789307688,
    "speed_of_light_ns": 208096.46079999997,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, true, 0>((anon...",
-     169.8,
-     51.6
+     175.3,
+     54.2
     ],
     [
      "void okc::moe_fused<false>(okc::Params)",
-     91.4,
-     27.8
+     80.0,
+     24.7
     ],
     [
      "void sk2_kernel<2, 32, 4, 2, 2, 2, 3, true, false, 1, 1, ...",
-     17.5,
-     5.3
+     17.3,
+     5.4
     ],
     [
      "void sk2_kernel<2, 32, 2, 2, 2, 2, 5, true, false, 1, 1, ...",
-     15.4,
-     4.7
+     15.5,
+     4.8
     ]
    ]
   },
@@ -318,37 +318,37 @@
     "load": "verify 1",
     "page": 1,
     "q_len": 8,
-    "seed": 4754484677982150424,
+    "seed": 2139008939282225600,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 111328.34182673009,
-   "baseline_ns": 270624.00104478,
-   "speedup": 2.4308634854723294,
-   "speedup_of_medians": 2.4114628371734725,
-   "err_ns": 3242.055578375754,
+   "median_ns": 102600.91344901337,
+   "baseline_ns": 253392.003942281,
+   "speedup": 2.469685653122396,
+   "speedup_of_medians": 2.465670269571022,
+   "err_ns": 3219.44829639515,
    "speed_of_light_ns": 62286.50666666666,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     77.6,
-     58.9
+     57.4,
+     51.2
     ],
     [
      "void sk2_kernel_gle04aa4a5f0ad8<1, 8, 4, 1, 8, 1, 6, true...",
-     19.5,
-     14.8
+     19.7,
+     17.6
     ],
     [
      "void sk2_kernel_narrow_5663ecf2e3d9<1, 8, 3, 1, 4, 2, 5, ...",
      9.4,
-     7.2
+     8.4
     ],
     [
      "void (anonymous namespace)::attn_kernel<8, false, 15>((an...",
-     7.2,
-     5.5
+     7.5,
+     6.7
     ]
    ]
   },
@@ -363,37 +363,37 @@
     "load": "verify 1",
     "page": 1,
     "q_len": 8,
-    "seed": 4754757600393168729,
+    "seed": 2139089141771710348,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 111792.41693887005,
-   "baseline_ns": 266207.9995498061,
-   "speedup": 2.381270633905098,
-   "speedup_of_medians": 2.4127029896141448,
-   "err_ns": 2333.870110261356,
+   "median_ns": 113371.5187267278,
+   "baseline_ns": 275216.00713953376,
+   "speedup": 2.4275586164009857,
+   "speedup_of_medians": 2.420971230754795,
+   "err_ns": 2102.4428803483743,
    "speed_of_light_ns": 66443.94666666666,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<false>(okc::Params)",
-     45.1,
-     41.1
+     57.8,
+     47.4
     ],
     [
      "void sk2_kernel_gle04aa4a5f0ad8<1, 8, 4, 1, 8, 1, 6, true...",
      20.4,
-     18.6
+     16.7
     ],
     [
      "void (anonymous namespace)::attn_kernel<8, false, 11>((an...",
-     15.3,
-     13.9
+     15.6,
+     12.8
     ],
     [
      "void sk2_kernel_narrow_5663ecf2e3d9<1, 8, 3, 1, 4, 2, 5, ...",
      9.7,
-     8.8
+     7.9
     ]
    ]
   },
@@ -408,38 +408,38 @@
     "load": "verify 16",
     "page": 1,
     "q_len": 8,
-    "seed": 4755030522804187035,
+    "seed": 2139169344261195097,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 252209.3866133051,
-   "baseline_ns": 539551.9784651697,
-   "speedup": 2.1393017353966557,
-   "speedup_of_medians": 2.152422179034172,
-   "err_ns": 2974.794984965019,
+   "median_ns": 254112.56740729787,
+   "baseline_ns": 554895.9956504405,
+   "speedup": 2.1836621514316508,
+   "speedup_of_medians": 2.2094031195409864,
+   "err_ns": 1858.2257186155723,
    "speed_of_light_ns": 126614.45973333334,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<true>(okc::Params)",
-     121.4,
-     55.8
+     146.6,
+     60.8
     ],
     [
      "nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT",
-     28.8,
-     13.2
+     28.7,
+     11.9
     ],
     [
      "nvjet_sm90_tss_80x64_64x11_4x2_h_bz_coopB_TNN",
-     26.1,
-     12.0
+     24.9,
+     10.3
     ],
     [
      "nvjet_sm90_tst_48x64_64x15_1x2_h_bz_TNN",
-     16.9,
-     7.8
+     16.6,
+     6.9
     ]
    ]
   },
@@ -454,38 +454,38 @@
     "load": "verify 16",
     "page": 1,
     "q_len": 8,
-    "seed": 4755303445215205342,
+    "seed": 2139249546750679847,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 343547.5203493304,
-   "baseline_ns": 702479.9883365631,
-   "speedup": 2.0447825896756826,
-   "speedup_of_medians": 2.0443751190118475,
-   "err_ns": 3023.788865378704,
+   "median_ns": 343473.2756104578,
+   "baseline_ns": 725360.0000403821,
+   "speedup": 2.111838246370679,
+   "speedup_of_medians": 2.1027365612437774,
+   "err_ns": 2099.32402266125,
    "speed_of_light_ns": 188675.41333333336,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<true>(okc::Params)",
-     140.3,
-     41.9
+     150.8,
+     44.6
     ],
     [
      "void (anonymous namespace)::attn_kernel<8, true, 0>((anon...",
-     111.9,
-     33.4
+     106.3,
+     31.4
     ],
     [
      "nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT",
      28.8,
-     8.6
+     8.5
     ],
     [
      "nvjet_sm90_tss_80x64_64x11_4x2_h_bz_coopB_TNN",
-     25.2,
-     7.5
+     24.8,
+     7.3
     ]
    ]
   },
@@ -500,38 +500,38 @@
     "load": "verify 32",
     "page": 1,
     "q_len": 8,
-    "seed": 4755576367626223650,
+    "seed": 2139329749240164598,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 313184.61744973715,
-   "baseline_ns": 723807.9961389303,
-   "speedup": 2.3111224364494656,
-   "speedup_of_medians": 2.3250244331873002,
-   "err_ns": 4551.239120520414,
+   "median_ns": 319146.74082391965,
+   "baseline_ns": 743088.0065076053,
+   "speedup": 2.3283584365900936,
+   "speedup_of_medians": 2.3199460290343525,
+   "err_ns": 2305.6800666469976,
    "speed_of_light_ns": 143813.83679999996,
    "status": "pass",
    "top_kernels": [
     [
      "void okc::moe_fused<true>(okc::Params)",
-     188.8,
-     61.2
+     193.8,
+     61.5
     ],
     [
      "nvjet_sm90_tss_144x64_64x8_1x1_v_bz_TNN",
-     32.1,
+     32.8,
      10.4
     ],
     [
      "nvjet_sm90_tst_128x128_64x6_1x2_h_bz_coopA_NNT",
-     25.5,
-     8.3
+     25.7,
+     8.2
     ],
     [
      "nvjet_sm90_tst_72x64_64x12_1x1_v_bz_TNN",
-     19.9,
-     6.5
+     21.0,
+     6.7
     ]
    ]
   },
@@ -546,38 +546,38 @@
     "load": "verify 32",
     "page": 1,
     "q_len": 8,
-    "seed": 4755849290037241959,
+    "seed": 2139409951729649350,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 491006.8497413094,
-   "baseline_ns": 1064527.996815741,
-   "speedup": 2.168051214309119,
-   "speedup_of_medians": 2.168258120280346,
-   "err_ns": 3525.28079349983,
+   "median_ns": 485207.2444610548,
+   "baseline_ns": 1089392.0282833278,
+   "speedup": 2.2452097340248347,
+   "speedup_of_medians": 2.228488223359951,
+   "err_ns": 2365.401880269858,
    "speed_of_light_ns": 267183.7184,
    "status": "pass",
    "top_kernels": [
     [
-     "void (anonymous namespace)::attn_kernel<8, true, 0>((anon...",
-     201.4,
-     39.7
+     "void okc::moe_fused<true>(okc::Params)",
+     209.3,
+     41.3
     ],
     [
-     "void okc::moe_fused<true>(okc::Params)",
-     201.1,
-     39.6
+     "void (anonymous namespace)::attn_kernel<8, true, 0>((anon...",
+     191.4,
+     37.8
     ],
     [
      "nvjet_sm90_tss_144x64_64x8_1x1_v_bz_TNN",
-     31.2,
-     6.1
+     31.3,
+     6.2
     ],
     [
      "nvjet_sm90_tst_128x128_64x6_1x2_h_bz_coopA_NNT",
-     26.6,
-     5.2
+     26.9,
+     5.3
     ]
    ]
   }
@@ -585,39 +585,39 @@
  "loads": [
   {
    "load": "decode 1",
-   "sglang_ns": 10755168.023519218,
-   "yours_ns": 4377947.379805335,
-   "speedup": 2.4566690940898073
+   "sglang_ns": 10700512.08883524,
+   "yours_ns": 4308587.915649368,
+   "speedup": 2.4835311007510246
   },
   {
    "load": "decode 16",
-   "sglang_ns": 18829471.335746348,
-   "yours_ns": 9106574.02343742,
-   "speedup": 2.067678941310452
+   "sglang_ns": 19382528.288289905,
+   "yours_ns": 9478011.72769263,
+   "speedup": 2.0449993991523026
   },
   {
    "load": "decode 32",
-   "sglang_ns": 21849504.316225648,
-   "yours_ns": 11863833.861131951,
-   "speedup": 1.8416900111698753
+   "sglang_ns": 22400544.05014962,
+   "yours_ns": 11888119.61486746,
+   "speedup": 1.884279833636193
   },
   {
    "load": "verify 1",
-   "sglang_ns": 16708032.040856779,
-   "yours_ns": 6909782.3950515045,
-   "speedup": 2.418025790916711
+   "sglang_ns": 16059488.295577466,
+   "yours_ns": 6533586.31828226,
+   "speedup": 2.457989764463639
   },
   {
    "load": "verify 16",
-   "sglang_ns": 36059070.822782815,
-   "yours_ns": 17098392.109801322,
-   "speedup": 2.1089158905247385
+   "sglang_ns": 37130975.800566375,
+   "yours_ns": 17184750.510503028,
+   "speedup": 2.160693329697894
   },
   {
    "load": "verify 32",
-   "sglang_ns": 50327615.77144265,
-   "yours_ns": 22262601.998548858,
-   "speedup": 2.2606349327326227
+   "sglang_ns": 51612320.75188309,
+   "yours_ns": 22444065.98927718,
+   "speedup": 2.2995976208830102
   }
  ],
  "attribution": null
