@@ -222,6 +222,12 @@
   The gate said land without a scored run; **overridden by the user's standing policy** (okc-robustness-fixes-land:
   scored run first, promote only from a scored sha). **05:38Z scored run 3f9df6f8** of MD16F-r3 (fresh nonce, code
   identical; attempt 2026-11-01T053806Z-submit-md16f.md): lands on master if valid (5/5 + 6/6).
+- **The user asked (after 05:38Z) whether to purge held hypotheses** ("i like the idea of creating more, i hate the
+  idea of wasting tokens going over and over reviewing plans that are obsolete"). All 87 queue files (attention 30,
+  bf16 9, decode 18, moe 12, prefill 18; minted 10-23..10-30) were on pre-public-foundation blobs, 31 still
+  `review: required`. **Retired** to `<p>/hypotheses/retired/2026-11-01-prefoundation/` (master 5a1485d1; README
+  per folder; churn and hyp.py do not read it; hyp.py context verified). Proposed next (user's call): split CLAIMS
+  (~85% of lines predate 10-31; 30-57 KB each) and prune PENDING_USER's obsolete items.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
