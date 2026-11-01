@@ -277,6 +277,11 @@
 - **Lanes since 08:35Z:** pf-s1-wg4-oracle KILL (g1), moe-rg-wgs-setmaxnreg KILL (g5). In flight: g3
   moe-xs-wgs-start-selfgather, g4 dec-ds0-weight-arena, g5 mining #3, g6 c2-wgs-pdl-endgame. **g1 refill
   wf_4fd3c855-af9** (task wdjy9f6rc), told to mine CPUSH extensions to other rows first.
+- **10:25Z CPUSH scored 8a73a9d7: 2.5180** [2.4802, 2.5558]; 16/16 + 12/12; d1s +10.11% vs R0. **Board 2.4880 -> 2.5180.**
+  Landing rule (attempt): d32s 2.9427 vs floor 2.9450 (R0/1.03) MISSED by 0.08% on a row running master's SASS-identical
+  code (checks read it +1.70%; 3-read pool > R0). **Landed on master 41978a3e anyway** (bytes = scored file 145b6849) by
+  the skill's standing "scored run beats the board -> land" rule: an override of the agent-written pre-registered rule,
+  flagged for the user; revert = `git revert 41978a3e`. register-landing done (CLAIMS [landed] CPUSH, BEST, DECISIONS).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
