@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "f4e16629be334b14",
- "check_job": "eaf356366ca5459c",
+ "job": "3f9df6f829db4601",
+ "check_job": "1ab2de4b9f6c4237",
  "mode": "submit",
- "speedup": 2.386688057102304,
+ "speedup": 2.368037883520421,
  "ci": [
-  2.3508877362457694,
-  2.4224883779588384
+  2.332517315267615,
+  2.403558451773227
  ],
- "score_us": 5634.795867009082,
- "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
- "submission_blob": "d54fed228cfc135fb40aa6ea7264935b7adfb317",
- "slug": "m1a-nofence",
- "master_slug": "m1a-nofence",
- "master_job": "f4e16629be334b14",
+ "score_us": 5679.17434665653,
+ "commit": "62c4a332b0aa6b1f5e1a5a3405d5c901510a7719",
+ "submission_blob": "6995d5a9bcf6be5560759ca9acb74b882b85078f",
+ "slug": "landing-3f9df6f8",
+ "master_slug": "landing-3f9df6f8",
+ "master_job": "3f9df6f829db4601",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T074351Z",
- "note": "H100 d32 x1.007; judge check 2.3867, scored 2.3867 vs 2.3670 (+0.83%, borderline)"
+ "updated_at": "2026-11-01T054253Z",
+ "note": "below board 2.3867; lands by audited gate outcome D + scored-sha robustness policy"
 }
