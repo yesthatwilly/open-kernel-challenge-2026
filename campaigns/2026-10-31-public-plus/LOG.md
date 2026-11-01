@@ -314,6 +314,12 @@
   (attention g1, moe g5, prefill g6, bf16 g5 shared) designer (max) -> build + H100 sanity -> audit; returns check-ready
   r1/r2 files + pre-registered gates; main thread dispatches. Decode combos come from decode-push (g7). Refill
   wf_fcb43dbd-e65 keeps g3/g4 (g1/g5/g6 chains ended none_left). Checks left: att 15, dec 17, moe 17, pf 19, bf16 20.
+- **16:53Z tick:** combos designs: **attention ATT-B1X** (HSV1 + CPNQF + HSK8 + P, one part per B=1 row; +1.96% x p 0.71)
+  / ATT-B1S (+1.74% x 0.76) building on g1; prefill PFC1 (+0.48) / PFC2 (+0.68) building on g6; moe M-B4X best is +0.25%
+  (below bar) building on g5; bf16 designing. Decode-push design (scratchpad DECODE-PUSH-DESIGN.md): board moves today
+  ~8%; the one lead is **CG-O** (o-proj post-wait tail, +0.30-0.55% x p 0.45); DEC-DX2 combines CG-O k-variants, CG-U,
+  CPUSH exposure, O8 and a post-DSTK path map in one diag check; both building on g7. Refill lanes: att-d1f-tail KILL,
+  dec-tf7-att7-trigger-first KILL, bf16-qkv256-cutlass-streamk KILL.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
