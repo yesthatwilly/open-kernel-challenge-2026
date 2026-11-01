@@ -80,7 +80,7 @@
   starts 01:22Z** (Build 2 keeps running).
 - **01:22Z phase B launched:** attention S3 builder (M0 stamps -> M1 last-arriver finalize on GO; H100 GPU 5; branch
   campaign/att-s3) and the prefill S0 headroom check (ncu big-only issue-active / conversion pipes, NSLOT 3 vs 4; GPU 4).
-- **01:45Z prefill S0 (H100, node-only):** gate GO (big-phase issue-active 34/28/32%, conversion pipes <= 16%) but the
+- **01:31Z prefill S0 (H100, node-only):** gate GO (big-phase issue-active 34/28/32%, conversion pipes <= 16%) but the
   big phase is **tensor-pipe-bound** (81/91/85% busy; tensor work is additive across big and small), so the prize
   shrinks to ~63 us t1s / ~37 us t4s judge-scaled (from 70.7/69.6). NSLOT 3 costs big +1.95% at t1s (marginal);
   setmaxnreg 40/96/168/168 is infeasible (consumers use R219/R229). The lever that matters: small tiles carry 320
@@ -88,7 +88,7 @@
   below the bar as specified. **Prefill S1 is re-scoped, not built:** next is a cheap S1-stage probe of the
   small-only path with real-row MMA width (gate <= 105 us at t1s vs 110.4, bit-identical), after the 04:19Z window.
   CLAIMS prefill [node-only] S0.
-- **02:00Z attention S3: M0 GO, M1 KILL** (H100 GPU 5). M0 (20261031-182321): imbalance + barrier/finalize is 69/78% of
+- **01:33Z attention S3: M0 GO, M1 KILL** (H100 GPU 5). M0 (20261031-182321): imbalance + barrier/finalize is 69/78% of
   the tail at v16f/v32f L2-res, but only 4.8/5.1 us follows the last main loop (barrier 0.9 + finalize 1.7 at v16f).
   The 15/28 us "plateau" is each SM's second-dispatched CTA running alone, and per public NEGATIVE_RESULTS #2
   rebalancing that pair does not move the SM finish. M1 (coop=0, the per-request last-arriver ticket already in the
