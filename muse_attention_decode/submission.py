@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. pp-nonce CPUSH-r1 | HSV1 (v1s head split, campaign/h100-att-hsv1-v1s-headsplit-confirm c5033ddb) pp-nonce HSV1-r1
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1SN (3to1 informed combos 11-01): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code present but _HSK = 0 (v1f key-packed head split, 0d2feafa); CPNQF clause above. pp-nonce B1SN-r1
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -38,6 +38,10 @@ Design
 * [HSV1] q_len 8 sliding, one request (the speculative one-tile cooperative grid): one CTA per (split, KV
   head), grid z = 2 x pairs: one QDIR pass over the head's 64 rows, the head's K/V bytes, warpgroup 0
   computes, warpgroup 1 only issues copies and meets the CTA barriers; one warpgroup's reds.
+* [HSK8] q_len 8 full, one request (v1f, the speculative cooperative grid ksp[3]): one CTA per (split pair, KV
+  head) at the same CTA count, grid z = 2 x pairs; the CTA's head over a doubled key range, keys packed into the
+  stage-row column halves (warpgroup = key half); exact FP32 merge of the two warpgroups in shared memory, one
+  head's reds per CTA.
 * Fixed build: sm_90a only. There are no tuning switches left in the
   CUDA source; the taken path is the only path.
 * CUDA-graph capturable: no host syncs in the timed path. The module-level
@@ -83,6 +87,8 @@ COOP_BIT = 1   # bit 1: cooperative finalize
 PDL_BIT = 16   # bit 16: programmatic dependent launch
 CPUSH_BIT = 24   # [CPUSH] bit 24: per-KV-head cluster push-merge (B=1, one KV pair, q_len 1, sliding)
 _CPUSH = 1       # [CPUSH] 0 routes d1s as master (test switch)
+HSK_BIT = 26     # [HSK8] bit 26: one CTA per (split pair, KV head) on the q_len 8 full one-request coop grid
+_HSK = 0         # [HSK8] 0 routes v1f as master (test switch)
 HSQ_BIT = 25     # [HSQ8] bit 25: one CTA per (split, KV head) on the q_len 8 sliding cooperative grids
 _HSQ = 1         # [HSQ8] 0 routes every q_len 8 row as master (test switch); [HSV1] B == 1 only
 _HSQ_V1 = 1      # [HSQ8] 1 also routes one request (v1s: the speculative-length one-tile build)
@@ -1164,6 +1170,13 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   constexpr bool ONE = !FLAT && (MODE & 4) != 0;
   constexpr bool PH = !FLAT && L == 1 && (MODE & 16) != 0;   // [CPUSH] per-KV-head cluster push-merge
   const int phh = PH ? (int)(blockIdx.x >> 4) : 0;            // [CPUSH] this cluster's KV head
+  // [HSK8] q_len 8 key-packed head split (MODE bit 64): this CTA's KV head = blockIdx.z & 1 (pair = blockIdx.z >> 1);
+  // stage x holds keys [start + 128x, +128) of that head, column half = key half = warpgroup
+  constexpr bool HSK = !FLAT && L == 8 && (MODE & 64) != 0;
+  static_assert(!(HSK && (ONE || PH)), "HSK8 is built for the non-one-tile per-request q_len 8 grid only");
+  const int hkz = HSK ? (int)(blockIdx.z & 1) : 0;
+  int hch = 0;   // [HSK8] master's chunk = this CTA's half range (set only in the HSK8 build: master's instances
+  if constexpr (HSK) hch = chunk >> 1;   // never reference chunk here, which kept their SASS byte-identical)
   // [HSQ8] q_len 8 per-KV-head split (MODE bit 32): this CTA's KV head = blockIdx.z & 1 (pair = blockIdx.z >> 1)
   constexpr bool HSQ = !FLAT && L == 8 && (MODE & 32) != 0;
   const int hsz = HSQ ? (int)(blockIdx.z & 1) : 0;
@@ -1181,7 +1194,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   const int split = first ? 0 : 1;
   const int pairs = p.Hkv >> 1;
   const int bp = b * pairs + pair;
-  const int ntiles = ONE ? 1 : (end - start + TILE - 1) / TILE;   // (ONE: a CTA without keys returned earlier)
+  const int ntiles = ONE ? 1 : HSK ? (min(end, start + hch) - start + TILE - 1) / TILE : (end - start + TILE - 1) / TILE;   // [HSK8] tiles of split 2s (half 0)   // (ONE: a CTA without keys returned earlier)
 
   if constexpr (WS) {
     constexpr int NP = Cfg<L, FLAT>::NP;
@@ -1336,10 +1349,60 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   // K/V: thread -> 16-byte chunk (tid & 7) of rows (tid >> 3) + 16*k: a warp copies 4 whole 128-byte rows.
   // New-token rows come from S.kn / S.vn; rows past the range are zeroed.
   const int cchunk = tid & 7, crow0 = tid >> 3;
-  const int kvc = PH ? (phh * 4 + (cchunk & 3)) : cchunk;   // [CPUSH] source chunk of the pair row
-  const int kvx = PH ? (cchunk >> 2) : 0;                   // [CPUSH] tile half of this chunk
+  const int kvc = PH ? (phh * 4 + (cchunk & 3)) : HSK ? (hkz * 4 + (cchunk & 3)) : cchunk;   // [CPUSH] / [HSK8] source chunk of the pair row
+  const int kvx = (PH || HSK) ? (cchunk >> 2) : 0;                   // [CPUSH] / [HSK8] tile (key) half of this chunk
   constexpr int RPP = NT / 8;   // rows per pass
   auto issue_kv = [&](int x, bool with_new) {
+    if constexpr (HSK) {   // [HSK8] stage x: row r = key start + kvx * chunk/2 + 64x + r (tile x of master split 2s + kvx) of head hkz
+      const int st = x % STAGES;
+      const int* idxs = reinterpret_cast<const int*>(S.q8s + (hkz ^ 1) * 4096) + (x & 7) * (2 * TILE) + kvx * TILE;
+      const int kb0 = start + kvx * hch + x * TILE;
+      bool generic = false;
+      if (with_new && p.off32 && p.lp == 0 && start + hch + x * TILE + TILE <= min(end, seq)) {   // in-loop, both halves' rows cached
+        const uint32_t kst = smem_u32(S.k + st * STAGE_BYTES), vst = smem_u32(S.v + st * STAGE_BYTES);
+        const uint32_t col = (uint32_t)(pair * 128 + kvc * 16);
+#pragma unroll
+        for (int k = 0; k < TILE / RPP; ++k) {
+          const int r = crow0 + RPP * k;
+          const uint32_t so = r * ROWB + ((cchunk ^ (r & 7)) << 4);
+          const uint32_t off = ((uint32_t)idxs[r] << p.lrb) + col;
+          cp_async16(kst + so, p.k_cache + off, 16);
+          cp_async16(vst + so, p.v_cache + off, 16);
+        }
+        return;
+      }
+#pragma unroll
+      for (int k = 0; k < TILE / RPP; ++k) {
+        const int r = crow0 + RPP * k;
+        const int pos = kb0 + r;
+        const int sw = ((cchunk ^ (r & 7)) << 4);
+        uint8_t* dk = S.k + st * STAGE_BYTES + r * ROWB + sw;
+        uint8_t* dv = S.v + st * STAGE_BYTES + r * ROWB + sw;
+        if (pos < end && pos < seq) {
+          if (p.off32) {
+            const uint32_t off = ((((uint32_t)idxs[r] << p.lp) + (uint32_t)(pos & (p.P - 1))) << p.lrb) + (uint32_t)(pair * 128 + kvc * 16);
+            cp_async16(smem_u32(dk), p.k_cache + off, 16);
+            cp_async16(smem_u32(dv), p.v_cache + off, 16);
+          } else {
+            const int64_t row = ((int64_t)idxs[r] << p.lp) + (pos & (p.P - 1));
+            const int64_t off = row * p.row_bytes + pair * 128 + kvc * 16;
+            cp_async16(smem_u32(dk), p.k_cache + off, 16);
+            cp_async16(smem_u32(dv), p.v_cache + off, 16);
+          }
+        } else if (pos < end) {
+          if (with_new) {
+            *reinterpret_cast<uint4*>(dk) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + kvc * 16);
+            *reinterpret_cast<uint4*>(dv) = *reinterpret_cast<const uint4*>(S.vn + (pos - seq) * ROWB + kvc * 16);
+            generic = true;
+          }
+        } else {   // past the range: masked out of S; V must be finite (P = 0 times V)
+          *reinterpret_cast<uint4*>(dk) = make_uint4(0, 0, 0, 0);
+          *reinterpret_cast<uint4*>(dv) = make_uint4(0, 0, 0, 0);
+        }
+      }
+      if (generic) fence_proxy_async();
+      return;
+    }
     if (HSQ && (cchunk >> 2) != hsz) return;   // [HSQ8] the other KV head's chunks: never read here
     const int st = x % STAGES;
     const int* idxs = &S.idx[((x + kvx) % IDX_SLOTS) * TILE];   // [CPUSH] kvx: tile half (0 outside PH)
@@ -1393,6 +1456,14 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     if (L == 8 && generic) fence_proxy_async();
   };
   auto issue_idx = [&](int y) {
+    if constexpr (HSK) {   // [HSK8] 128 page indices per stage (both halves' tile y), slot y & 7 of the idle q8s half
+      if (tid < 2 * TILE && y < ntiles) {
+        const int pos = start + (tid >> 6) * hch + y * TILE + (tid & 63);
+        if (pos < end && pos < seq)
+          cp_async4(smem_u32(reinterpret_cast<int*>(S.q8s + (hkz ^ 1) * 4096) + (y & 7) * (2 * TILE) + tid), pt_row + (pos >> p.lp));
+      }
+      return;
+    }
     if (phalf == 0 && prow < TILE && y < (PH ? 2 : ntiles)) {   // [CPUSH] PH: the two tile halves
       const int pos = start + y * TILE + prow;
       if (pos < end && pos < seq) cp_async4(smem_u32(&S.idx[(y % IDX_SLOTS) * TILE + prow]), pt_row + (pos >> p.lp));
@@ -1454,6 +1525,13 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     tfor<L * 8 * 8, NT>(tidL, [&](int e) {
       const int r8 = e >> 3, ch = e & 7;
       const int j = r8 >> 3, hh = hsz * 8 + (r8 & 7);
+      cp_async16(smem_u32(&S.qst()[(j * 16 + hh) * 64 + ch * 8]), p.qkv + (ix_t)(b * L + j) * p.ld_qkv + (16 * pair + hh) * 64 + ch * 8, 16);
+    });
+  } else
+  if constexpr (HSK) {   // [HSK8] this head's 64 query rows (8 tokens x 8 heads), at their rows j*16 + hh
+    tfor<L * 8 * 8, NT>(tidL, [&](int e) {
+      const int r8 = e >> 3, ch = e & 7;
+      const int j = r8 >> 3, hh = hkz * 8 + (r8 & 7);
       cp_async16(smem_u32(&S.qst()[(j * 16 + hh) * 64 + ch * 8]), p.qkv + (ix_t)(b * L + j) * p.ld_qkv + (16 * pair + hh) * 64 + ch * 8, 16);
     });
   } else
@@ -1576,15 +1654,101 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   const float kscale = S.scl[0], vscale = S.scl[1];
   const float sl2 = p.scale_log2 * kscale;
 
+  // [CPNQF] q_len 1 PH kernels (the CPUSH cluster push-merge), the CTA holding the new token: warp 0 prepares its
+  // 4 query rows and the block's 4 new k / v rows (2 KV heads) in one pass, so the two dependent chains (load, sum of
+  // squares, octet shuffles, rsqrt, RoPE, convert, store) overlap instead of running back to back (S2 M1's fold). The
+  // per-element arithmetic is the q pass's and the k / v pass's below, unchanged (the key-only steps are selects). The
+  // new rows go to S.kn / S.vn (both heads, as the k / v pass), this cluster's head to the cache and straight into
+  // its row of the stage (the patch pass is skipped); every reader is behind the barriers that follow.
+  constexpr bool NQF = (L == 1) && !WS && PH;
+  if (NQF && has_new && tidL < 32) {
+    const int rr = tidL >> 3;                    // query row (QPASS == 1) and new k / v row (KPASS == 1, all live)
+    const int j = rr >> 4, hh = rr & 15;
+    const int kind = rr / (2 * L);
+    const int jj = (rr % (2 * L)) >> 1, hn = rr & 1;
+    const uint4 qv = *reinterpret_cast<const uint4*>(&S.qst()[rr * 64 + partL * 8]);
+    const uint4 kvv = *reinterpret_cast<const uint4*>(&S.kvst[rr * 64 + partL * 8]);
+    const __nv_bfloat162* h2 = reinterpret_cast<const __nv_bfloat162*>(&qv);
+    const __nv_bfloat162* n2 = reinterpret_cast<const __nv_bfloat162*>(&kvv);
+    float x[8], z[8];
+#pragma unroll
+    for (int e = 0; e < 4; ++e) {
+      const float2 f = __bfloat1622float2(h2[e]);
+      x[2 * e] = f.x;
+      x[2 * e + 1] = f.y;
+      const float2 fz = __bfloat1622float2(n2[e]);
+      z[2 * e] = fz.x;
+      z[2 * e + 1] = fz.y;
+    }
+    float ss = 0.f, sz = 0.f;
+#pragma unroll
+    for (int e = 0; e < 8; ++e) { ss += x[e] * x[e]; sz += z[e] * z[e]; }
+    ss = oct_sum(ss);
+    sz = oct_sum(sz);
+    const float r = rsqrtf(ss * (1.f / 64.f) + 1e-5f);
+    const bool isk = kind == 0;
+    const float rz = rsqrtf(sz * (1.f / 64.f) + 1e-5f);
+#pragma unroll
+    for (int e = 0; e < 8; ++e) { x[e] *= r; z[e] = isk ? z[e] * rz : z[e]; }
+    if (p.rope) {
+#pragma unroll
+      for (int e = 0; e < 4; ++e) {
+        const int i = partL * 4 + e;
+        const float c = S.cs[j * 32 + i], sn = S.sn[j * 32 + i];
+        const float a0 = x[2 * e], a1 = x[2 * e + 1];
+        x[2 * e] = a0 * c - a1 * sn;
+        x[2 * e + 1] = a0 * sn + a1 * c;
+        const float cz = S.cs[jj * 32 + i], snz = S.sn[jj * 32 + i];
+        const float b0 = z[2 * e], b1 = z[2 * e + 1];
+        const float k0 = b0 * cz - b1 * snz;
+        const float k1 = b0 * snz + b1 * cz;
+        z[2 * e] = isk ? k0 : b0;
+        z[2 * e + 1] = isk ? k1 : b1;
+      }
+    }
+    {   // the query: f16, pre-scaled to log2 units, into the last pipeline stage (as the q pass)
+      uint4 qw;
+      uint32_t* qwp = reinterpret_cast<uint32_t*>(&qw);
+      const float qsc = sl2;
+      const int hk = hh >> 3, gg = hh & 7;
+#pragma unroll
+      for (int e = 0; e < 4; ++e) qwp[e] = pack_h2(x[2 * e] * qsc, x[2 * e + 1] * qsc);
+      { const uint32_t t1 = qwp[1]; qwp[1] = qwp[2]; qwp[2] = t1; }   // (scout: quad order 0,2,1,3)
+      uint8_t* qs = (hk ? S.v : S.k) + (STAGES - 1) * STAGE_BYTES;
+      *reinterpret_cast<uint4*>(qs + (j * 8 + gg) * 128 + partL * 16) = qw;
+    }
+    {   // the new key / value row: e4m3 (as the k / v pass)
+      const float sc = __fdividef(1.f, isk ? kscale : vscale);
+      uint32_t w0 = 0, w1 = 0;
+#pragma unroll
+      for (int e = 0; e < 4; ++e) {
+        w0 |= (uint32_t)to_e4m3(z[e] * sc) << (8 * e);
+        w1 |= (uint32_t)to_e4m3(z[4 + e] * sc) << (8 * e);
+      }
+      uint8_t* dst = (isk ? S.kn : S.vn) + jj * ROWB + hn * 64 + partL * 8;
+      *reinterpret_cast<uint2*>(dst) = make_uint2(w0, w1);
+      const int pos = seq + jj;
+      if (pos >= start && pos < end && hn == phh) {   // this cluster's head only (as the k / v pass and the patch)
+        const int64_t row = S.cloc[jj];
+        uint8_t* g8 = const_cast<uint8_t*>(cache_row(isk ? p.k_cache : p.v_cache, p, row, (2 * pair + hn) * 64 + partL * 8));
+        *reinterpret_cast<uint2*>(g8) = make_uint2(w0, w1);
+        // its row of the stage (the patch pass's copy, 8 of its 16 bytes). PH: one tile (stage 0) of two halves, half
+        // hf = keys start + 64 hf .. +64 in stage chunks 4 hf .. 4 hf + 3 (this head's 64 bytes), swizzled
+        const int xr = pos - start, hf = xr / TILE, rw = xr - hf * TILE, ck = hf * 4 + (partL >> 1);
+        uint8_t* sd = (isk ? S.k : S.v) + rw * ROWB + ((ck ^ (rw & 7)) << 4) + (partL & 1) * 8;
+        *reinterpret_cast<uint2*>(sd) = make_uint2(w0, w1);
+      }
+    }
+  } else {
   if constexpr (QDIR) {
     // (q_len 8, QDIRECT): four threads per query row, 16 dims each (half the passes of the 8-thread
     // layout, two shuffle levels instead of three, one 16-byte e4m3 store); same math per element
     constexpr int RP4 = NT / 4;                    // rows per pass
-    constexpr int QP4 = (HSQ ? L * 8 : L * 16) / RP4;   // [HSQ8] one pass: this head's 64 rows
+    constexpr int QP4 = (HSQ || HSK ? L * 8 : L * 16) / RP4;   // [HSK8]   // [HSQ8] one pass: this head's 64 rows
     const int q4 = tidL & 3;
 #pragma unroll
     for (int ps = 0; ps < QP4; ++ps) {
-      const int rr = HSQ ? ((tidL >> 5) * 16 + hsz * 8 + ((tidL >> 2) & 7)) : ps * RP4 + (tidL >> 2);
+      const int rr = HSQ ? ((tidL >> 5) * 16 + hsz * 8 + ((tidL >> 2) & 7)) : HSK ? ((tidL >> 5) * 16 + hkz * 8 + ((tidL >> 2) & 7)) : ps * RP4 + (tidL >> 2);   // [HSK8]
       const int j = rr >> 4, hh = rr & 15;
       const uint4 qa = *reinterpret_cast<const uint4*>(&S.qst()[rr * 64 + q4 * 16]);
       const uint4 qb = *reinterpret_cast<const uint4*>(&S.qst()[rr * 64 + q4 * 16 + 8]);
@@ -1678,9 +1842,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       *reinterpret_cast<uint4*>(qs + (j * 8 + gg) * 128 + partL * 16) = qw;
     }
   }
+  }   // [CPNQF] (end of the q pass's else)
   if constexpr (QDIR) fence_proxy_async();   // the e4m3 q tile (st.shared) is read by the wgmma after the loop's first barrier
 
-  if (has_new) {
+  if (!NQF && has_new) {   // [CPNQF] (q_len 1 PH: in warp 0's fused pass above)
 #pragma unroll
     for (int ps = 0; ps < KPASS; ++ps) {
       const int rr = ps * RPP + (tidL >> 3);
@@ -1729,7 +1894,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         uint8_t* dst = (kind == 0 ? S.kn : S.vn) + jj * ROWB + hh * 64 + partL * 8;
         *reinterpret_cast<uint2*>(dst) = make_uint2(w0, w1);
         const int pos = seq + jj;
-        if (pos >= start && pos < end && (!PH || hh == phh) && (!HSQ || hh == hsz)) {   // [CPUSH] PH / [HSQ8]: this CTA's head only
+        if (pos >= start && pos < end && (!PH || hh == phh) && (!HSK || hh == hkz) && (!HSQ || hh == hsz)) {   // [CPUSH] PH / [HSQ8]: this CTA's head only
           const int64_t row = S.cloc[jj];
           uint8_t* g8 = const_cast<uint8_t*>(cache_row(kind == 0 ? p.k_cache : p.v_cache, p, row, (2 * pair + hh) * 64 + partL * 8));
           *reinterpret_cast<uint2*>(g8) = make_uint2(w0, w1);
@@ -1738,14 +1903,14 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     }
   }
   csync<WS, NT>();
-  if (!WS && has_new) {
+  if (!WS && !NQF && has_new) {   // [CPNQF] (q_len 1 PH: written straight into the stage above)
     // new-token rows of the tiles already issued (their cached rows are in flight with cp.async)
     for (int x = 0; x < (STAGES - 1) && x < ntiles; ++x) {
       const int st = x % STAGES;
 #pragma unroll
       for (int k = 0; k < TILE / RPP; ++k) {
         const int r = crow0 + RPP * k;
-        const int pos = start + (x + kvx) * TILE + r;   // [CPUSH] kvx: tile half (0 outside PH)
+        const int pos = HSK ? start + kvx * hch + x * TILE + r : start + (x + kvx) * TILE + r;   // [CPUSH] / [HSK8] kvx: tile (key) half
         if (pos >= seq && pos < end) {
           const int sw = ((cchunk ^ (r & 7)) << 4);
           *reinterpret_cast<uint4*>(S.k + st * STAGE_BYTES + r * ROWB + sw) = *reinterpret_cast<const uint4*>(S.kn + (pos - seq) * ROWB + kvc * 16);
@@ -1765,6 +1930,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   const int hk = HSQ ? hsz : hk0;   // [HSQ8] both warpgroups on this CTA's KV head
   const int wsub = __shfl_sync(0xffffffffu, (L == 1) ? (warp >> 1) : (warp & 3), 0);    // L==1: key half; L==8: m-tile (tokens 2*wsub, 2*wsub+1)
   const int wgi = hk0;          // named barrier of this warpgroup ([HSQ8] the warpgroup, not the head)
+  const int hq = HSK ? hkz : hk;   // [HSK8] query head of this warpgroup's rows (hk = warpgroup = column half)
   float o[MT][8][4];
 #pragma unroll
   for (int mt = 0; mt < MT; ++mt)
@@ -1962,7 +2128,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   uint32_t ph_c = (uint32_t)(tb / STAGES) & 1u;
   // descriptor low words broadcast from lane 0: a shuffle result is uniform and is not rematerialized, so the
   // bases stay in uniform registers (the high words are constants); +st*512 / +2 never carry out of the low word
-  const uint32_t qlo0 = __shfl_sync(0xffffffffu, (uint32_t)((smem_u32(S.q8s) + hk * 4096) >> 4) | 0x10000u, 0);
+  const uint32_t qlo0 = __shfl_sync(0xffffffffu, (uint32_t)((smem_u32(S.q8s) + hq * 4096) >> 4) | 0x10000u, 0);
   const uint32_t klo0 = __shfl_sync(0xffffffffu, (uint32_t)((smem_u32(S.k) + hk * 64) >> 4) | 0x10000u, 0);
   const uint64_t qdesc0 = ((uint64_t)((512 >> 4) | (2u << 30)) << 32) | qlo0;
   const uint32_t vsrc0 = smem_u32(S.v);
@@ -2106,7 +2272,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     
 
     const bool common_t = WS && ((uint32_t)i - r_lo <= r_span);
-    const int t0 = start + i * TILE;
+    const int t0 = HSK ? start + wgi * hch + i * TILE : start + i * TILE;   // [HSK8] this warpgroup's split (2s + wgi)
     const bool interior = common_t || ((t0 >= lo_all) && (t0 + TILE - 1 <= hi_all));
     if (!interior) {
 #pragma unroll
@@ -2290,6 +2456,60 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   m_r[1] = (cr[1] == -INFINITY) ? -INFINITY : cr[1] - 8.f;
   l_r[0] = lacc[0];   // [public-C G0b] this thread's FP32 partial row sums of the unrounded P; the epilogue quad-sums
   l_r[1] = lacc[2];
+  if constexpr (HSK) {   // [HSK8] in-CTA FP32 merge of master splits 2s (warpgroup 0) and 2s + 1 (warpgroup 1)
+    // each warpgroup first applies master's own per-split epilogue to both its rows (R11 test / exact slot, the
+    // 2^(m - R11_REF) scale, the quad-summed denominator), then hands the row half it does not keep (O 16 floats, l)
+    // to the other one through the two stages the last tile did not use (both warpgroups passed that tile's loop
+    // barrier, so no wgmma / ldmatrix reads them); warpgroup w adds the two scaled partials of rows hf = w and reds
+    // them: master's red terms, one FP32 add earlier (atomic-order class)
+    float lsf[2];
+#pragma unroll
+    for (int r = 0; r < 2; ++r) {
+      const int j = 2 * wsub + r, hh = hkz * 8 + g;
+      const float lsum = quad_sum(l_r[r]);
+      const bool r11 = r11_out(p, m_r[r]);   // [public-C R11]
+      const float f = (m_r[r] == -INFINITY || r11) ? 0.f : ex2(m_r[r] - R11_REF);
+      if (r11) {
+        float v[16];
+#pragma unroll
+        for (int t = 0; t < 8; ++t) { v[2 * t] = o[0][t][2 * r]; v[2 * t + 1] = o[0][t][2 * r + 1]; }
+        r11_store<L>(p, (bp * L + j) * 16 + hh, tig, m_r[r], lsum, v);
+      }
+#pragma unroll
+      for (int t = 0; t < 8; ++t) { o[0][t][2 * r] *= f; o[0][t][2 * r + 1] *= f; }
+      lsf[r] = lsum * f;
+    }
+    const int lt = tid & 127;
+    const bool w1 = wgi != 0;
+    const int s_a = st_c, s_b = st_c + 1 == STAGES ? 0 : st_c + 1;   // st_c = the stage after the last tile's
+    float4* xo = reinterpret_cast<float4*>(S.k + (w1 ? s_b : s_a) * STAGE_BYTES);
+    float* xl = reinterpret_cast<float*>(S.v + (w1 ? s_b : s_a) * STAGE_BYTES);
+#pragma unroll
+    for (int t4 = 0; t4 < 4; ++t4) {
+      const int t = 2 * t4;
+      xo[t4 * 128 + lt] = w1 ? make_float4(o[0][t][0], o[0][t][1], o[0][t + 1][0], o[0][t + 1][1])
+                             : make_float4(o[0][t][2], o[0][t][3], o[0][t + 1][2], o[0][t + 1][3]);
+    }
+    xl[lt] = w1 ? lsf[0] : lsf[1];
+    csync<WS, NT>();   // [HSK8] merge barrier: both warpgroups' hand-offs written
+    const float4* yo = reinterpret_cast<const float4*>(S.k + (w1 ? s_a : s_b) * STAGE_BYTES);
+    const float lm = (w1 ? lsf[1] : lsf[0]) + reinterpret_cast<const float*>(S.v + (w1 ? s_a : s_b) * STAGE_BYTES)[lt];
+#pragma unroll
+    for (int t4 = 0; t4 < 4; ++t4) {
+      const int t = 2 * t4;
+      const float4 v = yo[t4 * 128 + lt];
+      const float a0 = (w1 ? o[0][t][2] : o[0][t][0]) + v.x;
+      const float a1 = (w1 ? o[0][t][3] : o[0][t][1]) + v.y;
+      const float a2 = (w1 ? o[0][t + 1][2] : o[0][t + 1][0]) + v.z;
+      const float a3 = (w1 ? o[0][t + 1][3] : o[0][t + 1][1]) + v.w;
+      o[0][t][0] = a0; o[0][t][2] = a0; o[0][t][1] = a1; o[0][t][3] = a1;   // both row slots: the red takes row wgi
+      o[0][t + 1][0] = a2; o[0][t + 1][2] = a2; o[0][t + 1][1] = a3; o[0][t + 1][3] = a3;
+    }
+    // master's red code below then takes f = 2^(R11_REF - R11_REF) = 1 and no R11 slot for a merged row with weight (its
+    // lines are untouched: editing them changed the SASS of 8 master instances), and f = 0 for an empty one
+    m_r[0] = lm > 0.f ? R11_REF : -INFINITY; m_r[1] = m_r[0];   // (lm: the merged row sum, quad-uniform)
+    l_r[0] = tig == 0 ? lm : 0.f; l_r[1] = l_r[0];   // (the red's quad_sum adds exact zeros)
+  }
   
   }
 
@@ -2381,9 +2601,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
   if (do_red) {   // (one branch, not one per row: the post-loop merge runs straight-line from a cold cache)
 #pragma unroll
   for (int r = 0; r < NROW; ++r) {
+    if (HSK && r != wgi) continue;   // [HSK8] warpgroup w reds the merged rows hf = w (warp-uniform)
     const int mt = r >> 1, hf = r & 1;
     const int j = (L == 1) ? 0 : 2 * (wsub + mt) + hf;
-    const int hh = hk * 8 + g;
+    const int hh = hq * 8 + g;
     const float lsum = quad_sum(l_r[r]);
     const bool r11 = r11_out(p, m_r[r]);   // [public-C R11]
     const float f = (m_r[r] == -INFINITY || r11) ? 0.f : ex2(m_r[r] - R11_REF);
@@ -2434,8 +2655,8 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // ---- all splits of this (request, kv pair) are resident: wait for every split's merge, then each
     // CTA finalizes its own slice of the rows (instead of one CTA doing all of them)
     // (the slice arithmetic first: it does not depend on the merge, so its divisions leave the barrier's chain)
-    const int split_idx = HSQ ? (int)blockIdx.x * 2 + hsz : (int)blockIdx.x;   // [HSQ8] slice per (split, head)
-    int nact = fdiv_i(n_keys + chunk - 1, chunk) * (HSQ ? 2 : 1);    // splits with keys ([HSQ8] x 2 heads)
+    const int split_idx = HSQ ? (int)blockIdx.x * 2 + hsz : HSK ? (int)blockIdx.x * 2 + hkz : (int)blockIdx.x;   // [HSK8]   // [HSQ8] slice per (split, head)
+    int nact = fdiv_i(n_keys + chunk - 1, chunk) * (HSQ || HSK ? 2 : 1);   // [HSK8] chunk doubled, x 2 heads;    // splits with keys ([HSQ8] x 2 heads)
     int R = fdiv_i(L * 16 + nact - 1, nact);          // rows per CTA
     // keep both divisions above the barrier wait (ptxas otherwise sinks them below the spin, where
     // they are first used: scout's v200 census found them after the poll); volatile asm keeps program order
@@ -2450,7 +2671,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       int old;
       asm volatile("atom.acq_rel.gpu.global.add.s32 %0, [%1], %2;\n" : "=r"(old) : "l"(c), "r"(mine) : "memory");
       
-      if (old + mine == (HSQ ? 2 * n_keys : n_keys)) {   // [HSQ8] every head's CTAs add their keys: 2 x n_keys
+      if (old + mine == (HSQ || HSK ? 2 * n_keys : n_keys)) {   // [HSK8]   // [HSQ8] every head's CTAs add their keys: 2 x n_keys
         p.ws_cnt[((ep & 1) ? 8192 : 12288) + bp] = 0;
         p.ws_cnt[24576 + bp] = ep + 1;
       } else {
@@ -2458,7 +2679,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         SPIN_T0;
         for (;;) {
           asm volatile("ld.acquire.gpu.global.s32 %0, [%1];\n" : "=r"(v) : "l"(c) : "memory");
-          if (v >= (HSQ ? 2 * n_keys : n_keys)) break;
+          if (v >= (HSQ || HSK ? 2 * n_keys : n_keys)) break;   // [HSK8]
           SPIN_CHECK;
           __nanosleep(64);
         }
@@ -2663,7 +2884,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
   extern __shared__ __align__(1024) uint8_t smem_raw[];
   // 1024-byte aligned base: the 128B-swizzled tiles must start on swizzle-pattern boundaries (wgmma)
   Smem<L, FLAT>& S = *reinterpret_cast<Smem<L, FLAT>*>(smem_raw + ((1024u - (smem_u32(smem_raw) & 1023u)) & 1023u));
-  const int pair = (!FLAT && L == 8 && (MODE & 32) != 0) ? (int)(blockIdx.z >> 1) : (int)blockIdx.z;   // [HSQ8] z = 2 pair + head
+  const int pair = (!FLAT && L == 8 && (MODE & 96) != 0) ? (int)(blockIdx.z >> 1) : (int)blockIdx.z;   // [HSK8] bit 64 too   // [HSQ8] z = 2 pair + head
   if (!FLAT) {
     // grid (n_splits, B): request b, split s of its window / context
     const int split = blockIdx.x, b = blockIdx.y;
@@ -2693,6 +2914,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
       chunk = (p.ns_magic ? (int)__umulhi((unsigned)ntl, p.ns_magic) : ntl) << 6;
       
     }
+    if constexpr (!FLAT && L == 8 && (MODE & 64) != 0) chunk *= 2;   // [HSK8] one head over two splits' keys
     int start = lo + split * chunk;
     int end = min(seq + L, start + chunk);
     if constexpr (PHK) {   // [CPUSH] cluster split >> 4 = KV head, rank split & 15 = keys [lo + 128 rank, +128)
@@ -2973,7 +3195,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
 }  // namespace
 
 template <int L>
-void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, bool ph = false, bool hs = false) {
+void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, bool ph = false, bool hs = false, bool hk8 = false) {
   Params p = p0;
   static bool init = false;
   const int sm_f = (int)sizeof(Smem<L, true>) + 1024, sm_n = (int)sizeof(Smem<L, false>) + 1024;
@@ -2989,6 +3211,9 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
   static const KernFn ksp1[4] = {0, attn_kernel<L, false, 13>, 0, attn_kernel<L, false, 15>};
   // [CPUSH] per-KV-head cluster push-merge builds (q_len 1): ONE | plain, and its speculative-length variant
   static const KernFn kph[2] = {attn_kernel<L, false, (L == 1) ? 21 : 5>, attn_kernel<L, false, (L == 1) ? 29 : 13>};
+  // [HSK8] the key-packed head-split build of ksp[3] (q_len 8: MODE 11 | 64)
+  static const KernFn khk = attn_kernel<L, false, (L == 8) ? 75 : 11>;
+  static int occ_hk = 0;
   const int sm_ph = sm_n + 16 + PH_BYTES;
   // [HSQ8] per-KV-head split builds (q_len 8 sliding cooperative): kn[3] | 32 and ksp1[3] | 32
   static const KernFn khs[2] = {attn_kernel<L, false, (L == 8) ? 35 : 3>, attn_kernel<L, false, (L == 8) ? 47 : 15>};
@@ -3017,6 +3242,10 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_sp, ksp[3], Cfg<L, false>::NTX, sm_n);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_sp1, ksp1[3], Cfg<L, false>::NTX, sm_n);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_f, attn_kernel<L, true>, Cfg<L, true>::NTX, sm_f);
+    if (L == 8) {   // [HSK8]
+      cudaFuncSetAttribute(khk, cudaFuncAttributeMaxDynamicSharedMemorySize, sm_n);
+      cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occ_hk, khk, Cfg<L, false>::NTX, sm_n);
+    }
     int dev;
     cudaGetDevice(&dev);
     cudaDeviceGetAttribute(&nsm, cudaDevAttrMultiProcessorCount, dev);
@@ -3056,6 +3285,16 @@ void launch(const Params& p0, dim3 grid, cudaStream_t stream, int cs, bool pdl, 
     const bool sp = kern == ksp1[3];
     if ((long long)grid.x * grid.y * grid.z * 2 <= (long long)(sp ? occ_h1 : occ_h0) * nsm) {
       kern = khs[sp ? 1 : 0];
+      grid.z *= 2;
+    }
+  }
+  // [HSK8] where ksp[3] launches (one request, page size 1, q_len 8, not one-tile, cooperative): the same CTA count
+  // as (ceil(n_splits / 2), 1, 2 x pairs), one KV head per CTA over two splits' keys, when that grid is resident
+  if (hk8 && L == 8 && q.coop && !p.flat && !cl && kern == ksp[3]) {
+    const unsigned gx = (grid.x + 1) / 2;
+    if ((long long)gx * grid.y * grid.z * 2 <= (long long)occ_hk * nsm) {
+      kern = khk;
+      grid.x = gx;
       grid.z *= 2;
     }
   }
@@ -3154,7 +3393,7 @@ void run(torch::Tensor qkv, torch::Tensor seq_lens, torch::Tensor cache_loc, tor
   const bool pdl = ((tma >> 16) & 1);   // programmatic dependent launch (off by default)
   const bool ph = ((tma >> 24) & 1) && L == 1 && !flat && n_splits == 32 && B == 1;   // [CPUSH] bit 24
   if (L == 1) launch<1>(p, grid, stream, (int)cs, pdl, ph);
-  else launch<8>(p, grid, stream, (int)cs, pdl, false, ((tma >> 25) & 1) && !flat);   // [HSQ8] bit 25
+  else launch<8>(p, grid, stream, (int)cs, pdl, false, ((tma >> 25) & 1) && !flat, ((tma >> 26) & 1) && !flat);   // [HSQ8] bit 25, [HSK8] bit 26
 }
 """
 
@@ -3200,7 +3439,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_hsv1M1{tag}_90a",
+        name=f"okc_attn_b1sn{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
@@ -3268,6 +3507,15 @@ def _hsq_bit(B):
     return (1 << HSQ_BIT) if (_HSQ and _HSQ_V1 and B == 1) else 0   # [HSV1] one request only
 
 
+assert HSK_BIT not in (COOP_BIT, PDL_BIT, 20, CPUSH_BIT, globals().get("HSQ_BIT", -1)), "tma bit collision"   # [HSK8]
+
+
+def _hsk_bit(B):
+    """[HSK8] the per-KV-head key-packed split bit for the q_len 8 full one-request grid (the launcher re-checks
+    that the speculative cooperative build ksp[3] launches and that the HSK grid is resident; else master's)."""
+    return (1 << HSK_BIT) if (_HSK and B == 1) else 0
+
+
 def _plan(B, pairs, L, window, max_pages, P, device):
     """Launch plan for a shape: n_splits CTAs per (request, KV pair) or, flat, per KV pair over all
     requests; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
@@ -3283,7 +3531,7 @@ def _plan(B, pairs, L, window, max_pages, P, device):
         # One long request: plain split-KV over 2 CTAs per SM (clusters slower here).
         if L == 8:
             n = _splits(tiles, _headroom(target) // reqs)
-            return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=_copies(n, 8))
+            return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=_copies(n, 8), tma=_hsk_bit(B))
         n = _splits(tiles, target // reqs)
         return dict(n_splits=n, flat=0, cs=0, ncl=1, nc=_copies(n, 4), coop=0)
     if L == 1 and reqs < 24:
