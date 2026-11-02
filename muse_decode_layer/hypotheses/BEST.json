@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "9185f31ce229462b",
- "check_job": "5a84a8809b9f4e61",
+ "job": "c3eadc8813204a58",
+ "check_job": "f8bf6332eabc4315",
  "mode": "submit",
- "speedup": 2.2111703725745118,
+ "speedup": 2.1861735313724675,
  "ci": [
-  2.1780028169858943,
-  2.2443379281631293
+  2.1533809284018806,
+  2.2189661343430545
  ],
- "score_us": 10230.012250780437,
- "commit": "5af7e6a82f72fbed2d9390048181104d42fbcb4d",
- "submission_blob": "453959d81964980fe06b493d40099c1448b3b99a",
- "slug": "landing-9185f31c",
- "master_slug": "landing-9185f31c",
- "master_job": "9185f31ce229462b",
+ "score_us": 10346.982833425442,
+ "commit": "6eefb7a756c8c22638a1cb8449d5668906fafb93",
+ "submission_blob": "c737255f14daf92b4eb52c68f96db12884c1c605",
+ "slug": "landing-c3eadc88",
+ "master_slug": "landing-c3eadc88",
+ "master_job": "c3eadc8813204a58",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-11-01T051616Z",
- "note": "below board 2.2220; lands by the audited pre-registered rule; checks I +1.96% (d1s +2.47%, d1f +4.55%)"
+ "updated_at": "2026-11-02T135011Z",
+ "note": "user-approved landing of a verified gain below the board (2.2220 is an old DPP high read): 4 judge reads J mean +1.02% on d32s+d32f, rho 2.1971/2.1933/2.1981/2.1850; ZL guard H100-proven (hang at no-local-route T fixed)"
 }

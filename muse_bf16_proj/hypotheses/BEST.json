@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "d1f5f46c65fa466a",
- "check_job": "754e0c9d91214186",
+ "job": "752054d53ade472a",
+ "check_job": "9041a8edfd214693",
  "mode": "submit",
- "speedup": 1.5521937365000742,
+ "speedup": 1.5331211229653023,
  "ci": [
-  1.5289108304525731,
-  1.5754766425475752
+  1.5101243061208227,
+  1.5561179398097817
  ],
- "score_us": 3112.240364332748,
- "commit": "8d0df028bfb304b4b1b70f5597157958ec2e599f",
- "submission_blob": "41ab82c0a874015097a75199bc0e58215eaba41c",
- "slug": "bf16fix-sk2-ring-war",
- "master_slug": "bf16fix-sk2-ring-war",
- "master_job": "d1f5f46c65fa466a",
+ "score_us": 3150.957825599883,
+ "commit": "dad637c8ceb9c7f91f77a3eeb83fa0033b7b9567",
+ "submission_blob": "aa6d6584d0081b311d7b7153cb176f09f7337589",
+ "slug": "landing-752054d5",
+ "master_slug": "landing-752054d5",
+ "master_job": "752054d53ade472a",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T210512Z",
- "note": "robustness landing by user ruling 10-31 ~21:04Z ('Land it (robustness)'); scored 1.5522 is below the leaderboard's best scored run 109f577b 1.5657, which stays the board entry"
+ "updated_at": "2026-11-02T135013Z",
+ "note": "user-approved landing of a verified gain below the board (1.5657 is a high read): v16 unpooler 1.0535/1.0543/1.0535 vs R0 1.0352 over 3 reads"
 }
