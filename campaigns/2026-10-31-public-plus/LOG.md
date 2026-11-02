@@ -382,6 +382,16 @@
 - **11-02 13:1xZ DD-W2Z proven (agent, GPU 4; h100/dec-zl 099541c4):** moe's ZL guard in decode wgs_ranges; no-local-route hang reproduced (DD-W2 all 8 T, master T=24/128) and fixed (8/8); 37/37 judge cases; changed WGS kernel bit-equal to DD-W2 on all 17 judge launches (whole-layer bitwise impossible: decode's small-T moe is nondeterministic run to run); timing within noise (<= ~0.1% on d32 at worst). Scored c3eadc88 dispatched so a scored sha of DD-W2 + ZL exists for the pending land-below-board call.
 - **11-02 ~13:5xZ USER "do 1 and 2" -> LANDED decode DD-W2Z (6eefb7a7; scored c3eadc88 2.1862, board 2.2220 stays) and bf16 P1F (dad637c8; scored 752054d5 1.5331, board 1.5657 stays), registered --force as verified gains below the board.** Board-entry withdrawals NOT run: rules check -- kernel boards carry no prizes, overall board = rank across problems (#222/1859; top 50 get serving priority), reruns only for top entries -> withdrawing lucky reads would only cost rank. Also DD-W2Z scored c3eadc88 2.1862 (J +0.89%). Decode master now carries the ZL guard (decode CLAIMS [unresolved] WGS zero-route hang -> fixed).
 - **11-02 ~13:55Z USER: "go, h100 is yours to do work for at least 12 hours, so do #1"** -> Phase 1 (go/no-go) of the moe WGS continuous-stream engine rewrite launched: wf_8960671a-ea3 (3-angle design panel max -> judge max -> up to 5 build sessions high on GPUs 1/3/4/5/6 -> adversarial verify max). Pre-registered GO: correct v32 prototype with WGS kernel <= 0.93x master OR >= 3.8 TB/s, projected v32 row >= +4% with a d32/v16 path, in 2 valid processes. Notes /tmp/.../scratchpad/wgs2/, code h100/wgs2, probes hopper/wgs2. H100 window now >= 02:00Z 11-03 (no new run after 01:30Z). dec-t8 r2 keeps GPU 7.
+- **2026-11-02T14:02Z ALL WORK CEASED (user ~14:00Z: "put all work to a close here" then "keep h100 open, just cease
+  all work").** Stopped: the /loop (no further wakeups), the six-lane workflow wf_dbac2a0d-746 (dec-t8 r2 mid-UF1C, see
+  below), and the WGS rewrite phase 1 wf_8960671a-ea3 (its 3 design agents had gone quiet at 13:59Z, before any PLAN.md,
+  build or H100 run: phase 1 NOT done, no GO/NOGO verdict). No judge jobs in flight. gpunode06 KEPT OPEN by the user's word:
+  node IDLE+DRAIN, jobs=0, all 8 GPUs 0% / 0 MiB, none of our processes on the node, hopper-queue runner (pid 829123) left
+  idle with pending=0 / running=0 / held=2, nodejudge env still set up, ssh mux up. Window-end cleanup (restore
+  queue/reserved, `hopper-probe clean gpunode06 nodejudge`, /tmp/USER-hopper) is NOT done: it waits for the user's call.
+  dec-t8 r2 at stop: UFI (UF fold into the moe tail) 4 processes, 1 valid -> not a survivor by the rule (d1s F -0.99..-1.16
+  us, but v1s G +0.90..+1.24 us); UF1C (UFI at T=1 only, rule fixed 13:07Z) untested, worktree .worktrees/h1-dec-t8 at
+  4e6d57c0, notes scratchpad h1102/dec-t8/lane-dec-t8-r2.md. Masters stand as landed: decode DD-W2Z, bf16 P1F, moe ZL.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
