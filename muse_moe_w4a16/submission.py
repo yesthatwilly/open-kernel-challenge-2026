@@ -1,5 +1,5 @@
 # okc: problem=muse_moe_w4a16
-# Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31. + MD16F: D1 paired scale decode in the WS skinny consumer (one PRMT + IMAD per scale pair, HMUL2 half-broadcast; bit-identical) + D6 TINY / TINY2 compile the helper0 source with -DOKC_WSH0=1 (helper-warp rotation, as MID) + F: moe WGS weights-slot hand-back fence (fence.proxy.async.shared::cta + __syncwarp before the BW_E arrive). + B4X: d32 (16 < M <= 32) run(s) their own WGS build with the B4FIN final pass ported from alygg77@6cae49a kernels/muse_decode_layer.py (bet4_claude; only the FP32 order of each route's sum of squares changes). pp-nonce B4X-r3
+# Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31. + MD16F: D1 paired scale decode in the WS skinny consumer (one PRMT + IMAD per scale pair, HMUL2 half-broadcast; bit-identical) + D6 TINY / TINY2 compile the helper0 source with -DOKC_WSH0=1 (helper-warp rotation, as MID) + F: moe WGS weights-slot hand-back fence (fence.proxy.async.shared::cta + __syncwarp before the BW_E arrive). + B4X: d32 (16 < M <= 32) run(s) their own WGS build with the B4FIN final pass ported from alygg77@6cae49a kernels/muse_decode_layer.py (bet4_claude; only the FP32 order of each route's sum of squares changes). + ZL: WGS builds take empty stage ranges on a launch with no local route (robustness). pp-nonce ZL-r1
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -2370,6 +2370,10 @@ __device__ __forceinline__ void wgs_range(const Smem& S, int nj, int pb, int c, 
 __device__ __noinline__ void wgs_ranges(const Params& p, Smem& S) {
   const int nj = S.njF + S.njS;
   wgs_prefix(S, nj);
+  if (nj == 0) {  // [ZL] no local route in this launch: empty ranges (wgs_stage_at would read the unset S.jC[0])
+    S.wgr[0] = S.wgr[1] = S.wgr[2] = S.wgr[3] = 0;
+    return;
+  }
   wgs_range(S, nj, 0, blockIdx.x, gridDim.x, S.wgr[0], S.wgr[1]);
   wgs_range(S, nj, 1, blockIdx.x, gridDim.x, S.wgr[2], S.wgr[3]);
 }
