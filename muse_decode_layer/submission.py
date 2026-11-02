@@ -1,5 +1,5 @@
 # okc: problem=muse_decode_layer
-# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31. + DC5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the max, lean max seed; the DPP turn ends right before the exponentials; same arithmetic, scheduling only; port of attention C5L). + CG: T = 1 qkv on muse_bf16_proj's cgemv<2,512,8192,2> over lossless 12-bit planes in the unused qkv_gate wide stream (FP32 accumulation, one BF16 rounding; launch_dependents after the FMA loop as sk2; T != 1 unchanged; DS1 M1, judge diag d3f671e8). pp-nonce DSTK-r1
+# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31. + DC5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the max, lean max seed; the DPP turn ends right before the exponentials; same arithmetic, scheduling only; port of attention C5L). + CG: T = 1 qkv on muse_bf16_proj's cgemv<2,512,8192,2> over lossless 12-bit planes in the unused qkv_gate wide stream (FP32 accumulation, one BF16 rounding; launch_dependents after the FMA loop as sk2; T != 1 unchanged; DS1 M1, judge diag d3f671e8). pp-nonce DSTK-r1; lane dec-dense W2 FUSE32-ESC (T=32 pooler + router in one pooler32_r144 sk2 launch, router weights riding the pooler stages, router MMAs on the escape warps) + ZL: WGS builds take empty stage ranges on a launch with no local route (robustness; ported from moe 5a191582). pp-nonce DD-W2Z-h1
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -6025,6 +6025,10 @@ __device__ __forceinline__ void wgs_range(const Smem& S, int nj, int pb, int c, 
 __device__ __noinline__ void wgs_ranges(const Params& p, Smem& S) {
   const int nj = S.njF + S.njS;
   wgs_prefix(S, nj);
+  if (nj == 0) {  // [ZL] no local route in this launch: empty ranges (wgs_stage_at would read the unset S.jC[0])
+    S.wgr[0] = S.wgr[1] = S.wgr[2] = S.wgr[3] = 0;
+    return;
+  }
   wgs_range(S, nj, 0, blockIdx.x, gridDim.x, S.wgr[0], S.wgr[1]);
   wgs_range(S, nj, 1, blockIdx.x, gridDim.x, S.wgr[2], S.wgr[3]);
 }
@@ -7819,6 +7823,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
   float* peer = corr + NESC * CSZ;                       // [CL-1][WSK][TOKS][RP]: ranks > 0 per-warp sums
   int2* ptab_s = reinterpret_cast<int2*>(peer + (CL > 1 ? (CL - 1) * WSK * TOKS * RP : 0));   // [pmax]: escapes
   const uint32_t zrow = (uint32_t)__cvta_generic_to_shared(ptab_s + pmax);   // 128 B of zeros (x rows >= M)
+  const uint32_t rmini = (zrow + 128u + 127u) & ~127u;   // V1b: [NSTAGE][8 KB] router hi|lo riding the pooler stages
   // m <= 8: the x box has exactly M rows per 64-k unit (packed, M*128 B per unit; no zero rows moved)
   // PK (M < TOKR, or TOKR == 8): packed x, exactly M rows per 64-k unit (no out-of-bounds TMA rows; rows >= M
   // read zrow); else the full TOKR-row tile with compile-time addressing
@@ -7839,11 +7844,14 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
   // FUSE (pooler + router in one launch): after its pooler stages every CTA streams one router piece: 8 router rows
   // (tile rt = cta / 4) over one quarter of K (rq = cta % 4), from the router's own stage-major hi|lo stream
   // ([16 stages][32 tiles][8 warps][2048 B]); 4 more stages through the same ring
-  constexpr int NSTR = FUSE ? 4 : 0;
+  constexpr int NSTR = FUSE ? (UPS == 8 ? 4 : 0) : 0;   // V1b: UPS-4 router weights ride the pooler stages
+  constexpr bool ILV = FUSE && UPS == 4;
   constexpr int WBYR = NW * 2048;
-  static_assert(!FUSE || (COMP && CL == 1 && UPW == 1 && UPS == 8 && WBYR <= WBY), "sk2 fused: pooler-like config only");
+  static_assert(!FUSE || (COMP && CL == 1 && WBYR <= WBY && ((UPW == 1 && UPS == 8) ||
+                                                            (UPS == 4 && NW == 4 && NWR == 2 && WSK == 2 && UPW == 2))),
+                "sk2 fused: pooler-like or pooler32_r144 config only");
   const int rt = cta >> 2, rq = cta & 3;
-  const uint8_t* wsr = FUSE ? Wsr + (size_t)rt * WBYR : nullptr;
+  const uint8_t* wsr = FUSE ? Wsr + (size_t)rt * (UPS == 8 ? WBYR : 16384) : nullptr;
   const int nstt = nst + NSTR;
   // stages issued by the prologue: 1, or under PDL up to pdl (CL == 1 only; never past this CTA's own stages)
   const int P = (CL == 1 && pdl > 0) ? min(pdl, min(NSTAGE, nst)) : 1;
@@ -7868,6 +7876,13 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
     asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
     // weights never depend on the previous kernel: under PDL (pdl > 0) they stream while it finishes; x (its output)
     // only after griddepcontrol.wait (a no-op when the launch has no programmatic dependency)
+    if constexpr (ILV)   // V1b: stage st of quarter rq carries router units 4 st .. 4 st + 3 (expect_tx before the arrive)
+      for (int st = 0; st < P; ++st)
+        if (((gs0 + st) >> 3) == rq) {
+          const int ku = (gs0 + st) * UPS;
+          asm volatile("mbarrier.expect_tx.relaxed.cta.shared::cta.b64 [%0], %1;" :: "r"(full0 + 8 * st), "r"(8192u) : "memory");
+          bulk_g2s(rmini + st * 8192, wsr + (size_t)(ku >> 3) * (32 * 16384) + (ku & 7) * 2048, 8192, full0 + 8 * st);
+        }
     for (int st = 0; st < P; ++st) {
       mbar_expect_tx(full0 + 8 * st, ((dgv & 4) ? 0 : XBYr) + WBY);
       bulk_g2s(sbase + st * SST + XBY, wsrc + (size_t)(gs0 + st) * wstride, WBY, full0 + 8 * st);
@@ -7910,15 +7925,28 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
         if (st >= NSTAGE) SK2_WAIT(empty0 + 8 * slot, ((st / NSTAGE) - 1) & 1);
         if (trace) tr[16 + 3 * st] = gtime();
         const uint32_t s0 = sbase + slot * SST;
+        if constexpr (ILV)
+          if (((gs0 + st) >> 3) == rq) {   // V1b: this stage's 8 KB of router hi|lo (same 256 k as its x tile)
+            const int ku = (gs0 + st) * UPS;
+            asm volatile("mbarrier.expect_tx.relaxed.cta.shared::cta.b64 [%0], %1;" :: "r"(full0 + 8 * slot), "r"(8192u) : "memory");
+            bulk_g2s(rmini + slot * 8192, wsr + (size_t)(ku >> 3) * (32 * 16384) + (ku & 7) * 2048, 8192, full0 + 8 * slot);
+          }
         if (!FUSE || st < nst) {
           mbar_expect_tx(full0 + 8 * slot, ((dgv & 4) ? 0 : XBYr) + WBY);
           bulk_g2s(s0 + XBY, wsrc + (size_t)(gs0 + st) * wstride, WBY, full0 + 8 * slot);
           if (!(dgv & 4)) tma_load_3d(s0, &xmap, full0 + 8 * slot, 0, 0, (gs0 + st) * UPS);
         } else {   // router piece: global router stage rq * 4 + j of tile rt
+          if constexpr (UPS == 8) {
           const int gsr = rq * NSTR + (st - nst);
           mbar_expect_tx(full0 + 8 * slot, XBYr + WBYR);
           bulk_g2s(s0 + XBY, wsr + (size_t)gsr * (32 * WBYR), WBYR, full0 + 8 * slot);
           tma_load_3d(s0, &xmap, full0 + 8 * slot, 0, 0, gsr * UPS);
+          } else {   // DD-FUSE32: 64-k unit ku of the [16][32 tiles][8 units][2048 B] router stream
+            const int ku = (rq * NSTR + (st - nst)) * UPS;
+            mbar_expect_tx(full0 + 8 * slot, XBYr + WBYR);
+            bulk_g2s(s0 + XBY, wsr + (size_t)(ku >> 3) * (32 * 16384) + (ku & 7) * 2048, WBYR, full0 + 8 * slot);
+            tma_load_3d(s0, &xmap, full0 + 8 * slot, 0, 0, ku);
+          }
         }
       }
     }
@@ -7938,6 +7966,15 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
       const int cnt = ptab_s[0].x;
       constexpr int KST = UPS * 64;
       int pe = 1;
+      float acce[ILV ? 2 : 1][MT][4];   // W2: this escape warp's router partial (hi, lo) over its stages
+#pragma unroll
+      for (int h = 0; h < (ILV ? 2 : 1); ++h)
+#pragma unroll
+        for (int mt = 0; mt < MT; ++mt) acce[h][mt][0] = acce[h][mt][1] = acce[h][mt][2] = acce[h][mt][3] = 0.f;
+      int trw[MT];
+#pragma unroll
+      for (int mt = 0; mt < MT; ++mt) trw[mt] = TOKR >= 16 ? mt * 16 + (lane & 7) + 8 * ((lane >> 3) & 1) : (lane & 7);
+      const int chw = (lane >> 3) >> 1;
       for (int st = 0; st < nstt; ++st) {
         const int slot = st % NSTAGE;
         if (FUSE && st >= nst) {   // router stages: nothing to correct, only the slot hand-back (in order, as below)
@@ -7971,9 +8008,50 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
           }
           ++pe;
         }
+        if constexpr (ILV)
+          if (((gs0 + st) >> 3) == rq) {   // W2: router units 0..3 of this stage (8 rows x 64 k each, hi + lo)
+            const uint32_t s0e = sbase + slot * SST;
+#pragma unroll 1
+            for (int u = 0; u < UPS; ++u) {
+              const uint32_t xr = s0e + u * XU;
+              const uint32_t ar0 = rmini + slot * 8192 + u * 2048 + lane * 32;
+              uint32_t bh[8], bo[8];
+              asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(bh[0]), "=r"(bh[1]), "=r"(bh[2]), "=r"(bh[3]) : "r"(ar0));
+              asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(bh[4]), "=r"(bh[5]), "=r"(bh[6]), "=r"(bh[7]) : "r"(ar0 + 16));
+              asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(bo[0]), "=r"(bo[1]), "=r"(bo[2]), "=r"(bo[3]) : "r"(ar0 + 1024));
+              asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(bo[4]), "=r"(bo[5]), "=r"(bo[6]), "=r"(bo[7]) : "r"(ar0 + 1040));
+              uint32_t ar[4][MT][4];
+#pragma unroll
+              for (int j = 0; j < 4; ++j)
+#pragma unroll
+                for (int mt = 0; mt < MT; ++mt)
+                  ldsm_x4((PK && trw[mt] >= M) ? zrow
+                              : xr + trw[mt] * 128 + (((2 * j + chw) ^ ((u * Mb + trw[mt]) & 7)) << 4),
+                          ar[j][mt][0], ar[j][mt][1], ar[j][mt][2], ar[j][mt][3]);
+#pragma unroll
+              for (int j = 0; j < 4; ++j)
+#pragma unroll
+                for (int mt = 0; mt < MT; ++mt) {
+                  mma_bf16(acce[0][mt], ar[j][mt][0], ar[j][mt][1], ar[j][mt][2], ar[j][mt][3], bh[2 * j], bh[2 * j + 1]);
+                  mma_bf16(acce[ILV ? 1 : 0][mt], ar[j][mt][0], ar[j][mt][1], ar[j][mt][2], ar[j][mt][3], bo[2 * j], bo[2 * j + 1]);
+                }
+            }
+          }
         asm volatile("fence.proxy.async.shared::cta;" ::: "memory");   // [WARFIX] reads done before the refill
         __syncwarp();
         if (lane == 0) mbar_arrive(empty0 + 8 * slot);
+      }
+      if constexpr (ILV) {   // W2: partial [ew][tok][8] in its own 4 KB after the mini ring
+        float* rp = reinterpret_cast<float*>(smem_raw + (rmini + NSTAGE * 8192 - sraw));
+        const int g = lane >> 2, t4 = lane & 3;
+#pragma unroll
+        for (int mt = 0; mt < MT; ++mt) {
+          const int row = 2 * t4, tok = mt * 16 + g;
+          rp[(ew * TOKS + tok) * 8 + row] = acce[0][mt][0] + acce[ILV ? 1 : 0][mt][0];
+          rp[(ew * TOKS + tok) * 8 + row + 1] = acce[0][mt][1] + acce[ILV ? 1 : 0][mt][1];
+          rp[(ew * TOKS + tok + 8) * 8 + row] = acce[0][mt][2] + acce[ILV ? 1 : 0][mt][2];
+          rp[(ew * TOKS + tok + 8) * 8 + row + 1] = acce[0][mt][3] + acce[ILV ? 1 : 0][mt][3];
+        }
       }
     }
     mbar_arrive(cbar);
@@ -8101,7 +8179,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
       const int slot = st % NSTAGE;
       mbar_wait(full0 + 8 * slot, (st / NSTAGE) & 1);
       const uint32_t s0 = sbase + slot * SST;
-      const int ui = wk;
+      const int ui = (NWR == 1) ? wk : warp;
       const uint32_t xt = s0 + ui * XU;
       const uint32_t a0 = s0 + XBY + warp * 2048 + lane * 32;
       uint32_t bh[8], bo[8];
@@ -8131,14 +8209,16 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
     // k-warp reduction of the 8 x TOKS piece through the (now idle) ring: redr[wk][tok][8]
     if constexpr (COMP) mbar_wait(cbar, 0);   // the escape warps are done with the ring too
     named_bar(1, NC);
-    float* redr = reinterpret_cast<float*>(gbase);
+    float* redr = ILV ? reinterpret_cast<float*>(smem_raw + (rmini + NSTAGE * 8192 - sraw)) : reinterpret_cast<float*>(gbase);
+    if constexpr (!ILV) {   // W2: the escape warps already stored the partials
 #pragma unroll
     for (int mt = 0; mt < MT; ++mt) {
       const int row = 2 * t4, tok = mt * 16 + g;
-      redr[(wk * TOKS + tok) * 8 + row] = accr[0][mt][0] + accr[1][mt][0];
-      redr[(wk * TOKS + tok) * 8 + row + 1] = accr[0][mt][1] + accr[1][mt][1];
-      redr[(wk * TOKS + tok + 8) * 8 + row] = accr[0][mt][2] + accr[1][mt][2];
-      redr[(wk * TOKS + tok + 8) * 8 + row + 1] = accr[0][mt][3] + accr[1][mt][3];
+      redr[(((NWR == 1) ? wk : warp) * TOKS + tok) * 8 + row] = accr[0][mt][0] + accr[1][mt][0];
+      redr[(((NWR == 1) ? wk : warp) * TOKS + tok) * 8 + row + 1] = accr[0][mt][1] + accr[1][mt][1];
+      redr[(((NWR == 1) ? wk : warp) * TOKS + tok + 8) * 8 + row] = accr[0][mt][2] + accr[1][mt][2];
+      redr[(((NWR == 1) ? wk : warp) * TOKS + tok + 8) * 8 + row + 1] = accr[0][mt][3] + accr[1][mt][3];
+    }
     }
     named_bar(1, NC);
     // this CTA's quarter-K partial -> part[rt][rq][TOKS][8]; the last of the 4 quarters (release/acquire counter)
@@ -8147,7 +8227,7 @@ sk2_kernel(const __grid_constant__ CUtensorMap xmap, const uint8_t* __restrict__
     for (int i = tid; i < TOKS * 8; i += NC) {
       float v = 0.f;
 #pragma unroll
-      for (int w = 0; w < WSK; ++w) v += redr[(w * TOKS + (i >> 3)) * 8 + (i & 7)];
+      for (int w = 0; w < ((NWR == 1) ? WSK : NW); ++w) v += redr[(w * TOKS + (i >> 3)) * 8 + (i & 7)];
       __stcg(pp + i, v);
     }
     named_bar(1, NC);
@@ -8304,7 +8384,8 @@ static void launch_sk2(const at::Tensor& Ws, const at::Tensor& x, at::Tensor& ou
   constexpr int CP = R + 1;
   constexpr int NESC = COMP ? (NSTAGE >= 4 ? 4 : NSTAGE) : 1;
   const size_t smem = 1024 + (size_t)NSTAGE * SST + 16 * NSTAGE + 32 + (size_t)NESC * ((TOKS * CP + 3) & ~3) * 4 +
-                      (CL > 1 ? (size_t)(CL - 1) * WSK * TOKS * RP * 4 : 0) + (size_t)pmax * 8 + 128;
+                      (CL > 1 ? (size_t)(CL - 1) * WSK * TOKS * RP * 4 : 0) + (size_t)pmax * 8 + 128 +
+                      ((FUSE && UPS == 4) ? (size_t)(128 + NSTAGE * 8192 + 4096) : 0);   // V1b mini ring
   auto go = [&](auto pkc) {
     constexpr bool PK = decltype(pkc)::value;
     auto kern = sk2_kernel<MT, TOKR, NT, NWR, WSK, UPW, NSTAGE, COMP, HL, NACC, CL, OutT, PK, FUSE>;
@@ -9311,6 +9392,9 @@ def bfp__sk2_geom(cfg, tokr):
     return hl, nstage
 
 
+_DD_FUSE32_GEOM = True   # DD-FUSE32 (lane dec-dense V1)
+
+
 def bfp__sk2_src(sm90):
     lines = []
     for ci, cfg in enumerate(bfp_SK2_CONFIGS):
@@ -9329,6 +9413,9 @@ def bfp__sk2_src(sm90):
         if name != "pooler":
             continue
         for tokr in (8, 16, 32):
+            if tokr == 32 and _DD_FUSE32_GEOM:   # DD-FUSE32: T = 17..32 fused on the pooler32_r144 geometry
+                cfg = next(c for c in bfp_SK2_CONFIGS if c[0] == "pooler32_r144")
+                name, layer, n_rows, R, NT, NWR, WSK, UPW, NACC, CL = cfg
             hl, nstage = bfp__sk2_geom(cfg, tokr)
             mt = 2 if tokr == 32 else 1
             nacc = 1 if (mt == 2 and nstage >= 4 and NT == 4) else NACC
@@ -9473,8 +9560,9 @@ def bfp_fused_pooler_router(x, state):
     weights with exact escape corrections, router as BF16 hi + lo with FP32 accumulation (quarter-K partials added in
     a fixed order)."""
     m = x.shape[0]
-    assert m <= 32 and state.get("sm90") and "pooler" in state["sk2"] and "router" in state["sk2"]
-    ci, stream, tab, pmax, b4, n_rows = state["sk2"]["pooler"]
+    pname = "pooler32_r144" if (m > 16 and _DD_FUSE32_GEOM) else "pooler"   # DD-FUSE32
+    assert m <= 32 and state.get("sm90") and pname in state["sk2"] and "router" in state["sk2"]
+    ci, stream, tab, pmax, b4, n_rows = state["sk2"][pname]
     rstream = state["sk2"]["router"][1]
     if "fused_part" not in state:
         state["fused_part"] = torch.empty(32 * 4 * 32 * 8, dtype=torch.float32, device=x.device)
@@ -14228,4 +14316,23 @@ def prepare(weights):
     except Exception as ex:  # noqa: BLE001
         st.pop("cgq", None)
         print("cgq disabled:", repr(ex)[:200], flush=True)
+    return st
+
+
+# ---------------------------------------------------------------------------------------------- DD-FUSE32 (lane dec-dense)
+# T = 17..32: pooler and router in ONE sk2 launch on the pooler32_r144 geometry (bfp_fused_pooler_router), replacing
+# the separate pooler32_r144 + CL=3 router launches. Same 12-bit pooler bytes and BF16 hi + lo router bytes; pooled
+# output bitwise equal to the separate pooler, router logits differ only by FP32 summation order.
+_DD_FUSE32 = True
+_dd_prior_prepare = prepare
+
+
+def prepare(weights):
+    st = _dd_prior_prepare(weights)
+    bfp = st.get("bfp")
+    if (_DD_FUSE32 and _DD_FUSE32_GEOM and bfp is not None and bfp.get("sm90") and "pooler32_r144" in bfp.get("sk2", {})
+            and "router" in bfp["sk2"] and st.get("mm_pick", {}).get((32, "pr")) == "bfp"
+            and bfp.get("choice", {}).get(("pooler", 32), ("",))[0] == "sk2"
+            and bfp.get("choice", {}).get(("router", 32), ("",))[0] == "sk2"):
+        st["mm_pick"][(32, "pr")] = "bfpf"
     return st
