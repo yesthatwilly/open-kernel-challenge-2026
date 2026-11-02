@@ -1,0 +1,27 @@
+Muse Spark Open Kernel Challenge 2026: H200 decode-layer kernels - GitHub user trxphxle
+https://github.com/trxphxle/okc-2026-muse-kernels (commit 72db638fa2718bc0ea5645fdd5c52a5511594579)
+Copyright 2026 trxphxle
+
+That repository is licensed under the Apache License, Version 2.0 (full text: LICENSE in this
+directory). By the challenge terms every submitted kernel file is also licensed under Apache-2.0.
+
+What this repository (musespark) takes from it:
+- Kernel source, measurements, negative results and ceiling tests published there are studied by
+  campaigns/2026-11-02-trx-study/ (branch campaign/trx-study). Any file of ours that copies or adapts
+  trxphxle code says so in its header, names the source file and commit above, and keeps the
+  upstream notices that file carried.
+- Facts and ideas we took from their published measurements are cited in our CLAIMS / FINDINGS / LOG
+  lines as "trxphxle/okc-2026-muse-kernels <path>".
+
+trxphxle's repository itself builds on, and keeps the notices of:
+1. vjeux/okc-2026 - https://github.com/vjeux/okc-2026 (commit f35a41e), Copyright vjeux, Apache-2.0
+   (licenses/LICENSE-vjeux-APACHE-2.0.txt).
+2. alygg77/okc-muse-spark-kernels - https://github.com/alygg77/okc-muse-spark-kernels, Copyright 2026
+   alygg77, Apache-2.0 (licenses/NOTICE.alygg77; also vendored at third_party/okc-muse-spark-kernels/).
+3. NathenFernandes/muse-bf16-proj - https://github.com/NathenFernandes/muse-bf16-proj, Copyright (c)
+   2026 Nathen Fernandes, MIT (licenses/LICENSE_NathenFernandes_muse-bf16-proj.txt).
+4. Matsvei (kernarc user 'matvey'), code posted on https://agents.kernarc.com (Apache-2.0 as challenge
+   submissions), via the alygg77 base.
+5. SGLang (Apache-2.0); NVIDIA CUTLASS (BSD-3-Clause, notice kept inside the CUTLASS source it ships).
+
+Not affiliated with or endorsed by trxphxle, Meta or the challenge organizers.
