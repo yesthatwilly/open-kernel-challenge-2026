@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "1cf77c003c3e4428",
+ "job": "7fe39538261148ac",
  "check_job": null,
  "mode": "submit",
- "speedup": 2.5191875943241553,
+ "speedup": 2.5545454442717754,
  "ci": [
-  2.481399780409293,
-  2.5569754082390173
+  2.516227262607699,
+  2.592863625935852
  ],
- "score_us": 1495.0454696131587,
- "commit": "8881e073c6465f66d0f7e887c19a7c27f5d66daa",
- "submission_blob": "a0ed5a24f3c6120344401c4adf1fbb78d5f3fb58",
- "slug": "landing-1cf77c00",
- "master_slug": "landing-1cf77c00",
- "master_job": "1cf77c003c3e4428",
+ "score_us": 1474.3523190966994,
+ "commit": "a161e2067ff38f62fc22d818e2e47274bdd24aa1",
+ "submission_blob": "a5bcede2deec612b55efb847149c61ed00f9e17f",
+ "slug": "landing-7fe39538",
+ "master_slug": "landing-7fe39538",
+ "master_job": "7fe39538261148ac",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-11-01T171702Z",
- "note": "registered by churn.py register-landing from okc status 1cf77c003c3e4428"
+ "updated_at": "2026-11-02T030320Z",
+ "note": "registered by churn.py register-landing from okc status 7fe39538261148ac"
 }
