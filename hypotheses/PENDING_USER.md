@@ -94,3 +94,14 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - Default: (b) hold. The bit-identical diet rider D1+D6 (1.05-1.07x consumer) is queued as a moe phase-B item after the ~04:19Z usage-window reset.
 
 - RESOLVED 2026-11-02 ~13:5xZ (user: "do 1 and 2"): (1) land verified gains below the board -> DD-W2Z landed (decode 6eefb7a7, scored c3eadc88) and P1F landed (bf16 dad637c8, scored 752054d5). (2) board-entry hygiene -> NOT executed: the rules say the kernel boards carry no prizes, the overall kernel board ranks across problems (we are #222 of 1859; the top 50 get serving priority) and only the top entries are rerun at final review, so withdrawing noise entries (T116HF a0588c87, W313P 2ef42c8f, decode DPP) would only lower our ranks. Reported to the user; no withdraw run.
+
+## OPEN 2026-11-02T16:20Z: strict "restore every SGLang BF16 rounding point" reading? (trx-study cross-problem scan)
+- **Finding** (trx-study research/cross-problem.md, campaign/trx-study): attention, moe, decode and prefill keep FP32 where SGLang rounds activations to BF16. All of it comes from alygg77@6cae49a:
+  - attention: after QK-norm and RoPE, before the FP8 cache write, and on the attention output;
+  - moe: GEMM1/GEMM2 outputs and the (1+w) gains;
+  - decode: the pooler input, BF16(r1*P), at T=1.
+- **What trxphxle did:** "restored" all of these in their files, measuring the decode cost at 1.0060. Our estimate is decode −0.6%, moe 0..−0.5%, attention −0.1..−0.3%.
+- **Our reading:** compliant. Rules :107 say "Activations stay BF16 wherever SGLang keeps them in BF16". The only exception lets queries go coarser (FP8), so the rule bans going coarser, not keeping FP32. The ban list at :137 targets "lower precision". Our 10-31 audit (public-plus FINDINGS.md:719) called the moe FP32 retention "finer, no violation".
+- **Scope of our own ruling:** the FA3 ruling (AT7b/AT7f) covers only the softmax: an FP32 denominator and no lazy max. The "LOUD" flag came from my wrong paraphrase in the agent brief, which has since been corrected in both workflows.
+- **Default (applied):** no change. Masters and board entries stay as they are.
+- **User call:** adopt the strict reading (restore the rounding points on all four problems at about −0.1 to −0.6% each), or keep the default.
