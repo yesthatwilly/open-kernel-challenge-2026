@@ -1,5 +1,5 @@
 # okc: problem=muse_bf16_proj
-# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31.
+# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31. + SWEEP-bf16 P1F: unpooler m128 static cuBLASLt plan nn(18,4,2) (128x64 coopB 1x1) on the existing W^T copy. pp-nonce P1F-r3
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -4015,9 +4015,10 @@ _KLARGE_CONFIGS = {
     ("pooler", 256): ("rownn", _kplan(18, 0, 2)),
     ("pooler", 128): ("nn", _kplan(15, 4, 2)),
     ("o", 256): ("tn", _kplan(20, 6, 2)),
+    ("unpooler", 128): ("nn", _kplan(18, 4, 2)),  # [SWEEP-bf16 P1F] RBX/BFR P1 plan, static (judge 3/3 reads)
     ("unpooler", 256): ("rownn", _kplan(20, 4, 2)),
 }
-_KLARGE_TRANSPOSED = {("unpooler", 256), ("pooler", 256), ("pooler", 128)}
+_KLARGE_TRANSPOSED = {("unpooler", 256), ("pooler", 256), ("pooler", 128), ("unpooler", 128)}
 _klarge_base_prepare = prepare
 _klarge_base_kernel = kernel_fn
 
