@@ -358,6 +358,7 @@
   - prefill S1 (wf_4c19f2c5-2c3, GPU 6): build agent was still reading PFC2L; no GPU work, worktree .worktrees/sw-pfs1 (sweep/pfs1) clean.
   - Resume: Workflow({scriptPath: ~/.claude/projects/-home-user-git-musespark/08efaca7-cd01-4c08-87f6-da5f73e85a3c/workflows/scripts/variant-sweep-lane-wf_ab5d88cb-252.js, resumeFromRunId: 'wf_64218a1f-cba' | 'wf_4c19f2c5-2c3'}) with the same args (in each run's journal); tell the build agent to reuse the existing worktree, the c1dec logs and pB1's run instead of rebuilding.
   - Not paused: the ~22 judge jobs (okc) and their local waiters; the hopper-queue fuzz runner on GPUs 3/4 (no agents).
+- **11-02 03:1xZ LANDED attention SN** scored 7fe39538 **2.5545** (board 2.5192 -> 2.5545, rank 331 -> 321); 3-read pool d1s 4.566 / v1s 3.559 / untouched 0.993 all hold; master a161e206, registered 35781e2a. PFC2L-r3 scored 1.7735 (noise; board stays 1.8117).
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
