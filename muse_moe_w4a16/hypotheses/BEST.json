@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "299e8e6e5f304a16",
- "check_job": null,
+ "job": "7a09274e73b245e3",
+ "check_job": "832878c1fa8e4d8e",
  "mode": "submit",
- "speedup": 2.3757350482002457,
+ "speedup": 2.3607788464700774,
  "ci": [
-  2.340099022477242,
-  2.4113710739232492
+  2.325367163773026,
+  2.396190529167128
  ],
- "score_us": 5660.7743402144115,
- "commit": "75b795dd005a6f174f73070b50c93f1335b1d856",
- "submission_blob": "a3aa4e1862ad485d83ce1719023c05bb8af705cd",
- "slug": "landing-299e8e6e",
- "master_slug": "landing-299e8e6e",
- "master_job": "299e8e6e5f304a16",
+ "score_us": 5696.636946789272,
+ "commit": "5a1915820f5908336ea97ff321040691c19e8e7c",
+ "submission_blob": "c09f214d93551fc0eb244f9d650e736386a2ab4e",
+ "slug": "landing-7a09274e",
+ "master_slug": "landing-7a09274e",
+ "master_job": "7a09274e73b245e3",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-11-01T181616Z",
- "note": "registered by churn.py register-landing from okc status 299e8e6e5f304a16"
+ "updated_at": "2026-11-02T071231Z",
+ "note": "registered below BEST under the 10-31 robustness rule: 2-read pool ~2.367 vs B4X R0 2.385 (-0.75%, inside read noise; every row 0.985-1.025); ZL-r2 check alone 2.3733 passes the -0.5% guard"
 }
