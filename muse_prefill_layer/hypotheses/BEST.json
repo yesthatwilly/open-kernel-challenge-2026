@@ -1,20 +1,20 @@
 {
  "problem": "muse_prefill_layer",
- "job": "8b89517bd87544b6",
- "check_job": "d114d2e8da984e8a",
+ "job": "79c432802f9f4387",
+ "check_job": null,
  "mode": "submit",
- "speedup": 1.7835726617500103,
+ "speedup": 1.8117316145571702,
  "ci": [
-  1.7568190718237602,
-  1.8103262516762602
+  1.7845556403388128,
+  1.8389075887755275
  ],
- "score_us": 217206.68201983208,
- "commit": "feccac755708a7b3f7bfa368cc1197c2005b5236",
- "submission_blob": "da0feea1cf96c1ab134735176fdb09b19ec50df2",
- "slug": "adopt-public-c-p2",
- "master_slug": "adopt-public-c-p2",
- "master_job": "8b89517bd87544b6",
+ "score_us": 213830.7334746657,
+ "commit": "568a4b6f2f5f864f0df196edfc0b117563c5c676",
+ "submission_blob": "b43df32beda32a7dee9ffd1087a2691b0056386f",
+ "slug": "landing-79c43280",
+ "master_slug": "landing-79c43280",
+ "master_job": "79c432802f9f4387",
  "result": "muse_prefill_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-10-31T045942Z",
- "note": "public-board adoption 10-31; old line at tag ours-final-1031"
+ "updated_at": "2026-11-02T021941Z",
+ "note": "registered by churn.py register-landing from okc status 79c432802f9f4387"
 }
