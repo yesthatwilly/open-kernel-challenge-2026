@@ -347,6 +347,11 @@
 - **~19:40Z prefill PFC1:** checks b49ac7e2 1.7795 / 60384917 1.7947 -> GO (mean 1.7871, routes PASS); **scored ecf82580
   1.7821** (5/5, rows all above floor) < board 1.7836 -> **not landed** (A4), CLAIMS [shelf]. 3-read 1.7854 vs master
   1.7783 (+0.40%). Open for the user: land on the 3-read pool (as HSV1) or keep shelved.
+- **18:45Z decode DEC-DX2** check 84b5da1a: 2.1938 (master control). VOID on MaMb (d1f 0.27>0.25) but every arm reads worse than master with CIs >0: CG-O kA d1s +0.38 us, CG-U +0.29, O8 +1.54, CPUSH exposure +0.22. H200 agrees with the H100 KILLs; re-send not spent; decode-push leads closed. (User 18:25Z: 5h quota at 97%, updates only until reset.)
+- **20:06Z sweep lanes** (one workflow per GPU: pf 6, moe 5, dec 7, att 1). Results: pf PFC2L/PFC2 PASS (PFC2G REJECT); att SN + D16N8 PASS; moe T116/T116HF PASS (B4FIN on d16/v16/v32 already H100-negative); dec: no variant passed (V1K4 STEP-0 fail; V2/V3 KILL; V4 miss). okc API down ~21:15-22:36Z (530/502).
+- **22:50Z PFC2L GO** (checks 56bfbb47 1.7871 / 7827cda6 1.7967; all 8 rows over their bars; rho_all8 1.7354). **23:55Z SN GO** (e37ec7e2 2.5603 / 522648f3 2.5513; rho 2.6256, d1s 4.532, v1s 3.557).
+- **23:11Z USER: "submit anything and everything … use up submissions and checks freely"; 23:3xZ "send the unaudited ones too, audit them quick first"** -> 17 scored runs queued before reset: prefill PFC2L x3, PFC2 x2; attention SN x2, D16N8, KN, W313P (quick audit PASS); moe T116 x2, T116HF x2, ZL (quick audit PASS); decode V1K4 (compliant, rejected on its own rules, sent on override). Plus checks PFC2 x2, D16N8, P1, W313, T116 x2, T116HF x2, ZL, V1K4.
+- **11-02 00:00Z USER: "land anything that beats the board, keep looping"** -> standing: any scored run above its board lands on master + register-landing immediately. Judge ~1 job / 20 min; queue drains over ~8 h.
 - **Phase-B queue from tonight's reads** (after decode/moe phase A; <= 3 agents): attention S3 (GAPMAP-1031 §2.4: M0
   stamps, then build) and prefill S1/A2 (§2.3; GAPMAP puts prefill ahead of attention). Both wait for the 04:19Z window.
 - **Token pacing:** the prefill S1 (A2) phase-B design panel waits for the ~04:19Z usage-window reset; two workflows
