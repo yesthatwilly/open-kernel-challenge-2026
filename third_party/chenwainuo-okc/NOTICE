@@ -1,0 +1,16 @@
+chenwainuo/okc - Muse Spark Open Kernel Challenge kernels - GitHub user chenwainuo
+https://github.com/chenwainuo/okc (commit 3d418e1625f6de2075b5684a27ddbc3d1442422d)
+Copyright 2026 chenwainuo
+
+That repository is licensed under the Apache License, Version 2.0 (full text: LICENSE in this directory). By the
+challenge terms every submitted kernel file is also licensed under Apache-2.0.
+
+We found it through trxphxle/okc-2026-muse-kernels experiments/research/FINDINGS.md (R2, "Independent dense escape
+scheduling"), which cites chenwainuo's published muse_bf16_proj rows (judged 1.542x). The trx-study campaign
+(campaigns/2026-11-02-trx-study/, branch campaign/trx-study) studies its muse_bf16_proj/submission.py for the m=128
+12-bit register-sourced GEMM. Any file of ours that copies or adapts chenwainuo code says so in its header ("Portions
+from chenwainuo/okc <path> @3d418e1 (Apache-2.0, Copyright 2026 chenwainuo)") and keeps the notices that code carried.
+Known deviation to fix before any reuse: their RS128 path rounds split-K partials to BF16 (our compliance needs FP32
+partial accumulation).
+
+Not affiliated with or endorsed by chenwainuo, Meta or the challenge organizers.
