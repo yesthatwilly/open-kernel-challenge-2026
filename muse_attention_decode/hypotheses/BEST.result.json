@@ -1,17 +1,17 @@
 {
  "schema": 1,
  "problem": "muse_attention_decode",
- "slug": "trx-att-b1p-r3",
- "job": "1734d042b5114faf",
+ "slug": "astk",
+ "job": "7b77ce057ac04908",
  "mode": "submit",
  "duplicate_of": null,
- "content_hash": "32fd6e28adc0e789b2e48bab456420dfbdccab6f35f015cacf36f3b1057e7ed0",
+ "content_hash": "11999887c3dbb0d54a4b18ed0542fc5234e9e07d7f5975b424cc7305b2bccf91",
  "submission_sha256": null,
- "submission_blob": "ba13f223c3e62d6f5e18f8147214d55584ba7898",
- "impl_commit": "23dba6fd0a0e92e758f16f5a44f4054c7045dc67",
+ "submission_blob": "a36f1e508575ec49c9cfe80309f4f4e7fb540af7",
+ "impl_commit": "7f2dd06ac7c4ccf802ae22cdafbf444cb3eec63e",
  "base_sha": null,
- "created_at": 1793724919.2043285,
- "finished_at": 1793725430.680278,
+ "created_at": 1793743328.6420007,
+ "finished_at": 1793749761.3697631,
  "gpu": "H200",
  "evaluator_sha256": "c64ec50d4fca1ac0ae80eae2883ad7e8acee7938f0032bc0470126fcfe8d9a58",
  "status": "done",
@@ -23,12 +23,12 @@
   "passed": 16
  },
  "first_failing": null,
- "speedup": 2.6123597952868822,
+ "speedup": 2.5440385371690737,
  "speedup_ci": [
-  2.5731743983575788,
-  2.6515451922161852
+  2.5058779591115377,
+  2.592996637693205
  ],
- "score_us": 1441.7233057999943,
+ "score_us": 1480.4414103691295,
  "baseline_us": 3766.3,
  "flags": [],
  "checks": {
@@ -48,15 +48,15 @@
     "layer": "sliding",
     "load": "decode 1",
     "page": 1,
-    "seed": 1044321274302678945,
+    "seed": 629261749511158904,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 4504.872595795684,
-   "baseline_ns": 20735.999569296837,
-   "speedup": 4.603015763120442,
-   "speedup_of_medians": 4.595744689634475,
-   "err_ns": 34.68897643085024,
+   "median_ns": 4954.319872359444,
+   "baseline_ns": 20640.000235289335,
+   "speedup": 4.166061289349035,
+   "speedup_of_medians": 4.147909872458784,
+   "err_ns": 47.882130209674706,
    "speed_of_light_ns": 111.14666666666666,
    "status": "pass",
    "top_kernels": [
@@ -78,15 +78,15 @@
     "layer": "full",
     "load": "decode 1",
     "page": 1,
-    "seed": 1044542864676255757,
+    "seed": 629530889965439147,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 11088.81378153986,
-   "baseline_ns": 31856.000423431396,
-   "speedup": 2.8728050674332524,
-   "speedup_of_medians": 2.8813313464669803,
-   "err_ns": 48.86201663951129,
+   "median_ns": 10927.687792317543,
+   "baseline_ns": 31455.998308956623,
+   "speedup": 2.8785593903104583,
+   "speedup_of_medians": 2.886930807502651,
+   "err_ns": 41.034256998162505,
    "speed_of_light_ns": 4268.586666666666,
    "status": "pass",
    "top_kernels": [
@@ -108,22 +108,22 @@
     "layer": "sliding",
     "load": "decode 16",
     "page": 1,
-    "seed": 1044764455049832570,
+    "seed": 629800030419719391,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 8438.564073847238,
-   "baseline_ns": 27344.00052577257,
-   "speedup": 3.2403617827015125,
-   "speedup_of_medians": 3.261450246005111,
-   "err_ns": 37.37921360463108,
+   "median_ns": 8755.549105404292,
+   "baseline_ns": 27280.000504106283,
+   "speedup": 3.1157383935255325,
+   "speedup_of_medians": 3.134191347099196,
+   "err_ns": 44.43867551728418,
    "speed_of_light_ns": 1647.2746666666667,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, false, 1>((ano...",
-     7.2,
+     6.9,
      100.0
     ]
    ]
@@ -139,22 +139,22 @@
     "layer": "full",
     "load": "decode 16",
     "page": 1,
-    "seed": 1044986045423409384,
+    "seed": 630069170873999636,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 84247.3585608065,
-   "baseline_ns": 202624.00107458234,
-   "speedup": 2.40510805959971,
-   "speedup_of_medians": 2.411731127272947,
-   "err_ns": 128.67612462952627,
+   "median_ns": 86852.06567854657,
+   "baseline_ns": 200848.00058975816,
+   "speedup": 2.312529921085917,
+   "speedup_of_medians": 2.3156244389519935,
+   "err_ns": 156.84049735214418,
    "speed_of_light_ns": 63177.38666666667,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, true, 0>((anon...",
-     83.1,
+     87.4,
      100.0
     ]
    ]
@@ -170,22 +170,22 @@
     "layer": "sliding",
     "load": "decode 32",
     "page": 1,
-    "seed": 1045207635796986199,
+    "seed": 630338311328279882,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 10018.101555315854,
-   "baseline_ns": 31471.99936211109,
-   "speedup": 3.141513308518146,
-   "speedup_of_medians": 3.102523614269764,
-   "err_ns": 44.85995639137599,
+   "median_ns": 10339.727198773753,
+   "baseline_ns": 31280.001159757376,
+   "speedup": 3.025224994665918,
+   "speedup_of_medians": 3.0076922763497227,
+   "err_ns": 42.12286813177689,
    "speed_of_light_ns": 3294.5493333333334,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, false, 1>((ano...",
-     8.8,
+     8.9,
      100.0
     ]
    ]
@@ -201,22 +201,22 @@
     "layer": "full",
     "load": "decode 32",
     "page": 1,
-    "seed": 1045429226170563015,
+    "seed": 630607451782560129,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 159607.9163260434,
-   "baseline_ns": 384848.000947386,
-   "speedup": 2.411208728276531,
-   "speedup_of_medians": 2.4205494332741537,
-   "err_ns": 223.79599015904503,
+   "median_ns": 166872.86489788766,
+   "baseline_ns": 385599.9927036464,
+   "speedup": 2.3107411318167372,
+   "speedup_of_medians": 2.3101992890044865,
+   "err_ns": 185.59223222623208,
    "speed_of_light_ns": 126354.77333333335,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<1, true, 0>((anon...",
-     158.9,
+     163.1,
      100.0
     ]
    ]
@@ -233,21 +233,21 @@
     "load": "verify 1",
     "page": 1,
     "q_len": 8,
-    "seed": 1045650816544139832,
+    "seed": 630876592236840377,
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 6883.456622008676,
-   "baseline_ns": 23423.999082297087,
-   "speedup": 3.4029413372640214,
-   "speedup_of_medians": 3.4046511442171328,
-   "err_ns": 36.401674388776996,
+   "median_ns": 6286.779846445417,
+   "baseline_ns": 22592.000663280487,
+   "speedup": 3.5935727375683655,
+   "speedup_of_medians": 3.5928752050042587,
+   "err_ns": 35.04839445539435,
    "speed_of_light_ns": 124.58666666666666,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<8, false, 47>((an...",
-     5.6,
+     5.5,
      100.0
     ]
    ]
@@ -264,21 +264,21 @@
     "load": "verify 1",
     "page": 1,
     "q_len": 8,
-    "seed": 1045872406917716650,
+    "seed": 631145732691120626,
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 15102.434874759892,
-   "baseline_ns": 36431.99848011136,
-   "speedup": 2.412326143580909,
-   "speedup_of_medians": 2.4223404044187915,
-   "err_ns": 39.184206378601665,
+   "median_ns": 15181.358263040627,
+   "baseline_ns": 36191.99898093939,
+   "speedup": 2.383976344794501,
+   "speedup_of_medians": 2.3835617018105406,
+   "err_ns": 38.42636378021144,
    "speed_of_light_ns": 4282.026666666667,
    "status": "pass",
    "top_kernels": [
     [
-     "void (anonymous namespace)::attn_kernel<8, false, 11>((an...",
-     14.4,
+     "void (anonymous namespace)::attn_kernel<8, false, 75>((an...",
+     13.7,
      100.0
     ]
    ]
@@ -295,22 +295,22 @@
     "load": "verify 16",
     "page": 1,
     "q_len": 8,
-    "seed": 1046093997291293469,
+    "seed": 631414873145400876,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 11913.682341754791,
-   "baseline_ns": 29407.998081296682,
-   "speedup": 2.468422208826924,
-   "speedup_of_medians": 2.4671141338642704,
-   "err_ns": 36.46836455243381,
+   "median_ns": 12204.198378803627,
+   "baseline_ns": 29760.00076159835,
+   "speedup": 2.438505163377696,
+   "speedup_of_medians": 2.4313726900070263,
+   "err_ns": 40.48782002532302,
    "speed_of_light_ns": 1862.3146666666669,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<8, false, 3>((ano...",
-     11.4,
+     10.8,
      100.0
     ]
    ]
@@ -327,22 +327,22 @@
     "load": "verify 16",
     "page": 1,
     "q_len": 8,
-    "seed": 1046315587664870289,
+    "seed": 631684013599681127,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 104933.24114739485,
-   "baseline_ns": 205823.99750128388,
-   "speedup": 1.9614756510968006,
-   "speedup_of_medians": 1.9615736198763274,
-   "err_ns": 169.51504193426396,
+   "median_ns": 108863.79928330117,
+   "baseline_ns": 205824.0002952516,
+   "speedup": 1.8906560459058253,
+   "speedup_of_medians": 1.8914865620903825,
+   "err_ns": 149.61907095300046,
    "speed_of_light_ns": 63392.42666666667,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<8, true, 0>((anon...",
-     103.7,
+     104.1,
      100.0
     ]
    ]
@@ -359,22 +359,22 @@
     "load": "verify 32",
     "page": 1,
     "q_len": 8,
-    "seed": 1046537178038447110,
+    "seed": 631953154053961379,
     "spread": "agentic",
     "weight": 46
    },
    "weight": 46,
-   "median_ns": 15923.25762787161,
-   "baseline_ns": 34943.99972259998,
-   "speedup": 2.194525802398312,
-   "speedup_of_medians": 2.1927710294164915,
-   "err_ns": 44.367184619120145,
+   "median_ns": 15150.496874647479,
+   "baseline_ns": 34463.99886161089,
+   "speedup": 2.274776804137838,
+   "speedup_of_medians": 2.2673684468510418,
+   "err_ns": 34.69836267013169,
    "speed_of_light_ns": 3724.6293333333338,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<8, false, 3>((ano...",
-     15.2,
+     14.6,
      100.0
     ]
    ]
@@ -391,22 +391,22 @@
     "load": "verify 32",
     "page": 1,
     "q_len": 8,
-    "seed": 1046758768412023932,
+    "seed": 632222294508241632,
     "spread": "agentic",
     "weight": 16
    },
    "weight": 16,
-   "median_ns": 194015.94959422224,
-   "baseline_ns": 393232.0028543472,
-   "speedup": 2.0268024545238603,
-   "speedup_of_medians": 2.026969104938318,
-   "err_ns": 207.9922029571551,
+   "median_ns": 198400.5771386105,
+   "baseline_ns": 390783.9935272932,
+   "speedup": 1.9696716570248485,
+   "speedup_of_medians": 1.9699950922088112,
+   "err_ns": 190.71464944052047,
    "speed_of_light_ns": 126784.85333333335,
    "status": "pass",
    "top_kernels": [
     [
      "void (anonymous namespace)::attn_kernel<8, true, 0>((anon...",
-     195.4,
+     201.0,
      100.0
     ]
    ]
@@ -415,39 +415,39 @@
  "loads": [
   {
    "load": "decode 1",
-   "sglang_ns": 1463551.9869625568,
-   "yours_ns": 384645.1599112392,
-   "speedup": 3.8049406036989684
+   "sglang_ns": 1452735.9837666154,
+   "yours_ns": 402741.7188056151,
+   "speedup": 3.6071157169287056
   },
   {
    "load": "decode 16",
-   "sglang_ns": 4499808.041378856,
-   "yours_ns": 1736131.684369877,
-   "speedup": 2.5918587177976913
+   "sglang_ns": 4468448.03262502,
+   "yours_ns": 1792388.3097053426,
+   "speedup": 2.4930133768611804
   },
   {
    "load": "decode 32",
-   "sglang_ns": 7605279.985815287,
-   "yours_ns": 3014559.3327612234,
-   "speedup": 2.522849659372647
+   "sglang_ns": 7608479.936607182,
+   "yours_ns": 3145593.289509795,
+   "speedup": 2.418774214066586
   },
   {
    "load": "verify 1",
-   "sglang_ns": 1660415.9334674478,
-   "yours_ns": 558277.9626085574,
-   "speedup": 2.9741742369860766
+   "sglang_ns": 1618304.0142059326,
+   "yours_ns": 532093.6051451392,
+   "speedup": 3.0413897076709047
   },
   {
    "load": "verify 16",
-   "sglang_ns": 4645951.8717601895,
-   "yours_ns": 2226961.246079038,
-   "speedup": 2.086229331534267
+   "sglang_ns": 4662144.03975755,
+   "yours_ns": 2303213.9139577853,
+   "speedup": 2.0241906370503977
   },
   {
    "load": "verify 32",
-   "sglang_ns": 7899136.032909155,
-   "yours_ns": 3836725.0443896498,
-   "speedup": 2.0588225482719618
+   "sglang_ns": 7837887.844070792,
+   "yours_ns": 3871332.090451552,
+   "speedup": 2.0245971311535254
   }
  ],
  "attribution": null

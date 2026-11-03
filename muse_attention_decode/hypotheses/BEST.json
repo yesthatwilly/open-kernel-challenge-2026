@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "1734d042b5114faf",
- "check_job": "7297cbabb96a456c",
+ "job": "7b77ce057ac04908",
+ "check_job": "ec63c5ad",
  "mode": "submit",
- "speedup": 2.6123597952868822,
+ "speedup": 2.5440385371690737,
  "ci": [
-  2.5731743983575788,
-  2.6515451922161852
+  2.5058779591115377,
+  2.592996637693205
  ],
- "score_us": 1441.7233057999943,
- "commit": "23dba6fd0a0e92e758f16f5a44f4054c7045dc67",
- "submission_blob": "ba13f223c3e62d6f5e18f8147214d55584ba7898",
- "slug": "trx-att-b1p-r3",
- "master_slug": "trx-att-b1p-r3",
- "master_job": "1734d042b5114faf",
+ "score_us": 1480.4414103691295,
+ "commit": "7f2dd06ac7c4ccf802ae22cdafbf444cb3eec63e",
+ "submission_blob": "a36f1e508575ec49c9cfe80309f4f4e7fb540af7",
+ "slug": "astk",
+ "master_slug": "astk",
+ "master_job": "7b77ce057ac04908",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-11-03T170430Z",
- "note": "trx-study 11-03: scored 2.6124 > board 2.5647; 6-read d1f_rel 1.0105 (B1RP x3 + B1P x3)"
+ "updated_at": "2026-11-03T235012Z",
+ "note": "3-read dH_T +0.770%, below 2.6124 board"
 }
