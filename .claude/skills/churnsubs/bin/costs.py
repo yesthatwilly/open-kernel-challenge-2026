@@ -15,14 +15,20 @@ usage limits, whose real weighting is not published.
 Writes hypotheses/costs.jsonl (one row per agent run) and hypotheses/COSTS.md (predictions by role
 and model, cost per outcome, per-hypothesis totals, main-thread overhead).
 
-usage: costs.py <transcript.jsonl> [more transcripts...]
+The ledger is cumulative: rows already in costs.jsonl are kept, a run found again in the given
+transcripts replaces its row (by agent id), and each kept row's outcome/speedup is refreshed from
+done/. Main-thread overhead per day is merged with the table already in COSTS.md (per day, the
+larger wtok wins), because Claude Code rotates old transcripts away and a rebuild from the few
+left on disk would drop the history. --replace rebuilds from the given transcripts only.
+
+usage: costs.py [--replace] <transcript.jsonl> [more transcripts...]
 """
 import glob, json, os, re, statistics, sys
 from collections import defaultdict
 
 REPO = os.environ.get("CHURN_REPO", "/home/user/git/musespark")
 PROBLEMS = ["muse_attention_decode", "muse_bf16_proj", "muse_decode_layer", "muse_moe_w4a16", "muse_prefill_layer"]
-ROLES = [("review", r"^review"), ("build", r"^build"), ("audit", r"^audit"), ("mint", r"^mint"),
+ROLES = [("review", r"^review"), ("build", r"^build"), ("audit", r"^audit"), ("mint", r"^(mint|hypothesi[sz]e)"),
          ("read", r"(read|harvest)"), ("diagnose", r"^diagnose"), ("triage", r"^triage")]
 TYPES = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
 WEIGHT = {"input_tokens": 1.0, "output_tokens": 5.0, "cache_read_input_tokens": 0.1, "cache_creation_input_tokens": 1.25}
@@ -141,8 +147,34 @@ def parse(paths):
     return spawns, tokens
 
 
+def old_rows(path):
+    """The rows already in costs.jsonl, by agent id (empty when missing)."""
+    rows = {}
+    if os.path.exists(path):
+        for r in read_jsonl(path):
+            if r.get("agent"):
+                rows[r["agent"]] = r
+    return rows
+
+
+def old_main(path):
+    """The main-thread overhead table already in COSTS.md: {day: usage}."""
+    days = {}
+    if not os.path.exists(path):
+        return days
+    pat = re.compile(r"^\| (\d{4}-\d\d-\d\d) \| " + r" \| ".join([r"([\d,]+)"] * 5) + r" \|$")
+    for line in open(path, errors="replace"):
+        m = pat.match(line.strip())
+        if m:
+            days[m.group(1)] = {k: int(m.group(i + 2).replace(",", "")) for i, k in enumerate(TYPES)}
+    return days
+
+
 def main():
-    paths = sys.argv[1:]
+    args = sys.argv[1:]
+    replace = "--replace" in args
+    paths = [a for a in args if a != "--replace"]
+    out = os.path.join(REPO, "hypotheses")
     slugs = known_slugs()
     by_len = sorted(slugs, key=len, reverse=True)
     spawns, tokens = parse(paths)
@@ -163,8 +195,17 @@ def main():
                      "tokens": tok, "usage": u, "wtok": wtok(u) if u else None,
                      "tool_uses": tu, "minutes": round(ms / 60000, 1),
                      "multi": len(set(hit)) > 1 and s["desc"].lower().startswith(("review six", "review five", "mint"))})
+    kept = 0
+    if not replace:
+        merged = old_rows(os.path.join(out, "costs.jsonl"))
+        kept = sum(1 for a in merged if a not in {r["agent"] for r in rows})
+        for r in merged.values():
+            r["role"] = role_of(r.get("desc") or "")
+            if r.get("slug") and (r.get("problem"), r["slug"]) in outs:
+                r["outcome"], r["speedup"] = outs[(r["problem"], r["slug"])]
+        merged.update({r["agent"]: r for r in rows})
+        rows = list(merged.values())
     rows.sort(key=lambda r: r["ts"] or "")
-    out = os.path.join(REPO, "hypotheses")
     with open(os.path.join(out, "costs.jsonl"), "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
@@ -185,6 +226,11 @@ def main():
     covered = [r for r in rows if r["usage"]]
     sub_u = {k: sum(r["usage"][k] for r in covered) for k in TYPES}
     main_u = main_overhead(paths)
+    if not replace:
+        for d, u in old_main(os.path.join(out, "COSTS.md")).items():
+            if d not in main_u or wtok(u) > wtok(main_u[d]):
+                main_u[d] = u
+        main_u = dict(sorted(main_u.items()))
 
     def fmt_u(u):
         return " | ".join(f"{u[k]:,}" for k in TYPES) + f" | {wtok(u):,}"
@@ -232,7 +278,8 @@ def main():
         L.append(f"| {p.replace('muse_', '')} | {sl} | {oc} | {f'{sp:.4f}' if sp else '-'} | {v.get('review', 0):,} | "
                  f"{v.get('build', 0):,} | {v.get('audit', 0):,} | {sum(v[k] for k in steps):,} | {v['wtok']:,} |")
     open(os.path.join(out, "COSTS.md"), "w").write("\n".join(L) + "\n")
-    print(json.dumps({"rows": len(rows), "hypotheses": len(per_hyp), "total": sum(r["tokens"] for r in rows)}))
+    print(json.dumps({"rows": len(rows), "kept_from_ledger": kept, "hypotheses": len(per_hyp),
+                      "total": sum(r["tokens"] for r in rows)}))
 
 
 if __name__ == "__main__":
