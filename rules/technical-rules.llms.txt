@@ -4,6 +4,26 @@
 
 Site: https://openkernelchallenge.dev/
 Rules: https://openkernelchallenge.dev/rules
+Updates: https://openkernelchallenge.dev/updates
+
+## Latest updates
+
+### 2026-11-03 12:15 PT
+
+We've added guidance to the [kernel rules](https://openkernelchallenge.dev/rules#kernels-restrictions). In particular, approximate math accurate to
+BF16 precision, partial sums held in BF16 or FP16, and FP16 accumulation in attention are allowed.
+
+### 2026-11-02 08:00 PT
+
+We have clarified the rules: submissions must be readable source code. Do not embed or load prebuilt binaries, and
+don't compress or obfuscate your code. See [Kernels: Restrictions](https://openkernelchallenge.dev/rules#kernels-restrictions).
+
+If you have runs that do this, withdraw them (`okc withdraw <job>`) by 4:30pm PT on Nov 2. After that, we'll remove them.
+
+### 2026-10-29 09:00 PT
+
+There is now an unofficial #muse-open-kernel-channel in the SGLang Slack. Participants can use this to connect with
+others and ask questions to maintainers: [invite link](https://t.co/0XXSWJ7w7Q).
 
 ## Problems
 
@@ -65,7 +85,7 @@ Authenticate with `Authorization: Bearer kc_...`. `okc login` mints the token an
 - Before the first submission, a person accepts the rules (https://openkernelchallenge.dev/rules) and the terms (https://openkernelchallenge.dev/terms.pdf) by running `okc login` in a terminal, which shows them and asks. An agent doesn't accept them for anyone. Submissions get a 403 until the current version is accepted; `GET https://openkernelchallenge.dev/api/v1/me`'s `rules.accepted_at` says whether it is.
 - `GET /problems` (no token): the problems: name, GPU, title and summary, and `limits`: today's daily caps, {"scored": {"per_day"}, "checks": {"per_day"}}, with your runs today ("used", "left") when you send your token; `tracks`: whether each track is open, the phase and its note
 - `GET /problems/{problem}` (no token): one problem: its starter and SGLang's kernel, the TASK.md and AGENTS.md okc init writes (`task_md`, `agents_md`), the page's copy, the scored shapes, SGLang's time and what it's per; `limits`, as above; `tracks`
-- `GET /leaderboard/{problem}` (no token): one problem's board: each row's speedup over SGLang, and its time
+- `GET /leaderboard/{problem}` (no token): one problem's board: each row's speedup over SGLang, and its time, and `screening` once its run is judged: screened, pending, under_review or final; `screened_speedup` on a row whose run isn't screened but whose team has one that is (docs/SCREENING.md)
 - `GET /leaderboard` (no token): the overall board: ranks only (the top 50 get serving priority)
 - `GET /queue` (no token): backlog and running counts, and whether kernel judging is running
 - `GET /me` (token): the account a token belongs to; `rules`: the current rules version and when you accepted it (null until you have); `serving_priority`, once the group is taken: whether you go first in the serving queue
@@ -105,9 +125,13 @@ Each problem takes 10 submissions and 20 check runs (`okc check`) a day, resetti
 
 - Your kernel has to be capturable in a CUDA graph. That rules out host synchronization (`.item()`, `.cpu()`, `torch.cuda.synchronize()`) and allocations or control flow that depend on the input's values. The shapes and `config` fields are fixed, so it's fine to branch on them.
 - You can repack the weights and compress them losslessly, but not change their precision or values: NVFP4 weights stay NVFP4 and BF16 weights stay BF16, or smaller, losslessly. Dequantizing inside your kernels is fine. The one exception is the router: its FP32 weights can run as a BF16 hi + lo pair with FP32 accumulation at any batch size, as SGLang does above 8 tokens.
-- Activations stay BF16 wherever SGLang's kernel keeps them in BF16, and the FP8 KV cache stays FP8. The one exception is attention's queries: they can be rounded to FP8 E4M3 (as FA3 does with an FP8 cache), but nothing coarser.
+- Activations stay in BF16 or FP32 wherever SGLang's kernel keeps them in BF16, and the FP8 KV cache stays FP8. As in SGLang's FA3 kernel, attention's queries can be rounded to FP8 E4M3, but nothing coarser.
+- You can use approximate math as long as it's accurate to BF16 precision. This permits the GPU's fast exp, tanh, rsqrt and the like.
+- As in SGLang's FA3 kernel, P in attention can be stored in FP8 E4M3, at any power-of-two scale, and its exp2 can be approximated, for example with a polynomial or bit manipulation.
+- Partial sums (split-K, split-KV) can be held in BF16 or FP16 before they're combined, and attention can accumulate QKᵀ and P·V in FP16.
 - Attention has to attend to every key it should: the whole window on sliding layers, and the whole context on full layers.
 - The softmax and its weighted sum run over every key: no top-k, sparse or block-skipping attention, and no skipping values by their attention weight.
+- Submit readable source. Everything that runs on the GPU has to be built during your run from source in your file: CUDA or C++ through `load_inline` or NVRTC, inline PTX, Triton, CuTe DSL and the like. No precompiled or hand-edited GPU code (cubin, fatbin, SASS, shared libraries), embedded or loaded, and no compressed, encoded or obfuscated source (base64, zlib, xz and the like), or code run from such data. Generating code from readable templates is fine.
 
 Final review reruns the top entries on the scored shapes and on nearby ones. Positions come from the scored shapes; an entry that's much slower on the nearby shapes gets a closer look.
 
