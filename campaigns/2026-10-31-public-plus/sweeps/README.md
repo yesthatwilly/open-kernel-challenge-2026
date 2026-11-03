@@ -13,3 +13,6 @@ The bytes match the scratchpad copies; the full scratchpad is node-local in ~/mu
 | [SWEEP-moe.md](SWEEP-moe.md) | `sweep/moe` | cdc75ffd |
 | [SWEEP-pf.md](SWEEP-pf.md) | `sweep/pf` | 6e85dc5f |
 | [SWEEP-pfs1.md](SWEEP-pfs1.md) | `sweep/pfs1` | 486567a0 |
+
+Also cited, copied byte-for-byte: [pfs1/m0an.py](pfs1/m0an.py) (prefill CLAIMS:98) and [c1dec/an-all.txt](c1dec/an-all.txt) (decode CLAIMS:135).
+The rest of `pfs1/` and `c1dec/` (raw runs) is in the archive only.
