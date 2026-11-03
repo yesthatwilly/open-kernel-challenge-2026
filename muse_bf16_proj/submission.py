@@ -1,8 +1,11 @@
 # okc: problem=muse_bf16_proj
-# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31. + SWEEP-bf16 P1F: unpooler m128 static cuBLASLt plan nn(18,4,2) (128x64 coopB 1x1) on the existing W^T copy. pp-nonce P1F-r3
+# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31. + SWEEP-bf16 P1F: unpooler m128 static cuBLASLt plan nn(18,4,2) (128x64 coopB 1x1) on the existing W^T copy. + BFX (trx-study 11-03): router m 2..16 routertail_small_kernel (4-owner cluster reduction, ruwwww); router m 32 rr_kernel<32,16,4,1,2,1> route (ruwwww route choice, existing Nathen ROUTER_CUDA). pp-nonce BFX-r3
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
+# Portions (routertail_small_kernel, verbatim; the router m=32 rr_kernel route choice) adapted from
+# github.com/ruwwww/open-kernel-challenge @c035bf9 (muse_bf16_proj), modified; OKC submissions are licensed under
+# the Apache License 2.0 (llms.txt), and that attribution is retained here.
 # ---- Third-party notice: Nathen Fernandes routes are derived from
 # https://github.com/NathenFernandes/muse-bf16-proj, used under the MIT License below:
 # MIT License
@@ -4130,34 +4133,44 @@ def _autotune(weights,state):
             state['choice_alt'][(layer,m)]=next((c for c in cands if c[0]=='torch'),('torch',))
     print('[proj] pinned choices:',state['choice'],file=sys.stderr)
 
-# Small-router kernel adapted from NathenFernandes/muse-bf16-proj (MIT), S=16, WK=8.
+# Small-router kernel adapted from NathenFernandes/muse-bf16-proj (MIT), S=16, WK=8; kernel body: ruwwww
+# routertail_small_kernel verbatim (Apache-2.0, github.com/ruwwww/open-kernel-challenge @c035bf9) [BFX R16].
 SMALL_ROUTER_SRC = r"""
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 #include <stdint.h>
+#include <algorithm>
 #define RD __device__ __forceinline__
-RD uint32_t rr_smem(const void* p) { return (uint32_t)__cvta_generic_to_shared(p); }
-RD void rr_init(uint32_t b, int n) { asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" ::"r"(b),"r"(n):"memory"); }
-RD void rr_expect(uint32_t b, int n) { asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" ::"r"(b),"r"(n):"memory"); }
-RD void rr_wait(uint32_t b, int ph) {
+RD uint32_t routertail_smem(const void* p) { return (uint32_t)__cvta_generic_to_shared(p); }
+RD void routertail_init(uint32_t b, int n) { asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" ::"r"(b),"r"(n):"memory"); }
+RD void routertail_expect(uint32_t b, int n) { asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" ::"r"(b),"r"(n):"memory"); }
+RD void routertail_wait(uint32_t b, int ph) {
   asm volatile("{ .reg .pred p; wait: mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 p, [%0], %1; @!p bra wait; }" ::"r"(b),"r"(ph):"memory");
 }
-RD uint32_t rr_map(uint32_t a, int r) { uint32_t b; asm("mapa.shared::cluster.u32 %0, %1, %2;":"=r"(b):"r"(a),"r"(r));return b; }
-RD void rr_push(uint32_t d, float4 v, uint32_t b) {
+RD void routertail_sync() { asm volatile("barrier.cluster.arrive.release.aligned; barrier.cluster.wait.acquire.aligned;" :::"memory"); }
+RD uint32_t routertail_map(uint32_t a, int r) { uint32_t b; asm("mapa.shared::cluster.u32 %0, %1, %2;":"=r"(b):"r"(a),"r"(r));return b; }
+RD void routertail_push(uint32_t d, float4 v, uint32_t b) {
   asm volatile("st.async.shared::cluster.mbarrier::complete_tx::bytes.v4.f32 [%0], {%1,%2,%3,%4}, [%5];" ::"r"(d),"f"(v.x),"f"(v.y),"f"(v.z),"f"(v.w),"r"(b):"memory");
 }
-RD void rr_add(float4& a,float4 b) { a.x+=b.x;a.y+=b.y;a.z+=b.z;a.w+=b.w; }
+RD float4 routertail_pull(uint32_t d) {
+  float4 v; asm volatile("ld.shared::cluster.v4.f32 {%0,%1,%2,%3}, [%4];":"=f"(v.x),"=f"(v.y),"=f"(v.z),"=f"(v.w):"r"(d):"memory");return v;
+}
+RD void routertail_add(float4& a,float4 b) { a.x+=b.x;a.y+=b.y;a.z+=b.z;a.w+=b.w; }
+RD uint64_t routertail_desc(uint32_t a) { return (uint64_t)((a&0x3ffff)>>4)|((uint64_t)64<<32)|((uint64_t)1<<62); }
+RD void routertail_tma(uint32_t dst, const void* tm, int k,int r,uint32_t bar) {
+  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1, {%2,%3}], [%4];" ::"r"(dst),"l"(tm),"r"(k),"r"(r),"r"(bar):"memory");
+}
 
 template<int MT,int S,int WK>
-__global__ __launch_bounds__(WK*32) void rr_small_kernel(const int4* wp,const __nv_bfloat16* x,float* out,int m) {
-  constexpr int KU=128/S/WK, NI=MT*32;
+__global__ __launch_bounds__(WK*32) void routertail_small_kernel(const int4* wp,const __nv_bfloat16* x,float* out,int m) {
+  constexpr int KU=128/S/WK, NI=MT*32, P=4, OWN=NI/P, PARTS=S*1;
   const int tid=threadIdx.x,lane=tid&31,warp=tid>>5,rank=blockIdx.x%S,row=blockIdx.x/S*16;
   const int gw=(rank*16+row/16)*WK+warp;
   extern __shared__ __align__(16) unsigned char sm[];
   float4* recv=(float4*)sm;
-  float4* part=recv+S*NI;
-  const uint32_t rb=rr_smem(sm+(S+WK)*NI*16);
+  float4* part=recv+PARTS*OWN;
+  const uint32_t rb=routertail_smem(sm+(PARTS*OWN+WK*NI)*16);
   int4 w[KU][8];uint4 xx[KU][MT][2];
 #pragma unroll
   for(int k=0;k<KU;k++) {
@@ -4173,9 +4186,9 @@ __global__ __launch_bounds__(WK*32) void rr_small_kernel(const int4* wp,const __
       for(int h=0;h<2;h++) asm volatile("ld.global.nc.v4.u32 {%0,%1,%2,%3}, [%4];":"=r"(xx[k][n][h].x),"=r"(xx[k][n][h].y),"=r"(xx[k][n][h].z),"=r"(xx[k][n][h].w):"l"(p+h*8));
     }
   }
-  if(rank==0 && tid==0) {rr_init(rb,1);asm volatile("fence.proxy.async.shared::cta;" :::"memory");}
-  if(rank==0 && warp==0) __syncwarp();
-  if(rank==0 && tid==0) {rr_expect(rb,(S-1)*NI*16);asm volatile("fence.mbarrier_init.release.cluster;" :::"memory");}
+  if(rank<P && tid==0) {routertail_init(rb,1);asm volatile("fence.proxy.async.shared::cta;" :::"memory");}
+  __syncthreads();
+  if(rank<P && tid==0) {routertail_expect(rb,PARTS*OWN*16);asm volatile("fence.mbarrier_init.release.cluster;" :::"memory");}
   asm volatile("barrier.cluster.arrive.relaxed.aligned;" :::"memory");
   float c[2][MT][4]={};
 #pragma unroll
@@ -4198,43 +4211,45 @@ __global__ __launch_bounds__(WK*32) void rr_small_kernel(const int4* wp,const __
   for(int n=0;n<MT;n++) part[warp*NI+n*32+lane]=make_float4(c[0][n][0]+c[1][n][0],c[0][n][1]+c[1][n][1],c[0][n][2]+c[1][n][2],c[0][n][3]+c[1][n][3]);
   __syncthreads();
   asm volatile("barrier.cluster.wait.acquire.aligned;" :::"memory");
-  for(int v=tid;v<NI;v+=WK*32) {
+  if(tid<NI) {
     float4 sum=make_float4(0,0,0,0);
 #pragma unroll
-    for(int k=0;k<WK;k++) rr_add(sum,part[k*NI+v]);
-    if(rank==0)recv[v]=sum;
-    else rr_push(rr_map(rr_smem(recv+rank*NI+v),0),sum,rr_map(rb,0));
+    for(int k=0;k<WK;k++) routertail_add(sum,part[k*NI+tid]);
+    const int dst=tid/OWN,local=tid%OWN;
+    routertail_push(routertail_map(routertail_smem(recv+rank*OWN+local),dst),sum,routertail_map(rb,dst));
   }
-  if(rank==0) {
-    __syncthreads();rr_wait(rb,0);
-    for(int v=tid;v<NI;v+=WK*32) {
-      float4 sum=make_float4(0,0,0,0);
+
+  if(rank<P && tid<OWN) {
+    routertail_wait(rb,0);
+    float4 sum=make_float4(0,0,0,0);
 #pragma unroll
-      for(int s=0;s<S;s++) rr_add(sum,recv[s*NI+v]);
-      const int ln=v%32,tok=(v/32)*8+(ln&3)*2,wr=row+(ln>>2);
-      if(tok<m){out[tok*256+wr]=sum.x;out[tok*256+wr+8]=sum.z;}
-      if(tok+1<m){out[(tok+1)*256+wr]=sum.y;out[(tok+1)*256+wr+8]=sum.w;}
-    }
+    for(int k=0;k<PARTS;k++) routertail_add(sum,recv[k*OWN+tid]);
+    const int v=rank*OWN+tid,ln=v%32,tok=(v/32)*8+(ln&3)*2,wr=row+(ln>>2);
+    if(tok<m){out[tok*256+wr]=sum.x;out[tok*256+wr+8]=sum.z;}
+    if(tok+1<m){out[(tok+1)*256+wr]=sum.y;out[(tok+1)*256+wr+8]=sum.w;}
   }
+
 }
 
 template<int MT,int S,int WK>
-int rr_small_t(int64_t w,int64_t x,int64_t out,int m,int64_t stream) {
-  auto fn=rr_small_kernel<MT,S,WK>;
-  constexpr int bytes=(S+WK)*MT*512+16;
+int routertail_small_t(int64_t w,int64_t x,int64_t out,int m,int64_t stream,int query) {
+  auto fn=routertail_small_kernel<MT,S,WK>;
+  constexpr int bytes=(S*1/4+WK)*MT*512+16;
   static bool configured=false;
   if(!configured){cudaFuncSetAttribute(fn,cudaFuncAttributeMaxDynamicSharedMemorySize,bytes);cudaFuncSetAttribute(fn,cudaFuncAttributeNonPortableClusterSizeAllowed,1);configured=true;}
+  if(query==2){cudaFuncAttributes fa;cudaFuncGetAttributes(&fa,fn);return fa.numRegs*1000+fa.localSizeBytes;}
   cudaLaunchConfig_t cfg={};cfg.gridDim=dim3(16*S);cfg.blockDim=dim3(WK*32);cfg.dynamicSmemBytes=bytes;cfg.stream=(cudaStream_t)stream;
   cudaLaunchAttribute at;at.id=cudaLaunchAttributeClusterDimension;at.val.clusterDim={S,1,1};cfg.attrs=&at;cfg.numAttrs=1;
   return (int)cudaLaunchKernelEx(&cfg,fn,(const int4*)w,(const __nv_bfloat16*)x,(float*)out,m);
 }
-int rr_small(int64_t w,int64_t x,int64_t out,int m,int64_t stream) {
-  if(m<=8)return rr_small_t<1,16,8>(w,x,out,m,stream);
-  if(m<=16)return rr_small_t<2,16,8>(w,x,out,m,stream);
-  return -99;
+int routertail_small(int64_t w,int64_t x,int64_t out,int m,int s,int wk,int64_t stream,int query) {
+#define RSM(S,W) if(s==S && wk==W) {if(m<=8)return routertail_small_t<1,S,W>(w,x,out,m,stream,query);if(m<=16)return routertail_small_t<2,S,W>(w,x,out,m,stream,query);if(m<=32)return routertail_small_t<4,S,W>(w,x,out,m,stream,query);}
+RSM(8,8) RSM(16,8) RSM(16,4)
+return -99;
 }
+
 """
-SMALL_ROUTER_CPP = "#include <pybind11/pybind11.h>\n#include <stdint.h>\nint rr_small(int64_t,int64_t,int64_t,int,int64_t);"
+SMALL_ROUTER_CPP = '#include <stdint.h>\n#include <pybind11/pybind11.h>\nint routertail_small(int64_t,int64_t,int64_t,int,int,int,int64_t,int);\n'
 _small_router_ext = None
 
 
@@ -4242,8 +4257,8 @@ def _get_small_router_ext():
     global _small_router_ext
     if _small_router_ext is None:
         _small_router_ext = load_inline(
-            "research_kimi_small_router_s16w8_v1", SMALL_ROUTER_CPP, cuda_sources=SMALL_ROUTER_SRC,
-            functions=["rr_small"], extra_cuda_cflags=["-O3", "-std=c++20", "-gencode=arch=compute_90a,code=sm_90a"],
+            "ruw_routertail_small_s16w8_v1", SMALL_ROUTER_CPP, cuda_sources=SMALL_ROUTER_SRC,
+            functions=["routertail_small"], extra_cuda_cflags=["-O3", "-std=c++20", "-gencode=arch=compute_90a,code=sm_90a"],
             no_implicit_headers=True, with_pytorch_error_handling=False, verbose=False)
     return _small_router_ext
 
@@ -4270,7 +4285,7 @@ def _run(choice,x,layer,m,n,k,state):
         return _RS_RUN(choice,x,layer,m,n,k,state)
     assert x.is_contiguous() and x.data_ptr()%16 == 0 and k==8192
     out=torch.empty((m,256),dtype=torch.float32,device=x.device)
-    rc=_get_small_router_ext().rr_small(state['router_small'].data_ptr(),x.data_ptr(),out.data_ptr(),m,torch.cuda.current_stream().cuda_stream)
+    rc=_get_small_router_ext().routertail_small(state['router_small'].data_ptr(),x.data_ptr(),out.data_ptr(),m,16,8,torch.cuda.current_stream().cuda_stream,0)
     if rc:raise RuntimeError(f'small router launch failed: {rc}')
     return out
 
@@ -6438,3 +6453,44 @@ def kernel_fn(data, state):
         if out is not None:
             return out
     return _nathen_pool16_parent_kernel(data, state)
+
+
+# [BFX R32] ruwwww (Apache-2.0, github.com/ruwwww/open-kernel-challenge @c035bf9) route choice: router m == 32 on
+# rr_kernel<32,16,4,1,2,1> (ROUTER_CONFIGS[0]; ROUTER_CUDA above, byte-identical to ruwwww's judged build, Nathen MIT).
+# FP32 router weights as BF16 hi + lo K tiles, FP32 wgmma accumulation; 16-CTA K split, fixed-order owner sum.
+# prepare builds and checks it on synthetic data only (FP64 reference, tol 2e-5); any failure keeps the sk2 route.
+_rr32_parent_prepare = prepare
+_rr32_parent_kernel = kernel_fn
+
+
+def prepare(weights):
+    state = _rr32_parent_prepare(weights)
+    w = weights.get('router'); st = {'enabled': False}
+    try:
+        if (w is not None and tuple(w.shape) == (256, 8192) and w.dtype == torch.float32 and w.is_cuda
+                and torch.cuda.get_device_capability(w.device) == (9, 0)):
+            cand = prepare_candidates(weights, ROUTER_CONFIGS)
+            g = torch.Generator(device=w.device); g.manual_seed(4242)
+            x = torch.randn((32, 8192), generator=g, device=w.device).to(torch.bfloat16)
+            out = run_candidate(x, cand, 0).double(); torch.cuda.synchronize(w.device)
+            ref = x.double() @ w.double().T
+            err = ((out - ref).norm() / ref.norm()).item()
+            if err < 2e-5:
+                cand['enabled'] = True; st = cand
+            else:
+                print(f'[okc] rr32 router m=32: rel err {err:.3e} -> disabled', file=sys.stderr)
+    except Exception as e:  # build / launch failure -> keep the master route
+        print(f'[okc] rr32 router m=32 disabled: {e}', file=sys.stderr)
+        st = {'enabled': False}
+    state['rr32'] = _kshare_modules(st)
+    return state
+
+
+def kernel_fn(data, state):
+    _k_ctx_bind(data['x'])
+    x = data['x']; c = data['config']; st = state.get('rr32', {})
+    if (c['layer'] == 'router' and st.get('enabled') and c['n'] == 256 and x.ndim == 2 and x.shape[0] == 32
+            and x.shape[1] == 8192 and x.dtype == torch.bfloat16 and x.is_cuda and x.is_contiguous()
+            and x.data_ptr() % 16 == 0 and x.device == st['weight'].device):
+        return run_candidate(x, st, 0)
+    return _rr32_parent_kernel(data, state)
