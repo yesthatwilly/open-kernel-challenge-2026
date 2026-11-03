@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1SN (3to1 informed combos 11-01): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code present but _HSK = 0 (v1f key-packed head split, 0d2feafa); CPNQF clause above. pp-nonce B1SN-r1
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1P (trx-study 11-03): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code present but _HSK = 0 (v1f key-packed head split, 0d2feafa) + rider P of D1FT-p (1a559375) restricted to q_len 1 (row-less cooperative-finalize CTAs arrive and leave instead of polling; scheduling only; q_len 8 coop instances unchanged); CPNQF clause above. pp-nonce B1P-r3
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -2674,7 +2674,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
       if (old + mine == (HSQ || HSK ? 2 * n_keys : n_keys)) {   // [HSK8]   // [HSQ8] every head's CTAs add their keys: 2 x n_keys
         p.ws_cnt[((ep & 1) ? 8192 : 12288) + bp] = 0;
         p.ws_cnt[24576 + bp] = ep + 1;
-      } else {
+      } else if (L != 1 || split_idx * R < L * 16) {   // [D1FT-P] row-less CTAs arrive and leave (q_len 1 only)
         int v;
         SPIN_T0;
         for (;;) {
@@ -3439,7 +3439,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_b1sn{tag}_90a",
+        name=f"okc_attn_b1p{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
