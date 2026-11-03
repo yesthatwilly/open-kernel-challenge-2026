@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "1171f7919f9d4d8a",
- "check_job": "2dd445896cff42a5",
+ "job": "c44ca192e4e0447f",
+ "check_job": "6463e862cf8e4fa9",
  "mode": "submit",
- "speedup": 2.399803829972424,
+ "speedup": 2.367800085640187,
  "ci": [
-  2.3638067725228376,
-  2.43580088742201
+  2.332283084355584,
+  2.4033170869247895
  ],
- "score_us": 5603.9997236584695,
- "commit": "b2cbd5cff92ef52c1ea4a2c865d8bd3688bd6926",
- "submission_blob": "b54bb7efd8b4a2a6b0316b7f4edbf6b1119721dc",
- "slug": "trx-FRX-r3",
- "master_slug": "trx-FRX-r3",
- "master_job": "1171f7919f9d4d8a",
+ "score_us": 5679.744705458908,
+ "commit": "65ec48ca6c88713ee61c39a4af28ad48aae0e449",
+ "submission_blob": "7454bedd8b60aa121fa893d4e22c328fc0966f6c",
+ "slug": "trx-MXN-r3",
+ "master_slug": "trx-MXN-r3",
+ "master_job": "c44ca192e4e0447f",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-11-03T160549Z",
- "note": "trx-study 11-03: scored 2.3998 > board 2.3914; FRX gate GO on 2dd44589 (G_F +0.464%)"
+ "updated_at": "2026-11-03T161508Z",
+ "note": "trx-study 11-03: verified gain below the board (FRX-r3 1171f791 2.3998 is the board); MXN 3-read G +0.449% (6463e862, 11b2a5be, c44ca192); NRB4 d32 >= 1.006 in 5 judge reads"
 }
