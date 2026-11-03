@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "752054d53ade472a",
- "check_job": "9041a8edfd214693",
+ "job": "a4b98fae58a54892",
+ "check_job": null,
  "mode": "submit",
- "speedup": 1.5331211229653023,
+ "speedup": 1.5537283964177246,
  "ci": [
-  1.5101243061208227,
-  1.5561179398097817
+  1.5304224704714589,
+  1.5770343223639904
  ],
- "score_us": 3150.957825599883,
- "commit": "dad637c8ceb9c7f91f77a3eeb83fa0033b7b9567",
- "submission_blob": "aa6d6584d0081b311d7b7153cb176f09f7337589",
- "slug": "landing-752054d5",
- "master_slug": "landing-752054d5",
- "master_job": "752054d53ade472a",
+ "score_us": 3109.1663196333993,
+ "commit": "0827922ca551478bef0ba6597888fa3d994b8e38",
+ "submission_blob": "0fb1a33ce97fda398bd2edacce6b2618f0702c63",
+ "slug": "trx-BFX-r3",
+ "master_slug": "trx-BFX-r3",
+ "master_job": "a4b98fae58a54892",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-11-02T135013Z",
- "note": "user-approved landing of a verified gain below the board (1.5657 is a high read): v16 unpooler 1.0535/1.0543/1.0535 vs R0 1.0352 over 3 reads"
+ "updated_at": "2026-11-03T211136Z",
+ "note": "trx-study 11-03: verified gain below the board (109f577b 1.5657); BFX 3-read G +0.293% (35ccdea5, b16574c4, a4b98fae); rel v1 1.0504 d16 1.0543 d32 1.0633"
 }
