@@ -1,5 +1,5 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1P (trx-study 11-03): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code present but _HSK = 0 (v1f key-packed head split, 0d2feafa) + rider P of D1FT-p (1a559375) restricted to q_len 1 (row-less cooperative-finalize CTAs arrive and leave instead of polling; scheduling only; q_len 8 coop instances unchanged); CPNQF clause above. pp-nonce B1P-r3
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1P (trx-study 11-03): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code (v1f key-packed head split, 0d2feafa) + rider P of D1FT-p (1a559375) restricted to q_len 1 (row-less cooperative-finalize CTAs arrive and leave instead of polling; scheduling only; q_len 8 coop instances unchanged); CPNQF clause above. + ASTK (trx-study 11-03): HSK8 routed (_HSK = 1: v1f on attn_kernel<8,false,75>) + BFPR (per-request q8 softmax update unconditional, FA3 style, no warp vote; tree row max; ONE builds skip the zero-state rescale; bit-identical). pp-nonce ASTK-r3
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
@@ -30,7 +30,7 @@ Design
   normalizes, applies rmsnorm * sigmoid(gate), writes the output, then zeroes
   the workspace for the next call.
 * Launch shapes: per-request split-KV, per-request clusters (DSMEM
-  reduction), a flat kernel (one CTA pass over all requests' keys, for full
+  reduction), a flat kernel (one CTA pass over all reqs' keys, for full
   layers), and a cooperative finalize (every CTA finalizes a slice) for grids
   known resident. The host picks one in _plan(); the kernel itself is built
   once per launch mode (the MODE template parameter), so each build carries
@@ -88,7 +88,7 @@ PDL_BIT = 16   # bit 16: programmatic dependent launch
 CPUSH_BIT = 24   # [CPUSH] bit 24: per-KV-head cluster push-merge (B=1, one KV pair, q_len 1, sliding)
 _CPUSH = 1       # [CPUSH] 0 routes d1s as master (test switch)
 HSK_BIT = 26     # [HSK8] bit 26: one CTA per (split pair, KV head) on the q_len 8 full one-request coop grid
-_HSK = 0         # [HSK8] 0 routes v1f as master (test switch)
+_HSK = 1         # [HSK8] 0 routes v1f as master (test switch)
 HSQ_BIT = 25     # [HSQ8] bit 25: one CTA per (split, KV head) on the q_len 8 sliding cooperative grids
 _HSQ = 1         # [HSQ8] 0 routes every q_len 8 row as master (test switch); [HSV1] B == 1 only
 _HSQ_V1 = 1      # [HSQ8] 1 also routes one request (v1s: the speculative-length one-tile build)
@@ -174,7 +174,7 @@ constexpr int STAGES = 4;
 constexpr int ROWB = 128;                    // bytes per tile row: 2 KV heads x 64
 constexpr int STAGE_BYTES = TILE * ROWB;     // 8 KB per stage for K (same for V)
 constexpr int IDX_SLOTS = 2 * STAGES;
-constexpr int MAXB = 512;               // flat partition: requests per call
+constexpr int MAXB = 512;               // flat partition: reqs per call
 constexpr int MAXSEG = 64;              // flat partition: segments per CTA
 
 struct Params {
@@ -2291,9 +2291,8 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     }
     // [public-C A0] FA3's FP8 softmax (sgl-flash-attn 141fa063: flash_fwd_kernel_sm90.h:459 Max_offset 8 for FP8;
     // softmax.h:181-184 sums the fp32 P before mainloop_fwd_sm90_tma_gmma_ws.hpp:1360 rounds it to E4M3): the exact
-    // running row max (TH = 0: any score past it moves it, as FA3's per-tile max does), P = 2^(x - max + 8) in
+    // running row max (any score past it moves it, as FA3's per-tile max does), P = 2^(x - max + 8) in
     // (0, 256]; the denominator is the FP32 sum of the unrounded P (no ones rows; PV m64n64)
-    constexpr float TH = 0.f;
     float dlo, dhi;   // P = 2^(x - dlo) for row g, 2^(x - dhi) for row g + 8 (dlo = anchor - 8; 0 with no finite score yet)
     // this tile's FP32 row sums of the unrounded P ([tax] flat kernel: seeded with -0.0, the additive identity, so the
     // first add folds away; P >= +0 (ex2 never returns -0), hence the same sums bit for bit)
@@ -2345,27 +2344,25 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         asm volatile("bar.arrive %2, 256;\n" : "+f"(dlo), "+f"(dhi) : "r"(5 + (hk ^ 1)) : "memory");
       packh(0);
       packh(1);
-    } else {
-      const bool pchk = false;
-      if (!pchk) {
-        float mlo = -INFINITY, mhi = -INFINITY;
+    } else {   // [BFPR] per-request q8 kernels: FA3's unconditional per-tile update, no warp vote / branch. A row
+               // whose quad max is <= its anchor gets nlo == cr, alpha = 1.f exactly and O * 1.f == O, so this is
+               // bit-identical to master's voted form. Row maxima as balanced trees (depth 4 instead of an
+               // -inf-seeded 16-deep chain; fmaxf is exact, so the same values).
+      const float l0 = fmaxf(fmaxf(s[0], s[1]), fmaxf(s[4], s[5])), l1 = fmaxf(fmaxf(s[8], s[9]), fmaxf(s[12], s[13]));
+      const float l2 = fmaxf(fmaxf(s[16], s[17]), fmaxf(s[20], s[21])), l3 = fmaxf(fmaxf(s[24], s[25]), fmaxf(s[28], s[29]));
+      const float h0 = fmaxf(fmaxf(s[2], s[3]), fmaxf(s[6], s[7])), h1 = fmaxf(fmaxf(s[10], s[11]), fmaxf(s[14], s[15]));
+      const float h2 = fmaxf(fmaxf(s[18], s[19]), fmaxf(s[22], s[23])), h3 = fmaxf(fmaxf(s[26], s[27]), fmaxf(s[30], s[31]));
+      // scores -> log2 units (ssc > 0) before the quad max, as master (full-mask shuffles, every lane)
+      const float mlo = quad_max(fmaxf(fmaxf(l0, l1), fmaxf(l2, l3)) * ssc);
+      const float mhi = quad_max(fmaxf(fmaxf(h0, h1), fmaxf(h2, h3)) * ssc);
+      const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
+      if constexpr (!ONE) {   // (ONE builds: the only tile, o = 0 and l = 0: alpha would only multiply zeros, as at q_len 1)
+        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
 #pragma unroll
-        for (int nt = 0; nt < 8; ++nt) {
-          mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
-          mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
-        }
-        mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
-        mhi *= ssc;
-        if (__any_sync(0xffffffffu, (mlo > cr[0] + TH || mhi > cr[1] + TH))) {
-          mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
-          const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
-          const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
-#pragma unroll
-          for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
-          lacc[0] *= alo; lacc[2] *= ahi;
-          cr[0] = nlo; cr[1] = nhi;
-        }
+        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+        lacc[0] *= alo; lacc[2] *= ahi;
       }
+      cr[0] = nlo; cr[1] = nhi;
       dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
       dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
     }
@@ -2788,7 +2785,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 }
 
 // Flat grids whose CTAs are all resident: once every CTA has merged all its segments (grid-wide count),
-// each CTA finalizes its own slice of all requests' rows (sum the copies, normalize, rmsnorm * gate, store,
+// each CTA finalizes its own slice of all reqs' rows (sum the copies, normalize, rmsnorm * gate, store,
 // zero the workspace). Runs on the NT consumer threads; the last CTA out resets the two counters.
 template <int L, bool WS, int NT>
 __device__ __forceinline__ void flat_finalize(const Params& p, const int* sense_s) {
@@ -2976,7 +2973,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
   int w0_rank = 0;
   
   
-  // grid (G): CTA c takes keys [c*T/G, (c+1)*T/G) of all requests' keys laid end to end (equal work)
+  // grid (G): CTA c takes keys [c*T/G, (c+1)*T/G) of all reqs' keys laid end to end (equal work)
   // warp 0 computes the key range and the segment list right after its prefix sums (one request per lane)
   constexpr bool fpart = L == 1;   // (compile time: no run-time branch in the main flow)
   if constexpr (L == 1 && Cfg<L, FLAT>::WS) {
@@ -3012,7 +3009,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
       n_l = n;
     }
     if (threadIdx.x == 0) S.cum[0] = 0;
-    if (fpart && p.B > 32) {   // many requests: the generic partition by lane 0 (after the whole prefix sum)
+    if (fpart && p.B > 32) {   // many reqs: the generic partition by lane 0 (after the whole prefix sum)
       __syncwarp();
       if (threadIdx.x == 0) {
         constexpr int SEGKF = (L == 8) ? 600 : 400;
@@ -3059,7 +3056,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
         csf = min(csf - bs * SEGKF, is);
         cef = min(cef - be * SEGKF, ie);
       }
-      // segment list: the requests with cum[b + 1] > cs and cum[b] < ce (a contiguous run of lanes)
+      // segment list: the reqs with cum[b + 1] > cs and cum[b] < ce (a contiguous run of lanes)
       const bool in = lane_f < p.B && incl_l > csf && excl < cef;
       const unsigned mi = __ballot_sync(FULL, in);
       const int rank = __popc(mi & ((1u << lane_f) - 1u));
@@ -3439,7 +3436,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_b1p{tag}_90a",
+        name=f"okc_attn_astk{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
@@ -3518,7 +3515,7 @@ def _hsk_bit(B):
 
 def _plan(B, pairs, L, window, max_pages, P, device):
     """Launch plan for a shape: n_splits CTAs per (request, KV pair) or, flat, per KV pair over all
-    requests; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
+    reqs; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
     sms = _num_sms(device)
     target = 2 * sms
     if not window and 1 < B <= MAX_BATCH:
