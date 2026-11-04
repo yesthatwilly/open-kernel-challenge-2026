@@ -1,5 +1,6 @@
 # okc: problem=muse_decode_layer
 # stack_all1: stack_mf1 (MFIN, no MoE grid barrier) + SC6 (6-bit block scales, WGS MoE builds) + PRF32 + PDL at T=128 (moe-fin bundle; L2 hints at T=1 left out: judge d1 25.7-26.6 us with them vs 24.5-25.8 without). + KZ (team yesthatwilly, 11-04): adopted verbatim from github.com/keell0renz/muse-open-kernel-challenge @890809c (Apache-2.0, team keell0renz; attributions above and their NOTICE apply). pp-nonce KZ-decode_layer-r3
+# pp-nonce: dzl-r3
 # st2l: st1l with OKC_WGSFCI 4 (E374).
 # st1l: ybfl.py + OKC_WGSFCI 5 + weight-ring pacing at M <= 64 (E372).
 # ybfl: cepil_u160.py + WGS ybuf in bf16 (epilogue store + final-pass reads; harness/make_ybf.py).
@@ -6175,6 +6176,11 @@ __device__ __noinline__ void wgs_ranges(const Params& p, Smem& S) {
   }
   if (lane == 0) { S.wcp[nj] = (int)carryA; S.wcpB[nj] = (int)carryB; S.wtot = carryA; S.wtotB = carryB; }
   __syncwarp();
+  if (nj == 0) {  // [ZL] no local route in this launch: empty ranges (wgs_stage_at would read the unset S.jC[0])
+    if (lane < 4) S.wgr[lane] = 0;
+    __syncwarp();
+    return;
+  }
   const int l4 = lane & 3, pbl = l4 >> 1, kk = l4 & 1;
   const uint32_t tot = pbl ? carryB : carryA;
   int res;
