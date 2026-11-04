@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "1448280120e34d43",
+ "job": "0298f5ff37554de5",
  "check_job": null,
  "mode": "submit",
- "speedup": 1.5528695066702742,
+ "speedup": 1.5646202087306837,
  "ci": [
-  1.52957646407022,
-  1.5761625492703282
+  1.5411509055997235,
+  1.5880895118616438
  ],
- "score_us": 3110.8859947661654,
- "commit": "e6a2da74dce8eb33bc377802569b461829879402",
- "submission_blob": "a2cb23ce1a9158679f92f620894f3f9173d0337d",
- "slug": "plain",
- "master_slug": "plain",
- "master_job": "1448280120e34d43",
+ "score_us": 3087.522437102511,
+ "commit": "119f145e2e25a24d6181c7fb3afe91494f1c7dfe",
+ "submission_blob": "0ad95b3996aeef070ea30b6af1ff42953810253c",
+ "slug": "u1pin",
+ "master_slug": "u1pin",
+ "master_job": "0298f5ff37554de5",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T014509Z",
- "note": "PLAIN 1.5529 VALID; readable-source build of BFX, restores the DQ'd bf16 row"
+ "updated_at": "2026-11-04T030637Z",
+ "note": "3-read rho 1.034"
 }
