@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "85e5e041879b454a",
+ "job": "2d48f00fca8e40da",
  "check_job": null,
  "mode": "submit",
- "speedup": 2.2130274489797466,
+ "speedup": 2.265664968965486,
  "ci": [
-  2.1798320372450504,
-  2.2462228607144428
+  2.231679994431004,
+  2.2996499434999684
  ],
- "score_us": 10221.427669335257,
- "commit": "897c618e1e10f1864f307f448fcbba49cc7a186c",
- "submission_blob": "ecc9ef7ff7db694d5486ea036088fed751f735a7",
- "slug": "qb128",
- "master_slug": "qb128",
- "master_job": "85e5e041879b454a",
+ "score_us": 9983.956282083727,
+ "commit": "c3b07763765d2265e5f601dbe1ef006903970fd2",
+ "submission_blob": "0ffaeeb76faf1f71062fcd63a3ae3a6d8dedb513",
+ "slug": "kz-decode-r3",
+ "master_slug": "kz-decode-r3",
+ "master_job": "2d48f00fca8e40da",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T031425Z",
- "note": "3-read I(v16) +1.31%"
+ "updated_at": "2026-11-04T064133Z",
+ "note": "registered by churn.py register-landing from okc status 2d48f00fca8e40da"
 }
