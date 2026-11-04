@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "2d48f00fca8e40da",
- "check_job": null,
+ "job": "a02997bf3e0542ce",
+ "check_job": "1139d5f5da7c4160",
  "mode": "submit",
- "speedup": 2.265664968965486,
+ "speedup": 2.2342148684618164,
  "ci": [
-  2.231679994431004,
-  2.2996499434999684
+  2.200701645434889,
+  2.267728091488743
  ],
- "score_us": 9983.956282083727,
- "commit": "c3b07763765d2265e5f601dbe1ef006903970fd2",
- "submission_blob": "0ffaeeb76faf1f71062fcd63a3ae3a6d8dedb513",
- "slug": "kz-decode-r3",
- "master_slug": "kz-decode-r3",
- "master_job": "2d48f00fca8e40da",
+ "score_us": 10124.496224292578,
+ "commit": "c3ec85f75d8dccc7f8dcee52a5d6d3a9135b6f11",
+ "submission_blob": "ad4cf10c4e6fb51c026d0e3b9defeb01a5d7174c",
+ "slug": "dzl",
+ "master_slug": "dzl",
+ "master_job": "a02997bf3e0542ce",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T064133Z",
- "note": "registered by churn.py register-landing from okc status 2d48f00fca8e40da"
+ "updated_at": "2026-11-04T202849Z",
+ "note": "robustness rider per USER rule; 3 reads 2.238/2.257/2.234"
 }

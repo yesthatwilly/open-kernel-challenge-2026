@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "10f10d1a29634c81",
- "check_job": "2a00ff2464c64b3d",
+ "job": "eee554e7b8a14685",
+ "check_job": "fea38416ea594ee3",
  "mode": "submit",
- "speedup": 2.392295273069125,
+ "speedup": 2.3930630024145403,
  "ci": [
-  2.356410843973088,
-  2.4281797021651617
+  2.357167057378322,
+  2.428958947450758
  ],
- "score_us": 5621.588669005161,
- "commit": "b7ed47fc9e881e1d595f7cfbc226c12f6734ff4f",
- "submission_blob": "d04187a6660751ee9aa724a15cd8627b5e2e0df0",
- "slug": "fin-mfsd",
- "master_slug": "fin-mfsd",
- "master_job": "10f10d1a29634c81",
+ "score_us": 5619.785181765295,
+ "commit": "9fe5e52c28f73d2b5144163e1917792c17fb0db2",
+ "submission_blob": "ebf1eec1fc156ed3d98a21559559aa8fb15fa322",
+ "slug": "mpc",
+ "master_slug": "mpc",
+ "master_job": "eee554e7b8a14685",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T190255Z",
- "note": "3 judge reads mean 2.4025 vs MXN r4-r6 2.381 (+0.9%); scored 2.392 below board 2.3998; lands per okc-land-verified-below-board"
+ "updated_at": "2026-11-04T202849Z",
+ "note": "robustness rider per USER rule; 3 reads 2.381/2.402/2.393"
 }
