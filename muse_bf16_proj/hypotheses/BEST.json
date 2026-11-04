@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "0298f5ff37554de5",
+ "job": "d455f7f990f14da2",
  "check_job": null,
  "mode": "submit",
- "speedup": 1.5646202087306837,
+ "speedup": 1.575920157493186,
  "ci": [
-  1.5411509055997235,
-  1.5880895118616438
+  1.5522813551307881,
+  1.5995589598555837
  ],
- "score_us": 3087.522437102511,
- "commit": "119f145e2e25a24d6181c7fb3afe91494f1c7dfe",
- "submission_blob": "0ad95b3996aeef070ea30b6af1ff42953810253c",
- "slug": "u1pin",
- "master_slug": "u1pin",
- "master_job": "0298f5ff37554de5",
+ "score_us": 3065.3837233000095,
+ "commit": "00ffb3b10703f0659ce0b96a9ab9dc388ace90c0",
+ "submission_blob": "f350c89cb8abbddf51e9a85c9360a75bd04b3d11",
+ "slug": "kz-bf16-r3",
+ "master_slug": "kz-bf16-r3",
+ "master_job": "d455f7f990f14da2",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T030637Z",
- "note": "3-read rho 1.034"
+ "updated_at": "2026-11-04T064134Z",
+ "note": "registered by churn.py register-landing from okc status d455f7f990f14da2"
 }
