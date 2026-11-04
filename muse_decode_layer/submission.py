@@ -1,10 +1,12 @@
 # okc: problem=muse_decode_layer
-# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31. + DC5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the max, lean max seed; the DPP turn ends right before the exponentials; same arithmetic, scheduling only; port of attention C5L). + CG: T = 1 qkv on muse_bf16_proj's cgemv<2,512,8192,2> over lossless 12-bit planes in the unused qkv_gate wide stream (FP32 accumulation, one BF16 rounding; launch_dependents after the FMA loop as sk2; T != 1 unchanged; DS1 M1, judge diag d3f671e8). pp-nonce DSTK-r1; lane dec-dense W2 FUSE32-ESC (T=32 pooler + router in one pooler32_r144 sk2 launch, router weights riding the pooler stages, router MMAs on the escape warps) + ZL: WGS builds take empty stage ranges on a launch with no local route (robustness; ported from moe 5a191582). pp-nonce DD-W2Z-h1
+# Based on alygg77@6cae49a kernels/muse_decode_layer.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: ATT7 q_len 8 exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard; the four tvm_ffi glue builds on torch load_inline. Compliance patch (public-C D0, judge 10-31). + DPP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only; port of attention PP). 3to1 lever DPP, judge 10-31. + D0FIX: sk2 / skinny / GLE / moe-WGS ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, fused router, escape owner, skinny, GLE FP32 router stages, moe WGS weights slot; ordering only); 3to1 sk2fix D0FIX, user: keep (robustness), judge 10-31. + DC5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the max, lean max seed; the DPP turn ends right before the exponentials; same arithmetic, scheduling only; port of attention C5L). + CG: T = 1 qkv on muse_bf16_proj's cgemv<2,512,8192,2> over lossless 12-bit planes in the unused qkv_gate wide stream (FP32 accumulation, one BF16 rounding; launch_dependents after the FMA loop as sk2; T != 1 unchanged; DS1 M1, judge diag d3f671e8). pp-nonce DSTK-r1; lane dec-dense W2 FUSE32-ESC (T=32 pooler + router in one pooler32_r144 sk2 launch, router weights riding the pooler stages, router MMAs on the escape warps) + ZL: WGS builds take empty stage ranges on a launch with no local route (robustness; ported from moe 5a191582). + FAC-qb128 (trx-study 11-03): T = 128 qkv on qb_kernel<64,36,128,3,8,539,5> (3-CTA cluster K split, DSMEM FP32 exchange, one BF16 rounding), verbatim from our muse_bf16_proj master (alygg77 lineage) in place of the cuBLASLt 48x64 pick; prepare-checked on synthetic data, Lt pick on any failure. pp-nonce FAC-qb128-r3 + QBPLAIN: the qb_kernel template is plain readable source text; compiled code byte-identical.
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
+# Portions (qb_kernel, the qkv m=128 GEMM) from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0), via our
+# muse_bf16_proj submission; that notice is retained here.
 """Muse Spark decode layer: one CUDA-graph-capturable kernel_fn.
 
 Pipeline (one decode step, T = batch * q_len tokens)
@@ -291,7 +293,7 @@ constexpr int STAGES = 4;
 constexpr int ROWB = 128;                    // bytes per tile row: 2 KV heads x 64
 constexpr int STAGE_BYTES = TILE * ROWB;     // 8 KB per stage for K (same for V)
 constexpr int IDX_SLOTS = 2 * STAGES;
-constexpr int MAXB = 512;               // flat partition: requests per call
+constexpr int MAXB = 512;               // flat partition: reqs per call
 constexpr int MAXSEG = 64;              // flat partition: segments per CTA
 
 struct Params {
@@ -2935,7 +2937,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 }
 
 // Flat grids whose CTAs are all resident: once every CTA has merged all its segments (grid-wide count),
-// each CTA finalizes its own slice of all requests' rows (sum the copies, normalize, rmsnorm * gate, store,
+// each CTA finalizes its own slice of all reqs' rows (sum the copies, normalize, rmsnorm * gate, store,
 // zero the workspace). Runs on the NT consumer threads; the last CTA out resets the two counters.
 template <int L, bool WS, int NT>
 __device__ __forceinline__ void flat_finalize(const Params& p, const int* sense_s) {
@@ -3176,7 +3178,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
     atomicAdd(p.ws_cnt + 32001, 1);   // registered (monotonic: launch g is complete at (g + 1) * G)
     w0g_rank = (w0g_rank & 3) | ((int)smid << 2);
   }
-  // grid (G): CTA c takes keys [c*T/G, (c+1)*T/G) of all requests' keys laid end to end (equal work)
+  // grid (G): CTA c takes keys [c*T/G, (c+1)*T/G) of all reqs' keys laid end to end (equal work)
   // OKC_FPART: warp 0 computes the key range and the segment list right after its prefix sums (one request per lane)
   constexpr bool fpart = OKC_FPART && L == 1 && !OKC_W0ENABLE && !OKC_W0L1 && OKC_WSPLIT == 500 && !OKC_BALPART &&
                          !OKC_SWAPHALF && !OKC_DYN;   // (compile time: no run-time branch in the main flow)
@@ -3213,7 +3215,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
       n_l = n;
     }
     if (threadIdx.x == 0) S.cum[0] = 0;
-    if (fpart && p.B > 32) {   // many requests: the generic partition by lane 0 (after the whole prefix sum)
+    if (fpart && p.B > 32) {   // many reqs: the generic partition by lane 0 (after the whole prefix sum)
       __syncwarp();
       if (threadIdx.x == 0) {
         constexpr int SEGKF = (L == 8) ? OKC_SEGK8 : OKC_SEGK1;
@@ -3260,7 +3262,7 @@ __global__ void __launch_bounds__(Cfg<L, FLAT>::NTX, Cfg<L, FLAT>::MINB) attn_ke
         csf = min(csf - bs * SEGKF, is);
         cef = min(cef - be * SEGKF, ie);
       }
-      // segment list: the requests with cum[b + 1] > cs and cum[b] < ce (a contiguous run of lanes)
+      // segment list: the reqs with cum[b + 1] > cs and cum[b] < ce (a contiguous run of lanes)
       const bool in = lane_f < p.B && incl_l > csf && excl < cef;
       const unsigned mi = __ballot_sync(FULL, in);
       const int rank = __popc(mi & ((1u << lane_f) - 1u));
@@ -3782,7 +3784,7 @@ OKC_W0_L8 = 1135   # q_len 8 flat: the lower-blockIdx CTA of each SM takes 1135/
 
 def _plan7(B, pairs, L, window, max_pages, P, device):
     """Launch plan for a shape: n_splits CTAs per (request, KV pair) or, flat, per KV pair over all
-    requests; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
+    reqs; clusters of cs CTAs reduce through DSMEM (ncl clusters per request); nc workspace copies."""
     sms = _num_sms7(device)
     target = 2 * sms
     if not window and 1 < B <= 512:
@@ -12335,7 +12337,7 @@ def kernel_fn(data, state):
     plan = state.get("graft_lt", {}).get(("qkv", T)) if T in (128, 256) else None
     if (plan is not None and state["att_ok"] and _supported7(cfg) and _att_fits7(data, cfg)
             and state.get("mm_pick", {}).get((T, "qkv"), True) is True):
-        qkv = _graft_lt_run(data["attn_input"], plan)
+        qkv = _fac_qkv(data["attn_input"], plan, state, T)   # [FAC-qb128] T = 128 -> qb_kernel, else the Lt pick
         try:
             o_in = _decode_attention7(data, state, qkv)
         except RuntimeError:
@@ -14335,4 +14337,92 @@ def prepare(weights):
             and bfp.get("choice", {}).get(("pooler", 32), ("",))[0] == "sk2"
             and bfp.get("choice", {}).get(("router", 32), ("",))[0] == "sk2"):
         st["mm_pick"][(32, "pr")] = "bfpf"
+    return st
+
+
+# ---------------------------------------------------------------------------------------------- FAC-qb128 (trx-study)
+# T = 128 (verify 16) qkv on qb_kernel<64,36,128,3,8,539,5>: TMA + wgmma, 3-CTA cluster K split, DSMEM FP32 partial
+# exchange, one BF16 rounding (FP32 accumulation). Verbatim from our muse_bf16_proj master (e9483339), where it runs
+# qkv_gate m = 128 on the judge; it comes from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0).
+# prepare builds and checks it on synthetic data only (FP64 reference); any failure keeps the cuBLASLt pick.
+
+_FAC_QB_SRC = '\n#include <cuda.h>\n#include <cuda_runtime.h>\n#include <cuda_bf16.h>\n#include <stdint.h>\n#include <algorithm>\n#define QD __device__ __forceinline__\nQD uint32_t q_addr(const void* p) {return (uint32_t)__cvta_generic_to_shared(p);}\nQD void q_init(uint32_t p,int n) {asm volatile("mbarrier.init.shared::cta.b64 [%0],%1;"::"r"(p),"r"(n):"memory");}\nQD void q_expect(uint32_t p,int n) {asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _,[%0],%1;"::"r"(p),"r"(n):"memory");}\nQD void q_wait(uint32_t p,int phase) {\n  asm volatile("{.reg .pred p; L: mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 p,[%0],%1; @!p bra L;}"::"r"(p),"r"(phase):"memory");\n}\nQD void q_sync() {asm volatile("barrier.cluster.arrive.release.aligned; barrier.cluster.wait.acquire.aligned;":::"memory");}\nQD uint32_t q_map(uint32_t p,int rank) {uint32_t d;asm("mapa.shared::cluster.u32 %0,%1,%2;":"=r"(d):"r"(p),"r"(rank));return d;}\nQD void q_push(uint32_t p,float4 v,uint32_t b) {\n  asm volatile("st.async.shared::cluster.mbarrier::complete_tx::bytes.v4.f32 [%0],{%1,%2,%3,%4},[%5];"::"r"(p),"f"(v.x),"f"(v.y),"f"(v.z),"f"(v.w),"r"(b):"memory");\n}\nQD uint64_t q_desc(uint32_t p) {return uint64_t((p&0x3ffff)>>4)|(uint64_t(64)<<32)|(uint64_t(1)<<62);}\nQD uint64_t q_time() {uint64_t t;asm volatile("mov.u64 %0, %%globaltimer;":"=l"(t)::"memory");return t;}\nQD void q_tma(uint32_t p,const void* tm,int k,int r,uint32_t b,uint64_t policy) {\n  asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0],[%1,{%2,%3}],[%4],%5;"::"r"(p),"l"(tm),"r"(k),"r"(r),"r"(b),"l"(policy):"memory");\n}\nQD void q_tma3(uint32_t p,const void* tm,int k,int r,uint32_t b,uint64_t policy) {\n  asm volatile("cp.async.bulk.tensor.3d.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0],[%1,{0,%2,%3}],[%4],%5;"::"r"(p),"l"(tm),"r"(k/64),"r"(r),"r"(b),"l"(policy):"memory");\n}\n@@MMA@@\ntemplate<int NR,int G,int TM,int S,int ST,int PIPE,int RED,bool PROFILE>\n__global__ __launch_bounds__((PIPE&2)?256:128) void qb_kernel(const __grid_constant__ CUtensorMap tw,\n    const __grid_constant__ CUtensorMap tx,__nv_bfloat16* out,int m,unsigned long long* stamps) {\n  constexpr int KT=(PIPE&32)?2:1, LR=(2304+G-1)/G, WB=NR*128, XB=TM*128, SB=KT*(WB+XB);\n  constexpr int NV=NR*TM/4, OWN=RED>=4?((NV/128+S-1)/S)*128:((PIPE&16)?(NV+S-1)/S:((NV+128*S-1)/(128*S))*128);\n  constexpr int RB=ST*SB+ST*16, RECV=RED==3?0:RB+16;\n  extern __shared__ __align__(1024) unsigned char sm[];\n  const int tid=threadIdx.x, lane=tid&31, rank=blockIdx.x%S, group=blockIdx.x/S;\n  const int tok=blockIdx.y*TM, row=group*2304/G, rows=(group+1)*2304/G-row;\n  const int kb=(128/KT)*rank/S, nkb=(128/KT)*(rank+1)/S-kb, own=RED>=4?((NV/128+S-1-rank)/S)*128:min(OWN,NV-rank*OWN);\n  const uint32_t base=q_addr(sm), bars=base+ST*SB, empty=bars+ST*8, rb=base+RB;\n  uint64_t begin=0, stream_end=0;\n  if constexpr(PROFILE) begin=q_time();\n  if constexpr(LR<NR) {\n    for(int i=tid;i<ST*(NR-LR)*32;i+=blockDim.x) {\n      int stage=i/((NR-LR)*32), j=i%((NR-LR)*32);\n      ((uint32_t*)(sm+stage*SB+LR*128))[j]=0;\n    }\n    asm volatile("fence.proxy.async.shared::cta;":::"memory");\n    __syncthreads();\n  }\n  uint64_t pw,px;\n  asm volatile("createpolicy.fractional.L2::evict_first.b64 %0, 1.0;":"=l"(pw));\n  asm volatile("createpolicy.fractional.L2::evict_last.b64 %0, 1.0;":"=l"(px));\n  auto tma=[&](uint32_t p,const void* tm,int k,int r,uint32_t b,uint64_t policy) {\n    if constexpr(PIPE&2048)q_tma3(p,tm,k,r,b,policy);else q_tma(p,tm,k,r,b,policy);\n  };\n  if constexpr(PIPE&4096)asm volatile("createpolicy.fractional.L2::evict_normal.b64 %0, 1.0;":"=l"(pw));\n  auto load=[&](int i) {\n    const int stage=i%ST;\n    q_expect(bars+stage*8,KT*(LR*128+XB));\n    if constexpr(KT==2)tma(base+stage*SB,&tw,0,(group*128+(kb+i)*KT)*NR,bars+stage*8,pw);\n    else tma(base+stage*SB,&tw,(kb+i)*64,group*LR,bars+stage*8,pw);\n#pragma unroll\n    for(int q=0;q<KT;q++)tma(base+stage*SB+KT*WB+q*XB,&tx,((kb+i)*KT+q)*64,tok,bars+stage*8,px);\n  };\n  if(tid==((PIPE&2)?128:0)) {\n#pragma unroll\n    for(int i=0;i<ST;i++) {q_init(bars+i*8,1);if constexpr(PIPE&2)q_init(empty+i*8,4);}\n    if constexpr(S>1) q_init(rb,1);\n    asm volatile("fence.proxy.async.shared::cta;":::"memory");\n    if constexpr(S>1 && RED<4) {q_expect(rb,(S-1)*own*16);asm volatile("fence.mbarrier_init.release.cluster;":::"memory");}\n#pragma unroll\n    for(int i=0;i<ST;i++) if(i<nkb)load(i);\n  }\n  __syncthreads();\n  if constexpr(S>1 && RED>=4) {\n    if(tid==((PIPE&2)?128:0)) {\n      q_expect(rb,(S-1)*own*16);\n      asm volatile("fence.mbarrier_init.release.cluster;":::"memory");\n    }\n    __syncthreads();\n  }\n  if constexpr(S>1 && RED!=3) asm volatile("barrier.cluster.arrive.relaxed.aligned;":::"memory");\n  if constexpr(PIPE&2) {\n    if(tid>=128) {\n      if(tid==128) for(int i=ST;i<nkb;i++) {q_wait(empty+(i%ST)*8,((i/ST)-1)&1);load(i);}\n      if constexpr(S>1) {\n        if constexpr(RED==3) asm volatile("barrier.cluster.arrive.release.aligned;":::"memory");\n        asm volatile("barrier.cluster.wait.acquire.aligned;":::"memory");\n        if constexpr(RED==1 || RED==3) q_sync();\n      }\n      return;\n    }\n  }\n  float a[(TM/64)*(NR/2)];\n#pragma unroll\n  for(int h=0;h<TM/64;h++)\n#pragma unroll\n    for(int j=0;j<NR/2;j++) asm volatile("mov.b32 %0, 0;":"=f"(a[h*(NR/2)+j]));\nif constexpr(PIPE&64) asm volatile("wgmma.fence.sync.aligned;":::"memory");\n#pragma unroll 1\n  for(int i=0;i<nkb;i++) {\n    const int stage=i%ST;\n    q_wait(bars+stage*8,(i/ST)&1);\n#pragma unroll\n    for(int h=0;h<TM/64;h++)\n#pragma unroll\n      for(int j=0;j<NR/2;j++) if constexpr(!(PIPE&128)) asm volatile("":"+f"(a[h*(NR/2)+j])::"memory");\n    if constexpr(!(PIPE&64)) asm volatile("wgmma.fence.sync.aligned;":::"memory");\n#pragma unroll\n    for(int k=0;k<4*KT;k++) {\n      if constexpr(PIPE&8) {\n        uint64_t dx=q_desc(base+stage*SB+KT*WB+(k/4)*XB+(k%4)*32),dw=q_desc(base+stage*SB+(k/4)*WB+(k%4)*32);\n        @@SWAP@@\n      } else {\n#pragma unroll\n        for(int h=0;h<TM/64;h++) {\n          uint64_t dx=q_desc(base+stage*SB+KT*WB+(k/4)*XB+h*8192+(k%4)*32),dw=q_desc(base+stage*SB+(k/4)*WB+(k%4)*32);\n          @@CALL@@\n        }\n      }\n    }\n    asm volatile("wgmma.commit_group.sync.aligned;":::"memory");\n    if constexpr(PIPE&1) asm volatile("wgmma.wait_group.sync.aligned %0;"::"n"(((PIPE>>8)&7)?((PIPE>>8)&7):1):"memory");\n    else asm volatile("wgmma.wait_group.sync.aligned 0;":::"memory");\n#pragma unroll\n    for(int h=0;h<TM/64;h++)\n#pragma unroll\n      for(int j=0;j<NR/2;j++) if constexpr(!(PIPE&128)) asm volatile("":"+f"(a[h*(NR/2)+j])::"memory");\n    int done=i-((PIPE&1)?(((PIPE>>8)&7)?((PIPE>>8)&7):1):0);\n    if(done>=0 && done+ST<nkb) {\n      if constexpr(PIPE&2) {if(lane==0)asm volatile("mbarrier.arrive.shared::cta.b64 _,[%0];"::"r"(empty+(done%ST)*8):"memory");}\n      else if(tid==0)load(done+ST);\n    }\n  }\n  asm volatile("wgmma.wait_group.sync.aligned 0;":::"memory");\n  if constexpr(PROFILE) stream_end=q_time();\n  auto emit=[&](int v,float4 z) {\n    int t=v%128, j=(v/128)%(NR/8), h=(v/128)/(NR/8);\n    int rr=h*64+(t/32)*16+(t%32)/4, cc=j*8+(t%4)*2;\n    float vv[4]={z.x,z.y,z.z,z.w};\n#pragma unroll\n    for(int c=0;c<4;c++) {\n      int tr,wc;\n      if constexpr(PIPE&8) {tr=tok+(v/128)*8+(t%4)*2+(c&1);wc=(t/32)*16+(t%32)/4+(c/2)*8;}\n      else {tr=tok+rr+(c/2)*8;wc=cc+(c&1);}\n      if(tr<m && wc<rows)out[tr*2304+row+wc]=__float2bfloat16_rn(vv[c]);\n    }\n  };\n  if constexpr(S==1) {\n#pragma unroll\n    for(int h=0;h<TM/64;h++)\n#pragma unroll\n      for(int j=0;j<NR/8;j++)emit((h*(NR/8)+j)*128+tid,make_float4(a[h*(NR/2)+j*4],a[h*(NR/2)+j*4+1],a[h*(NR/2)+j*4+2],a[h*(NR/2)+j*4+3]));\n  } else if constexpr(RED>=4) {\n    static_assert(NR==64 && (PIPE&8));\n    asm volatile("barrier.cluster.wait.acquire.aligned;":::"memory");\n#pragma unroll\n    for(int j=0;j<TM/8;j++) {\n      int dst=j%S,local=(j/S)*128+tid,slot=rank-(rank>dst);\n      if(dst!=rank) q_push(q_map(base+RECV+(slot*OWN+local)*16,dst),\n        make_float4(a[4*j],a[4*j+1],a[4*j+2],a[4*j+3]),q_map(rb,dst));\n    }\n    q_wait(rb,0);\n#pragma unroll\n    for(int j=0;j<TM/8;j++) if(j%S==rank) {\n      float4 sum=make_float4(0,0,0,0);\n#pragma unroll\n      for(int r=0;r<S;r++) {\n        float4 z=r==rank?make_float4(a[4*j],a[4*j+1],a[4*j+2],a[4*j+3]):\n          *(float4*)(sm+RECV+((r-(r>rank))*OWN+(j/S)*128+tid)*16);\n        sum.x+=z.x;sum.y+=z.y;sum.z+=z.z;sum.w+=z.w;\n      }\n      if constexpr(RED==4) emit(j*128+tid,sum);\n      else {\n        a[4*j]=sum.x;a[4*j+1]=sum.y;a[4*j+2]=sum.z;a[4*j+3]=sum.w;\n      }\n    }\n    if constexpr(RED==5) {\n      asm volatile("bar.sync 1,128;":::"memory");\n#pragma unroll\n      for(int j=0;j<TM/8;j++) if(j%S==rank) {\n        __nv_bfloat162 lo=__floats2bfloat162_rn(a[4*j],a[4*j+1]),hi=__floats2bfloat162_rn(a[4*j+2],a[4*j+3]);\n        int rr=(tid/32)*16+((tid%16)/8)*8,cc=8*j+tid%8;\n        asm volatile("stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%0],{%1,%2};"::\n          "r"(base+2*(cc*72+rr)),"r"(*(uint32_t*)&lo),"r"(*(uint32_t*)&hi):"memory");\n      }\n      asm volatile("bar.sync 1,128;":::"memory");\n      for(int q=tid;q<(own/128)*64;q+=128) {\n        int token=(rank+(q/64)*S)*8+(q/8)%8,rr=(q%8)*8;\n        if(tok+token<m) *(uint4*)(out+(tok+token)*2304+row+rr)=*(uint4*)((__nv_bfloat16*)sm+token*72+rr);\n      }\n    }\n  } else {\n    if constexpr(RED==3) asm volatile("barrier.cluster.arrive.release.aligned;":::"memory");\n    asm volatile("barrier.cluster.wait.acquire.aligned;":::"memory");\n#pragma unroll\n    for(int h=0;h<TM/64;h++)\n#pragma unroll\n      for(int j=0;j<NR/8;j++) {\n        int v=(h*(NR/8)+j)*128+tid,dst=v/OWN,local=v%OWN;\n        float4 z=make_float4(a[h*(NR/2)+j*4],a[h*(NR/2)+j*4+1],a[h*(NR/2)+j*4+2],a[h*(NR/2)+j*4+3]);\n        uint32_t p=base+RECV+(rank*OWN+local)*16;\n        if(dst==rank)*(float4*)(sm+RECV+(rank*OWN+local)*16)=z;\n        else q_push(q_map(p,dst),z,q_map(rb,dst));\n      }\n    if constexpr(PIPE&2) asm volatile("bar.sync 1, 128;":::"memory");else __syncthreads();\n    q_wait(rb,0);\n    for(int t=tid;t<own;t+=128) {\n      float4 sum=make_float4(0,0,0,0);\n#pragma unroll\n      for(int r=0;r<S;r++) {\n        float4 z=*(float4*)(sm+RECV+(r*OWN+t)*16);\n        sum.x+=z.x;sum.y+=z.y;sum.z+=z.z;sum.w+=z.w;\n      }\n      emit(rank*OWN+t,sum);\n    }\n    if constexpr(RED==1 || RED==3) q_sync();\n  }\n  if constexpr(PROFILE) if(lane==0) {\n    unsigned smid;asm volatile("mov.u32 %0, %%smid;":"=r"(smid));\n    int idx=((blockIdx.y*gridDim.x+blockIdx.x)*4+tid/32)*4;\n    stamps[idx]=smid;stamps[idx+1]=begin;stamps[idx+2]=stream_end;stamps[idx+3]=q_time();\n  }\n}\nusing QEncode=decltype(&cuTensorMapEncodeTiled);\nint q_tensor_map(CUtensorMap* tm,int64_t p,int inner,int rows,int box,bool map3) {\n  static QEncode encode=nullptr;\n  if(!encode){cudaDriverEntryPointQueryResult q;cudaGetDriverEntryPointByVersion("cuTensorMapEncodeTiled",(void**)&encode,12000,cudaEnableDefault,&q);if(!encode)return -100;}\n  if(map3) {\n    uint64_t dims[3]={64,(uint64_t)inner/64,(uint64_t)rows},stride[2]={128,(uint64_t)inner*2};\n    uint32_t box3[3]={64,1,(uint32_t)box},es[3]={1,1,1};\n    return int(encode(tm,CU_TENSOR_MAP_DATA_TYPE_BFLOAT16,3,(void*)p,dims,stride,box3,es,CU_TENSOR_MAP_INTERLEAVE_NONE,\n      CU_TENSOR_MAP_SWIZZLE_128B,CU_TENSOR_MAP_L2_PROMOTION_L2_256B,CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE));\n  }\n  uint64_t dims[2]={(uint64_t)inner,(uint64_t)rows},stride[1]={(uint64_t)inner*2};uint32_t b[2]={64,(uint32_t)box},es[2]={1,1};\n  return int(encode(tm,CU_TENSOR_MAP_DATA_TYPE_BFLOAT16,2,(void*)p,dims,stride,b,es,CU_TENSOR_MAP_INTERLEAVE_NONE,\n    CU_TENSOR_MAP_SWIZZLE_128B,CU_TENSOR_MAP_L2_PROMOTION_L2_256B,CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE));\n}\ntemplate<int NR,int G,int TM,int S,int ST,int PIPE,int RED,bool PROFILE>\nint qb_launch_t(int64_t w,int64_t x,int64_t out,int m,int64_t stream,int query,int64_t stats) {\n  constexpr int LR=(2304+G-1)/G,NV=NR*TM/4,OWN=RED>=4?((NV/128+S-1)/S)*128:((PIPE&16)?(NV+S-1)/S:((NV+128*S-1)/(128*S))*128);\n  constexpr int KT=(PIPE&32)?2:1;\n  constexpr int bytes=ST*KT*(NR+TM)*128+ST*16+16+(S>1 && RED!=3?(RED>=4?S-1:S)*OWN*16:0);\n  auto fn=qb_kernel<NR,G,TM,S,ST,PIPE,RED,PROFILE>;\n  static bool ready=false;\n  if(!ready){cudaError_t e=cudaFuncSetAttribute(fn,cudaFuncAttributeMaxDynamicSharedMemorySize,bytes);if(e!=cudaSuccess)return -(int)e;\n    e=cudaFuncSetAttribute(fn,cudaFuncAttributeNonPortableClusterSizeAllowed,1);if(e!=cudaSuccess)return -(int)e;ready=true;}\n  if(query==2){cudaFuncAttributes fa;cudaFuncGetAttributes(&fa,fn);return fa.numRegs*1000+fa.localSizeBytes;}\n  cudaLaunchConfig_t cfg={};cfg.gridDim=dim3(G*S,(m+TM-1)/TM);cfg.blockDim=dim3((PIPE&2)?256:128);cfg.dynamicSmemBytes=bytes;cfg.stream=(cudaStream_t)stream;\n  cudaLaunchAttribute attr={};attr.id=cudaLaunchAttributeClusterDimension;attr.val.clusterDim={S,1,1};if(S>1){cfg.attrs=&attr;cfg.numAttrs=1;}\n  if(query==1){int v=0;cudaError_t e=S>1?cudaOccupancyMaxActiveClusters(&v,fn,&cfg):cudaOccupancyMaxActiveBlocksPerMultiprocessor(&v,fn,cfg.blockDim.x,bytes);return e==cudaSuccess?v:-(int)e;}\n  CUtensorMap tw,tx;int e=q_tensor_map(&tw,w,KT==2?64:8192,KT==2?G*128*NR:G*LR,KT==2?KT*NR:LR,PIPE&2048);if(e)return e;e=q_tensor_map(&tx,x,8192,m,TM,PIPE&2048);if(e)return e;\n  return int(cudaLaunchKernelEx(&cfg,fn,tw,tx,(__nv_bfloat16*)out,m,(unsigned long long*)stats));\n}\nint qb_launch(int id,int64_t w,int64_t x,int64_t out,int m,int64_t stream,int query,int64_t stats) {\n  switch(id){@@CASES@@ default:return -99;}\n}\n'  # qb_kernel template, plain readable source
+_FAC_QB_CONFIG = (64, 36, 128, 3, 8, 539, 5)
+_FAC_QB_EXT = None
+
+
+def _fac_qb_mma(n):
+    regs = ','.join(f'%{i}' for i in range(n // 2))
+    outs = ','.join(f'"+f"(a[{i}])' for i in range(n // 2))
+    return f'__device__ __forceinline__ void q_mma_{n}(float* a,uint64_t x,uint64_t w) {{\n      asm volatile("wgmma.mma_async.sync.aligned.m64n{n}k16.f32.bf16.bf16 {{{regs}}}, %{n // 2}, %{n // 2 + 1}, 1, 1, 1, 0, 0;" : {outs} : "l"(x),"l"(w));\n    }}'
+
+
+def _fac_qb_ext():
+    global _FAC_QB_EXT
+    if _FAC_QB_EXT is None:
+        import hashlib
+        configs = [_FAC_QB_CONFIG]
+        ns = sorted({c[0] for c in configs} | {c[2] for c in configs if c[5] & 8})
+        source = _FAC_QB_SRC
+        source = source.replace('@@MMA@@', '\n'.join(_fac_qb_mma(n) for n in ns))
+        source = source.replace('@@CALL@@', ' '.join(f'if constexpr(NR=={n})q_mma_{n}(a+h*(NR/2),dx,dw);' for n in ns))
+        source = source.replace('@@SWAP@@', ' '.join(f'if constexpr(TM=={n})q_mma_{n}(a,dw,dx);' for n in ns))
+        source = source.replace('@@CASES@@', '\n'.join(
+            f"case {i}: return qb_launch_t<{','.join(map(str, c))},false>(w,x,out,m,stream,query,stats);" for i, c in enumerate(configs)))
+        digest = hashlib.sha256(source.encode()).hexdigest()[:16]
+        namespace = 'qb_' + digest
+        begin = source.index('#define QD')
+        args = 'int id,int64_t w,int64_t x,int64_t out,int m,int64_t stream,int query,int64_t stats'
+        source = source[:begin] + f'namespace {namespace} {{\n' + source[begin:] + f'\n}}\nint qb_launch({args}) {{return {namespace}::qb_launch(id,w,x,out,m,stream,query,stats);}}'
+        cpp = '#include <pybind11/pybind11.h>\n#include <stdint.h>\nint qb_launch(int,int64_t,int64_t,int64_t,int,int64_t,int,int64_t);'
+        _FAC_QB_EXT = load_inline('qbig_' + hashlib.sha256(source.encode()).hexdigest()[:16], cpp,
+            cuda_sources=source, functions=['qb_launch'], no_implicit_headers=True,
+            with_pytorch_error_handling=False, verbose=False,
+            extra_cuda_cflags=['-O3', '-std=c++20', '-gencode=arch=compute_90a,code=sm_90a', '--ptxas-options=-v'])
+    return _FAC_QB_EXT
+
+
+def _fac_qb_launch(w, x, out):
+    rc = _FAC_QB_EXT.qb_launch(0, w.data_ptr(), x.data_ptr(), out.data_ptr(), 128,
+                               torch.cuda.current_stream().cuda_stream, 0, 0)
+    if rc:
+        raise RuntimeError(f"qbig launch failed: {rc}")
+    return out
+
+
+def _fac_qkv(x, plan, state, T):
+    w = state.get("qkv")
+    if (T == 128 and state.get("fac_qb") is True and _FAC_QB_EXT is not None and w is not None
+            and x.dtype == torch.bfloat16 and x.dim() == 2 and tuple(x.shape) == (128, HIDDEN)
+            and x.is_contiguous() and x.data_ptr() % 16 == 0 and x.device == w.device):
+        return _fac_qb_launch(w, x, torch.empty((128, QKV_ROWS), dtype=torch.bfloat16, device=x.device))
+    return _graft_lt_run(x, plan)
+
+
+_fac_qb_prior_prepare = prepare
+
+
+def prepare(weights):
+    st = _fac_qb_prior_prepare(weights)
+    st["fac_qb"] = False
+    try:
+        w = st.get("qkv")
+        if (w is not None and tuple(w.shape) == (QKV_ROWS, HIDDEN) and w.dtype == torch.bfloat16 and w.is_cuda
+                and w.is_contiguous() and w.data_ptr() % 16 == 0
+                and torch.cuda.get_device_capability(w.device) == (9, 0)):
+            _fac_qb_ext()
+            g = torch.Generator(device=w.device)
+            g.manual_seed(1103)
+            x = torch.randn((128, HIDDEN), generator=g, device=w.device).to(torch.bfloat16)
+            out = _fac_qb_launch(w, x, torch.empty((128, QKV_ROWS), dtype=torch.bfloat16, device=w.device))
+            torch.cuda.synchronize(w.device)
+            ref = x.double() @ w.double().T
+            err = ((out.double() - ref).norm() / ref.norm()).item()
+            if err < 4e-3:
+                st["fac_qb"] = True
+            else:
+                print(f"[okc] FAC-qb128: rel err {err:.3e} -> Lt pick kept", flush=True)
+    except Exception as e:  # build / launch failure -> keep the master Lt pick
+        print(f"[okc] FAC-qb128 disabled: {e!r}"[:300], flush=True)
+        st["fac_qb"] = False
     return st
