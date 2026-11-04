@@ -105,3 +105,9 @@ items here and in each tick's summary. Resolved items move to the log at the bot
 - **Scope of our own ruling:** the FA3 ruling (AT7b/AT7f) covers only the softmax: an FP32 denominator and no lazy max. The "LOUD" flag came from my wrong paraphrase in the agent brief, which has since been corrected in both workflows.
 - **Default (applied):** no change. Masters and board entries stay as they are.
 - **User call:** adopt the strict reading (restore the rounding points on all four problems at about −0.1 to −0.6% each), or keep the default.
+
+## 2026-11-04 07:05Z: nonce-only repeat scored reads (trx-study FINAL-PLAN.md §2)
+- The question: FINAL-PLAN.md would spend every remaining scored run (about 75 today, 100 on 11-05) on nonce-only copies of each problem's master, to raise the board max through noise.
+- The concern: rules line 159 base final positions on the medians of post-challenge reruns, and the judge looks for gaming. Max-of-noise copies add nothing under a median and may look like variance-gaming.
+- So far: about 19 repeats were sent 05:30–06:45Z (hsk r4/r5, moe MXN r4–r6, KZ prefill r4/r5, KZP r4/r5, bf16 r4–r6, decode r4/r5, HYBM r4/r5). They are left to finish.
+- Default until the user rules: new pure-repeat sends are PAUSED. Real candidates (new mechanisms, gate-registered) still get checks and scored runs.
