@@ -1,20 +1,20 @@
 {
  "problem": "muse_moe_w4a16",
- "job": "c44ca192e4e0447f",
- "check_job": "6463e862cf8e4fa9",
+ "job": "10f10d1a29634c81",
+ "check_job": "2a00ff2464c64b3d",
  "mode": "submit",
- "speedup": 2.367800085640187,
+ "speedup": 2.392295273069125,
  "ci": [
-  2.332283084355584,
-  2.4033170869247895
+  2.356410843973088,
+  2.4281797021651617
  ],
- "score_us": 5679.744705458908,
- "commit": "65ec48ca6c88713ee61c39a4af28ad48aae0e449",
- "submission_blob": "7454bedd8b60aa121fa893d4e22c328fc0966f6c",
- "slug": "trx-MXN-r3",
- "master_slug": "trx-MXN-r3",
- "master_job": "c44ca192e4e0447f",
+ "score_us": 5621.588669005161,
+ "commit": "b7ed47fc9e881e1d595f7cfbc226c12f6734ff4f",
+ "submission_blob": "d04187a6660751ee9aa724a15cd8627b5e2e0df0",
+ "slug": "fin-mfsd",
+ "master_slug": "fin-mfsd",
+ "master_job": "10f10d1a29634c81",
  "result": "muse_moe_w4a16/hypotheses/BEST.result.json",
- "updated_at": "2026-11-03T161508Z",
- "note": "trx-study 11-03: verified gain below the board (FRX-r3 1171f791 2.3998 is the board); MXN 3-read G +0.449% (6463e862, 11b2a5be, c44ca192); NRB4 d32 >= 1.006 in 5 judge reads"
+ "updated_at": "2026-11-04T190255Z",
+ "note": "3 judge reads mean 2.4025 vs MXN r4-r6 2.381 (+0.9%); scored 2.392 below board 2.3998; lands per okc-land-verified-below-board"
 }
