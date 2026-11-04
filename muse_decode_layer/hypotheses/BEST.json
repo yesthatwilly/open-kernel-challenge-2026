@@ -1,20 +1,20 @@
 {
  "problem": "muse_decode_layer",
- "job": "c3eadc8813204a58",
- "check_job": "f8bf6332eabc4315",
+ "job": "85e5e041879b454a",
+ "check_job": null,
  "mode": "submit",
- "speedup": 2.1861735313724675,
+ "speedup": 2.2130274489797466,
  "ci": [
-  2.1533809284018806,
-  2.2189661343430545
+  2.1798320372450504,
+  2.2462228607144428
  ],
- "score_us": 10346.982833425442,
- "commit": "6eefb7a756c8c22638a1cb8449d5668906fafb93",
- "submission_blob": "c737255f14daf92b4eb52c68f96db12884c1c605",
- "slug": "landing-c3eadc88",
- "master_slug": "landing-c3eadc88",
- "master_job": "c3eadc8813204a58",
+ "score_us": 10221.427669335257,
+ "commit": "897c618e1e10f1864f307f448fcbba49cc7a186c",
+ "submission_blob": "ecc9ef7ff7db694d5486ea036088fed751f735a7",
+ "slug": "qb128",
+ "master_slug": "qb128",
+ "master_job": "85e5e041879b454a",
  "result": "muse_decode_layer/hypotheses/BEST.result.json",
- "updated_at": "2026-11-02T135011Z",
- "note": "user-approved landing of a verified gain below the board (2.2220 is an old DPP high read): 4 judge reads J mean +1.02% on d32s+d32f, rho 2.1971/2.1933/2.1981/2.1850; ZL guard H100-proven (hang at no-local-route T fixed)"
+ "updated_at": "2026-11-04T031425Z",
+ "note": "3-read I(v16) +1.31%"
 }
