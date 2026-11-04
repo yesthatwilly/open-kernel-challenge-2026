@@ -1,20 +1,20 @@
 {
  "problem": "muse_attention_decode",
- "job": "df0fef4b7fd341e1",
- "check_job": null,
+ "job": "22b4f9e2e7f74ea7",
+ "check_job": "39a72d99935f4cd9",
  "mode": "submit",
- "speedup": 2.6910608956323796,
+ "speedup": 2.6593063635366674,
  "ci": [
-  2.650694982197894,
-  2.731426809066865
+  2.6194167680836173,
+  2.714070917786375
  ],
- "score_us": 1399.5595588761091,
- "commit": "ca2f794b4305214ea5fffb87c7d60593e1c5b548",
- "submission_blob": "e5cd6a7735aaf607ad2666be597a1f885b223f91",
- "slug": "relax-hsk-r3",
- "master_slug": "relax-hsk-r3",
- "master_job": "df0fef4b7fd341e1",
+ "score_us": 1416.2715705275562,
+ "commit": "9335bd51fc24a82c20fdc38fa5e62ce7d3d1eb12",
+ "submission_blob": "a572359ab5b5751d84eb300135075a4720119ecc",
+ "slug": "rv-kzd1g",
+ "master_slug": "rv-kzd1g",
+ "master_job": "22b4f9e2e7f74ea7",
  "result": "muse_attention_decode/hypotheses/BEST.result.json",
- "updated_at": "2026-11-04T053112Z",
- "note": "registered by churn.py register-landing from okc status df0fef4b7fd341e1"
+ "updated_at": "2026-11-04T212306Z",
+ "note": "3 judge reads 2.676/2.677/2.659, mean 2.6707 (+2.1% vs hsk-r3); scored below board 2.6911; lands per okc-land-verified-below-board"
 }
