@@ -1,5 +1,5 @@
 # okc: problem=muse_bf16_proj
-# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31. + SWEEP-bf16 P1F: unpooler m128 static cuBLASLt plan nn(18,4,2) (128x64 coopB 1x1) on the existing W^T copy. + BFX (trx-study 11-03): router m 2..16 routertail_small_kernel (4-owner cluster reduction, ruwwww); router m 32 rr_kernel<32,16,4,1,2,1> route (ruwwww route choice, existing Nathen ROUTER_CUDA). + PLAIN: every embedded compressed CUDA payload is now plain readable source text (string literals); compiled code byte-identical. pp-nonce PLAIN-r1
+# Adopted from alygg77@6cae49a kernels/muse_bf16_proj.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), unmodified except this line. yesthatwilly 2026-10-31 + BF16FIX: sk2 / skinny ring-slot WAR fix: fence.proxy.async.shared::cta before every hand-back of a TMA / bulk-filled ring slot read with generic loads (sk2 consumers, escape owner, skinny; ordering only); 3to1 sk2fix BF16FIX, judge 10-31. + SWEEP-bf16 P1F: unpooler m128 static cuBLASLt plan nn(18,4,2) (128x64 coopB 1x1) on the existing W^T copy. + BFX (trx-study 11-03): router m 2..16 routertail_small_kernel (4-owner cluster reduction, ruwwww); router m 32 rr_kernel<32,16,4,1,2,1> route (ruwwww route choice, existing Nathen ROUTER_CUDA). + FAC-u1pin (trx-study 11-03): unpooler m=1 static IV pick cgemv<2,128,4096,4> instead of the prepare race (qkv race unchanged). + PLAIN: every embedded compressed CUDA payload is now plain readable source text (string literals); compiled code byte-identical. pp-nonce U1PIN-PLAIN-r3
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
 # attribution is retained here.
@@ -4464,7 +4464,7 @@ def prepare(weights):
         best=_iv_choose(funcs,x,router,dev,1e-4)
         if best:state['iv_router24']=variants[best-1]
     state['iv_cg_choice']={}
-    for layer,indices in [('qkv_gate',(0,1)),('unpooler',(2,3))]:
+    for layer,indices in [('qkv_gate',(0,1))]:   # [FAC-u1pin] unpooler leaves the race (static pin below)
         c=state.get('cg',{}).get(layer)
         if c is None:continue
         w=weights[layer][:1024] if layer=='unpooler' else weights[layer]
@@ -4475,6 +4475,17 @@ def prepare(weights):
         funcs.extend(lambda i=i:_iv_cg_run(c,x,n,i) for i in indices)
         best=_iv_choose(funcs,x,w,dev,1e-2)
         if best:state['iv_cg_choice'][layer]=indices[best-1]
+    # [FAC-u1pin] unpooler m=1 slice: static IV pick 3 = cgemv<2,128,4096,4> (the judge's best-reading race pick),
+    # used only if it matches FP64 on a random input at the race's tolerance; else the base cgemv stays
+    c=state.get('cg',{}).get('unpooler')
+    if c is not None:
+        w=weights['unpooler'][:1024]
+        n,k=w.shape
+        x=torch.randn((1,k),generator=gen,device=dev,dtype=torch.bfloat16)
+        truth=x.double()@w.double().T
+        err=((_iv_cg_run(c,x,n,3).double()-truth).norm()/truth.norm()).item()
+        if err<1e-2:state['iv_cg_choice']['unpooler']=3
+        print(f"[fac-u1pin] unpooler m1 iv3 rel err {err:.3e} -> {'pinned' if err<1e-2 else 'base'}",file=sys.stderr)
     return state
 
 def kernel_fn(data,state):
