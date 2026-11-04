@@ -1,5 +1,6 @@
 # okc: problem=muse_moe_w4a16
 # Based on alygg77@6cae49a kernels/muse_moe_w4a16.py (Apache-2.0; MIT/third-party notices kept below and in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: M1a NOFENCE (drop the redundant fence.acq_rel.gpu before the stream-K read-back, PUB:2151). 3to1 phase A, judge 10-31. + MD16F: D1 paired scale decode in the WS skinny consumer (one PRMT + IMAD per scale pair, HMUL2 half-broadcast; bit-identical) + D6 TINY / TINY2 compile the helper0 source with -DOKC_WSH0=1 (helper-warp rotation, as MID) + F: moe WGS weights-slot hand-back fence (fence.proxy.async.shared::cta + __syncwarp before the BW_E arrive). + B4X: d32 (16 < M <= 32) run(s) their own WGS build with the B4FIN final pass ported from alygg77@6cae49a kernels/muse_decode_layer.py (bet4_claude; only the FP32 order of each route's sum of squares changes). + ZL: WGS builds take empty stage ranges on a launch with no local route (robustness). + FRX (H100 lane moe-skinny 11-02): TINY / TINY2 bulk-copy x into the dead fat-ring smem (XS) and the FAST1 warp builds route()'s tables itself before the join (FR); same tables, same math. + NRB4 (H100 lane moe-wgs 11-02): the d32 B4FIN build starts phase A at its range start (no trailing-partial rotation, OKC_WGSREORD 0 there); order only, same partition; MAIN unchanged. + KZT: SC6/MFIN ported from keell0renz/muse-open-kernel-challenge @890809c (Apache-2.0): SC6 only (lossless 6-bit NVFP4 block scales in the WGS stages, 35840 B per stage; round-trip checked in prepare, plain-scale fallback); MFIN added by MFPW below. + MFPW: MFIN (per-expert phase-B completion counters, launch-parity hand-off flags, no grid barrier before the final pass) + WPRO (warp-parallel stream-K prologue); WGS builds only (ALT_SRCS["mfin"]), checked in prepare against the stock WGS build, stock fallback ported from keell0renz/muse-open-kernel-challenge @890809c (Apache-2.0). + MFSD (11-04): SC6 kept only in the d32-class (16 < M <= 32) MFIN build on its own WGS copies; the MAIN (M > 32) MFIN build and every stock build read plain scales, and CUDA_SRC is the base file's (no SC6). pp-nonce mfsd-r1
+# pp-nonce: mpc-r3
 # pp-nonce: fin-mfsd-r3 (scored read; identical code to r1)
 # Portions (the per-thread CUDA-context bind helper; cuBLASLt plan pins) follow code posted by Matsvei (kernarc user
 # 'matvey') on agents.kernarc.com; OKC submissions are licensed under the Apache License 2.0 (llms.txt), and that
@@ -3510,6 +3511,14 @@ def prepare(weights):
             mods.append(tuple(d) + sfx)
     if b4:  # [B4] the B4FIN build (the MFIN one when MFIN is on; the stock one is compiled on a fallback)
         mods.append(new["db4"] if mfx else state["db4"])
+    # [MPC] compile the variants concurrently (nvcc runs in subprocesses, one extension dir each; as _diag does): serial
+    # builds of 6 extensions took 233 s (H200 node) / 315 s (H100 node) of the 300 s prepare limit, cold
+    import concurrent.futures as _mpc_cf
+    try:
+        with _mpc_cf.ThreadPoolExecutor(max_workers=max(1, len(mods))) as _mpc_ex:
+            list(_mpc_ex.map(_ext, list(dict.fromkeys(mods))))
+    except Exception as _mpc_e:  # any failure: the serial loop below rebuilds (and raises) as before
+        print(f"[mpc] parallel build failed: {_mpc_e!r}"[:200], file=sys.stderr, flush=True)
     for d in mods:
         _ext(d)
     torch.cuda.synchronize()
