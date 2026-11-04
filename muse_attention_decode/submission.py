@@ -1,7 +1,9 @@
 # okc: problem=muse_attention_decode
-# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1P (trx-study 11-03): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code (v1f key-packed head split, 0d2feafa) + rider P of D1FT-p (1a559375) restricted to q_len 1 (row-less cooperative-finalize CTAs arrive and leave instead of polling; scheduling only; q_len 8 coop instances unchanged); CPNQF clause above. + ASTK (trx-study 11-03): HSK8 routed (_HSK = 1: v1f on attn_kernel<8,false,75>) + BFPR (per-request q8 softmax update unconditional, FA3 style, no warp vote; tree row max; ONE builds skip the zero-state rescale; bit-identical). pp-nonce ASTK-r3
+# Based on alygg77@6cae49a kernels/muse_attention_decode.py (Apache-2.0; notices in third_party/okc-muse-spark-kernels/NOTICE), modified by yesthatwilly 2026-10-31: exact-max FA3 softmax (offset max-8, P<=256), FP32 unrounded-P denominator (PV m64n64), R11 guard. Compliance patch (public-plus A0/P2, judge 10-31). + PP: flat q8 softmax turns between the two KV-head warpgroups (named barriers 5/6; scheduling only); 3to1 lever ATT, judge 10-31. + TAX C5L: flat q8 exact-max bookkeeping per row half (one vote and one O/l rescale per moved half, P offsets carried with the anchors, l updated after the PV issue; same arithmetic, scheduling only); att-tax 10-31; 3to1 att-tax C5L, judge 10-31. + CPUSH: sliding q_len 1 single-request route (d1s) as a per-KV-head cluster push-merge (2 clusters x 16 CTAs, one per KV head; st.async of FP32 partials O, exact running max m and unrounded-P denominator l to owner ranks; exact max-rescaled FP32 merge, then rmsnorm * sigmoid(gate)); replaces the red.global / ticket / finalize tail on that route only, every other route and kernel unchanged; 3to1 cpush-m1, H100 11-01. + CPNQF: q_len 1 PH (CPUSH) kernels prepare the new-token block's new k / v rows inside warp 0's q pass (same per-element arithmetic) and write this cluster's head straight into its stage row (no separate k / v pass, no patch pass); att-cpnqf 11-01. + B1P (trx-study 11-03): HSV1 (v1s per-KV-head split, c5033ddb) + HSK8 code (v1f key-packed head split, 0d2feafa) + rider P of D1FT-p (1a559375) restricted to q_len 1 (row-less cooperative-finalize CTAs arrive and leave instead of polling; scheduling only; q_len 8 coop instances unchanged); CPNQF clause above. + ATT-RELAX (trx-study 11-03, rules of 2026-11-03 12:15 PT: P in E4M3 at any power-of-two scale): every q_len 8 kernel takes the public file's softmax again, superseding the compliance patch above for q_len 8: lazy offset (P = 2^(x - offset) <= 256, the offset moves only when a score passes it by 8; flat kernel: packed-P byte test once every row has an offset) and row sums from V^T ones rows in the PV wgmma (m64n72k32, the sum of the E4M3 P); R11 guard kept. + HSK8 routed (_HSK = 1: v1f on attn_kernel<8,false,75>). pp-nonce att-relax-hsk-r3
 # Portions Copyright vjeux, from https://github.com/vjeux/okc-2026 (commit f35a41e), licensed under the Apache License 2.0.
 # Submitted by alygg77 under the Apache License 2.0 with this notice retained.
+# Portions (q_len 8 lazy softmax offset, packed-P offset test, V^T ones rows / m64n72k32 row sums) from
+# github.com/ruwwww/open-kernel-challenge @c035bf9 / alygg77@6cae49a, modified (Apache License 2.0).
 """Gated attention decode for Muse Spark Open: one fused CUDA kernel per call.
 
 Algorithm
@@ -2081,8 +2083,7 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     
     
   }
-  float dlo_c = 0.f, dhi_c = 0.f;   // [tax C5] P offsets of the anchors below (0 while an anchor is -inf)
-  float cr[2] = {-INFINITY, -INFINITY};   // [public-C] per-row max anchors (log2 units; -inf: no finite score yet), rows g and g+8; P is taken against anchor - 8
+  float cr[2] = {-INFINITY, -INFINITY};   // [att-relax] per-row offsets (log2 units; -inf: no finite score yet), rows g and g+8; P is taken against cr (lazy: P <= 2^8)
   const float ssc = sl2;   // raw score -> log2 units
   // the lazy-max test on raw scores against (offset + 8) / ssc (ssc > 0), updated with the offset
   float thr[2] = {0.f, 0.f};
@@ -2230,7 +2231,12 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     // this head's V^T for this tile (PV reads it asynchronously: double buffer per stream)
     uint8_t* vtb = vtb_c;
     
-      // [public-C G0b] no ones rows in V^T: the row sums are the FP32 sums of the unrounded P (PV is m64n64)
+      if (jj == 0) {   // [att-relax] rows 64..71 of this warpgroup's two V^T buffers: e4m3 ones (0x38), so the PV
+                                     // wgmma also produces the row sums (after the first barrier: the q staging shares this space)
+        const int wt = tid & 127;
+        *reinterpret_cast<uint2*>(S.kvq + ((0 + (wt >> 6)) * 2 + wgi) * 4608 + 4096 + (wt & 63) * 8) =
+            make_uint2(0x38383838u, 0x38383838u);
+      }
     
          // meanwhile: this head's V tile -> V^T (FP8, 72 x 64, keys in P-register order: k = 4q + 2h + b for
         // key = 8h + 2q + b within each 16-key block), two ldmatrix.trans (b16 pairs) + byte permutes per thread
@@ -2289,91 +2295,123 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
           }
       }
     }
-    // [public-C A0] FA3's FP8 softmax (sgl-flash-attn 141fa063: flash_fwd_kernel_sm90.h:459 Max_offset 8 for FP8;
-    // softmax.h:181-184 sums the fp32 P before mainloop_fwd_sm90_tma_gmma_ws.hpp:1360 rounds it to E4M3): the exact
-    // running row max (any score past it moves it, as FA3's per-tile max does), P = 2^(x - max + 8) in
-    // (0, 256]; the denominator is the FP32 sum of the unrounded P (no ones rows; PV m64n64)
-    float dlo, dhi;   // P = 2^(x - dlo) for row g, 2^(x - dhi) for row g + 8 (dlo = anchor - 8; 0 with no finite score yet)
-    // this tile's FP32 row sums of the unrounded P ([tax] flat kernel: seeded with -0.0, the additive identity, so the
-    // first add folds away; P >= +0 (ex2 never returns -0), hence the same sums bit for bit)
-    float tlo = WS ? -0.f : 0.f, thi = WS ? -0.f : 0.f;
-    auto pk4 = [](float x0, float x1, float x2, float x3, float& t) -> uint32_t {
-      t += (x0 + x1) + (x2 + x3);
-      return e4m3x4f(x0, x1, x2, x3);
-    };
-    auto packh = [&](const int kk) {   // half kk of P (16 permuted keys x rows g, g+8 per thread) and its row sums
+    // [att-relax] the public file's lazy softmax offset (allowed by the rules of 2026-11-03: P in E4M3 at any
+    // power-of-two scale): P = 2^(x - cr) with cr the row max when it last moved, so P <= 2^8 = 256 (E4M3 0x78, no
+    // satfinite clip); cr moves (O and l rescaled) only when a score passes cr + LZT. The denominator is the PV
+    // wgmma's ones columns (V^T rows 64..71): lacc = the rows' sums of the E4M3 P (PV m64n72k32)
+    constexpr float LZT = 8.f;
+    float dlo, dhi;   // P = 2^(x - dlo) for row g, 2^(x - dhi) for row g + 8 (dlo = cr; 0 while cr = -inf)
+    auto packh = [&](const int kk) {   // half kk of P (16 permuted keys x rows g, g+8 per thread)
       const float* sv = s + 16 * kk;
-      pa[kk][0] = pk4(ex2(fmaf(sv[0], ssc, -dlo)), ex2(fmaf(sv[1], ssc, -dlo)), ex2(fmaf(sv[4], ssc, -dlo)), ex2(fmaf(sv[5], ssc, -dlo)), tlo);
-      pa[kk][1] = pk4(ex2(fmaf(sv[2], ssc, -dhi)), ex2(fmaf(sv[3], ssc, -dhi)), ex2(fmaf(sv[6], ssc, -dhi)), ex2(fmaf(sv[7], ssc, -dhi)), thi);
-      pa[kk][2] = pk4(ex2(fmaf(sv[8], ssc, -dlo)), ex2(fmaf(sv[9], ssc, -dlo)), ex2(fmaf(sv[12], ssc, -dlo)), ex2(fmaf(sv[13], ssc, -dlo)), tlo);
-      pa[kk][3] = pk4(ex2(fmaf(sv[10], ssc, -dhi)), ex2(fmaf(sv[11], ssc, -dhi)), ex2(fmaf(sv[14], ssc, -dhi)), ex2(fmaf(sv[15], ssc, -dhi)), thi);
+      pa[kk][0] = e4m3x4f(ex2(fmaf(sv[0], ssc, -dlo)), ex2(fmaf(sv[1], ssc, -dlo)), ex2(fmaf(sv[4], ssc, -dlo)), ex2(fmaf(sv[5], ssc, -dlo)));
+      pa[kk][1] = e4m3x4f(ex2(fmaf(sv[2], ssc, -dhi)), ex2(fmaf(sv[3], ssc, -dhi)), ex2(fmaf(sv[6], ssc, -dhi)), ex2(fmaf(sv[7], ssc, -dhi)));
+      pa[kk][2] = e4m3x4f(ex2(fmaf(sv[8], ssc, -dlo)), ex2(fmaf(sv[9], ssc, -dlo)), ex2(fmaf(sv[12], ssc, -dlo)), ex2(fmaf(sv[13], ssc, -dlo)));
+      pa[kk][3] = e4m3x4f(ex2(fmaf(sv[10], ssc, -dhi)), ex2(fmaf(sv[11], ssc, -dhi)), ex2(fmaf(sv[14], ssc, -dhi)), ex2(fmaf(sv[15], ssc, -dhi)));
     };
-    if constexpr (WS) {   // [tax C5L] flat q8 kernel
-      float mlo = fmaxf(s[0], s[1]), mhi = fmaxf(s[2], s[3]);
+    if constexpr (WS) {   // flat q8 kernel
+      // once every row of the warp has an offset (first == false), the offset test runs on the packed P instead of
+      // on 32 row-max steps (theirs: PCHK); until then master's C5L votes on the row maxima
+      const bool chk = !first;
+      if (!chk) {   // [tax C5L] one vote and one O / l rescale per moved row half
+        float mlo = fmaxf(s[0], s[1]), mhi = fmaxf(s[2], s[3]);
 #pragma unroll
-      for (int nt = 1; nt < 8; ++nt) {
+        for (int nt = 1; nt < 8; ++nt) {
+          mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
+          mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
+        }
+        mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
+        mhi *= ssc;
+        const bool vlo = __any_sync(0xffffffffu, mlo > cr[0] + LZT);   // (cr = -inf: any finite score)
+        const bool vhi = __any_sync(0xffffffffu, mhi > cr[1] + LZT);
+        if (vlo) {   // warp-uniform
+          mlo = quad_max(mlo);   // (full-mask shuffles)
+          const float nlo = fmaxf(mlo, cr[0]);
+          const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f;
+#pragma unroll
+          for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; }
+          lacc[0] *= alo; lacc[1] *= alo;   // (FP8 PV: the row sums live here too)
+          cr[0] = nlo;
+        }
+        if (vhi) {   // warp-uniform
+          mhi = quad_max(mhi);   // (full-mask shuffles)
+          const float nhi = fmaxf(mhi, cr[1]);
+          const float ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+#pragma unroll
+          for (int t = 0; t < 8; ++t) { o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+          lacc[2] *= ahi; lacc[3] *= ahi;
+          cr[1] = nhi;
+        }
+        first = __any_sync(0xffffffffu, cr[0] == -INFINITY || cr[1] == -INFINITY);   // (warp-uniform)
+        dlo = (cr[0] == -INFINITY) ? 0.f : cr[0];   // (no finite score yet: every P of the row is 0)
+        dhi = (cr[1] == -INFINITY) ? 0.f : cr[1];
+      } else {
+        dlo = cr[0]; dhi = cr[1];
+      }
+      if (hk == 0 || jj + 1 < nit)   // [PP] the other's turn (none after warpgroup 1's last tile)
+        asm volatile("bar.arrive %2, 256;\n" : "+f"(dlo), "+f"(dhi) : "r"(5 + (hk ^ 1)) : "memory");
+      packh(0);
+      packh(1);
+      if (chk) {
+        // an e4m3 byte above 0x78 (P > 256: a score past its row's offset + 8) sets bit 7 when 0x07 is added to every
+        // byte (P >= 0: no carry between bytes)
+        constexpr uint32_t PB = 0x07070707u;
+        const uint32_t ov = ((pa[0][0] + PB) | (pa[0][1] + PB) | (pa[0][2] + PB) | (pa[0][3] + PB) |
+                             (pa[1][0] + PB) | (pa[1][1] + PB) | (pa[1][2] + PB) | (pa[1][3] + PB)) & 0x80808080u;
+        if (__any_sync(0xffffffffu, ov != 0u)) {
+          // rare: offsets up to the tile's row maxima, state rescaled (no PV of this tile issued yet; the previous
+          // tile's finished at the wgmma wait), both halves repacked (P <= 1 at the new maxima: one pass)
+          float hlo = -INFINITY, hhi = -INFINITY;
+#pragma unroll
+          for (int nt = 0; nt < 8; ++nt) {
+            hlo = fmaxf(hlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
+            hhi = fmaxf(hhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
+          }
+          hlo = quad_max(hlo) * ssc;
+          hhi = quad_max(hhi) * ssc;
+          const float nlo = fmaxf(hlo, cr[0]), nhi = fmaxf(hhi, cr[1]);
+          const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+#pragma unroll
+          for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
+          lacc[0] *= alo; lacc[1] *= alo; lacc[2] *= ahi; lacc[3] *= ahi;
+          cr[0] = nlo; cr[1] = nhi;
+          dlo = nlo; dhi = nhi;   // (chk: every row anchored, finite)
+          packh(0);
+          packh(1);
+        }
+      }
+    } else {   // per-request q8 kernels: the row maxima every tile, the vote at cr + LZT (theirs: the !PCHK path)
+      float mlo = -INFINITY, mhi = -INFINITY;
+#pragma unroll
+      for (int nt = 0; nt < 8; ++nt) {
         mlo = fmaxf(mlo, fmaxf(s[4 * nt], s[4 * nt + 1]));
         mhi = fmaxf(mhi, fmaxf(s[4 * nt + 2], s[4 * nt + 3]));
       }
       mlo *= ssc;   // scores -> log2 units (ssc > 0; ssc = 1 when the query was pre-scaled)
       mhi *= ssc;
-      const bool vlo = __any_sync(0xffffffffu, mlo > cr[0]);   // [tax C5] one vote per row half
-      const bool vhi = __any_sync(0xffffffffu, mhi > cr[1]);
-      if (vlo) {   // warp-uniform
-        mlo = quad_max(mlo);   // (full-mask shuffles)
-        const float nlo = fmaxf(mlo, cr[0]);
-        const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f;
-#pragma unroll
-        for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; }
-        lacc[0] *= alo;
-        cr[0] = nlo;
-        dlo_c = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;
-      }
-      if (vhi) {   // warp-uniform
-        mhi = quad_max(mhi);   // (full-mask shuffles)
-        const float nhi = fmaxf(mhi, cr[1]);
-        const float ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
-#pragma unroll
-        for (int t = 0; t < 8; ++t) { o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
-        lacc[2] *= ahi;
-        cr[1] = nhi;
-        dhi_c = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
-      }
-      dlo = dlo_c; dhi = dhi_c;
-      if (hk == 0 || jj + 1 < nit)   // [PP] the other's turn (none after warpgroup 1's last tile)
-        asm volatile("bar.arrive %2, 256;\n" : "+f"(dlo), "+f"(dhi) : "r"(5 + (hk ^ 1)) : "memory");
-      packh(0);
-      packh(1);
-    } else {   // [BFPR] per-request q8 kernels: FA3's unconditional per-tile update, no warp vote / branch. A row
-               // whose quad max is <= its anchor gets nlo == cr, alpha = 1.f exactly and O * 1.f == O, so this is
-               // bit-identical to master's voted form. Row maxima as balanced trees (depth 4 instead of an
-               // -inf-seeded 16-deep chain; fmaxf is exact, so the same values).
-      const float l0 = fmaxf(fmaxf(s[0], s[1]), fmaxf(s[4], s[5])), l1 = fmaxf(fmaxf(s[8], s[9]), fmaxf(s[12], s[13]));
-      const float l2 = fmaxf(fmaxf(s[16], s[17]), fmaxf(s[20], s[21])), l3 = fmaxf(fmaxf(s[24], s[25]), fmaxf(s[28], s[29]));
-      const float h0 = fmaxf(fmaxf(s[2], s[3]), fmaxf(s[6], s[7])), h1 = fmaxf(fmaxf(s[10], s[11]), fmaxf(s[14], s[15]));
-      const float h2 = fmaxf(fmaxf(s[18], s[19]), fmaxf(s[22], s[23])), h3 = fmaxf(fmaxf(s[26], s[27]), fmaxf(s[30], s[31]));
-      // scores -> log2 units (ssc > 0) before the quad max, as master (full-mask shuffles, every lane)
-      const float mlo = quad_max(fmaxf(fmaxf(l0, l1), fmaxf(l2, l3)) * ssc);
-      const float mhi = quad_max(fmaxf(fmaxf(h0, h1), fmaxf(h2, h3)) * ssc);
-      const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
-      if constexpr (!ONE) {   // (ONE builds: the only tile, o = 0 and l = 0: alpha would only multiply zeros, as at q_len 1)
+      // any score past its row's offset + LZT shows in its own thread's partial max (cr = -inf: any finite score)
+      if (__any_sync(0xffffffffu, (mlo > cr[0] + LZT || mhi > cr[1] + LZT))) {
+        mlo = quad_max(mlo); mhi = quad_max(mhi);   // (warp-uniform branch: full-mask shuffles)
+        const float nlo = fmaxf(mlo, cr[0]), nhi = fmaxf(mhi, cr[1]);
         const float alo = (nlo > cr[0]) ? ex2(cr[0] - nlo) : 1.f, ahi = (nhi > cr[1]) ? ex2(cr[1] - nhi) : 1.f;
+        // (the previous tile's PV wgmma completed at this tile's wgmma wait)
 #pragma unroll
         for (int t = 0; t < 8; ++t) { o[0][t][0] *= alo; o[0][t][1] *= alo; o[0][t][2] *= ahi; o[0][t][3] *= ahi; }
-        lacc[0] *= alo; lacc[2] *= ahi;
+        lacc[0] *= alo; lacc[1] *= alo; lacc[2] *= ahi; lacc[3] *= ahi;   // (FP8 PV: the row sums live here too)
+        cr[0] = nlo; cr[1] = nhi;
       }
-      cr[0] = nlo; cr[1] = nhi;
-      dlo = (cr[0] == -INFINITY) ? 0.f : cr[0] - 8.f;   // (no finite score yet: every P of the row is 0)
-      dhi = (cr[1] == -INFINITY) ? 0.f : cr[1] - 8.f;
+      dlo = (cr[0] == -INFINITY) ? 0.f : cr[0];   // (no finite score yet: every P of the row is 0)
+      dhi = (cr[1] == -INFINITY) ? 0.f : cr[1];
+      first = false;
     }
-    first = false;
-    // P (e4m3, registers, k-steps of 32 permuted keys) x V^T (e4m3, K-major, 64 dims) as an asynchronous wgmma; the
-    // next tile's wgmma wait covers it before P, o or V^T are reused
+    // P (e4m3, registers, k-steps of 32 permuted keys) x V^T (e4m3, K-major, 72 columns: 64 dims + 8 copies of the row
+    // sum) as an asynchronous wgmma; the next tile's wgmma wait covers it before P, o or V^T are reused
     constexpr bool PK2 = WS;
     if constexpr (PK2) {
       float* odk = &o[0][0][0];
 #pragma unroll
       for (int e = 0; e < 32; ++e) reg_fence(odk[e]);
+#pragma unroll
+      for (int e = 0; e < 4; ++e) reg_fence(lacc[e]);
 #pragma unroll
       for (int e = 0; e < 8; ++e) asm volatile("" : "+r"(pa[e >> 2][e & 3]));
       if constexpr (LSYNC) {   // every warp's V^T for this tile written (and visible to the async proxy)
@@ -2381,10 +2419,9 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
         wgsync(wgi);
       }
       wgmma_fence();
-      wgmma_m64n64k32_e4m3(odk, pa[0][0], pa[0][1], pa[0][2], pa[0][3], vdesc_c, 1);
-      wgmma_m64n64k32_e4m3(odk, pa[1][0], pa[1][1], pa[1][2], pa[1][3], vdesc_c + 2, 1);
+      wgmma_m64n72k32_e4m3(odk, lacc, pa[0], vdesc_c);
+      wgmma_m64n72k32_e4m3(odk, lacc, pa[1], vdesc_c + 2);
       wgmma_commit();
-      lacc[0] += tlo; lacc[2] += thi;   // [tax L] after the PV issue
     } else {
 #pragma unroll
       for (int kk = 0; kk < 2; ++kk) {   // each half of P goes to the tensor cores as soon as it is packed
@@ -2405,12 +2442,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
 #pragma unroll
         for (int e = 0; e < 4; ++e) asm volatile("" : "+r"(pa[kk][e]));
         wgmma_fence();
-        wgmma_m64n64k32_e4m3(od, pa[kk][0], pa[kk][1], pa[kk][2], pa[kk][3], vdesc_c + 2 * kk, 1);
+        wgmma_m64n72k32_e4m3(od, lacc, pa[kk], vdesc_c + 2 * kk);
         wgmma_commit();
       }
-      lacc[0] += tlo; lacc[2] += thi;
     }
-
 
       float* od = &o[0][0][0];
       
@@ -2449,10 +2484,10 @@ __device__ __forceinline__ bool segment(const Params& p, Smem<L, FLAT>& S, const
     for (int e = 0; e < 4; ++e) reg_fence(lacc[e]);
   }
   
-  m_r[0] = (cr[0] == -INFINITY) ? -INFINITY : cr[0] - 8.f;   // [public-C] the offset P was taken against
-  m_r[1] = (cr[1] == -INFINITY) ? -INFINITY : cr[1] - 8.f;
-  l_r[0] = lacc[0];   // [public-C G0b] this thread's FP32 partial row sums of the unrounded P; the epilogue quad-sums
-  l_r[1] = lacc[2];
+  m_r[0] = cr[0];   // [att-relax] the offset P was taken against (-inf: no finite score)
+  m_r[1] = cr[1];
+  l_r[0] = 0.25f * lacc[0];   // [att-relax] every lane of the quad holds the full row sum; the epilogue quad-sums
+  l_r[1] = 0.25f * lacc[2];
   if constexpr (HSK) {   // [HSK8] in-CTA FP32 merge of master splits 2s (warpgroup 0) and 2s + 1 (warpgroup 1)
     // each warpgroup first applies master's own per-split epilogue to both its rows (R11 test / exact slot, the
     // 2^(m - R11_REF) scale, the quad-summed denominator), then hands the row half it does not keep (O 16 floats, l)
@@ -3436,7 +3471,7 @@ def _build(tag="", flags=()):
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name=f"okc_attn_astk{tag}_90a",
+        name=f"okc_attn_relaxh{tag}_90a",
         cpp_sources=CPP_SRC,
         cuda_sources=CUDA_SRC,
         functions=["run"],
