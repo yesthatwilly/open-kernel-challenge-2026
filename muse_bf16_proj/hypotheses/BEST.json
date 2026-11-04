@@ -1,20 +1,20 @@
 {
  "problem": "muse_bf16_proj",
- "job": "a4b98fae58a54892",
+ "job": "1448280120e34d43",
  "check_job": null,
  "mode": "submit",
- "speedup": 1.5537283964177246,
+ "speedup": 1.5528695066702742,
  "ci": [
-  1.5304224704714589,
-  1.5770343223639904
+  1.52957646407022,
+  1.5761625492703282
  ],
- "score_us": 3109.1663196333993,
- "commit": "0827922ca551478bef0ba6597888fa3d994b8e38",
- "submission_blob": "0fb1a33ce97fda398bd2edacce6b2618f0702c63",
- "slug": "trx-BFX-r3",
- "master_slug": "trx-BFX-r3",
- "master_job": "a4b98fae58a54892",
+ "score_us": 3110.8859947661654,
+ "commit": "e6a2da74dce8eb33bc377802569b461829879402",
+ "submission_blob": "a2cb23ce1a9158679f92f620894f3f9173d0337d",
+ "slug": "plain",
+ "master_slug": "plain",
+ "master_job": "1448280120e34d43",
  "result": "muse_bf16_proj/hypotheses/BEST.result.json",
- "updated_at": "2026-11-03T211136Z",
- "note": "trx-study 11-03: verified gain below the board (109f577b 1.5657); BFX 3-read G +0.293% (35ccdea5, b16574c4, a4b98fae); rel v1 1.0504 d16 1.0543 d32 1.0633"
+ "updated_at": "2026-11-04T014509Z",
+ "note": "PLAIN 1.5529 VALID; readable-source build of BFX, restores the DQ'd bf16 row"
 }
