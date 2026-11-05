@@ -1,0 +1,59 @@
+era	regex	stage	note
+# Stages: norm = residual boundaries (post-attn / post-FFN norm + residual gate + next pre-norm) and standalone RMSNorms (pre-expert norm).
+#   qkv = qkv_gate projection.  attention = QK-norm/RoPE/KV-cache write/q FP8 cast + attention + split-KV combine + output norm x gate.
+#   o_proj = o projection.  router = pooler GEMM + router GEMM (hi/lo or FP32) + top-8 routing + route bookkeeping (moe align).
+#   experts = W4A16 expert GEMMs (w13, silu*mul, w2).  combine = post-expert norm weighted sum + unpooler (back to hidden).
+# The regex is searched in '<kernel name as shown>@calls=<n>'. First matching row of the landing's era wins; no match -> unattributed.
+# era column: comma list of sglang|ours|public|keell.
+sglang,ours,public,keell	marlin_moe::Marlin<	experts	SGLang moe_wna16_marlin_gemm (w13 and w2 share the name; both experts)
+sglang,ours,public,keell	act_and_mul_kernel	experts	silu_and_mul between w13 and w2
+ours	\beak\w*::ea\w*_w(13|2)_kernel|\beak6::ea6_kernel<	experts	Engine A expert kernels (ea_w13/ea_w2, ea2-ea4x, ea6 fused)
+ours	\bwg_kernel<	experts	hand-written wgmma W4A16 expert kernel (wg_gemm on the expert bank, T>=128)
+public,keell	okc::moe_fused<	experts	moe agent kernel; fuses w13+silu+w2 AND the post-expert norm weighted sum (combine) -> dominant stage experts
+sglang,ours,public,keell	flash::enable_sm90_or_later|flash::FlashAttnFwdCombine|flash::prepare_varlen_num_blocks	attention	FA3 forward / split combine / scheduler prep
+ours	splitkv_attn|splitkv_combine|skw_attn_kernel|skw_pre_kernel|c320_attn_kernel|c320_combine_kernel|skwph::sliding_cluster_kernel|\bfvg_kernel<|^_sliding_fused_kernel|^_pre_attention_kernel|^_qk_rms_norm_fwd_kernel	attention	our attention kernels; *_pre / _pre_attention / _qk_rms_norm are the QK-norm+RoPE+cache-store prologue; _sliding_fused is prologue+attention+gate norm in one launch
+public,keell	\battn_kernel<	attention	public attention kernel (decode <1,..> and verify <8,..>)
+sglang,ours,public,keell	muse_spark_norm_residual_kernel	norm	FusedPostNormResidualPreNorm boundary (post-attn and post-FFN)
+sglang,ours	at::native::\(anonymous namespace\)::vectorized_layer_	norm	at::native vectorized_layer_norm kernel (name truncated): F.rms_norm of the pre-expert norm (MuseSpark1xRMSNorm), the only torch norm call in the layer
+public,keell	^_graft_row_boundary(_pre)?(@|$)|glue_cluster_boundary<|^_sl_cluster_finish(@|$)	norm	grafted row / 8-CTA cluster boundaries; _sl_cluster_finish = post-FFN norm + residual + next pre-attn norm
+ours	dl_qkv_kernel<	qkv	
+ours	dl_o_kernel<	o_proj	
+public	\bcgq_kernel<	qkv	DSTK cgemv qkv at T=1 (5af7e6a8 cgq launch in the qkv path)
+public,keell	::qb_kernel<	qkv	qb128: T=128 qkv on qb_kernel (897c618e)
+keell	^void rq<256,	qkv	keell rs128 rq GEMM; RQ_USE = {(un,128),(qkv,128),(qkv,256)}: only qkv runs at T=256
+keell	^void rq<128,	unattributed	rq<128> serves BOTH qkv (T=128) and unpooler (T=128) with one template (calls=2): not separable
+keell	^nvjet_sm90_tst_128x64_64x8_1x2_h_bz_NNT@calls=1$	o_proj	T=128 LtNN pick shared by o and un in the public file; keell moved un m128 to rq, so the single remaining call is o
+ours	dl_pooler_router_kernel<|b12p::b12p_kernel<	router	pooler + router hi/lo in one launch (pooler dominates bytes; router stage = pooler+router)
+ours	dl_route_norm_align(_v1)?_kernel	router	FUSES routing top-8 + pre-expert norm + moe align: dominant stage router
+sglang,ours	^_moe_align_small_numel_kernel|^_align_parallel_kernel|^_hc_align_kernel	router	moe_align_block_size equivalents (route bookkeeping)
+ours	^_t128_hilo_kernel|^_dc0_r32_kernel	router	router hi/lo GEMM at T=128 / FP32 split-K router GEMV (DC0)
+sglang,ours	dot_kernel<float.*cublasGemv|reduce_1Block_kernel<float.*cublasGemv	router	FP32 cuBLAS gemv: the only FP32 dense matmul is the router's F.linear at T=1
+sglang,ours,public,keell	^nvjet_sm90_tss_	router	nvjet 'tss' = FP32-output cuBLAS GEMM; the only FP32-output dense GEMMs are router hi/lo (torch.mm out_dtype=fp32), the T=128 pooler khalf bmm (ours era) and the fused pooler+router 'pr' Lt pick (public) -> all router stage
+public,keell	^_gle_route(@|$)|^_sl_tile_route(@|$)|^_graft_route(@|$)|^_sl_graft_route(@|$)|^_route(@|$)	router	top-8 pick + pre-expert norm of the pooled row (route finish)
+public,keell	^nvjet_sm90_tst_.*_TNN@	qkv	T>32 'tn' BF16-out cuBLASLt pick: only qkv (m128 lima TN / m256 algo 66); pr is FP32 (tss), o and un are 'nn'
+sglang,ours	^_post_expert_norm_weighted_sum_kernel|^_post_norm_combine_kernel|eac::ea_combine_kernel|eak6::ea6_cmb_kernel	combine	post-expert norm weighted sum
+ours	dl_unpool_kernel<	combine	unpooler
+public,keell	^void sk2_kernel<1,\ 16,\ 1,\ 1,\ 8,\ 1,\ 6,\ false,\ true,\ 4,\ 3,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: router tokr16
+public,keell	^void sk2_kernel<1,\ 16,\ 3,\ 1,\ 4,\ 2,\ 5,\ true,\ false,\ 1,\ 1,	qkv	sk2_kernel qkv_gate call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: qkv16_r176 tokr16
+public,keell	^void sk2_kernel<1,\ 16,\ 4,\ 1,\ 4,\ 1,\ 4,\ true,\ false,\ 2,\ 1,	o_proj	sk2_kernel o call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: o8h_r88 tokr16
+public,keell	^void sk2_kernel<1,\ 16,\ 4,\ 1,\ 4,\ 1,\ 5,\ true,\ false,\ 2,\ 1,	combine	sk2_kernel unpooler call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: unpooler16h_r100 tokr16
+public,keell	^void sk2_kernel<1,\ 16,\ 4,\ 1,\ 8,\ 1,\ 5,\ true,\ false,\ 2,\ 1,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: pooler tokr16; pooler tokr16 fused
+public,keell	^void sk2_kernel<1,\ 8,\ 1,\ 1,\ 8,\ 1,\ 6,\ false,\ true,\ 4,\ 3,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: router tokr8
+public,keell	^void sk2_kernel<1,\ 8,\ 1,\ 1,\ 8,\ 2,\ 4,\ true,\ false,\ 2,\ 1,	combine	sk2_kernel unpooler call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: slice8_r192 tokr8
+public,keell	^void sk2_kernel<1,\ 8,\ 1,\ 2,\ 2,\ 4,\ 3,\ true,\ false,\ 1,\ 1,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: pooler8h_r72 tokr8
+public,keell	^void sk2_kernel<1,\ 8,\ 3,\ 1,\ 4,\ 2,\ 6,\ true,\ false,\ 1,\ 1,	qkv	sk2_kernel qkv_gate call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: qkv8_r176 tokr8
+public,keell	^void sk2_kernel<1,\ 8,\ 4,\ 1,\ 4,\ 1,\ 4,\ true,\ false,\ 2,\ 1,	o_proj	sk2_kernel o call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: o8h_r88 tokr8
+public,keell	^void sk2_kernel<1,\ 8,\ 4,\ 1,\ 8,\ 1,\ 6,\ true,\ false,\ 2,\ 1,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: pooler tokr8 fused
+public,keell	^void sk2_kernel<2,\ 32,\ 1,\ 1,\ 8,\ 1,\ 4,\ false,\ true,\ 4,\ 3,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: router tokr32
+public,keell	^void sk2_kernel<2,\ 32,\ 2,\ 2,\ 2,\ 2,\ 3,\ true,\ false,\ 1,\ 1,	o_proj	sk2_kernel o call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: o32h_r100 tokr32
+public,keell	^void sk2_kernel<2,\ 32,\ 2,\ 2,\ 2,\ 2,\ 5,\ true,\ false,\ 1,\ 1,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: pooler32_r144 tokr32; pooler32_r144 tokr32 fused
+public,keell	^void sk2_kernel<2,\ 32,\ 3,\ 1,\ 4,\ 2,\ 4,\ true,\ false,\ 1,\ 1,	qkv	sk2_kernel qkv_gate call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: qkv32_r208 tokr32
+public,keell	^void sk2_kernel<2,\ 32,\ 4,\ 1,\ 8,\ 1,\ 3,\ true,\ false,\ 2,\ 1,	router	sk2_kernel pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: pooler tokr32 fused
+public,keell	^void sk2_kernel<2,\ 32,\ 4,\ 2,\ 2,\ 2,\ 3,\ true,\ false,\ 1,\ 1,	combine	sk2_kernel unpooler call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: unpooler32_r144 tokr32
+public,keell	^void sk2_kernel_gle[0-9a-f]+<1,\ 8,\ 4,\ 1,\ 4,\ 1,\ 4,	o_proj	sk2_kernel_gle o call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: gle o M<=8
+public,keell	^void sk2_kernel_gle[0-9a-f]+<1,\ 8,\ 4,\ 1,\ 8,\ 1,\ 6,	router	sk2_kernel_gle pooler/router call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: gle pr M<=8
+public,keell	^void sk2_kernel_narrow_[0-9a-f]+<1,\ 8,\ 3,\ 1,\ 4,\ 2,\ 5,	qkv	sk2_kernel_narrow qkv_gate call site, bfp_SK2_CONFIGS/PICK + bfp__sk2_geom at each public commit: narrow T<=8
+sglang,ours,public,keell	_bf16_swapab_kernel	unattributed	dense swap-AB GEMM; _dsa_gemm routes qkv_gate, o AND unpooler through it (calls=2 is qkv+o): call site not identifiable from the row
+sglang,ours,public,keell	^nvjet_sm90_tst_	unattributed	BF16-out cuBLAS GEMM: qkv / o / pooler / unpooler share tile kernels; the report gives no call site
+sglang,ours,public,keell	cublasLt::splitKreduce_kernel	unattributed	split-K reduction of some cuBLAS GEMM
+sglang,ours,public,keell	at::native::	unattributed	generic torch elementwise / reduce (casts, pads, index math)

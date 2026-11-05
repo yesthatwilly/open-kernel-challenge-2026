@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decode Kernel Blocks</title>
+<style>
+:root{
+  --bg:#ffffff; --ink:#111111; --muted:#6b6b6b; --line:#111111; --rule:#e4e4e4;
+  --face-top:#ffffff; --face-l:#ededed; --face-r:#d9d9d9; --accent:#13c400; --accent-ink:#0a6b00;
+  --hatch:#bdbdbd; --panel:#fafafa;
+  --s-norm:#f2f2f2; --s-qkv:#e9f0ff; --s-attention:#eafbe6; --s-o_proj:#f0eaff; --s-router:#fff6dd;
+  --s-experts:#ffeaea; --s-combine:#e6f8f8; --s-unattributed:#f4f4f4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e0e0e; --ink:#f0f0f0; --muted:#9a9a9a; --line:#e8e8e8; --rule:#2a2a2a;
+    --face-top:#1b1b1b; --face-l:#262626; --face-r:#323232; --accent:#3dff26; --accent-ink:#3dff26;
+    --hatch:#555; --panel:#151515;
+    --s-norm:#222; --s-qkv:#1b2233; --s-attention:#1b2a1b; --s-o_proj:#251d33; --s-router:#2e2a17;
+    --s-experts:#331c1c; --s-combine:#173030; --s-unattributed:#222;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e0e0e; --ink:#f0f0f0; --muted:#9a9a9a; --line:#e8e8e8; --rule:#2a2a2a;
+  --face-top:#1b1b1b; --face-l:#262626; --face-r:#323232; --accent:#3dff26; --accent-ink:#3dff26;
+  --hatch:#555; --panel:#151515;
+  --s-norm:#222; --s-qkv:#1b2233; --s-attention:#1b2a1b; --s-o_proj:#251d33; --s-router:#2e2a17;
+  --s-experts:#331c1c; --s-combine:#173030; --s-unattributed:#222;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+header{padding:16px 16px 0;max-width:1400px;margin:0 auto}
+h1{font-size:18px;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 12px;max-width:80ch}
+.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:0 16px;max-width:1400px;margin:0 auto}
+.tabs{display:flex;border:1px solid var(--line)}
+.tabs button{all:unset;cursor:pointer;padding:6px 12px;font-weight:550}
+.tabs button[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+select,button.btn{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);padding:5px 8px;border-radius:0}
+button.btn{cursor:pointer;min-width:64px}
+label.tog{display:flex;gap:6px;align-items:center;color:var(--muted)}
+label.tog[hidden]{display:none}
+main{position:relative;max-width:1400px;margin:8px auto 0;padding:0 16px}
+#stage{position:relative;width:100%;height:min(66vh,720px);min-height:360px;border:1px solid var(--rule);background:var(--bg);touch-action:none;cursor:grab}
+#stage:active{cursor:grabbing}
+canvas{display:block;width:100%;height:100%}
+#tip{position:absolute;pointer-events:none;background:var(--bg);border:1px solid var(--line);padding:8px 10px;font-size:12.5px;max-width:320px;display:none;z-index:2}
+#tip b{font-weight:650}
+#tip .k{color:var(--muted)}
+#hud{position:absolute;left:12px;top:10px;pointer-events:none;font-size:12.5px}
+#hud .big{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+#hud .era{display:inline-block;border:1px solid var(--line);padding:0 6px;margin-left:6px;font-size:11.5px}
+#hud .warn{color:var(--accent-ink);font-weight:600}
+#axes{position:absolute;right:12px;top:10px;font-size:12px;text-align:right;color:var(--muted);pointer-events:none;max-width:46%}
+#axes b{color:var(--ink);font-weight:600}
+.timeline{max-width:1400px;margin:10px auto 0;padding:0 16px;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}
+#scrub{width:100%;accent-color:var(--accent)}
+#ticks{grid-column:2;position:relative;height:32px;font-size:11px;color:var(--muted)}
+#ticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+#ticks span::before{content:"";position:absolute;left:50%;top:-6px;height:5px;border-left:1px solid var(--muted)}
+.legend{max-width:1400px;margin:8px auto 0;padding:0 16px;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border:1px solid var(--line);vertical-align:-2px;margin-right:5px}
+.notes{max-width:1400px;margin:14px auto 28px;padding:0 16px;color:var(--muted);font-size:12.5px}
+.notes p{margin:4px 0;max-width:110ch}
+@media (max-width:640px){
+  #axes{display:none}
+  #stage{height:58vh}
+  .timeline{grid-template-columns:1fr}
+  #ticks{grid-column:1}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>muse_decode_layer, landing by landing</h1>
+  <p class="sub" id="subtitle"></p>
+</header>
+<div class="bar">
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tabA" aria-selected="true">Where the time goes</button>
+    <button role="tab" id="tabB" aria-selected="false">Code against work</button>
+  </div>
+  <select id="shape" aria-label="Judged shape"></select>
+  <label class="tog" id="helpersTog" hidden><input type="checkbox" id="helpers" checked> count shared helpers</label>
+  <button class="btn" id="theme" title="Toggle light and dark">Theme</button>
+</div>
+<main>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="axes"></div>
+    <div id="tip"></div>
+  </div>
+</main>
+<div class="timeline">
+  <button class="btn" id="play">Play</button>
+  <input type="range" id="scrub" min="0" max="0" step="0.001" value="0" aria-label="Landing">
+  <div id="ticks"></div>
+</div>
+<div class="legend" id="legend"></div>
+<div class="notes" id="notes"></div>
+
+<script>
+const DATA = /*DATA*/null;
+</script>
+<script>
+(function(){
+"use strict";
+const T = DATA.times, LOC = DATA.loc || {}, INST = DATA.inst || {};
+const STAGES = T.stage_order;
+const STAGE_LABEL = {norm:"norm",qkv:"QKV projection",attention:"attention",o_proj:"output projection",
+  router:"router",experts:"experts",combine:"combine",unattributed:"unattributed"};
+const L = T.landings;
+const N = L.length;
+
+// ---------- state ----------
+const st = {view:"A", shape:"sum", pos:N-1, playing:false, az:-50*Math.PI/180, el:28*Math.PI/180,
+  zoom:1, hover:null, helpers:true};
+
+// ---------- helpers ----------
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtUs = v => v>=1000 ? (v/1000).toFixed(2)+" ms" : v.toFixed(1)+" µs";
+const fmtN = v => v>=1e9?(v/1e9).toFixed(2)+" G":v>=1e6?(v/1e6).toFixed(1)+" M":v>=1e3?(v/1e3).toFixed(1)+" k":String(Math.round(v));
+const frameFor = i => { // nearest landing at or before i that has a profile
+  for(let j=i;j>=0;j--) if(L[j].has_profile && T.frames[L[j].commit]) return j;
+  for(let j=i+1;j<N;j++) if(L[j].has_profile && T.frames[L[j].commit]) return j;
+  return -1;
+};
+const firstProfiled = frameFor(0);
+const D0 = L[firstProfiled].date.slice(5,10);
+
+function shapeRows(li){ // -> array of {key,name,base,stage,us,calls} for the chosen shape (or summed)
+  const fr = T.frames[L[li].commit]; if(!fr) return [];
+  const idx = st.shape==="sum" ? fr.map((_,k)=>k) : [Number(st.shape)];
+  const m = new Map();
+  for(const k of idx){
+    const s = fr[k]; if(!s) continue;
+    for(const kr of s.kernels){
+      const key = kr.stage+"|"+kr.name;
+      const o = m.get(key) || {key,name:kr.name,base:kr.base,stage:kr.stage,us:0,calls:0};
+      o.us += kr.us; o.calls += kr.calls||0; m.set(key,o);
+    }
+    if(s.other_us>0.05){
+      const key="unattributed|(rows the profile did not list)";
+      const o = m.get(key) || {key,name:"(rows the profile did not list)",base:"",stage:"unattributed",us:0,calls:0};
+      o.us += s.other_us; m.set(key,o);
+    }
+  }
+  return [...m.values()].filter(r=>r.us>0);
+}
+function stageTotals(rows){const t={};for(const s of STAGES)t[s]=0;for(const r of rows)t[r.stage]=(t[r.stage]||0)+r.us;return t;}
+function stepTotal(li){
+  const fr=T.frames[L[li].commit]; if(!fr) return 0;
+  const idx = st.shape==="sum" ? fr.map((_,k)=>k) : [Number(st.shape)];
+  return idx.reduce((a,k)=>a+(fr[k]?fr[k].total_us:0),0);
+}
+function sglangUs(){
+  if(st.shape==="sum") return T.shapes.reduce((a,s)=>a+s.sglang_us,0);
+  return T.shapes[Number(st.shape)].sglang_us;
+}
+
+// ---------- squarified treemap ----------
+function squarify(items, x, y, w, h){ // items: [{v,...}] v>0 ; returns [{item,x,y,w,h}]
+  const out=[]; const tot=items.reduce((a,b)=>a+b.v,0); if(tot<=0||w<=0||h<=0) return out;
+  const sc = w*h/tot; let rest = items.map(it=>({it,a:it.v*sc})).sort((p,q)=>q.a-p.a);
+  let rx=x, ry=y, rw=w, rh=h;
+  const worst=(row,side)=>{const s=row.reduce((a,b)=>a+b.a,0);let mx=0,mn=Infinity;for(const r of row){mx=Math.max(mx,r.a);mn=Math.min(mn,r.a);}return Math.max(side*side*mx/(s*s),(s*s)/(side*side*mn));};
+  while(rest.length){
+    const side=Math.min(rw,rh); let row=[rest[0]]; let i=1;
+    while(i<rest.length){const nr=row.concat([rest[i]]); if(worst(nr,side)<=worst(row,side)){row=nr;i++;} else break;}
+    rest=rest.slice(i); const s=row.reduce((a,b)=>a+b.a,0);
+    if(rw>=rh){ const cw=s/rh; let cy=ry; for(const r of row){const ch=r.a/cw; out.push({item:r.it,x:rx,y:cy,w:cw,h:ch}); cy+=ch;} rx+=cw; rw-=cw; }
+    else { const ch=s/rw; let cx=rx; for(const r of row){const cw=r.a/ch; out.push({item:r.it,x:cx,y:ry,w:cw,h:ch}); cx+=cw;} ry+=ch; rh-=ch; }
+  }
+  return out;
+}
+
+// ---------- scene builders: boxes {key,x0,z0,x1,z1,h,stage,label,info,flat} ----------
+const PLANE = 60;
+let globalMaxTotal = {}; // per shape key
+function maxTotalFor(){
+  const k=st.shape; if(globalMaxTotal[k]!=null) return globalMaxTotal[k];
+  let m=0; for(let i=0;i<N;i++){ if(T.frames[L[i].commit]) m=Math.max(m,stepTotal(i)); }
+  return globalMaxTotal[k]=m;
+}
+const HGROUP = s => s==="attention"?"attention":s==="experts"?"experts":"rest";
+const HGROUP_LABEL = {attention:"attention", experts:"experts", rest:"everything else (projections, router, norms, combine)"};
+function groupTotals(rows){ const g={attention:0,experts:0,rest:0}; for(const r of rows) g[HGROUP(r.stage)]+=r.us; return g; }
+function sceneA(li){
+  const rows=shapeRows(li); const tot=rows.reduce((a,r)=>a+r.us,0);
+  const side = PLANE*Math.sqrt(tot/maxTotalFor());
+  const baseG = groupTotals(shapeRows(firstProfiled)), nowG = groupTotals(rows);
+  const now = stageTotals(rows);
+  const stageItems = STAGES.filter(s=>now[s]>0).map(s=>({v:now[s],stage:s}));
+  const boxes=[];
+  const x0=-PLANE/2, z0=-PLANE/2;
+  for(const sr of squarify(stageItems,x0,z0,side,side)){
+    const s=sr.item.stage, g=HGROUP(s); const sp = (baseG[g]>0 && nowG[g]>0) ? baseG[g]/nowG[g] : null;
+    const h = 3.2*(sp==null?1:sp);
+    const kids = rows.filter(r=>r.stage===s).map(r=>({v:r.us,r}));
+    const pad = Math.min(0.35, Math.min(sr.w,sr.h)*0.06);
+    for(const kr of squarify(kids,sr.x+pad,sr.y+pad,sr.w-2*pad,sr.h-2*pad)){
+      const r=kr.item.r;
+      boxes.push({key:r.key,x0:kr.x,z0:kr.y,x1:kr.x+kr.w,z1:kr.y+kr.h,h,stage:s,label:short(r.name),
+        info:{name:r.name,stage:s,us:r.us,calls:r.calls,share:r.us/tot,group:g,groupSpeedup:sp,groupUs:nowG[g],groupBase:baseG[g]},flat:sp==null});
+    }
+  }
+  return {boxes, axes:`<b>floor area</b> = GPU time per decode step, on one fixed scale, so the floor shrinks as the layer gets faster<br><b>height</b> = speedup since ${D0} of the block's group: attention, experts, or everything else<br><span>${D0} (UTC) still ran SGLang's own kernels</span>`};
+}
+function locFor(li, base){
+  const c=L[li].commit; const e=LOC[c] || LOC[c.slice(0,8)];
+  if(!e||!e.kernels) return null;
+  const k=e.kernels[base]; if(!k) return null;
+  return st.helpers ? k.total : k.own;
+}
+function instFor(li, base){
+  const c=L[li].commit; const e=INST[c]||INST[c.slice(0,8)]; if(!e) return null;
+  const idx = st.shape==="sum" ? Object.keys(e) : [String(st.shape)];
+  let v=0, any=false; for(const k of idx){ const t=e[k]; if(t && t[base]!=null){v+=t[base];any=true;} }
+  return any?v:null;
+}
+let scalesB=null;
+function computeScalesB(){
+  let ml=1, mu=1, mi=1;
+  for(let i=0;i<N;i++){ if(!T.frames[L[i].commit]) continue;
+    const g=groupByBase(i);
+    for(const r of g){ ml=Math.max(ml,r.loc||0); mu=Math.max(mu,r.us); mi=Math.max(mi,r.inst||0); } }
+  scalesB={ml,mu,mi};
+}
+function groupByBase(li){
+  const rows=shapeRows(li); const m=new Map();
+  for(const r of rows){ const b=r.base||r.name; const o=m.get(b)||{key:"B|"+b,base:b,stage:r.stage,us:0,calls:0,names:[]};
+    o.us+=r.us; o.calls+=r.calls; o.names.push(r.name); m.set(b,o); }
+  for(const o of m.values()){ o.loc=locFor(li,o.base); o.inst=instFor(li,o.base); }
+  return [...m.values()];
+}
+function sceneB(li){
+  if(!scalesB) computeScalesB();
+  const g=groupByBase(li).sort((a,b)=>STAGES.indexOf(a.stage)-STAGES.indexOf(b.stage) || b.us-a.us);
+  const W=34, D=22, H=26, gap=1.6;
+  const anyInst = g.some(r=>r.inst!=null);
+  let x=0; const boxes=[];
+  for(const r of g){
+    const w = r.loc ? Math.max(0.5, W*r.loc/scalesB.ml) : 0.5;
+    const d = r.inst!=null ? Math.max(0.5, D*r.inst/scalesB.mi) : 3;
+    const h = Math.max(0.15, H*r.us/scalesB.mu);
+    boxes.push({key:r.key,x0:x,z0:-d/2,x1:x+w,z1:d/2,h,stage:r.stage,label:short(r.base),
+      info:{name:r.names.length>1?r.base+" ("+r.names.length+" variants)":r.names[0],stage:r.stage,us:r.us,calls:r.calls,loc:r.loc,inst:r.inst},
+      flat:r.loc==null, noDepth:r.inst==null});
+    x+=w+gap;
+  }
+  for(const b of boxes){ b.x0-=x/2; b.x1-=x/2; }
+  return {boxes, axes:`<b>width</b> = lines of code in the kernel${st.helpers?" plus the helpers it calls":""}<br><b>depth</b> = instructions executed per step${anyInst?"":" <span class='warn'>(not measured yet: fixed depth)</span>"}<br><b>height</b> = GPU time per step<br>volume means nothing`};
+}
+function short(n){ if(!n) return ""; let s=n.replace(/^void\s+/,"").replace(/\(.*$/,"").replace(/<.*$/,"").replace(/^.*::/,""); return s.length>22?s.slice(0,21)+"…":s; }
+
+// ---------- interpolation between frames ----------
+function lerpScene(a,b,t){
+  const mb=new Map(b.boxes.map(x=>[x.key,x])); const ma=new Map(a.boxes.map(x=>[x.key,x]));
+  const out=[]; const ease=t*t*(3-2*t);
+  const mix=(p,q)=>p+(q-p)*ease;
+  for(const x of a.boxes){ const y=mb.get(x.key);
+    if(y) out.push({...y,x0:mix(x.x0,y.x0),z0:mix(x.z0,y.z0),x1:mix(x.x1,y.x1),z1:mix(x.z1,y.z1),h:mix(x.h,y.h)});
+    else { const cx=(x.x0+x.x1)/2, cz=(x.z0+x.z1)/2; out.push({...x,x0:mix(x.x0,cx),x1:mix(x.x1,cx),z0:mix(x.z0,cz),z1:mix(x.z1,cz),h:mix(x.h,0)}); } }
+  for(const y of b.boxes){ if(ma.has(y.key)) continue; const cx=(y.x0+y.x1)/2, cz=(y.z0+y.z1)/2;
+    out.push({...y,x0:mix(cx,y.x0),x1:mix(cx,y.x1),z0:mix(cz,y.z0),z1:mix(cz,y.z1),h:mix(0,y.h)}); }
+  return {boxes:out.filter(x=>x.x1-x.x0>1e-3&&x.z1-x.z0>1e-3), axes:b.axes};
+}
+
+// ---------- projection ----------
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+let W=0,H=0,dpr=1, view={s:10,ox:0,oy:0};
+function resize(){ const r=cv.parentElement.getBoundingClientRect(); dpr=Math.min(window.devicePixelRatio||1,2.5);
+  W=r.width; H=r.height; cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); fitCache=null; draw(); }
+function proj(x,y,z){ // orthographic: rotate about y by az, tilt by el
+  const ca=Math.cos(st.az), sa=Math.sin(st.az), ce=Math.cos(st.el), se=Math.sin(st.el);
+  const xr = x*ca - z*sa, zr = x*sa + z*ca;
+  return [xr, -y*ce + zr*se, zr*ce + y*se]; // screen x, screen y(down), depth (bigger = nearer)
+}
+let fitCache=null;
+function fit(){
+  if(fitCache && fitCache.k===st.view+st.shape+st.az.toFixed(3)+st.helpers) return fitCache.v;
+  let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+  for(let i=0;i<N;i++){ if(!T.frames[L[i].commit]) continue; const sc=(st.view==="A"?sceneA:sceneB)(i);
+    for(const b of sc.boxes) for(const [x,y,z] of corners(b)){ const p=proj(x,y,z); mnx=Math.min(mnx,p[0]);mxx=Math.max(mxx,p[0]);mny=Math.min(mny,p[1]);mxy=Math.max(mxy,p[1]); } }
+  if(st.view==="A"){ for(const [x,z] of [[-PLANE/2,-PLANE/2],[PLANE/2,-PLANE/2],[PLANE/2,PLANE/2],[-PLANE/2,PLANE/2]]){const p=proj(x,0,z);mnx=Math.min(mnx,p[0]);mxx=Math.max(mxx,p[0]);mny=Math.min(mny,p[1]);mxy=Math.max(mxy,p[1]);} }
+  const padT=st.view==="B"?130:70, padB=24, padX=24;
+  const s=Math.min((W-2*padX)/(mxx-mnx||1),(H-padT-padB)/(mxy-mny||1));
+  const v={s, ox: W/2-(mnx+mxx)/2*s, oy: padT+(H-padT-padB)/2-(mny+mxy)/2*s};
+  fitCache={k:st.view+st.shape+st.az.toFixed(3)+st.helpers,v}; return v;
+}
+function corners(b){ return [[b.x0,0,b.z0],[b.x1,0,b.z0],[b.x1,0,b.z1],[b.x0,0,b.z1],[b.x0,b.h,b.z0],[b.x1,b.h,b.z0],[b.x1,b.h,b.z1],[b.x0,b.h,b.z1]]; }
+function scr(x,y,z){ const p=proj(x,y,z); return [W/2+(view.ox+p[0]*view.s-W/2)*st.zoom, H/2+(view.oy+p[1]*view.s-H/2)*st.zoom, p[2]]; }
+
+// painter's order: pairwise separating axis, topological sort
+function order(boxes){
+  const ca=Math.cos(st.az), sa=Math.sin(st.az);
+  // direction toward the viewer in world x/z: depth = x*sa + z*ca
+  const dx=sa, dz=ca; const n=boxes.length; const after=boxes.map(()=>[]); const indeg=new Array(n).fill(0);
+  const bb=boxes.map(b=>{let a=[1e9,1e9,-1e9,-1e9];for(const c of corners(b)){const p=scr(...c);a[0]=Math.min(a[0],p[0]);a[1]=Math.min(a[1],p[1]);a[2]=Math.max(a[2],p[0]);a[3]=Math.max(a[3],p[1]);}return a;});
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+    const A=bb[i],B=bb[j]; if(A[2]<=B[0]||B[2]<=A[0]||A[3]<=B[1]||B[3]<=A[1]) continue;
+    const a=boxes[i], b=boxes[j]; let vx=0, vz=0;
+    if(a.x1<=b.x0+1e-6) vx=(b.x0-a.x1+1e-3)*Math.sign(dx)||0; else if(b.x1<=a.x0+1e-6) vx=-(a.x0-b.x1+1e-3)*Math.sign(dx)||0;
+    if(a.z1<=b.z0+1e-6) vz=(b.z0-a.z1+1e-3)*Math.sign(dz)||0; else if(b.z1<=a.z0+1e-6) vz=-(a.z0-b.z1+1e-3)*Math.sign(dz)||0;
+    let v = Math.abs(vx*dx)>=Math.abs(vz*dz) ? vx : vz; // >0: b nearer
+    if(v===0){ const da=((a.x0+a.x1)/2)*dx+((a.z0+a.z1)/2)*dz, db=((b.x0+b.x1)/2)*dx+((b.z0+b.z1)/2)*dz; v=db-da; }
+    if(v>0){after[i].push(j);indeg[j]++;} else {after[j].push(i);indeg[i]++;}
+  }
+  const q=[]; for(let i=0;i<n;i++) if(!indeg[i]) q.push(i);
+  const out=[]; while(q.length){ const i=q.shift(); out.push(boxes[i]); for(const j of after[i]) if(--indeg[j]===0) q.push(j); }
+  if(out.length<n){ const seen=new Set(out); for(const b of boxes) if(!seen.has(b)) out.push(b); }
+  return out;
+}
+
+// ---------- drawing ----------
+let current=null, polys=[];
+function sceneAt(pos){
+  const i0=Math.floor(pos), t=pos-i0, i1=Math.min(N-1,i0+1);
+  const f0=frameFor(i0), f1=frameFor(i1);
+  const mk = st.view==="A"?sceneA:sceneB;
+  if(f0<0) return {boxes:[],axes:""};
+  const a=mk(f0); if(t<1e-3||f1===f0) return a;
+  return lerpScene(a, mk(f1), t);
+}
+var draw=function(){
+  if(!W) return;
+  view=fit();
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+  current=sceneAt(st.pos);
+  const C={line:css("--line"),top:css("--face-top"),l:css("--face-l"),r:css("--face-r"),acc:css("--accent"),rule:css("--rule"),hatch:css("--hatch"),ink:css("--ink"),muted:css("--muted")};
+  // floor
+  if(st.view==="A"){ ctx.strokeStyle=C.rule; ctx.lineWidth=1; ctx.beginPath();
+    const fl=[[-PLANE/2,-PLANE/2],[PLANE/2,-PLANE/2],[PLANE/2,PLANE/2],[-PLANE/2,PLANE/2]].map(([x,z])=>scr(x,0,z));
+    ctx.moveTo(fl[0][0],fl[0][1]); for(const p of fl.slice(1)) ctx.lineTo(p[0],p[1]); ctx.closePath(); ctx.stroke(); }
+  polys=[]; const floatLabels=[];
+  const ordered=order(current.boxes);
+  const ca=Math.cos(st.az), sa=Math.sin(st.az);
+  for(const b of ordered){
+    const hov = st.hover===b.key;
+    const c=corners(b).map(p=>scr(...p));
+    // visible side faces: those whose outward normal faces the viewer
+    const faces=[];
+    const nearZ = ca>0 ? [3,2,6,7] : [0,1,5,4]; // z1 face if ca>0
+    const nearX = sa>0 ? [1,2,6,5] : [0,3,7,4]; // x1 face if sa>0
+    faces.push({idx:nearX, fill: hov?C.acc:C.r});
+    faces.push({idx:nearZ, fill: hov?C.acc:C.l});
+    faces.push({idx:[4,5,6,7], fill: hov?C.acc:(css("--s-"+b.stage)||C.top), top:true});
+    for(const f of faces){
+      ctx.beginPath(); ctx.moveTo(c[f.idx[0]][0],c[f.idx[0]][1]); for(const k of f.idx.slice(1)) ctx.lineTo(c[k][0],c[k][1]); ctx.closePath();
+      ctx.fillStyle=f.fill; ctx.fill();
+      ctx.lineWidth = hov?1.6:1; ctx.strokeStyle=C.line;
+      if(b.flat||b.noDepth){ ctx.setLineDash(f.top?[]:[3,2]); } ctx.stroke(); ctx.setLineDash([]);
+    }
+    const hull=[c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]];
+    polys.push({b,hull:convexHull(hull)});
+    // label on top face if big enough
+    const tw=Math.hypot(c[5][0]-c[4][0],c[5][1]-c[4][1]), td=Math.hypot(c[7][0]-c[4][0],c[7][1]-c[4][1]);
+    if(st.view==="B" && b.label && !(Math.min(tw,td)>34)){ const top=[c[4],c[5],c[6],c[7]].reduce((a,p)=>p[1]<a[1]?p:a);
+      floatLabels.push({x:(c[4][0]+c[6][0])/2, y:top[1]-6, t:b.label, hov}); }
+    if(Math.min(tw,td)>34 && b.label){ const cx=(c[4][0]+c[6][0])/2, cy=(c[4][1]+c[6][1])/2;
+      ctx.fillStyle=hov?"#000":C.ink; ctx.font="11px ui-sans-serif,system-ui,sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(b.label,cx,cy); }
+  }
+  // floating labels (View B), skip ones that would collide
+  floatLabels.sort((p,q)=>p.x-q.x); let lastX=-1e9;
+  ctx.font="11px ui-sans-serif,system-ui,sans-serif"; ctx.textAlign="center"; ctx.textBaseline="bottom";
+  for(const f of floatLabels){ const w=ctx.measureText(f.t).width; if(f.x-w/2<lastX+4 && !f.hov) continue;
+    ctx.save(); ctx.translate(f.x,f.y); ctx.rotate(-Math.PI/6); ctx.textAlign="left"; ctx.fillStyle=f.hov?C.ink:C.muted; ctx.fillText(f.t,0,0); ctx.restore(); lastX=f.x+8; }
+  hud();
+}
+function convexHull(p){ p=p.map(q=>[q[0],q[1]]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]); const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+  const lo=[];for(const q of p){while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],q)<=0)lo.pop();lo.push(q);}
+  const up=[];for(const q of p.slice().reverse()){while(up.length>=2&&cr(up[up.length-2],up[up.length-1],q)<=0)up.pop();up.push(q);}
+  return lo.slice(0,-1).concat(up.slice(0,-1)); }
+function inPoly(x,y,P){ let c=false; for(let i=0,j=P.length-1;i<P.length;j=i++){ const a=P[i],b=P[j]; if(((a[1]>y)!==(b[1]>y))&&(x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])) c=!c; } return c; }
+
+function hud(){
+  const i=Math.round(st.pos), l=L[i], f=frameFor(i);
+  const tot=f>=0?stepTotal(f):0;
+  const shapeLbl = st.shape==="sum"?"all 12 shapes summed":T.shapes[Number(st.shape)].label;
+  document.getElementById("hud").innerHTML =
+    `<div class="big">${l.speedup.toFixed(3)}×</div>`+
+    `<div>${l.date.slice(0,10)} · ${l.commit.slice(0,8)}<span class="era">${({sglang:"SGLang kernels",ours:"our own code",public:"public base",keell:"keell0renz base"})[l.era]||l.era}</span></div>`+
+    `<div>${shapeLbl}: ${fmtUs(tot)} per step, SGLang ${fmtUs(sglangUs())}</div>`+
+    (l.has_profile?"":`<div class="warn">no profile for this landing: showing ${L[f].commit.slice(0,8)}</div>`)+
+    (l.job_match==="by_speedup"?`<div class="k">job matched by speedup, not confirmed</div>`:"");
+  document.getElementById("axes").innerHTML=current.axes;
+  document.getElementById("scrub").value=st.pos;
+}
+
+// ---------- tooltip ----------
+const tip=document.getElementById("tip");
+function showTip(b,x,y){
+  const I=b.info; let h=`<b>${esc(I.name)}</b><br><span class="k">stage</span> ${STAGE_LABEL[I.stage]}<br><span class="k">GPU time</span> ${fmtUs(I.us)}`+(I.calls?` <span class="k">in ${I.calls} call${I.calls>1?"s":""}</span>`:"");
+  if(I.share!=null) h+=`<br><span class="k">share of step</span> ${(I.share*100).toFixed(1)}%`;
+  if(st.view==="A") h+= I.groupSpeedup!=null ? `<br><span class="k">${HGROUP_LABEL[I.group]}, since ${D0}</span> ${I.groupSpeedup.toFixed(2)}× <span class="k">(${fmtUs(I.groupBase)} → ${fmtUs(I.groupUs)})</span>` : `<br><span class="k">group speedup</span> n/a`;
+  if(st.view==="B"){ h+=`<br><span class="k">lines of code</span> ${I.loc==null?"not ours (library kernel)":I.loc.toLocaleString()}`;
+    h+=`<br><span class="k">instructions executed</span> ${I.inst==null?"not measured":fmtN(I.inst)}`;
+    if(I.inst!=null&&I.us>0) h+=`<br><span class="k">instructions per µs</span> ${fmtN(I.inst/I.us)}`; }
+  tip.innerHTML=h; tip.style.display="block";
+  const r=cv.parentElement.getBoundingClientRect(); let tx=x+14, ty=y+14;
+  if(tx+tip.offsetWidth>r.width) tx=x-tip.offsetWidth-14; if(ty+tip.offsetHeight>r.height) ty=y-tip.offsetHeight-14;
+  tip.style.left=Math.max(4,tx)+"px"; tip.style.top=Math.max(4,ty)+"px";
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);}
+
+// ---------- input ----------
+let drag=null;
+cv.addEventListener("pointerdown",e=>{drag={x:e.clientX,az:st.az,id:e.pointerId,moved:false}; cv.setPointerCapture(e.pointerId);});
+cv.addEventListener("pointermove",e=>{
+  const r=cv.getBoundingClientRect(), x=e.clientX-r.left, y=e.clientY-r.top;
+  if(drag){ const dx=e.clientX-drag.x; if(Math.abs(dx)>3) drag.moved=true; if(drag.moved){ st.az=drag.az+dx*0.008; fitCache=null; tip.style.display="none"; draw(); return; } }
+  let hit=null; for(let k=polys.length-1;k>=0;k--){ if(inPoly(x,y,polys[k].hull)){hit=polys[k].b;break;} }
+  const key=hit?hit.key:null; if(key!==st.hover){ st.hover=key; draw(); }
+  if(hit) showTip(hit,x,y); else tip.style.display="none";
+});
+cv.addEventListener("pointerup",e=>{ drag=null; });
+cv.addEventListener("pointerleave",()=>{ st.hover=null; tip.style.display="none"; draw(); });
+cv.addEventListener("wheel",e=>{ e.preventDefault(); st.zoom=Math.min(6,Math.max(0.5,st.zoom*Math.exp(-e.deltaY*0.0012))); draw(); },{passive:false});
+
+const scrub=document.getElementById("scrub"); scrub.max=N-1;
+scrub.addEventListener("input",()=>{ st.pos=Number(scrub.value); stop(); draw(); });
+scrub.addEventListener("change",()=>{ st.pos=Math.round(Number(scrub.value)); draw(); });
+const playBtn=document.getElementById("play"); let raf=0, last=0;
+function stop(){ st.playing=false; playBtn.textContent="Play"; cancelAnimationFrame(raf); }
+function tick(ts){ if(!st.playing) return; const dt=last?(ts-last)/1000:0; last=ts;
+  st.pos=Math.min(N-1, st.pos+dt*1.6); draw(); if(st.pos>=N-1){ stop(); return; } raf=requestAnimationFrame(tick); }
+playBtn.addEventListener("click",()=>{ if(st.playing){stop();return;} if(st.pos>=N-1) st.pos=0; st.playing=true; playBtn.textContent="Pause"; last=0; raf=requestAnimationFrame(tick); });
+document.addEventListener("keydown",e=>{ if(e.target.tagName==="SELECT"||e.target.tagName==="INPUT"&&e.target.type!=="range") return;
+  if(e.key==="ArrowRight"){st.pos=Math.min(N-1,Math.floor(st.pos)+1);stop();draw();} if(e.key==="ArrowLeft"){st.pos=Math.max(0,Math.ceil(st.pos)-1);stop();draw();}
+  if(e.key===" "&&e.target===document.body){e.preventDefault();playBtn.click();} });
+
+const sel=document.getElementById("shape");
+sel.innerHTML=`<option value="sum">All 12 shapes, summed</option>`+T.shapes.map(s=>`<option value="${s.i}">${esc(s.label)}</option>`).join("");
+sel.addEventListener("change",()=>{ st.shape=sel.value; fitCache=null; scalesB=null; draw(); });
+function setView(v){ st.view=v; document.getElementById("tabA").setAttribute("aria-selected",v==="A"); document.getElementById("tabB").setAttribute("aria-selected",v==="B");
+  document.getElementById("helpersTog").hidden = v!=="B"; fitCache=null; draw(); legend(); }
+document.getElementById("tabA").onclick=()=>setView("A"); document.getElementById("tabB").onclick=()=>setView("B");
+document.getElementById("helpers").addEventListener("change",e=>{ st.helpers=e.target.checked; scalesB=null; fitCache=null; draw(); });
+document.getElementById("theme").addEventListener("click",()=>{ const d=document.documentElement; const dark = d.dataset.theme ? d.dataset.theme==="dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  d.dataset.theme = dark?"light":"dark"; draw(); legend(); });
+
+function legend(){ document.getElementById("legend").innerHTML = STAGES.map(s=>`<span><i style="background:${css("--s-"+s)}"></i>${STAGE_LABEL[s]}</span>`).join("")+
+  (st.view==="B"?`<span>dashed sides: not measured (library kernel or no instruction count)</span>`:`<span>colour = stage; height is shared by group because ${D0}'s projections ran in shared library kernels that can't be split by stage</span>`); }
+
+// ticks at era changes
+(function(){ const el=document.getElementById("ticks"); let prev=null, h="";
+  let row=0, lastP=-100;
+  L.forEach((l,i)=>{ if(l.era!==prev){ const p=(i/(N-1))*100; row = (p-lastP<12) ? 1-row : 0; lastP=p;
+    h+=`<span style="left:${p}%;top:${row*14}px;${p<4?"transform:none":p>96?"transform:translateX(-100%)":""}">${({sglang:"SGLang",ours:"ours",public:"public base",keell:"keell0renz"})[l.era]||l.era} ${l.date.slice(5,10)}</span>`; prev=l.era; } });
+  el.innerHTML=h; })();
+
+document.getElementById("subtitle").textContent =
+  `${N} master landings from ${L[0].date.slice(0,10)} to ${L[N-1].date.slice(0,10)}, ${L[0].speedup.toFixed(2)}× to ${L[N-1].speedup.toFixed(2)}× over SGLang on the judge's H200 (dates in UTC). Drag to turn, scroll to zoom, hover a block for its numbers.`;
+document.getElementById("notes").innerHTML = (DATA.notes||[]).map(n=>`<p>${n}</p>`).join("");
+
+// state in the URL hash: #view=B&shape=3&pos=12
+function readHash(){ const h=new URLSearchParams(location.hash.slice(1));
+  if(h.get("view")==="B"||h.get("view")==="A") st.view=h.get("view");
+  if(h.has("shape") && (h.get("shape")==="sum" || T.shapes[Number(h.get("shape"))])) st.shape=h.get("shape");
+  if(h.has("pos")){ const p=Number(h.get("pos")); if(p>=0&&p<N) st.pos=p; }
+  if(h.has("az")){ const a=Number(h.get("az")); if(isFinite(a)) st.az=a*Math.PI/180; }
+  sel.value=st.shape; setView(st.view); }
+let hashT=0; function writeHash(){ clearTimeout(hashT); hashT=setTimeout(()=>{ try{ history.replaceState(null,"","#view="+st.view+"&shape="+st.shape+"&pos="+Math.round(st.pos)); }catch(e){} },250); }
+const _draw=draw; draw=function(){ _draw(); writeHash(); };
+window.addEventListener("hashchange",()=>{ readHash(); draw(); });
+window.addEventListener("resize",resize);
+legend(); readHash(); resize();
+})();
+</script>
+</body>
+</html>
