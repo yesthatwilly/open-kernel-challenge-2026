@@ -161,7 +161,8 @@ Two constraints came with the openness:
 
 ## 7. What the systematic approach did and did not buy
 
-What it bought, measured on the judge: overall rank 480 to 139 in ten days; every problem between
+What it bought, measured on the judge: overall rank 480 of 1,163 on 10-26 to 147 of 2,014 at the
+close (139 four hours before it, before other teams' last sends landed); every problem between
 1.26× and 1.74× over its 10-26 start; a ledger of 792 mechanism claims with evidence; and about thirty
 audited landings of our own worth 0.1% to 11% per row (the largest: cluster
 push-merge and the one-CTA-per-split head layout on batch-1 attention, each about +10% on its row;
@@ -171,8 +172,9 @@ What it did not buy: a kernel of our own that beat the best public one on any pr
 day's attempt to graft the attention board's kernels into the decode layer ended at its bail-out
 gate: a source diff showed decode already contained the same kernel. The closing judgment, in the
 decode ledger, is that the public kernels are at their tuned values, the remaining riders are inside
-judge noise, and the gap to the 100th rank (+2.3% on decode) needs a new mechanism of 1% or more that
-nobody on the public boards has published.
+judge noise, and the gap to the 100th rank (2.308× on decode at the close, 1.1% above our board read
+and about 2.6% above master's true mean) needs a new mechanism of 1% or more that nobody on the public
+boards has published.
 
 ## 8. Operating lessons worth keeping
 

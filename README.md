@@ -41,21 +41,25 @@ shapes. The local rules mirror is in [rules/](rules/).
 
 ## Results
 
-**Status: provisional, as of 2026-11-05 04:00 UTC, four hours before the close.** The organizers rerun
-the top entries on held-out shapes after the close; the finalized ranks will replace this table when they
-are published.
+**Status: closing board.** The kernel track closed at 2026-11-05 07:59 UTC; this is the public board as
+read at 13:44 UTC the same day, after every team's last sends had landed. Our scores are the ones we held
+at 04:00 UTC; the ranks moved by a few places as other teams' final runs came in. The organizers rerun
+only the top entries on held-out shapes, which does not reach our rows, so these are our final numbers
+unless a review removes an entry above us.
 
 | Problem | Our best | Rank | Board leader | Start of the run |
 |---|---:|---:|---:|---:|
-| muse_decode_layer | 2.284× | 139 | 2.576× | 1.316× (10-26, rank 448) |
-| muse_attention_decode | 2.703× | 101 | 3.339× | 1.634× (10-27) |
-| muse_moe_w4a16 | 2.414× | 151 | 2.788× | 1.402× (10-26, rank 490) |
-| muse_bf16_proj | 1.584× | 140 | 1.728× | 1.257× (10-26) |
-| muse_prefill_layer | 1.947× | 49 | 2.147× | 1.490× (10-27) |
-| **Overall** | | **139 of ~2,000** | | 480 of 1,163 (10-26) |
+| muse_decode_layer | 2.284× | 147 of 1,299 | 2.614× | 1.316× (10-26, rank 448) |
+| muse_attention_decode | 2.703× | 109 of 1,379 | 3.339× | 1.634× (10-27) |
+| muse_moe_w4a16 | 2.414× | 158 of 1,425 | 2.844× | 1.402× (10-26, rank 490) |
+| muse_bf16_proj | 1.584× | 148 of 1,746 | 1.728× | 1.257× (10-26) |
+| muse_prefill_layer | 1.947× | 50 of 898 | 2.147× | 1.490× (10-27) |
+| **Overall** | | **147 of 2,014** | | 480 of 1,163 (10-26) |
 
 Speedups are over SGLang's own kernel on the judge's H200. "Start of the run" is the board entry when
-the systematic process began on 2026-10-26/27.
+the systematic process began on 2026-10-26/27. Attempts counted by the judge: 87 decode, 65 attention,
+70 moe, 39 bf16, 39 prefill scored runs. The 100th place on decode closed at 2.308×, 1.1% above our
+read.
 
 The entries that hold those rows are mostly public, Apache-2.0 code, adopted with attribution and
 improved with audited changes of our own (see "Lineage" below and [third_party/](third_party/)). The
@@ -90,7 +94,7 @@ Before 2026-10-31 every file was our own. Those files are kept at git tag `ours-
 | `.claude/skills/` | the project skills that ran the loop: `/hypothesize`, `/churnsubs`, `/3to1`, with `churn.py` and `okc_lint.py` |
 | `.worktrees/` (ignored) | one git worktree per campaign or hypothesis branch; 59 at the close, all committed on their branches |
 
-Repository statistics at the close: 4,131 commits on master over 13 days, 59 branches, 468 attempt
+Repository statistics at the close: 4,133 commits on master over 13 days, 59 branches, 468 attempt
 notes, 792 claim lines.
 
 ## Acknowledgements
