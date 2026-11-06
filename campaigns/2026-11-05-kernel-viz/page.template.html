@@ -69,6 +69,20 @@ canvas{display:block;width:100%;height:100%}
 .explain dl{margin:0;max-width:75ch}
 .explain dt{font-weight:600;margin-top:6px}
 .explain dd{margin:0 0 4px;color:var(--muted)}
+.results{max-width:1400px;margin:22px auto 0;padding:0 16px}
+.results h2{font-size:15px;margin:0 0 6px;font-weight:650}
+.results h3{font-size:13.5px;margin:16px 0 6px;font-weight:650}
+.results p{margin:0 0 8px;max-width:95ch}
+.tw{overflow-x:auto;max-width:100%;border:1px solid var(--rule)}
+.results table{border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;width:100%}
+.results th,.results td{padding:5px 9px;border-bottom:1px solid var(--rule);text-align:right;white-space:nowrap}
+.results th{font-weight:600;background:var(--panel)}
+.results th.l,.results td.l{text-align:left}
+.results tbody tr.go{cursor:pointer}
+.results tbody tr.go:hover{background:var(--panel)}
+.results tbody tr.cur td{box-shadow:inset 0 0 0 9999px color-mix(in srgb,var(--accent) 12%,transparent)}
+.results td.hi{font-weight:650}
+.results .k{color:var(--muted)}
 .notes h2{font-size:13px;margin:0 0 4px;color:var(--ink);font-weight:650}
 @media (max-width:640px){
   #axes{display:none}
@@ -112,6 +126,7 @@ canvas{display:block;width:100%;height:100%}
 </div>
 <div class="legend" id="legend"></div>
 <section class="explain" id="explain"></section>
+<section class="results" id="results"></section>
 <div class="notes" id="notes"></div>
 
 <script>
@@ -451,7 +466,7 @@ document.addEventListener("keydown",e=>{ if(e.target.tagName==="SELECT"||e.targe
 
 const sel=document.getElementById("shape");
 sel.innerHTML=`<option value="sum">All 12 test cases, added up</option>`+T.shapes.map(s=>`<option value="${s.i}">${esc(caseLabel(s.label))}</option>`).join("");
-sel.addEventListener("change",()=>{ st.shape=sel.value; fitCache=null; scalesB=null; draw(); });
+sel.addEventListener("change",()=>{ st.shape=sel.value; fitCache=null; scalesB=null; draw(); results(); });
 function setView(v){ st.view=v; document.getElementById("tabA").setAttribute("aria-selected",v==="A"); document.getElementById("tabB").setAttribute("aria-selected",v==="B");
   document.getElementById("helpersTog").hidden = v!=="B"; fitCache=null; draw(); legend(); }
 document.getElementById("tabA").onclick=()=>setView("A"); document.getElementById("tabB").onclick=()=>setView("B");
@@ -461,7 +476,7 @@ document.getElementById("theme").addEventListener("click",()=>{ const d=document
 
 function legend(){ document.getElementById("legend").innerHTML = STAGES.map(s=>`<span><i style="background:${css("--s-"+s)}"></i>${STAGE_LABEL[s]}</span>`).join("")+
   (st.view==="B"?`<span>dashed sides: not measured (library kernel, or no instruction count yet)</span>`:`<span>colour = step in the layer</span>`);
-  explain(); }
+  explain(); results(); }
 function eraStart(e){ const l=L.find(x=>x.era===e); return l?l.date.slice(5,10):"?"; }
 function explain(){
   const A = `<div><h2>How to read “Where the time goes”</h2>
@@ -493,6 +508,51 @@ function explain(){
 document.getElementById("subtitle").textContent =
   `Press Play to step through the ${N} versions adopted between ${L[0].date.slice(0,10)} and ${L[N-1].date.slice(0,10)}, which went from ${L[0].speedup.toFixed(2)}× to ${L[N-1].speedup.toFixed(2)}× SGLang's speed. Drag the picture to turn it, scroll to zoom, and hover over a block for its numbers. Two views are offered as tabs; the notes below the picture explain each.`;
 document.getElementById("notes").innerHTML = `<h2>About the data</h2>` + (DATA.notes||[]).map(n=>`<p>${n}</p>`).join("");
+
+// ---------- results addendum ----------
+function results(){
+  const R=DATA.results; if(!R) return;
+  const B=R.board, C=R.cases, f2=v=>v.toFixed(2), f1=v=>v.toFixed(1), pct=v=>Math.round(v*100)+"%";
+  const sp=C.map(c=>c.speedup), best=Math.max(...sp), worst=Math.min(...sp);
+  const gs=k=>C.map(c=>c.group_speedup[k]);
+  let h=`<h2>Results: how this layer finished</h2>
+<p>The judge reports one speedup per entry by combining all 12 test cases, and ranks teams by their best one. Below are the official numbers at the close (2026-11-05), then the same run case by case, tied to the picture above.</p>
+<div class="tw"><table><thead><tr><th class="l">Measure</th><th>Value</th><th class="l">What it means</th></tr></thead><tbody>
+<tr><td class="l">Rank on this layer</td><td class="hi">${B.rank} of ${B.entrants.toLocaleString()}</td><td class="l">Ranked by each team's best scored run.</td></tr>
+<tr><td class="l">Best scored run (on the board)</td><td class="hi">${f2(B.best)}×</td><td class="l">The final code was scored ${B.reads_n} times, reading ${f2(B.reads_lo)}× to ${f2(B.reads_hi)}×; the board keeps the best read.</td></tr>
+<tr><td class="l">Version ${N}, the run on this page</td><td>${f2(R.final.speedup)}×</td><td class="l">The run the picture's last frame comes from. Judge's 95% range: ${f2(R.final.ci[0])}× to ${f2(R.final.ci[1])}×.</td></tr>
+<tr><td class="l">Version 1</td><td>${f2(R.first.speedup)}×</td><td class="l">Still SGLang's own kernels, so about even with SGLang.</td></tr>
+<tr><td class="l">When systematic work began</td><td>${f2(B.start_speedup)}×</td><td class="l">The board entry on ${B.start_date}, then rank ${B.start_rank}.</td></tr>
+<tr><td class="l">100th place at the close</td><td>${f2(B.hundredth)}×</td><td class="l">${pct(B.hundredth/B.best-1)} above our best.</td></tr>
+<tr><td class="l">Board leader</td><td>${f2(B.leader)}×</td><td class="l">${pct(B.leader/B.best-1)} above our best.</td></tr>
+<tr><td class="l">Overall rank, all five problems</td><td>${B.overall_rank} of ${B.overall_entrants.toLocaleString()}</td><td class="l">This layer is one of five problems in the contest.</td></tr>
+</tbody></table></div>
+<h3>Case by case, version 1 to version ${N}</h3>
+<p>Times are the judge's medians for one token step, in µs. <b>Speed-of-light</b> is the judge's own lower bound for the case, set by the hardware's limits; no code can go below it. The judge weights each windowed case 46 and each full case 16 when it combines them, so the windowed cases count for more.</p>
+<p><b>How this maps to the picture:</b> choose a case in the menu, or click its row, and move to the last version. The <b>floor area</b> of each colour group is its share of the time (the right-hand columns), and its <b>height</b> is the group's speedup since version 1 (the middle columns). Group figures come from the judge's per-kernel profile, which runs a few percent slower than its timed runs, so they don't multiply out exactly to the speedup column.</p>
+<div class="tw"><table><thead>
+<tr><th class="l" rowspan="2">Test case</th><th rowspan="2">Weight</th><th rowspan="2">SGLang</th><th rowspan="2">Version 1</th><th rowspan="2">Version ${N}</th><th rowspan="2">Speedup</th><th rowspan="2">Speed-of-light</th><th rowspan="2">Room left</th><th colspan="3">Height: group speedup</th><th colspan="3">Floor: share of time now</th></tr>
+<tr><th>attention</th><th>experts</th><th>other</th><th>attention</th><th>experts</th><th>other</th></tr></thead><tbody>`;
+  const mx={}; for(const k of ["attention","experts","rest"]) mx[k]=Math.max(...gs(k));
+  for(const c of C){
+    const g=c.group_speedup, sh=c.share, cur=String(st.shape)===String(c.i);
+    h+=`<tr class="go${cur?" cur":""}" data-i="${c.i}" title="Show this case in the picture"><td class="l">${esc(caseLabel(T.shapes[c.i].label))}</td><td>${c.weight}</td><td>${f1(c.sglang_us)}</td><td>${f1(c.first_us)}</td><td>${f1(c.final_us)}</td>`+
+       `<td class="${c.speedup===best?"hi":""}">${f2(c.speedup)}×</td><td>${f1(c.sol_us)}</td><td>${f2(c.final_us/c.sol_us)}×</td>`+
+       ["attention","experts","rest"].map(k=>`<td class="${g[k]===mx[k]?"hi":""}">${f2(g[k])}×</td>`).join("")+
+       ["attention","experts","rest"].map(k=>`<td>${pct(sh[k])}</td>`).join("")+`</tr>`;
+  }
+  h+=`</tbody></table></div>
+<p class="k">“Room left” is version ${N}'s time divided by speed-of-light: 1.00× would be a perfect kernel. Bold marks the best value in each speedup column.</p>
+<h3>What the table says, and where to see it</h3>
+<p><b>Small batches gained most.</b> With one sequence there is little arithmetic per step, so time goes to the many small steps around it. The “other” group (projections, router, combine, normalise) got ${f2(Math.min(...C.filter(c=>/b1 /.test(T.shapes[c.i].label)).map(c=>c.group_speedup.rest)))}–${f2(Math.max(...C.filter(c=>/b1 /.test(T.shapes[c.i].label)).map(c=>c.group_speedup.rest)))}× faster at batch 1, and those cases reached ${f2(Math.max(...C.filter(c=>/b1 /.test(T.shapes[c.i].label)).map(c=>c.speedup)))}×. In the picture, the non-red, non-green blocks are the tallest in the batch-1 cases.</p>
+<p><b>The weakest case is generating at batch 32 with windowed attention (${f2(worst)}×),</b> one of the heavily weighted windowed cases. Its experts got only ${f2(C[4].group_speedup.experts)}× faster and still take ${pct(C[4].share.experts)} of the time. In the picture that case shows a wide, low red block: the most floor still to win back.</p>
+<p><b>Verification at batch 16 and 32 is where the experts improved most</b> (2.6–2.8×, the tallest red blocks). In those cases the experts are also the largest share of the floor, so their gain moves the total most.</p>
+<p><b>Full attention over long text is attention-bound.</b> In the full-attention cases at batch 16 and 32, attention is 33–52% of the floor, against about 5% with a window. The green blocks grow across those cases for that reason, not because attention got slower.</p>`;
+  const el=document.getElementById("results"); el.innerHTML=h;
+  el.querySelectorAll("tr.go").forEach(tr=>tr.addEventListener("click",()=>{
+    st.shape=tr.dataset.i; st.pos=N-1; sel.value=st.shape; fitCache=null; scalesB=null; setView("A");
+    document.getElementById("stage").scrollIntoView({behavior:"smooth",block:"center"}); }));
+}
 
 // state in the URL hash: #view=B&shape=3&pos=12
 function readHash(){ const h=new URLSearchParams(location.hash.slice(1));

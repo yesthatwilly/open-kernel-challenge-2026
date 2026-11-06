@@ -7,12 +7,48 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+FIRST_RESULT = 'muse_decode_layer/hypotheses/done/gain/sglang-pipeline-parity-router-hilo-m8.result.json'
+FINAL_RESULT = 'muse_decode_layer/hypotheses/BEST.result.json'
+# Closing board as read 2026-11-05 13:44Z (README.md "Status: closing board"), and the reads of master's
+# final code (CLAIMS.md, DNS entry: 14 reads 2.209-2.284).
+BOARD = {'best': 2.284, 'rank': 147, 'entrants': 1299, 'overall_rank': 147, 'overall_entrants': 2014,
+         'leader': 2.614, 'hundredth': 2.308, 'start_speedup': 1.316, 'start_rank': 448, 'start_date': '2026-10-26',
+         'reads_lo': 2.209, 'reads_hi': 2.284, 'reads_n': 14}
 D = HERE / 'data'
 
 
 def load(name, default=None):
     p = D / name
     return json.loads(p.read_text()) if p.exists() else default
+
+
+def groups(fr):
+    o = {'attention': 0.0, 'experts': 0.0, 'rest': 0.0}
+    for k in fr['kernels']:
+        o[k['stage'] if k['stage'] in ('attention', 'experts') else 'rest'] += k['us']
+    o['rest'] += fr.get('other_us') or 0
+    return o
+
+
+def results(times):
+    first = json.loads((REPO / FIRST_RESULT).read_text())
+    final = json.loads((REPO / FINAL_RESULT).read_text())
+    L = times['landings']
+    assert final['job'] == L[-1]['job'] and first['job'] == L[0]['job'], 'result files do not match the first/last landing'
+    fa, fb = times['frames'][L[0]['commit']], times['frames'][L[-1]['commit']]
+    cases = []
+    for i, (s0, s1) in enumerate(zip(first['shapes'], final['shapes'])):
+        assert s0['key'].split(' load=')[0] == s1['key'].split(' load=')[0]
+        g0, g1 = groups(fa[i]), groups(fb[i])
+        tot = sum(g1.values())
+        cases.append({'i': i, 'weight': s1['weight'], 'sglang_us': s1['baseline_ns'] / 1e3,
+                      'first_us': s0['median_ns'] / 1e3, 'final_us': s1['median_ns'] / 1e3,
+                      'first_speedup': s0['speedup'], 'speedup': s1['speedup'], 'sol_us': s1['speed_of_light_ns'] / 1e3,
+                      'group_speedup': {k: g0[k] / g1[k] for k in g1}, 'share': {k: g1[k] / tot for k in g1}})
+    return {'first': {'speedup': first['speedup'], 'ci': first['speedup_ci'], 'job': first['job']},
+            'final': {'speedup': final['speedup'], 'ci': final['speedup_ci'], 'job': final['job']},
+            'board': BOARD, 'cases': cases}
 
 
 def main():
@@ -23,6 +59,7 @@ def main():
         'times': times,
         'loc': load('loc.json', {}),
         'inst': load('inst.json', {}),
+        'results': results(times),
         'notes': [
             'Times come from the judge itself: for each scored version it reported how long every kernel took in one '
             'token step of each test case, on an NVIDIA H200. For five versions between 10-29 and 10-31 no such breakdown '

@@ -14,6 +14,11 @@ A 3D view of `muse_decode_layer` across its 49 master landings, 2026-10-24 to 20
   calls. Height is GPU time per step. Depth is instructions executed per step. Depth is fixed until the GPU
   step below has run. Volume means nothing.
 
+Below the picture, a results section gives the rank, the board and judged speedups, and a per-case table
+(judge medians, speed-of-light, group speedups and time shares) whose rows open that case in the picture. `build.py`
+reads it from the first and final landings' judge result files; the board figures are the closing board in the
+top-level README.
+
 The timeline plays the landings. Drag to turn, scroll to zoom, and hover a block for its numbers. The URL
 hash keeps the view, shape and landing, e.g. `index.html#view=B&shape=0&pos=48`.
 
