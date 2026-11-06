@@ -63,6 +63,13 @@ canvas{display:block;width:100%;height:100%}
 .legend i{display:inline-block;width:12px;height:12px;border:1px solid var(--line);vertical-align:-2px;margin-right:5px}
 .notes{max-width:1400px;margin:14px auto 28px;padding:0 16px;color:var(--muted);font-size:12.5px}
 .notes p{margin:4px 0;max-width:110ch}
+.explain{max-width:1400px;margin:18px auto 0;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:8px 40px}
+.explain h2{font-size:14px;margin:0 0 6px;font-weight:650}
+.explain p{margin:0 0 8px;max-width:75ch}
+.explain dl{margin:0;max-width:75ch}
+.explain dt{font-weight:600;margin-top:6px}
+.explain dd{margin:0 0 4px;color:var(--muted)}
+.notes h2{font-size:13px;margin:0 0 4px;color:var(--ink);font-weight:650}
 @media (max-width:640px){
   #axes{display:none}
   #stage{height:58vh}
@@ -73,16 +80,21 @@ canvas{display:block;width:100%;height:100%}
 </head>
 <body>
 <header>
-  <h1>muse_decode_layer, landing by landing</h1>
-  <p class="sub" id="subtitle"></p>
+  <h1>Speeding up one layer of a language model: 49 versions in 12 days</h1>
+  <p class="sub">A language model writes one token (a word fragment) at a time, and every token passes through the
+  same stack of layers on a GPU. This page follows one of those layers through the 2026 Open Kernel Challenge, a contest
+  to rewrite its GPU code so it runs faster. A judge timed every entry on an NVIDIA H200 GPU against SGLang, a widely
+  used open-source engine for running these models.</p>
+  <p class="sub">The code that does the work is a set of <b>kernels</b>: functions that run on the GPU, launched one
+  after another. Each block in the picture is one kernel. <span id="subtitle"></span></p>
 </header>
 <div class="bar">
   <div class="tabs" role="tablist">
     <button role="tab" id="tabA" aria-selected="true">Where the time goes</button>
     <button role="tab" id="tabB" aria-selected="false">Code against work</button>
   </div>
-  <select id="shape" aria-label="Judged shape"></select>
-  <label class="tog" id="helpersTog" hidden><input type="checkbox" id="helpers" checked> count shared helpers</label>
+  <select id="shape" aria-label="Test case"></select>
+  <label class="tog" id="helpersTog" hidden><input type="checkbox" id="helpers" checked> include the helper functions each kernel calls</label>
   <button class="btn" id="theme" title="Toggle light and dark">Theme</button>
 </div>
 <main>
@@ -99,6 +111,7 @@ canvas{display:block;width:100%;height:100%}
   <div id="ticks"></div>
 </div>
 <div class="legend" id="legend"></div>
+<section class="explain" id="explain"></section>
 <div class="notes" id="notes"></div>
 
 <script>
@@ -109,8 +122,12 @@ const DATA = /*DATA*/null;
 "use strict";
 const T = DATA.times, LOC = DATA.loc || {}, INST = DATA.inst || {};
 const STAGES = T.stage_order;
-const STAGE_LABEL = {norm:"norm",qkv:"QKV projection",attention:"attention",o_proj:"output projection",
+const STAGE_LABEL = {norm:"normalise",qkv:"QKV projection",attention:"attention",o_proj:"output projection",
   router:"router",experts:"experts",combine:"combine",unattributed:"unattributed"};
+const ERA_LABEL = {sglang:"start: SGLang's kernels",ours:"our own code",public:"built on public entries",keell:"built on keell0renz's entry"};
+function caseLabel(raw){ // "decode b16 sliding" -> "Generate, batch 16, windowed attention"
+  const m=/^(decode|verify) b(\d+) (sliding|full)$/.exec(raw||""); if(!m) return raw;
+  return `${m[1]==="decode"?"Generate":"Verify"}, batch ${m[2]}, ${m[3]==="sliding"?"windowed":"full"} attention`; }
 const L = T.landings;
 const N = L.length;
 
@@ -185,7 +202,7 @@ function maxTotalFor(){
   return globalMaxTotal[k]=m;
 }
 const HGROUP = s => s==="attention"?"attention":s==="experts"?"experts":"rest";
-const HGROUP_LABEL = {attention:"attention", experts:"experts", rest:"everything else (projections, router, norms, combine)"};
+const HGROUP_LABEL = {attention:"attention", experts:"experts", rest:"everything else"};
 function groupTotals(rows){ const g={attention:0,experts:0,rest:0}; for(const r of rows) g[HGROUP(r.stage)]+=r.us; return g; }
 function sceneA(li){
   const rows=shapeRows(li); const tot=rows.reduce((a,r)=>a+r.us,0);
@@ -206,7 +223,7 @@ function sceneA(li){
         info:{name:r.name,stage:s,us:r.us,calls:r.calls,share:r.us/tot,group:g,groupSpeedup:sp,groupUs:nowG[g],groupBase:baseG[g]},flat:sp==null});
     }
   }
-  return {boxes, axes:`<b>floor area</b> = GPU time per decode step, on one fixed scale, so the floor shrinks as the layer gets faster<br><b>height</b> = speedup since ${D0} of the block's group: attention, experts, or everything else<br><span>${D0} (UTC) still ran SGLang's own kernels</span>`};
+  return {boxes, axes:`<b>floor area</b> = time the kernel takes<br><b>height</b> = how many times faster its group is than in version 1<br>each group keeps the same volume: it gets squeezed, not shrunk`};
 }
 function locFor(li, base){
   const c=L[li].commit; const e=LOC[c] || LOC[c.slice(0,8)];
@@ -251,7 +268,7 @@ function sceneB(li){
     x+=w+gap;
   }
   for(const b of boxes){ b.x0-=x/2; b.x1-=x/2; }
-  return {boxes, axes:`<b>width</b> = lines of code in the kernel${st.helpers?" plus the helpers it calls":""}<br><b>depth</b> = instructions executed per step${anyInst?"":" <span class='warn'>(not measured yet: fixed depth)</span>"}<br><b>height</b> = GPU time per step<br>volume means nothing`};
+  return {boxes, axes:`<b>width</b> = lines of code${st.helpers?", helpers included":""}<br><b>height</b> = time the kernel takes<br><b>depth</b> = GPU instructions executed${anyInst?"":" <span class='warn'>(not measured yet, so all equal)</span>"}<br>volume has no meaning here`};
 }
 function short(n){ if(!n) return ""; let s=n.replace(/^void\s+/,"").replace(/\(.*$/,"").replace(/<.*$/,"").replace(/^.*::/,""); return s.length>22?s.slice(0,21)+"…":s; }
 
@@ -379,13 +396,13 @@ function inPoly(x,y,P){ let c=false; for(let i=0,j=P.length-1;i<P.length;j=i++){
 function hud(){
   const i=Math.round(st.pos), l=L[i], f=frameFor(i);
   const tot=f>=0?stepTotal(f):0;
-  const shapeLbl = st.shape==="sum"?"all 12 shapes summed":T.shapes[Number(st.shape)].label;
+  const shapeLbl = st.shape==="sum"?"All 12 test cases":caseLabel(T.shapes[Number(st.shape)].label);
   document.getElementById("hud").innerHTML =
-    `<div class="big">${l.speedup.toFixed(3)}×</div>`+
-    `<div>${l.date.slice(0,10)} · ${l.commit.slice(0,8)}<span class="era">${({sglang:"SGLang kernels",ours:"our own code",public:"public base",keell:"keell0renz base"})[l.era]||l.era}</span></div>`+
-    `<div>${shapeLbl}: ${fmtUs(tot)} per step, SGLang ${fmtUs(sglangUs())}</div>`+
-    (l.has_profile?"":`<div class="warn">no profile for this landing: showing ${L[f].commit.slice(0,8)}</div>`)+
-    (l.job_match==="by_speedup"?`<div class="k">job matched by speedup, not confirmed</div>`:"");
+    `<div class="big">${l.speedup.toFixed(2)}× <span style="font-size:13px;font-weight:500">SGLang's speed</span></div>`+
+    `<div>Version ${i+1} of ${N} · ${l.date.slice(0,10)}<span class="era">${ERA_LABEL[l.era]||l.era}</span></div>`+
+    `<div>${shapeLbl}: ${fmtUs(tot)} per token step (SGLang: ${fmtUs(sglangUs())})</div>`+
+    (l.has_profile?"":`<div class="warn">no time breakdown was recorded for this version: showing version ${f+1}</div>`)+
+    (l.job_match==="by_speedup"?`<div class="k">matched to its score by value; the record has no run id</div>`:"");
   document.getElementById("axes").innerHTML=current.axes;
   document.getElementById("scrub").value=st.pos;
 }
@@ -393,10 +410,10 @@ function hud(){
 // ---------- tooltip ----------
 const tip=document.getElementById("tip");
 function showTip(b,x,y){
-  const I=b.info; let h=`<b>${esc(I.name)}</b><br><span class="k">stage</span> ${STAGE_LABEL[I.stage]}<br><span class="k">GPU time</span> ${fmtUs(I.us)}`+(I.calls?` <span class="k">in ${I.calls} call${I.calls>1?"s":""}</span>`:"");
-  if(I.share!=null) h+=`<br><span class="k">share of step</span> ${(I.share*100).toFixed(1)}%`;
-  if(st.view==="A") h+= I.groupSpeedup!=null ? `<br><span class="k">${HGROUP_LABEL[I.group]}, since ${D0}</span> ${I.groupSpeedup.toFixed(2)}× <span class="k">(${fmtUs(I.groupBase)} → ${fmtUs(I.groupUs)})</span>` : `<br><span class="k">group speedup</span> n/a`;
-  if(st.view==="B"){ h+=`<br><span class="k">lines of code</span> ${I.loc==null?"not ours (library kernel)":I.loc.toLocaleString()}`;
+  const I=b.info; let h=`<b>${esc(I.name)}</b><br><span class="k">step in the layer</span> ${STAGE_LABEL[I.stage]}<br><span class="k">time</span> ${fmtUs(I.us)}`+(I.calls?` <span class="k">over ${I.calls} launch${I.calls>1?"es":""}</span>`:"");
+  if(I.share!=null) h+=`<br><span class="k">share of this version's time</span> ${(I.share*100).toFixed(1)}%`;
+  if(st.view==="A") h+= I.groupSpeedup!=null ? `<br><span class="k">group "${HGROUP_LABEL[I.group]}" vs version 1</span> ${I.groupSpeedup.toFixed(2)}× faster <span class="k">(${fmtUs(I.groupBase)} → ${fmtUs(I.groupUs)})</span>` : `<br><span class="k">group speedup</span> not available`;
+  if(st.view==="B"){ h+=`<br><span class="k">lines of code</span> ${I.loc==null?"none of ours (library kernel)":I.loc.toLocaleString()}`;
     h+=`<br><span class="k">instructions executed</span> ${I.inst==null?"not measured":fmtN(I.inst)}`;
     if(I.inst!=null&&I.us>0) h+=`<br><span class="k">instructions per µs</span> ${fmtN(I.inst/I.us)}`; }
   tip.innerHTML=h; tip.style.display="block";
@@ -433,7 +450,7 @@ document.addEventListener("keydown",e=>{ if(e.target.tagName==="SELECT"||e.targe
   if(e.key===" "&&e.target===document.body){e.preventDefault();playBtn.click();} });
 
 const sel=document.getElementById("shape");
-sel.innerHTML=`<option value="sum">All 12 shapes, summed</option>`+T.shapes.map(s=>`<option value="${s.i}">${esc(s.label)}</option>`).join("");
+sel.innerHTML=`<option value="sum">All 12 test cases, added up</option>`+T.shapes.map(s=>`<option value="${s.i}">${esc(caseLabel(s.label))}</option>`).join("");
 sel.addEventListener("change",()=>{ st.shape=sel.value; fitCache=null; scalesB=null; draw(); });
 function setView(v){ st.view=v; document.getElementById("tabA").setAttribute("aria-selected",v==="A"); document.getElementById("tabB").setAttribute("aria-selected",v==="B");
   document.getElementById("helpersTog").hidden = v!=="B"; fitCache=null; draw(); legend(); }
@@ -443,18 +460,39 @@ document.getElementById("theme").addEventListener("click",()=>{ const d=document
   d.dataset.theme = dark?"light":"dark"; draw(); legend(); });
 
 function legend(){ document.getElementById("legend").innerHTML = STAGES.map(s=>`<span><i style="background:${css("--s-"+s)}"></i>${STAGE_LABEL[s]}</span>`).join("")+
-  (st.view==="B"?`<span>dashed sides: not measured (library kernel or no instruction count)</span>`:`<span>colour = stage; height is shared by group because ${D0}'s projections ran in shared library kernels that can't be split by stage</span>`); }
+  (st.view==="B"?`<span>dashed sides: not measured (library kernel, or no instruction count yet)</span>`:`<span>colour = step in the layer</span>`);
+  explain(); }
+function eraStart(e){ const l=L.find(x=>x.era===e); return l?l.date.slice(5,10):"?"; }
+function explain(){
+  const A = `<div><h2>How to read “Where the time goes”</h2>
+<p><b>Floor area is time.</b> Each block's floor is proportional to how long that kernel runs for one token step. The scale never changes, so as the code gets faster the whole floor shrinks.</p>
+<p><b>Height is speedup.</b> A block's height is how many times faster its group is than in version 1. There are three groups: attention, experts, and everything else. Height is set per group, not per kernel, because in version 1 several steps ran inside one shared library call and can't be timed apart.</p>
+<p><b>So each group keeps the same volume from start to finish.</b> Area × height = (time now) × (time in version 1 ÷ time now) = time in version 1. A group doesn't get smaller as it gets faster; it gets squeezed. Half the floor and twice the height means twice as fast. Blocks inside a group can still trade volume with each other, since one kernel may improve more than its neighbours; only the group total is fixed.</p>
+<p><b>Why squeeze instead of shrink?</b> If blocks only shrank with their time, the biggest improvements would end up as the smallest specks, and the picture would be hardest to read exactly where the news is. Fixed volume keeps every group in view and turns speed into shape you can read at a glance: wide and flat means little gain so far, narrow and tall means a large gain. The volume itself is a reminder of where each group started.</p></div>`;
+  const B = `<div><h2>How to read “Code against work”</h2>
+<p>Each block is one kernel, set side by side and coloured by its step in the layer.</p>
+<p><b>Width</b> is lines of source code in the kernel; the checkbox adds the helper functions it calls. <b>Height</b> is the time it takes per token step. <b>Depth</b> is the number of GPU instructions it executes. That has not been measured yet, so every block has the same depth for now.</p>
+<p>The three measures are independent, so volume means nothing here. The question this view answers is whether more code bought less time: look for wide blocks that are short. Thin slivers with dashed sides are library kernels, such as NVIDIA's cuBLAS matrix routines, with none of our code in them.</p></div>`;
+  const G = `<div><h2>Terms</h2><dl>
+<dt>The layer's steps (colours)</dt><dd>Normalise the input; project it into queries, keys and values (QKV); attention, which compares the new token with earlier ones; output projection; a router that sends each token to a few of many small “expert” networks; the experts themselves; combine, which merges their answers. Grey is time the judge's profile could not assign to one step.</dd>
+<dt>Speedup (the big number)</dt><dd>SGLang's time divided by this version's time, as measured by the judge. 2× means twice as fast.</dd>
+<dt>Version</dt><dd>A change adopted onto the project's main line after the judge scored it. There are ${N}.</dd>
+<dt>Test case (menu at the top)</dt><dd>The judge times 12 cases. <i>Generate</i> adds one new token per sequence; <i>Verify</i> checks several guessed tokens at once, a trick called speculative decoding. <i>Batch</i> is how many sequences run together. <i>Windowed</i> attention looks back over recent tokens only; <i>full</i> looks at all of them.</dd>
+<dt>Eras (marks on the timeline)</dt><dd><i>Start</i>: still SGLang's own kernels. <i>Own code</i>: kernels written for this project. <i>Public entries</i>: from ${eraStart('public')} the project was rebuilt on kernels other contestants had published. <i>keell0renz</i>: from ${eraStart('keell')}, on the published entry of contestant keell0renz.</dd>
+<dt>µs</dt><dd>Microsecond, a millionth of a second.</dd></dl></div>`;
+  document.getElementById("explain").innerHTML = (st.view==="A"?A:B) + G;
+}
 
 // ticks at era changes
 (function(){ const el=document.getElementById("ticks"); let prev=null, h="";
   let row=0, lastP=-100;
-  L.forEach((l,i)=>{ if(l.era!==prev){ const p=(i/(N-1))*100; row = (p-lastP<12) ? 1-row : 0; lastP=p;
-    h+=`<span style="left:${p}%;top:${row*14}px;${p<4?"transform:none":p>96?"transform:translateX(-100%)":""}">${({sglang:"SGLang",ours:"ours",public:"public base",keell:"keell0renz"})[l.era]||l.era} ${l.date.slice(5,10)}</span>`; prev=l.era; } });
+  L.forEach((l,i)=>{ if(l.era!==prev){ const p=(i/(N-1))*100; row = prev===null ? 0 : 1-row; lastP=p;
+    h+=`<span style="left:${p}%;top:${row*14}px;${p<4?"transform:none":p>96?"transform:translateX(-100%)":""}">${({sglang:"start",ours:"own code",public:"public entries",keell:"keell0renz"})[l.era]||l.era} ${l.date.slice(5,10)}</span>`; prev=l.era; } });
   el.innerHTML=h; })();
 
 document.getElementById("subtitle").textContent =
-  `${N} master landings from ${L[0].date.slice(0,10)} to ${L[N-1].date.slice(0,10)}, ${L[0].speedup.toFixed(2)}× to ${L[N-1].speedup.toFixed(2)}× over SGLang on the judge's H200 (dates in UTC). Drag to turn, scroll to zoom, hover a block for its numbers.`;
-document.getElementById("notes").innerHTML = (DATA.notes||[]).map(n=>`<p>${n}</p>`).join("");
+  `Press Play to step through the ${N} versions adopted between ${L[0].date.slice(0,10)} and ${L[N-1].date.slice(0,10)}, which went from ${L[0].speedup.toFixed(2)}× to ${L[N-1].speedup.toFixed(2)}× SGLang's speed. Drag the picture to turn it, scroll to zoom, and hover over a block for its numbers. Two views are offered as tabs; the notes below the picture explain each.`;
+document.getElementById("notes").innerHTML = `<h2>About the data</h2>` + (DATA.notes||[]).map(n=>`<p>${n}</p>`).join("");
 
 // state in the URL hash: #view=B&shape=3&pos=12
 function readHash(){ const h=new URLSearchParams(location.hash.slice(1));

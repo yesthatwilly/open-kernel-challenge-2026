@@ -24,14 +24,18 @@ def main():
         'loc': load('loc.json', {}),
         'inst': load('inst.json', {}),
         'notes': [
-            'Times are the judge\'s own per-kernel profile for each scored master landing (H200, one decode step). '
-            'Five landings between 10-29 and 10-31 have no profile on record; the page holds the previous frame there and says so.',
-            'Heights in the first view compare each group (attention, experts, everything else) with the first landing, '
-            'which still ran SGLang\'s own kernels. Finer stages are colour only: on that first landing the projections ran in '
-            'shared cuBLAS kernels that cannot be split by stage. Kernels the profile could not place are grey ("unattributed"), never guessed.',
-            'Lines of code are counted from the CUDA and Triton source at each landing\'s commit. Library kernels '
-            '(cuBLAS, Marlin, FlashAttention) have no lines of ours and are drawn thin with dashed sides.',
-            'Instructions executed come from Nsight Compute at six milestone landings, when measured. Until then the depth is fixed.',
+            'Times come from the judge itself: for each scored version it reported how long every kernel took in one '
+            'token step of each test case, on an NVIDIA H200. For five versions between 10-29 and 10-31 no such breakdown '
+            'was kept, so the picture holds the previous version there and says so.',
+            'Each version is tied to the judge run that scored it. For eight versions the run id was not recorded and the '
+            'match was made by score; the picture flags these.',
+            'Kernels the breakdown could not assign to one step are grey ("unattributed") rather than guessed. Version 1 ran '
+            'several steps inside shared library calls, which is why heights in the first view are set per group.',
+            'Lines of code are counted from the GPU source (CUDA and Triton) at each version. Library kernels such as '
+            'NVIDIA\'s cuBLAS contain none of our code and are drawn as thin slivers.',
+            'Instruction counts will come from NVIDIA\'s Nsight Compute profiler at six of the versions. Until they are '
+            'measured, every block in the second view has the same depth.',
+            'Source, scripts and raw data: campaigns/2026-11-05-kernel-viz/ in this repository.',
         ],
     }
     blob = json.dumps(data, separators=(',', ':')).replace('</', '<\\/')

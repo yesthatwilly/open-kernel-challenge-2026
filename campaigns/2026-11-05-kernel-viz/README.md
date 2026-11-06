@@ -7,7 +7,9 @@ A 3D view of `muse_decode_layer` across its 49 master landings, 2026-10-24 to 20
 
 - **Where the time goes.** One block per kernel. Floor area is its GPU time per decode step, on one fixed
   scale, so the whole floor shrinks as the layer gets faster. Colour is the layer stage. Height is the
-  speedup since the first landing of the block's group: attention, experts, or everything else.
+  speedup since the first landing of the block's group: attention, experts, or everything else. So each group's
+  volume (area × height) always equals its first-landing time: speeding up squeezes a group (smaller floor, taller)
+  instead of shrinking it, which keeps the biggest gains visible and makes speed a shape you can read.
 - **Code against work.** One block per kernel. Width is lines of code, optionally including the helpers it
   calls. Height is GPU time per step. Depth is instructions executed per step. Depth is fixed until the GPU
   step below has run. Volume means nothing.
